@@ -1,0 +1,16 @@
+{
+  "name": "typescript-symbol-extractor",
+  "version": "1.0.0",
+  "description": "A tool to extract TypeScript function and variable symbols",
+  "main": "extractSymbols.js",
+  "scripts": {
+    "start": "node extractSymbols.js"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {},
+  "keywords": [],
+  "author": "Your Name",
+  "license": "MIT"
+}
