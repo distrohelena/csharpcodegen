@@ -6,8 +6,11 @@ using System.Runtime.InteropServices;
 
 namespace cs2.ts {
     public class TypeScriptProgram : ConvertedProgram {
+        public List<TypeScriptKnownClass> Requirements { get; private set; }
+
         public TypeScriptProgram(ConversionRules rules)
             : base(rules) {
+            Requirements = new List<TypeScriptKnownClass>();
         }
 
         public void AddDotNet(TypeScriptEnvironment env) {
@@ -15,86 +18,89 @@ namespace cs2.ts {
 
             this.buildNativeRemap();
 
-            //this.buildDotNetData();
+            this.buildDotNetData();
 
             // system
-            Requirements.Add(new GenericKnownClass(17, 0, false, "Action", "./system/action"));
-            Requirements.Add(new GenericKnownClass(17, 1, false, "Func", "./system/func"));
-            Requirements.Add(new KnownClass("ConsoleColor", "./system/console-color"));
-            Requirements.Add(new KnownClass("DateTime", "./system/date-time"));
-            Requirements.Add(new KnownClass("TimeSpan", "./system/time-span"));
-            Requirements.Add(new KnownClass("Exception", "./system/exception"));
-            Requirements.Add(new KnownClass("NotSupportedException", "./system/not-supported.exception"));
-            Requirements.Add(new KnownClass("ArgumentException", "./system/argument.exception"));
-            Requirements.Add(new KnownClass("Random", "./system/random"));
-            Requirements.Add(new KnownClass("Attribute", "./system/attribute"));
-            Requirements.Add(new KnownClass("Version", "./system/version"));
-            Requirements.Add(new KnownClass("Tuple", "./system/tuple"));
-            Requirements.Add(new KnownClass("Console", "./system/console"));
-            Requirements.Add(new KnownClass("IDisposable", "./system/disposable.interface"));
-            Requirements.Add(new KnownClass("Guid", "./system/guid"));
+            Requirements.Add(new TypeScriptGenericKnownClass(17, 0, false, "Action", "./system/action"));
+            Requirements.Add(new TypeScriptGenericKnownClass(17, 1, false, "Func", "./system/func"));
+            Requirements.Add(new TypeScriptKnownClass("ConsoleColor", "./system/console-color"));
+            Requirements.Add(new TypeScriptKnownClass("DateTime", "./system/date-time"));
+            Requirements.Add(new TypeScriptKnownClass("TimeSpan", "./system/time-span"));
+            Requirements.Add(new TypeScriptKnownClass("Exception", "./system/exception"));
+            Requirements.Add(new TypeScriptKnownClass("NotSupportedException", "./system/not-supported.exception"));
+            Requirements.Add(new TypeScriptKnownClass("ArgumentException", "./system/argument.exception"));
+            Requirements.Add(new TypeScriptKnownClass("Random", "./system/random"));
+            Requirements.Add(new TypeScriptKnownClass("Attribute", "./system/attribute"));
+            Requirements.Add(new TypeScriptKnownClass("Version", "./system/version"));
+            Requirements.Add(new TypeScriptKnownClass("Tuple", "./system/tuple"));
+            Requirements.Add(new TypeScriptKnownClass("Console", "./system/console"));
+            Requirements.Add(new TypeScriptKnownClass("IDisposable", "./system/disposable.interface"));
+            Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
 
             // system.collection.concurrent
-            Requirements.Add(new KnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));
+            Requirements.Add(new TypeScriptKnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));
 
             // system.collection.generic
-            Requirements.Add(new KnownClass("IDictionary", "./system/collections/generic/dictionary.interface"));
-            Requirements.Add(new KnownClass("Dictionary", "./system/collections/generic/dictionary"));
-            Requirements.Add(new KnownClass("List", "./system/collections/generic/list"));
-            Requirements.Add(new KnownClass("KeyValuePair", "./system/collections/generic/key-value-pair"));
-            Requirements.Add(new KnownClass("SortedList", "./system/collections/generic/sorted-list"));
-            Requirements.Add(new KnownClass("Queue", "./system/collections/generic/queue"));
+            Requirements.Add(new TypeScriptKnownClass("IDictionary", "./system/collections/generic/dictionary.interface"));
+            Requirements.Add(new TypeScriptKnownClass("Dictionary", "./system/collections/generic/dictionary"));
+            Requirements.Add(new TypeScriptKnownClass("List", "./system/collections/generic/list"));
+            Requirements.Add(new TypeScriptKnownClass("KeyValuePair", "./system/collections/generic/key-value-pair"));
+            Requirements.Add(new TypeScriptKnownClass("SortedList", "./system/collections/generic/sorted-list"));
+            Requirements.Add(new TypeScriptKnownClass("Queue", "./system/collections/generic/queue"));
 
             // system.drawing
-            Requirements.Add(new KnownClass("Point", "./system/drawing/point"));
-            Requirements.Add(new KnownClass("Rectangle", "./system/drawing/rectangle"));
-            Requirements.Add(new KnownClass("Size", "./system/drawing/size"));
+            Requirements.Add(new TypeScriptKnownClass("Point", "./system/drawing/point"));
+            Requirements.Add(new TypeScriptKnownClass("Rectangle", "./system/drawing/rectangle"));
+            Requirements.Add(new TypeScriptKnownClass("Size", "./system/drawing/size"));
 
             // system.diagnostics
-            Requirements.Add(new KnownClass("Debug", "./system/diagnostics/debug"));
-            Requirements.Add(new KnownClass("Stopwatch", "./system/diagnostics/stopwatch"));
+            Requirements.Add(new TypeScriptKnownClass("Debug", "./system/diagnostics/debug"));
+            Requirements.Add(new TypeScriptKnownClass("Stopwatch", "./system/diagnostics/stopwatch"));
 
             // system.io
-            Requirements.Add(new KnownClass("SeekOrigin", "./system/io/seek-origin"));
-            Requirements.Add(new KnownClass("Stream", "./system/io/stream"));
-            Requirements.Add(new KnownClass("MemoryStream", "./system/io/memory-stream"));
-            Requirements.Add(new KnownClass("StreamWriter", "./system/io/stream-writer"));
-            Requirements.Add(new KnownClass("BinaryReader", "./system/io/binary-reader"));
-            Requirements.Add(new KnownClass("BinaryWriter", "./system/io/binary-writer"));
-            Requirements.Add(new KnownClass("DirectoryInfo", "./system/io/directory-info"));
-            Requirements.Add(new KnownClass("FileInfo", "./system/io/file-info"));
-            Requirements.Add(new KnownClass("SearchOption", "./system/io/search-option"));
-            Requirements.Add(new KnownClass("StreamReader", "./system/io/stream-reader"));
-            Requirements.Add(new KnownClass("TextWriter", "./system/io/text-writer"));
-            Requirements.Add(new KnownClass("DriveInfo", "./system/io/drive-info"));
+            Requirements.Add(new TypeScriptKnownClass("SeekOrigin", "./system/io/seek-origin"));
+            Requirements.Add(new TypeScriptKnownClass("Stream", "./system/io/stream"));
+            Requirements.Add(new TypeScriptKnownClass("MemoryStream", "./system/io/memory-stream"));
+            Requirements.Add(new TypeScriptKnownClass("StreamWriter", "./system/io/stream-writer"));
+            Requirements.Add(new TypeScriptKnownClass("BinaryReader", "./system/io/binary-reader"));
+            Requirements.Add(new TypeScriptKnownClass("BinaryWriter", "./system/io/binary-writer"));
+            Requirements.Add(new TypeScriptKnownClass("DirectoryInfo", "./system/io/directory-info"));
+            Requirements.Add(new TypeScriptKnownClass("FileInfo", "./system/io/file-info"));
+            Requirements.Add(new TypeScriptKnownClass("FileMode", "./system/io/file-mode"));
+            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));
+            Requirements.Add(new TypeScriptKnownClass("File", "./system/io/file"));
+            Requirements.Add(new TypeScriptKnownClass("SearchOption", "./system/io/search-option"));
+            Requirements.Add(new TypeScriptKnownClass("StreamReader", "./system/io/stream-reader"));
+            Requirements.Add(new TypeScriptKnownClass("TextWriter", "./system/io/text-writer"));
+            Requirements.Add(new TypeScriptKnownClass("DriveInfo", "./system/io/drive-info"));
 
             // system.net.sockets
-            Requirements.Add(new KnownClass("TcpClient", "./system/net/sockets/tcp-client"));
-            Requirements.Add(new KnownClass("TcpListener", "./system/net/sockets/tcp-listener"));
+            Requirements.Add(new TypeScriptKnownClass("TcpClient", "./system/net/sockets/tcp-client"));
+            Requirements.Add(new TypeScriptKnownClass("TcpListener", "./system/net/sockets/tcp-listener"));
 
             // system.reflection
-            Requirements.Add(new KnownClass("Assembly", "./system/reflection/assembly"));
-            Requirements.Add(new KnownClass("AssemblyName", "./system/reflection/assembly-name"));
+            Requirements.Add(new TypeScriptKnownClass("Assembly", "./system/reflection/assembly"));
+            Requirements.Add(new TypeScriptKnownClass("AssemblyName", "./system/reflection/assembly-name"));
 
             // system.security.cryptography
-            Requirements.Add(new KnownClass("SHA256", "./system/security/cryptography/sha256"));
-            Requirements.Add(new KnownClass("MD5", "./system/security/cryptography/md5"));
+            Requirements.Add(new TypeScriptKnownClass("SHA256", "./system/security/cryptography/sha256"));
+            Requirements.Add(new TypeScriptKnownClass("MD5", "./system/security/cryptography/md5"));
 
             // system.text
-            Requirements.Add(new KnownClass("Encoding", "./system/text/encoding"));
+            Requirements.Add(new TypeScriptKnownClass("Encoding", "./system/text/encoding"));
 
             // system.threading
-            Requirements.Add(new KnownClass("Thread", "./system/threading/thread"));
-            Requirements.Add(new KnownClass("AutoResetEvent", "./system/threading/auto-reset-event"));
-            Requirements.Add(new KnownClass("SynchronizationContext", "./system/threading/synchronization-context", "", true));
-            Requirements.Add(new KnownClass("SendOrPostCallback", "./system/threading/send-or-post-callback"));
+            Requirements.Add(new TypeScriptKnownClass("Thread", "./system/threading/thread"));
+            Requirements.Add(new TypeScriptKnownClass("AutoResetEvent", "./system/threading/auto-reset-event"));
+            Requirements.Add(new TypeScriptKnownClass("SynchronizationContext", "./system/threading/synchronization-context", "", true));
+            Requirements.Add(new TypeScriptKnownClass("SendOrPostCallback", "./system/threading/send-or-post-callback"));
 
             // system.threading.tasks
-            Requirements.Add(new KnownClass("Task", "./system/threading/tasks/task", "", true));
+            Requirements.Add(new TypeScriptKnownClass("Task", "./system/threading/tasks/task", "", true));
 
             // WebSocketSharp
-            Requirements.Add(new KnownClass("WebSocketWS", "./websocketsharp/websocket"));
-            Requirements.Add(new KnownClass("WebSocketState", "./websocketsharp/websocket-state"));
+            Requirements.Add(new TypeScriptKnownClass("WebSocketWS", "./websocketsharp/websocket"));
+            Requirements.Add(new TypeScriptKnownClass("WebSocketState", "./websocketsharp/websocket-state"));
 
             switch (env) {
                 case TypeScriptEnvironment.Web:
@@ -106,7 +112,7 @@ namespace cs2.ts {
             }
 
             for (int i = 0; i < Requirements.Count; i++) {
-                KnownClass requirement = Requirements[i];
+                TypeScriptKnownClass requirement = Requirements[i];
 
                 ConvertedClass cl = new ConvertedClass();
                 cl.IsNative = true;
@@ -171,11 +177,11 @@ namespace cs2.ts {
         }
 
         private void addNode() {
-            Requirements.Add(new KnownClass("NodeDirectory", "./system/io/node-directory", "Directory"));
+            Requirements.Add(new TypeScriptKnownClass("NodeDirectory", "./system/io/node-directory", "Directory"));
         }
 
         private void addWeb() {
-            Requirements.Add(new KnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
+            Requirements.Add(new TypeScriptKnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
         }
 
         private ConvertedClass makeClass(string name) {
@@ -239,7 +245,7 @@ namespace cs2.ts {
 
         private void buildDotNetData() {
             string startFolder = AssemblyUtil.GetStartFolder();
-            string dotNetFolder = Path.Combine(startFolder, ".net");
+            string dotNetFolder = Path.Combine(startFolder, ".net.ts");
             string extractorPath = Path.Combine(dotNetFolder, "extractor.js");
 
             List<FileInfo> files = new List<FileInfo>();

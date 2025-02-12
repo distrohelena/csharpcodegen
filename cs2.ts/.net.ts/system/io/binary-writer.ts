@@ -62,6 +62,23 @@ export class BinaryWriter {
         this.stream.InternalWriteByte((high >> 24) & 0xF);
     }
 
+    writeInt64(value: number): void {
+        this.checkAlloc(8);
+
+        this.stream.InternalWriteByte(value & 0xFF); // Write lower byte
+        this.stream.InternalWriteByte((value >> 8) & 0xFF);  // Write next byte
+        this.stream.InternalWriteByte((value >> 16) & 0xFF);
+        this.stream.InternalWriteByte((value >> 24) & 0xFF);
+
+        // For values beyond 32 bits
+        const high = Math.floor(value / 0x100000000);  // Get the upper 32 bits
+
+        this.stream.InternalWriteByte(high & 0xFF);
+        this.stream.InternalWriteByte((high >> 8) & 0xFF);
+        this.stream.InternalWriteByte((high >> 16) & 0xFF);
+        this.stream.InternalWriteByte((high >> 24) & 0xF);
+    }
+
     writeFloat(value: number): void {
         this.checkAlloc(4);
 

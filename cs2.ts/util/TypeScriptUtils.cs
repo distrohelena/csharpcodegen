@@ -15,7 +15,7 @@ namespace cs2.ts {
 
                 var extCl = program.Classes.FirstOrDefault(c => c.Name == ext);
                 if (extCl == null) {
-                    var knownClass = program.Requirements.FirstOrDefault(c => c.Name == ext);
+                    var knownClass = ((TypeScriptProgram)program).Requirements.FirstOrDefault(c => c.Name == ext);
 
                     if (knownClass == null) {
                         //throw new Exception($"Class not found: {ext}");

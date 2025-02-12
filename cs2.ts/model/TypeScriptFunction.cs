@@ -4,7 +4,7 @@ namespace cs2.ts {
     public static class TypeScriptFunction {
         public static void WriteLines(this ConvertedFunction fn, ConversionProcessor conversion, ConvertedProgram program, ConvertedClass cl, StreamWriter writer) {
             List<string> lines = new List<string>();
-            LayerContext context = new TypeScriptLayerContext(program);
+            LayerContext context = new TypeScriptLayerContext((TypeScriptProgram)program);
 
             int start = context.DepthClass;
             int startFn = context.DepthFunction;

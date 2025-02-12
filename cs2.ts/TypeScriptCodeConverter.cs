@@ -60,11 +60,15 @@ namespace cs2.ts {
             string outputDir = Path.GetDirectoryName(outputFile)!;
             Directory.CreateDirectory(outputDir);
 
+            if (File.Exists(outputFile)) {
+                File.Delete(outputFile);
+            }
+
             Stream stream = File.OpenWrite(outputFile);
             StreamWriter writer = new StreamWriter(stream);
 
-            foreach (var pair in program.Requirements) {
-                if (pair is GenericKnownClass gen) {
+            foreach (var pair in tsProgram.Requirements) {
+                if (pair is TypeScriptGenericKnownClass gen) {
                     string imports = "";
 
                     for (int i = gen.Start; i < gen.TotalImports; i++) {
@@ -129,7 +133,7 @@ namespace cs2.ts {
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(program);
+                    string type = param.VarType.ToTypeScriptString(tsProgram);
 
                     if (k == fn.InParameters.Count - 1) {
                         // last
@@ -158,7 +162,7 @@ namespace cs2.ts {
 
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
-                        string type = param.VarType.ToTypeScriptString(program);
+                        string type = param.VarType.ToTypeScriptString(tsProgram);
 
                         if (k == fn.InParameters.Count - 1) {
                             // last
@@ -187,7 +191,7 @@ namespace cs2.ts {
                 access = "";
             }
 
-            string type = var.VarType.ToTypeScriptString(program);
+            string type = var.VarType.ToTypeScriptString(tsProgram);
 
             string accessType = "";
             // TODO: implement none
@@ -248,7 +252,7 @@ namespace cs2.ts {
                     writer.Write("return ");
 
                     List<string> lines = new List<string>();
-                    LayerContext context = new TypeScriptLayerContext(program);
+                    TypeScriptLayerContext context = new TypeScriptLayerContext(tsProgram);
 
                     int start = context.DepthClass;
                     context.AddClass(cl);
@@ -319,7 +323,7 @@ namespace cs2.ts {
 
                 for (int k = 0; k < del.InParameters.Count; k++) {
                     var param = del.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(program);
+                    string type = param.VarType.ToTypeScriptString(tsProgram);
                     string? def = param.DefaultValue;
                     if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                         def = "";
@@ -337,7 +341,7 @@ namespace cs2.ts {
                 if (del.ReturnType == null) {
                     writer.Write("void");
                 } else {
-                    writer.Write(del.ReturnType.ToTypeScriptString(program));
+                    writer.Write(del.ReturnType.ToTypeScriptString(tsProgram));
                 }
 
                 writer.WriteLine(";");
@@ -424,7 +428,7 @@ namespace cs2.ts {
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(program);
+                    string type = param.VarType.ToTypeScriptString(tsProgram);
                     string? def = param.DefaultValue;
                     if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                         def = "";
@@ -440,7 +444,7 @@ namespace cs2.ts {
                 if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
                     writer.WriteLine(");");
                 } else {
-                    string returnParameter = fn.ReturnType?.ToTypeScriptString(program);
+                    string returnParameter = fn.ReturnType?.ToTypeScriptString(tsProgram);
                     if (string.IsNullOrEmpty(returnParameter)) {
                         writer.WriteLine($") {{");
                     } else {

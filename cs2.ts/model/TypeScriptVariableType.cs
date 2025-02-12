@@ -2,7 +2,7 @@
 
 namespace cs2.ts {
     public static class TypeScriptVariableType {
-        public static string GetTypeScriptType(this ConvertedVariableType varType, ConvertedProgram program) {
+        public static string GetTypeScriptType(this ConvertedVariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
                 if (program.TypeMap.TryGetValue(typeName, out var type)) {
@@ -10,9 +10,9 @@ namespace cs2.ts {
                 }
             }
 
-            KnownClass known = program.Requirements.Find(c => c.Name == typeName);
+            TypeScriptKnownClass known = program.Requirements.Find(c => c.Name == typeName);
             if (known != null) {
-                if (known is GenericKnownClass generic) {
+                if (known is TypeScriptGenericKnownClass generic) {
                     if (generic.VoidReturn) {
                         typeName += varType.GenericArgs.Count;
                     } else {
@@ -25,7 +25,7 @@ namespace cs2.ts {
             return typeName;
         }
 
-        public static string ToTypeScriptString(this ConvertedVariableType varType, ConvertedProgram program) {
+        public static string ToTypeScriptString(this ConvertedVariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
                 if (program.TypeMap.TryGetValue(typeName, out var type)) {
@@ -33,9 +33,9 @@ namespace cs2.ts {
                 }
             }
 
-            KnownClass known = program.Requirements.Find(c => c.Name == typeName);
+            TypeScriptKnownClass known = program.Requirements.Find(c => c.Name == typeName);
             if (known != null) {
-                if (known is GenericKnownClass generic) {
+                if (known is TypeScriptGenericKnownClass generic) {
                     if (generic.VoidReturn) {
                         typeName += varType.GenericArgs.Count;
                     } else {

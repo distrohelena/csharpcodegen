@@ -195,13 +195,13 @@ namespace cs2.ts {
             }
 
             if (stackVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType(context.Program)));
+                context.AddClass(context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
                 return new ExpressionResult(true, stackVar.VarType);
             } else if (functionInVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType(context.Program)));
+                context.AddClass(context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
                 return new ExpressionResult(true, functionInVar.VarType);
             } else if (classVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType(context.Program)));
+                context.AddClass(context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
                 return new ExpressionResult(true, classVar.VarType);
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
@@ -210,7 +210,7 @@ namespace cs2.ts {
                 if (classFn.ReturnType != null) {
                     // invoked function
                     if (classFn.ReturnType.Type != VariableDataType.Void) {
-                        context.AddClass(context.Program.Classes.Find(c => c.Name == classFn.ReturnType.GetTypeScriptType(context.Program)));
+                        context.AddClass(context.Program.Classes.Find(c => c.Name == classFn.ReturnType.GetTypeScriptType((TypeScriptProgram)context.Program)));
                         return new ExpressionResult(true, classFn.ReturnType);
                     }
                 }
@@ -335,7 +335,7 @@ namespace cs2.ts {
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
                 ConvertedVariableType type = VariableUtil.GetVarType(genType, semantic);
-                lines.Add(type.ToTypeScriptString(context.Program));
+                lines.Add(type.ToTypeScriptString((TypeScriptProgram)context.Program));
 
                 if (i < count - 1) {
                     lines.Add(",");
@@ -618,7 +618,7 @@ namespace cs2.ts {
             ConvertedVariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
 
             lines.Add("<");
-            lines.Add(varType.ToTypeScriptString(context.Program)); // Type of the cast
+            lines.Add(varType.ToTypeScriptString((TypeScriptProgram)context.Program)); // Type of the cast
             lines.Add(">");
             lines.Add("<unknown>");
 
@@ -690,8 +690,6 @@ namespace cs2.ts {
 
         protected override void ProcessUsingStatement(SemanticModel semantic, LayerContext context, UsingStatementSyntax usingStatement, List<string> lines) {
             // You may want to handle custom resource management here, or just ignore it and provide a comment
-            lines.Add("// Using statement converted to custom resource handling\n");
-
             lines.Add("try {\n");
 
             // Process the resource declaration (if any)

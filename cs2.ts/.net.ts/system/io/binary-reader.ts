@@ -46,6 +46,11 @@ export class BinaryReader {
         return (high << 32n) | low;
     }
 
+    readInt64(): bigint {
+        const value = this.readUInt64();
+        return value < 0x8000000000000000n ? value : value - 0x10000000000000000n;
+    }
+
     readSingle(): number {
         const buffer = new Uint8Array(4);
         buffer[0] = this.stream.InternalReadByte();
