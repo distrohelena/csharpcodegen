@@ -1,10 +1,14 @@
+import { IDisposable } from "../disposable.interface";
 import { Stream } from "./stream";
 
-export class BinaryReader {
+export class BinaryReader implements IDisposable {
     private stream: Stream;
 
     constructor(stream: Stream) {
         this.stream = stream;
+    }
+
+    dispose(): void {
     }
 
     readByte(): number {

@@ -18,7 +18,7 @@ namespace cs2.ts {
 
             this.buildNativeRemap();
 
-            //this.buildDotNetData();
+            this.buildDotNetData();
 
             // system
             Requirements.Add(new TypeScriptGenericKnownClass(17, 0, false, "Action", "./system/action"));

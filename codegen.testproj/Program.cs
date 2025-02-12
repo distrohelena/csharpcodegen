@@ -2,7 +2,11 @@
     static void Main() {
         string filePath = "testdata.bin";
 
-        // Write binary data
+        if (File.Exists(filePath)) {
+            File.Delete(filePath);
+        }
+
+        // write binary data
         using (BinaryWriter writer = new BinaryWriter(File.Open(filePath, FileMode.Create))) {
             writer.Write(42);// int
             writer.Write(3.14f);// float
@@ -10,7 +14,7 @@
             writer.Write("Hello, world!");// string
         }
 
-        // Read binary data
+        // read binary data
         using (BinaryReader reader = new BinaryReader(File.Open(filePath, FileMode.Open))) {
             int intValue = reader.ReadInt32();
             float floatValue = reader.ReadSingle();
@@ -22,5 +26,9 @@
             Console.WriteLine($"Long: {longValue}");
             Console.WriteLine($"String: {stringValue}");
         }
+
+#if !TYPESCRIPT
+        Console.ReadLine();
+#endif
     }
 }
