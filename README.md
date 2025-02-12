@@ -22,23 +22,23 @@ Features
 - Pass argument by out/ref 
     - Dynamically creates an object that is passed to the method, then assigns back to the value name that was passed. 
 
-.NET Library
-System
+.NET Library System
+
     - Action<T...>
     - DateTime
     - Guid
     - NotSupportedException
     - TimeSpan
-System.Collections.Concurrent
+#### System.Collections.Concurrent
     - ConcurrentDictionary<Key, Value>
-System.Collections.Generic
+#### System.Collections.Generic
     - Dictionary<Key, Value>
     - List<T>
     - SortedList<T>
-System.Drawing
+#### System.Drawing
     - Rectangle
 
-Not Implemented
+### Not Implemented
 - Function arguments with same name as classes variables
     - A bit harder
 - No constructor creation (argument-less)
