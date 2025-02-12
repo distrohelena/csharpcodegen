@@ -242,7 +242,6 @@ namespace cs2.ts {
             Classes.Add(clUint8Array);
         }
 
-
         private void buildDotNetData() {
             string startFolder = AssemblyUtil.GetStartFolder();
             string dotNetFolder = Path.Combine(startFolder, ".net.ts");

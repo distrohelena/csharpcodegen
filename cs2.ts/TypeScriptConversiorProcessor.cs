@@ -718,7 +718,7 @@ namespace cs2.ts {
                 lines.Add(";\n");
             }
 
-            // Process the body of the using statement
+            // process the body of the using statement
             ProcessStatement(semantic, context, usingStatement.Statement, lines);
 
             lines.Add("} finally {\n");
@@ -970,8 +970,15 @@ namespace cs2.ts {
                     type = "bool";
                     break;
                 case SyntaxKind.NumericLiteralExpression:
+                    string valueToken = literalExpression.Token.ToString().ToLowerInvariant();
+                    if (valueToken.Contains("f")) {
+                        type = "float";
+                    } else if (valueToken.Contains("l")) {
+                        type = "int64";
+                    } else {
+                        type = "int32";
+                    }
                     literalValue = literalExpression.Token.ValueText;
-                    type = "int";
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
                         type = "char";
