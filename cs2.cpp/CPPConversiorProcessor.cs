@@ -335,7 +335,7 @@ namespace cs2.cpp {
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
                 ConvertedVariableType type = VariableUtil.GetVarType(genType, semantic);
-                lines.Add(type.ToTypeScriptString(context.Program));
+                lines.Add(type.ToCPPString(context.Program));
 
                 if (i < count - 1) {
                     lines.Add(",");
@@ -618,7 +618,7 @@ namespace cs2.cpp {
             ConvertedVariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
 
             lines.Add("<");
-            lines.Add(varType.ToTypeScriptString(context.Program)); // Type of the cast
+            lines.Add(varType.ToCPPString(context.Program)); // Type of the cast
             lines.Add(">");
             lines.Add("<unknown>");
 
@@ -689,12 +689,9 @@ namespace cs2.cpp {
 
 
         protected override void ProcessUsingStatement(SemanticModel semantic, LayerContext context, UsingStatementSyntax usingStatement, List<string> lines) {
-            // You may want to handle custom resource management here, or just ignore it and provide a comment
-            lines.Add("// Using statement converted to custom resource handling\n");
-
             lines.Add("try {\n");
 
-            // Process the resource declaration (if any)
+            // process the resource declaration (if any)
             if (usingStatement.Declaration != null) {
                 ProcessDeclaration(semantic, context, usingStatement.Declaration, lines);
                 lines.Add(";\n");
@@ -703,12 +700,12 @@ namespace cs2.cpp {
                 lines.Add(";\n");
             }
 
-            // Process the body of the using statement
+            // process the body of the using statement
             ProcessStatement(semantic, context, usingStatement.Statement, lines);
 
             lines.Add("} finally {\n");
 
-            // Optionally, add resource disposal logic in the finally block
+            // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
                 foreach (var variable in usingStatement.Declaration.Variables) {
                     lines.Add($"{variable.Identifier.Text}.dispose();\n");

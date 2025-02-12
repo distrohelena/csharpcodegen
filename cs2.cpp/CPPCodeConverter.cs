@@ -56,6 +56,15 @@ namespace cs2.cpp {
                     return !file.FullName.EndsWith(".json");
                 });
 
+
+            if (Directory.Exists(outputFolder)) {
+                //Directory.Delete(outputFolder, true);
+            }
+
+            Directory.CreateDirectory(outputFolder);
+
+            writeClasses(outputFolder);
+
             //string outputFile = Path.Combine(outputFolder, fileName);
             //string outputDir = Path.GetDirectoryName(outputFile)!;
             //Directory.CreateDirectory(outputDir);
@@ -87,34 +96,123 @@ namespace cs2.cpp {
             //    }
             //}
 
-            //writer.WriteLine();
-
             //writeOutput(writer);
-
-            //writer.WriteLine();
-
-            //writer.Flush();
-            //stream.Dispose();
         }
 
-        private void writeConstructors(ConvertedClass cl, StreamWriter writer) {
-          
+        private void writeConstructors(ConvertedClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
+
         }
 
-        private bool writeVariable(ConvertedClass cl, ConvertedVariable var, StreamWriter writer) {
+        private void writeFunction(ConvertedClass cl, ConvertedFunction fn, StreamWriter headerWriter, StreamWriter codeWriter) {
+            string staticKeyword = fn.IsStatic ? "static " : "";
+            string returnKeyword = fn.ReturnType == null ? "void " : fn.ReturnType.ToCPPString(this.program) + " ";
+
+            headerWriter.Write($"    {staticKeyword}{returnKeyword}{fn.Name}(");
+            codeWriter.Write($"{returnKeyword}{cl.Name}::{fn.Name}(");
+
+            for (int i = 0; i < fn.InParameters.Count; i++) {
+                ConvertedVariable var = fn.InParameters[i];
+                string type = var.VarType.ToCPPString(tsProgram);
+                headerWriter.Write($"{type} {var.Name}");
+                codeWriter.Write($"{type} {var.Name}");
+
+                if (i != fn.InParameters.Count - 1) {
+                    headerWriter.Write(", ");
+                    codeWriter.Write(", ");
+                }
+            }
+
+            headerWriter.WriteLine(");");
+
+            codeWriter.WriteLine(")");
+            codeWriter.WriteLine("{");
+
+            // 
+            fn.WriteLines(conversion, program, cl, codeWriter);
+
+            codeWriter.WriteLine("}");
+        }
+
+        private bool writeVariable(ConvertedClass cl, ConvertedVariable var, StreamWriter headerWriter, StreamWriter codeWriter) {
 
             return false;
         }
 
-        private void writeClass(ConvertedClass cl, StreamWriter writer) {
-            
+        private void writeClass(ConvertedClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
+            headerWriter.WriteLine("#pragma once");
+            codeWriter.WriteLine($"#include \"{cl.Name}.h\"");
+            codeWriter.WriteLine();
+
+            var extends = CPPUtils.GetInheritance(program, cl);
+
+            if (cl.DeclarationType == MemberDeclarationType.Interface) {
+            } else if (cl.DeclarationType == MemberDeclarationType.Abstract) {
+            } else if (cl.DeclarationType == MemberDeclarationType.Delegate) {
+            } else if (cl.DeclarationType == MemberDeclarationType.Enum) {
+            } else {
+                // class
+                if (string.IsNullOrEmpty(extends)) {
+                    headerWriter.WriteLine($"class {cl.Name}");
+                    headerWriter.WriteLine("{");
+                } else {
+                    throw new NotImplementedException();
+                }
+
+                SortVariables(cl);
+
+                for (int j = 0; j < cl.Variables.Count; j++) {
+                    ConvertedVariable var = cl.Variables[j];
+                    if (writeVariable(cl, var, headerWriter, codeWriter)) {
+                        if (j != cl.Variables.Count - 1) {
+                            headerWriter.WriteLine();
+                        }
+                    }
+                }
+
+                if (cl.Variables.Count > 0) {
+                    headerWriter.WriteLine();
+                }
+
+                SortFunctions(cl);
+
+                MemberAccessType? lastAccessType = null;
+                for (int i = 0; i < cl.Functions.Count; i++) {
+                    ConvertedFunction fn = cl.Functions[i];
+
+                    if (lastAccessType == null ||
+                        lastAccessType.Value != fn.AccessType) {
+                        lastAccessType = fn.AccessType;
+
+                        headerWriter.WriteLine($"{fn.AccessType.ToString().ToLowerInvariant()}:");
+                    }
+
+                    writeFunction(cl, fn, headerWriter, codeWriter);
+                }
+
+                headerWriter.WriteLine("};");
+            }
+
         }
 
-        private void writeOutput(StreamWriter writer) {
+        private void writeClasses(string folder) {
             SortProgram();
 
             for (int i = 0; i < program.Classes.Count; i++) {
-                writeClass(program.Classes[i], writer);
+                ConvertedClass cl = program.Classes[i];
+                if (cl.IsNative) {
+                    continue;
+                }
+
+                string filePath = Path.Combine(folder, cl.Name);
+
+                using (StreamWriter writerHeader = new StreamWriter(filePath + ".h")) {
+                    using (StreamWriter writerCode = new StreamWriter(filePath + ".cpp")) {
+                        writeClass(cl, writerHeader, writerCode);
+
+                        writerCode.Flush();
+                        writerHeader.Flush();
+                    }
+                }
             }
         }
 

@@ -419,7 +419,6 @@ namespace cs2.ts {
                 string clType = fn.GetClassType();
                 string async = fn.GetAsync();
 
-
                 if (fn.IsStatic) {
                     writer.Write($"    {access}static {async}{fn.Remap}{generic}(");
                 } else {

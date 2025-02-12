@@ -6,8 +6,10 @@ namespace cs2.cpp {
             return "";
         }
 
-        public static string ToTypeScriptString(this ConvertedVariableType varType, ConvertedProgram program) {
-            return "";
+        public static string ToCPPString(this ConvertedVariableType varType, ConvertedProgram program) {
+            string typeName = varType.TypeName;
+
+            return typeName;
         }
     }
 }

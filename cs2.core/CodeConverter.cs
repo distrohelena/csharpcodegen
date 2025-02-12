@@ -63,7 +63,7 @@ namespace cs2.core {
             }
         }
 
-        protected void SortProgram() {
+        protected virtual void SortProgram() {
             program.Classes.Sort((a, b) => {
                 int delegateComparison = (b.DeclarationType == MemberDeclarationType.Delegate).CompareTo(a.DeclarationType == MemberDeclarationType.Delegate);
                 if (delegateComparison != 0) {
@@ -119,7 +119,7 @@ namespace cs2.core {
             });
         }
 
-        protected void SortVariables(ConvertedClass cl) {
+        protected virtual void SortVariables(ConvertedClass cl) {
             cl.Variables.Sort((a, b) => {
                 int staticComparison = b.IsStatic.CompareTo(a.IsStatic);
                 if (staticComparison != 0) {
@@ -134,6 +134,18 @@ namespace cs2.core {
                 return string.Compare(a.Name, b.Name, StringComparison.Ordinal);
             });
         }
+
+        protected virtual void SortFunctions(ConvertedClass cl) {
+            cl.Functions.Sort((a, b) => {
+                int accessComparison = a.AccessType.CompareTo(b.AccessType);
+                if (accessComparison != 0) {
+                    return accessComparison;
+                }
+
+                return string.Compare(a.Name, b.Name, StringComparison.Ordinal);
+            });
+        }
+
 
         protected abstract void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context);
 
