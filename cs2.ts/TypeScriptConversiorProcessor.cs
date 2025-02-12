@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Nucleus;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
@@ -689,12 +690,28 @@ namespace cs2.ts {
 
 
         protected override void ProcessUsingStatement(SemanticModel semantic, LayerContext context, UsingStatementSyntax usingStatement, List<string> lines) {
-            // You may want to handle custom resource management here, or just ignore it and provide a comment
+            lines.Add("let ");
+
+            // process the resource declaration (if any)
+            if (usingStatement.Declaration != null) {
+                var declaration = usingStatement.Declaration;
+                for (int i = 0; i < declaration.Variables.Count; i++) {
+                    var variable = declaration.Variables[i];
+                    lines.Add($"{variable.Identifier.ToString()}");
+
+                    if (i < declaration.Variables.Count - 1) {
+                        lines.Add(",");
+                    }
+                }
+                lines.Add(";\n");
+            } else if (usingStatement.Expression != null) {
+            }
+
             lines.Add("try {\n");
 
-            // Process the resource declaration (if any)
+            // process the resource declaration (if any)
             if (usingStatement.Declaration != null) {
-                ProcessDeclaration(semantic, context, usingStatement.Declaration, lines);
+                ProcessDeclaration(semantic, context, usingStatement.Declaration, lines, true);
                 lines.Add(";\n");
             } else if (usingStatement.Expression != null) {
                 ProcessExpression(semantic, context, usingStatement.Expression, lines);
@@ -706,7 +723,7 @@ namespace cs2.ts {
 
             lines.Add("} finally {\n");
 
-            // Optionally, add resource disposal logic in the finally block
+            // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
                 foreach (var variable in usingStatement.Declaration.Variables) {
                     lines.Add($"{variable.Identifier.Text}.dispose();\n");
@@ -895,8 +912,21 @@ namespace cs2.ts {
             LayerContext context,
             VariableDeclarationSyntax declaration,
             List<string> lines
+        ) {
+            ProcessDeclaration(semantic, context, declaration, lines, false);
+        }
+
+
+        protected void ProcessDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            List<string> lines,
+            bool skipLet
             ) {
-            lines.Add("let ");
+            if (!skipLet) {
+                lines.Add("let ");
+            }
 
             FunctionStack? fn = context.GetCurrentFunction();
 
