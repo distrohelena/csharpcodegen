@@ -1,11 +1,11 @@
 using cs2.core;
-using cs2.core.json;
+using cs2.core.symbols;
 using Nucleus;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace cs2.ts {
-    public class TypeScriptProgram : ConvertedProgram {
+    public class TypeScriptProgram : ConversionProgram {
         public List<TypeScriptKnownClass> Requirements { get; private set; }
 
         public TypeScriptProgram(ConversionRules rules)
@@ -114,7 +114,7 @@ namespace cs2.ts {
             for (int i = 0; i < Requirements.Count; i++) {
                 TypeScriptKnownClass requirement = Requirements[i];
 
-                ConvertedClass cl = new ConvertedClass();
+                ConversionClass cl = new ConversionClass();
                 cl.IsNative = true;
                 cl.Name = requirement.Name;
                 Classes.Add(cl);
@@ -133,7 +133,7 @@ namespace cs2.ts {
 
                         for (int k = 0; k < symbol.Members.Count; k++) {
                             ClassMember member = symbol.Members[k];
-                            ConvertedVariable var = new ConvertedVariable();
+                            ConversionVariable var = new ConversionVariable();
                             var.Name = member.Name;
                             var.VarType = VariableUtil.GetVarType(cl.Name);
                             cl.Variables.Add(var);
@@ -147,7 +147,7 @@ namespace cs2.ts {
                     for (int k = 0; k < symbol.Members.Count; k++) {
                         ClassMember member = symbol.Members[k];
                         if (member.Type == "variable" || member.Type == "property" || member.Type == "getter" || member.Type == "setter") {
-                            ConvertedVariable var = new ConvertedVariable();
+                            ConversionVariable var = new ConversionVariable();
                             var.Name = member.Name;
                             if (string.IsNullOrEmpty(member.PropertyType)) {
                                 var.VarType = VariableUtil.GetVarType(member.ReturnType);
@@ -156,14 +156,14 @@ namespace cs2.ts {
                             }
                             cl.Variables.Add(var);
                         } else if (member.Type == "method") {
-                            ConvertedFunction fn = new ConvertedFunction();
+                            ConversionFunction fn = new ConversionFunction();
                             fn.Name = member.Name;
                             fn.ReturnType = VariableUtil.GetVarType(member.ReturnType);
                             cl.Functions.Add(fn);
 
                             for (int l = 0; l < member.Parameters.Count; l++) {
                                 var parameter = member.Parameters[l];
-                                ConvertedVariable var = new ConvertedVariable();
+                                ConversionVariable var = new ConversionVariable();
                                 var.Name = parameter.Name;
                                 if (!string.IsNullOrEmpty(parameter.Type)) {
                                     var.VarType = VariableUtil.GetVarType(parameter.Type);
@@ -184,8 +184,8 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
         }
 
-        private ConvertedClass makeClass(string name) {
-            ConvertedClass cl = new ConvertedClass();
+        private ConversionClass makeClass(string name) {
+            ConversionClass cl = new ConversionClass();
             cl.Name = name;
             cl.IsNative = true;
 
@@ -194,8 +194,8 @@ namespace cs2.ts {
             return cl;
         }
 
-        private void makeTypeScriptFunction(string name, string remap, ConvertedClass cl, string type = "") {
-            ConvertedFunction fnToString = new ConvertedFunction();
+        private void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "") {
+            ConversionFunction fnToString = new ConversionFunction();
             fnToString.Name = name;
             fnToString.Remap = remap;
             if (!string.IsNullOrEmpty(type)) {
@@ -204,8 +204,8 @@ namespace cs2.ts {
             cl.Functions.Add(fnToString);
         }
 
-        private void makeTypeScriptVariable(string name, string remap, ConvertedClass cl, string type) {
-            ConvertedVariable fnToString = new ConvertedVariable();
+        private void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type) {
+            ConversionVariable fnToString = new ConversionVariable();
             fnToString.Name = name;
             fnToString.Remap = remap;
             fnToString.VarType = VariableUtil.GetVarType(type);
@@ -213,31 +213,31 @@ namespace cs2.ts {
         }
 
         private void buildNativeRemap() {
-            ConvertedClass clArray = makeClass("Array");
+            ConversionClass clArray = makeClass("Array");
             Classes.Add(clArray);
             makeTypeScriptVariable("Length", "length", clArray, "int");
 
-            ConvertedClass clnumber = makeClass("number");
+            ConversionClass clnumber = makeClass("number");
             Classes.Add(clnumber);
 
-            ConvertedClass clNumber = makeClass("Number");
+            ConversionClass clNumber = makeClass("Number");
             makeTypeScriptFunction("MaxValue", "MAX_VALUE", clNumber, "int");
             Classes.Add(clNumber);
 
-            ConvertedClass clString = makeClass("string");
+            ConversionClass clString = makeClass("string");
             makeTypeScriptFunction("Length", "length", clString, "int");
             makeTypeScriptFunction("Replace", "replace", clString, "string");
             makeTypeScriptFunction("Remove", "slice", clString, "string");
             Classes.Add(clString);
 
-            ConvertedClass clBool = makeClass("boolean");
+            ConversionClass clBool = makeClass("boolean");
             Classes.Add(clBool);
 
-            ConvertedClass clMath = makeClass("Math");
+            ConversionClass clMath = makeClass("Math");
             makeTypeScriptFunction("Round", "round", clMath, "int");
             Classes.Add(clMath);
 
-            ConvertedClass clUint8Array = makeClass("Uint8Array");
+            ConversionClass clUint8Array = makeClass("Uint8Array");
             makeTypeScriptVariable("Length", "length", clUint8Array, "int");
             Classes.Add(clUint8Array);
         }

@@ -33,7 +33,7 @@ namespace codegen.sample {
             Console.WriteLine($"Folder: {sourceTestProj}");
             Console.WriteLine($"Output folder: {outputTsFolder}");
 
-            ConversionRules rules = new ConversionRules();
+            CPPConversionRules rules = new CPPConversionRules();
 
             rules.IgnoredNamespaces.Add("WebSocketSharp");
             rules.IgnoredNamespaces.Add("SocketSharp");
@@ -45,12 +45,13 @@ namespace codegen.sample {
             rules.IgnoredClasses.Add("UserManager");
             rules.IgnoredClasses.Add("AssemblyAttributes");
 
-            TypeScriptCodeConverter converter = new TypeScriptCodeConverter(rules, TypeScriptEnvironment.Web);
-            converter.AddCsproj(Path.Combine(sourceTestProj, "codegen.testproj.csproj"));
-            converter.WriteFile(outputTsFolder, "codegen.testproj.ts");
+            //TypeScriptCodeConverter converter = new TypeScriptCodeConverter(rules, TypeScriptEnvironment.Web);
+            //converter.AddCsproj(Path.Combine(sourceTestProj, "codegen.testproj.csproj"));
+            //converter.WriteFile(outputTsFolder, "codegen.testproj.ts");
 
             CPPCodeConverter cppConverter = new CPPCodeConverter(rules);
             cppConverter.AddCsproj(Path.Combine(sourceTestProj, "codegen.testproj.csproj"));
+            //cppConverter.AddCsproj("C:\\dev\\helengine\\engine\\helengine.core\\helengine.core.csproj");
             cppConverter.WriteOutput(outputCppFolder);
         }
     }

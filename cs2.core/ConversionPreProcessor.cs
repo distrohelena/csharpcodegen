@@ -2,7 +2,10 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Xml.Linq;
 
 namespace cs2.core {
     public class ConversionPreProcessor {
@@ -28,7 +31,7 @@ namespace cs2.core {
             }
 
             foreach (MemberDeclarationSyntax memberSyntax in classDecl.Members) {
-                PreProcessExpression(semantic, memberSyntax, context);
+                PreProcessExpression(semantic, context, memberSyntax);
             }
 
             if (classDecl.BaseList != null) {
@@ -55,15 +58,15 @@ namespace cs2.core {
             MemberDeclarationType type;
             MemberUtil.GetModifiers(constructor.Modifiers, out isStatic, out isOverride, out accessType, out type);
 
-            ConvertedFunction func = context.StartFn();
+            ConversionFunction func = context.StartFn();
             func.IsStatic = isStatic;
             func.AccessType = accessType;
             func.IsConstructor = true;
             func.Name = context.CurrentClass.Name;
 
-            List<ConvertedVariable> inParams = new List<ConvertedVariable>();
+            List<ConversionVariable> inParams = new List<ConversionVariable>();
             foreach (ParameterSyntax inParam in constructor.ParameterList.ChildNodes()) {
-                ConvertedVariable v = new ConvertedVariable();
+                ConversionVariable v = new ConversionVariable();
                 v.Name = inParam.Identifier.ToString();
                 v.VarType = VariableUtil.GetVarType(inParam.Type, semantic);
                 inParams.Add(v);
@@ -91,7 +94,7 @@ namespace cs2.core {
                 mappedName += sharedName + 1;
             }
 
-            ConvertedFunction func = context.StartFn();
+            ConversionFunction func = context.StartFn();
             func.IsStatic = isStatic;
             func.AccessType = access;
             func.Name = name;
@@ -107,7 +110,7 @@ namespace cs2.core {
             }
 
             foreach (ParameterSyntax inParam in method.ParameterList.ChildNodes()) {
-                ConvertedVariable v = new ConvertedVariable();
+                ConversionVariable v = new ConversionVariable();
                 v.Name = inParam.Identifier.ToString();
                 v.VarType = VariableUtil.GetVarType(inParam.Type!, semantic);
 
@@ -125,9 +128,13 @@ namespace cs2.core {
 
             if (method.Body != null) {
                 func.RawBlock = method.Body;
+
+                PreProcessExpression(semantic, context, method.Body);
             } else if (method.ExpressionBody != null) {
                 if (context.CurrentClass.DeclarationType == MemberDeclarationType.Class) {
                     func.ArrowExpression = method.ExpressionBody;
+
+                    PreProcessExpression(semantic, context, method.ExpressionBody);
                 }
             }
         }
@@ -152,7 +159,7 @@ namespace cs2.core {
 
             cl.DeclarationType = MemberDeclarationType.Delegate;
 
-            ConvertedFunction func = context.StartFn();
+            ConversionFunction func = context.StartFn();
             func.IsStatic = isStatic;
             func.AccessType = access;
             func.Name = "delegate";
@@ -164,9 +171,9 @@ namespace cs2.core {
                 .ToList();
 
             // Parameters
-            var parameters = new List<ConvertedVariable>();
+            var parameters = new List<ConversionVariable>();
             foreach (ParameterSyntax parameter in delegateDecl.ParameterList.Parameters) {
-                var tsParam = new ConvertedVariable {
+                var tsParam = new ConversionVariable {
                     Name = parameter.Identifier.ToString(),
                     VarType = VariableUtil.GetVarType(parameter.Type!, semantic)
                 };
@@ -217,7 +224,7 @@ namespace cs2.core {
             MemberDeclarationType type;
             MemberUtil.GetModifiers(fMember.Modifiers, out isStatic, out isOverride, out access, out type);
 
-            ConvertedVariable variable = context.StartVar();
+            ConversionVariable variable = context.StartVar();
             variable.Name = firstVar.Identifier.ToString();
             variable.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
 
@@ -242,7 +249,7 @@ namespace cs2.core {
             MemberDeclarationType type;
             MemberUtil.GetModifiers(pMember.Modifiers, out isStatic, out isOverride, out accessType, out type);
 
-            ConvertedVariable variable = context.StartVar();
+            ConversionVariable variable = context.StartVar();
             variable.Name = pMember.Identifier.ToString();
             variable.IsStatic = isStatic;
 
@@ -255,7 +262,7 @@ namespace cs2.core {
                 if (pMember.ExpressionBody != null) {
                     variable.ArrowExpression = pMember.ExpressionBody.Expression;
                 }
-            } else { 
+            } else {
                 // loop through each accessor (get/set)
                 foreach (var accessor in pMember.AccessorList.Accessors) {
                     // check if this accessor is a set accessor
@@ -286,7 +293,7 @@ namespace cs2.core {
 
             // Roslyn syntax: Event declarations can have multiple variables
             foreach (var variableDeclarator in eventDecl.Declaration.Variables) {
-                ConvertedVariable variable = context.StartVar();
+                ConversionVariable variable = context.StartVar();
                 variable.Name = variableDeclarator.Identifier.Text; // Correctly access the identifier
                 variable.IsStatic = isStatic;
                 variable.AccessType = accessType;
@@ -296,19 +303,19 @@ namespace cs2.core {
             }
         }
 
-        public static void PreProcessExpression(SemanticModel semantic, SyntaxNode exp, ConversionContext context) {
+        public static ExpressionResult PreProcessExpression(SemanticModel semantic, ConversionContext context, SyntaxNode exp) {
             if (exp is NamespaceDeclarationSyntax nameSpace) {
                 string name = nameSpace.Name.ToString();
                 if (context.Program.Rules.IgnoredNamespaces.Any(c => name.Contains(c))) {
-                    return;
+                    return new ExpressionResult(false);
                 }
 
                 foreach (var m in nameSpace.Members) {
-                    PreProcessExpression(semantic, m, context);
+                    PreProcessExpression(semantic, context, m);
                 }
             } else if (exp is ClassDeclarationSyntax classDecl) {
                 if (context.Program.Rules.IgnoredClasses.Any(c => classDecl.Identifier.ToString().Contains(c))) {
-                    return;
+                    return new ExpressionResult(false);
                 }
 
                 ProcessClassDeclaration(semantic, classDecl, context);
@@ -318,7 +325,7 @@ namespace cs2.core {
                 cl.Name = structDecl.Identifier.ToString();
 
                 foreach (MemberDeclarationSyntax memberSyntax in structDecl.Members) {
-                    PreProcessExpression(semantic, memberSyntax, context);
+                    PreProcessExpression(semantic, context, memberSyntax);
                 }
 
                 context.PopClass();
@@ -329,7 +336,7 @@ namespace cs2.core {
                 cl.DeclarationType = MemberDeclarationType.Interface;
 
                 foreach (MemberDeclarationSyntax memberSyntax in ifaceDecl.Members) {
-                    PreProcessExpression(semantic, memberSyntax, context);
+                    PreProcessExpression(semantic, context, memberSyntax);
                 }
 
                 if (ifaceDecl.BaseList != null) {
@@ -368,7 +375,7 @@ namespace cs2.core {
 
                 context.PopClass();
             } else if (exp is DelegateDeclarationSyntax del) {
-                ProcessDelegateDeclaration(semantic,del, context);
+                ProcessDelegateDeclaration(semantic, del, context);
             } else if (exp is MethodDeclarationSyntax method) {
                 ProcessMethodDeclaration(semantic, method, context);
             } else if (exp is ConstructorDeclarationSyntax constructor) {
@@ -381,9 +388,141 @@ namespace cs2.core {
                 ProcessProperty(semantic, prop, context);
             } else if (exp is EventFieldDeclarationSyntax eventDecl) {
                 ProcessEvent(semantic, eventDecl, context);
+            } else if (exp is BlockSyntax block) {
+                PreProcessBlock(semantic, context, block);
+            } else if (exp is LocalDeclarationStatementSyntax local) {
+                PreProcessDeclaration(semantic, context, local.Declaration);
+            } else if (exp is ExpressionStatementSyntax) {
+                ExpressionSyntax expression = ((ExpressionStatementSyntax)exp).Expression;
+                PreProcessExpression(semantic, context, expression);
+            } else if (exp is AssignmentExpressionSyntax assignment) {
+                PreProcessAssignmentExpressionSyntax(semantic, context, assignment);
+            } else if (exp is UsingStatementSyntax usingStatement) {
+                PreProcessUsingStatement(semantic, context, usingStatement);
+            } else if (exp is InvocationExpressionSyntax invocationExpression) {
+                PreProcessInvocationExpressionSyntax(semantic, context, invocationExpression);
+            } else if (exp is IfStatementSyntax ifStatement) {
+                PreProcessIfStatement(semantic, context, ifStatement);
+            } else if (exp is MemberAccessExpressionSyntax memberAccess) {
+                PreProcessMemberAccessExpressionSyntax(semantic, context, memberAccess);
+            } else if (exp is IdentifierNameSyntax identifier) {
+                PreProcessIdentifierNameSyntax(semantic, context, identifier);
             } else {
                 //Debugger.Break();
             }
+
+            return new ExpressionResult(false);
+        }
+
+        protected static void PreProcessIdentifierNameSyntax(SemanticModel semantic, ConversionContext context, IdentifierNameSyntax identifier) {
+            string name = identifier.ToString();
+            bool isMethod = false;
+
+            ISymbol? nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            if (nsSymbol is INamespaceSymbol namespaceSymbol) {
+                if (namespaceSymbol.IsNamespace) {
+                    return;
+                }
+            } else if (nsSymbol is IMethodSymbol methodSymbol) {
+                isMethod = true;
+            } 
+            
+            if (nsSymbol is ITypeSymbol typeSymbol) {
+                int kksk = -1;
+            } 
+            
+            if (nsSymbol is ITypeSymbol namedTypeSymbol) {
+                int kksk = -1;
+            } 
+            
+            if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType) {
+                bool isType = nameSpaceType.IsType;
+
+                string type = identifier.ToString();
+                ConversionClass cl = context.CurrentClass;
+                if (!cl.ReferencedClasses.Contains(type)) {
+                    cl.ReferencedClasses.Add(type);
+                }
+            }
+        }
+
+        protected static ExpressionResult PreProcessMemberAccessExpressionSyntax(SemanticModel semantic, ConversionContext context, MemberAccessExpressionSyntax memberAccess) {
+            PreProcessExpression(semantic, context, memberAccess.Expression);
+
+            return PreProcessExpression(semantic, context, memberAccess.Name);
+        }
+
+        protected static void PreProcessDeclaration(SemanticModel semantic, ConversionContext context, VariableDeclarationSyntax declaration) {
+            ConversionFunction fn = context.CurrentFunction;
+
+            ConversionClass cl = context.CurrentClass;
+
+            for (int i = 0; i < declaration.Variables.Count; i++) {
+                var variable = declaration.Variables[i];
+
+                ConversionFunctionVariableUsage usage = new ConversionFunctionVariableUsage();
+                usage.Name = variable.Identifier.ToString();
+
+                string type = declaration.Type.ToString();
+                if (!cl.ReferencedClasses.Contains(type)) {
+                    cl.ReferencedClasses.Add(type);
+                }
+
+                fn.BodyVariables.Add(usage);
+            }
+        }
+
+        protected static void PreProcessAssignmentExpressionSyntax(SemanticModel semantic, ConversionContext context, AssignmentExpressionSyntax assignment) {
+            string name;
+            if (assignment.Left is IdentifierNameSyntax identifierName) {
+                name = identifierName.Identifier.ToString();
+            } else {
+                return;
+                //throw new NotImplementedException();
+            }
+
+            ConversionFunction fn = context.CurrentFunction;
+            ConversionFunctionVariableUsage usage = fn.BodyVariables.FirstOrDefault(c => c.Name == name);
+            if (usage != null) {
+                usage.Reassignment = true;
+            }
+        }
+
+        protected static void PreProcessBlock(SemanticModel semantic, ConversionContext context, BlockSyntax block) {
+            foreach (var statement in block.Statements) {
+                List<string> newLines = new List<string>();
+                PreProcessExpression(semantic, context, statement);
+            }
+        }
+
+        protected static void PreProcessUsingStatement(SemanticModel semantic, ConversionContext context, UsingStatementSyntax usingStatement) {
+            // process the resource declaration (if any)
+            if (usingStatement.Declaration != null) {
+                PreProcessDeclaration(semantic, context, usingStatement.Declaration);
+            } else if (usingStatement.Expression != null) {
+                throw new NotImplementedException();
+            }
+
+            PreProcessExpression(semantic, context, usingStatement.Statement);
+        }
+
+        protected static void PreProcessIfStatement(SemanticModel semantic, ConversionContext context, IfStatementSyntax ifStatement) {
+            PreProcessExpression(semantic, context, ifStatement.Condition);
+
+            PreProcessExpression(semantic, context, ifStatement.Statement);
+
+            // Process 'else' part if exists
+            if (ifStatement.Else != null) {
+                if (ifStatement.Else.Statement is IfStatementSyntax elseIfStatement) {
+                    PreProcessExpression(semantic, context, elseIfStatement); // Handle else-if cases
+                } else {
+                    PreProcessExpression(semantic, context, ifStatement.Else.Statement);
+                }
+            }
+        }
+
+        protected static void PreProcessInvocationExpressionSyntax(SemanticModel semantic, ConversionContext context, InvocationExpressionSyntax invocationExpression) {
+            PreProcessExpression(semantic, context, invocationExpression.Expression);
         }
     }
 }

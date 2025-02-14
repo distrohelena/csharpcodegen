@@ -13,12 +13,13 @@ namespace cs2.cpp {
 
         CPPConversiorProcessor conversion;
         CPPProgram tsProgram;
+        public CPPConversionRules CPPRules { get; private set; }
 
         protected override string[] PreProcessorSymbols { get { return ["CPP"]; } }
 
-        public CPPCodeConverter(ConversionRules rules)
+        public CPPCodeConverter(CPPConversionRules rules)
             : base(rules) {
-            this.rules = rules;
+            this.CPPRules = rules;
 
             var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
 
@@ -27,10 +28,11 @@ namespace cs2.cpp {
             tsProgram = new CPPProgram(rules);
             program = tsProgram;
 
-            //tsProgram.AddDotNet(env);
             context = new ConversionContext(program);
 
-            conversion = new CPPConversiorProcessor();
+            conversion = new CPPConversiorProcessor(this);
+
+            tsProgram.AddDotNet();
 
             assemblyName = "";
             version = "";
@@ -99,11 +101,11 @@ namespace cs2.cpp {
             //writeOutput(writer);
         }
 
-        private void writeConstructors(ConvertedClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
+        private void writeConstructors(ConversionClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
 
         }
 
-        private void writeFunction(ConvertedClass cl, ConvertedFunction fn, StreamWriter headerWriter, StreamWriter codeWriter) {
+        private void writeFunction(ConversionClass cl, ConversionFunction fn, StreamWriter headerWriter, StreamWriter codeWriter) {
             string staticKeyword = fn.IsStatic ? "static " : "";
             string returnKeyword = fn.ReturnType == null ? "void " : fn.ReturnType.ToCPPString(this.program) + " ";
 
@@ -111,7 +113,7 @@ namespace cs2.cpp {
             codeWriter.Write($"{returnKeyword}{cl.Name}::{fn.Name}(");
 
             for (int i = 0; i < fn.InParameters.Count; i++) {
-                ConvertedVariable var = fn.InParameters[i];
+                ConversionVariable var = fn.InParameters[i];
                 string type = var.VarType.ToCPPString(tsProgram);
                 headerWriter.Write($"{type} {var.Name}");
                 codeWriter.Write($"{type} {var.Name}");
@@ -133,13 +135,36 @@ namespace cs2.cpp {
             codeWriter.WriteLine("}");
         }
 
-        private bool writeVariable(ConvertedClass cl, ConvertedVariable var, StreamWriter headerWriter, StreamWriter codeWriter) {
+        private bool writeVariable(ConversionClass cl, ConversionVariable var, StreamWriter headerWriter, StreamWriter codeWriter) {
 
             return false;
         }
 
-        private void writeClass(ConvertedClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
+        private void writeClass(ConversionClass cl, StreamWriter headerWriter, StreamWriter codeWriter) {
             headerWriter.WriteLine("#pragma once");
+
+            // include headers
+            for (int i = 0; i < cl.ReferencedClasses.Count; i++) {
+                string refClass = cl.ReferencedClasses[i];
+                VariableType varType = VariableUtil.GetVarType(refClass);
+
+                CPPTypeData typeData;
+                VariableType type = conversion.ConvertToCPPType(varType, out typeData);
+
+                if (typeData.IsNativeType) {
+                    continue;
+                }
+
+                CPPKnownClass known = tsProgram.Requirements.FirstOrDefault(c => c.Name == type.TypeName);
+
+                headerWriter.WriteLine($"#include \"{known.Path}.hpp\"");
+            }
+
+            if (cl.ReferencedClasses.Count > 0) {
+                headerWriter.WriteLine();
+            }
+
+
             codeWriter.WriteLine($"#include \"{cl.Name}.h\"");
             codeWriter.WriteLine();
 
@@ -161,7 +186,7 @@ namespace cs2.cpp {
                 SortVariables(cl);
 
                 for (int j = 0; j < cl.Variables.Count; j++) {
-                    ConvertedVariable var = cl.Variables[j];
+                    ConversionVariable var = cl.Variables[j];
                     if (writeVariable(cl, var, headerWriter, codeWriter)) {
                         if (j != cl.Variables.Count - 1) {
                             headerWriter.WriteLine();
@@ -177,7 +202,7 @@ namespace cs2.cpp {
 
                 MemberAccessType? lastAccessType = null;
                 for (int i = 0; i < cl.Functions.Count; i++) {
-                    ConvertedFunction fn = cl.Functions[i];
+                    ConversionFunction fn = cl.Functions[i];
 
                     if (lastAccessType == null ||
                         lastAccessType.Value != fn.AccessType) {
@@ -198,7 +223,7 @@ namespace cs2.cpp {
             SortProgram();
 
             for (int i = 0; i < program.Classes.Count; i++) {
-                ConvertedClass cl = program.Classes[i];
+                ConversionClass cl = program.Classes[i];
                 if (cl.IsNative) {
                     continue;
                 }
@@ -217,10 +242,10 @@ namespace cs2.cpp {
         }
 
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {
-            ConversionPreProcessor.PreProcessExpression(model, member, context);
+            ConversionPreProcessor.PreProcessExpression(model, context, member);
         }
 
-        protected override void ProcessClass(ConvertedClass cl, ConvertedProgram program) {
+        protected override void ProcessClass(ConversionClass cl, ConversionProgram program) {
             conversion.ProcessClass(cl, program);
         }
     }

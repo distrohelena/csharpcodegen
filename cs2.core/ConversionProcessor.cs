@@ -6,7 +6,7 @@ using System.Diagnostics;
 
 namespace cs2.core {
     public abstract class ConversionProcessor {
-        public virtual void ProcessClass(ConvertedClass cl, ConvertedProgram program) {
+        public virtual void ProcessClass(ConversionClass cl, ConversionProgram program) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
             var classOverrides = cl.Extensions.Count(over => {
                 var extCl = program.Classes.FirstOrDefault(c => c.Name == over);
@@ -19,24 +19,24 @@ namespace cs2.core {
 
             if (constructors.Count > 1) {
                 for (int i = 0; i < constructors.Count; i++) {
-                    ConvertedFunction fn = constructors[i];
+                    ConversionFunction fn = constructors[i];
                     fn.Name = $"New{i + 1}";
                 }
             }
 
             if (classOverrides > 0) {
                 // look for matching functions
-                List<ConvertedClass> classes = program.Classes.Where(c => cl.Extensions.Contains(c.Name)).ToList();
-                List<ConvertedFunction> matchingFns = classes
+                List<ConversionClass> classes = program.Classes.Where(c => cl.Extensions.Contains(c.Name)).ToList();
+                List<ConversionFunction> matchingFns = classes
                     .SelectMany(c => c.Functions)
                     .Where(f => cl.Functions.Any(clFn => clFn.Name == f.Name))
                     .ToList();
 
                 int counter = 0;
                 for (int i = 0; i < matchingFns.Count; i++) {
-                    ConvertedFunction match = matchingFns[i];
+                    ConversionFunction match = matchingFns[i];
 
-                    ConvertedFunction mainFn = cl.Functions.Find(c => c.Name == match.Name);
+                    ConversionFunction mainFn = cl.Functions.Find(c => c.Name == match.Name);
                     if (match.InParameters.Count != mainFn.InParameters.Count) {
                         mainFn.Remap += ++counter;
                     }
@@ -197,8 +197,6 @@ namespace cs2.core {
         protected abstract void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines);
 
         protected abstract void ProcessLambdaExpression(SemanticModel semantic, LayerContext context, ParenthesizedLambdaExpressionSyntax lambda, List<string> lines);
-
-
 
         protected virtual ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
             if (statement is ExpressionStatementSyntax) {

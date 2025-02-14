@@ -8,7 +8,7 @@ namespace cs2.core {
     public abstract class CodeConverter {
         protected Project project;
         protected ConversionContext context;
-        protected ConvertedProgram program;
+        protected ConversionProgram program;
         protected ConversionRules rules;
 
         protected MSBuildWorkspace workspace;
@@ -54,7 +54,7 @@ namespace cs2.core {
             }
 
             for (int i = 0; i < program.Classes.Count; i++) {
-                ConvertedClass cl = program.Classes[i];
+                ConversionClass cl = program.Classes[i];
                 if (cl.IsNative) {
                     continue;
                 }
@@ -119,7 +119,7 @@ namespace cs2.core {
             });
         }
 
-        protected virtual void SortVariables(ConvertedClass cl) {
+        protected virtual void SortVariables(ConversionClass cl) {
             cl.Variables.Sort((a, b) => {
                 int staticComparison = b.IsStatic.CompareTo(a.IsStatic);
                 if (staticComparison != 0) {
@@ -135,7 +135,7 @@ namespace cs2.core {
             });
         }
 
-        protected virtual void SortFunctions(ConvertedClass cl) {
+        protected virtual void SortFunctions(ConversionClass cl) {
             cl.Functions.Sort((a, b) => {
                 int accessComparison = a.AccessType.CompareTo(b.AccessType);
                 if (accessComparison != 0) {
@@ -146,9 +146,8 @@ namespace cs2.core {
             });
         }
 
-
         protected abstract void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context);
 
-        protected abstract void ProcessClass(ConvertedClass cl, ConvertedProgram program);
+        protected abstract void ProcessClass(ConversionClass cl, ConversionProgram program);
     }
 }

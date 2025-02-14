@@ -1,30 +1,30 @@
 namespace cs2.core {
     public class ConversionContext {
-        public ConvertedProgram Program { get; private set; }
-        public ConvertedClass CurrentClass { get; private set; }
-        public ConvertedVariable CurrentVar { get; private set; }
-        public ConvertedFunction CurrentFunction { get; private set; }
+        public ConversionProgram Program { get; private set; }
+        public ConversionClass CurrentClass { get; private set; }
+        public ConversionVariable CurrentVar { get; private set; }
+        public ConversionFunction CurrentFunction { get; private set; }
 
-        private List<ConvertedClass> classes;
+        private List<ConversionClass> classes;
 
-        public ConversionContext(ConvertedProgram program) {
+        public ConversionContext(ConversionProgram program) {
             Program = program;
-            classes = new List<ConvertedClass>();
+            classes = new List<ConversionClass>();
         }
 
-        public void AssignFunction(ConvertedFunction fn) {
+        public void AssignFunction(ConversionFunction fn) {
             CurrentFunction = fn;
         }
 
-        public void AssignClass(ConvertedClass fn) {
+        public void AssignClass(ConversionClass fn) {
             CurrentClass = fn;
         }
 
-        public ConvertedClass StartClass() {
+        public ConversionClass StartClass() {
             CurrentVar = null;
             CurrentFunction = null;
 
-            CurrentClass = new ConvertedClass();
+            CurrentClass = new ConversionClass();
             Program.Classes.Add(CurrentClass);
             classes.Add(CurrentClass);
             return CurrentClass;
@@ -42,22 +42,22 @@ namespace cs2.core {
             }
         }
 
-        public ConvertedVariable StartVar() {
+        public ConversionVariable StartVar() {
             if (CurrentClass == null) {
                 throw new NotSupportedException();
             }
 
-            CurrentVar = new ConvertedVariable();
+            CurrentVar = new ConversionVariable();
             CurrentClass.Variables.Add(CurrentVar);
             return CurrentVar;
         }
 
-        public ConvertedFunction StartFn() {
+        public ConversionFunction StartFn() {
             if (CurrentClass == null) {
                 throw new NotSupportedException();
             }
 
-            CurrentFunction = new ConvertedFunction();
+            CurrentFunction = new ConversionFunction();
             CurrentClass.Functions.Add(CurrentFunction);
             return CurrentFunction;
         }

@@ -1,12 +1,12 @@
 namespace cs2.core {
     public class FunctionStack
     {
-        public ConvertedFunction Function { get; set; }
-        public List<ConvertedVariable> Stack { get; set; }
+        public ConversionFunction Function { get; set; }
+        public List<ConversionVariable> Stack { get; set; }
 
-        public FunctionStack(ConvertedFunction function) {
+        public FunctionStack(ConversionFunction function) {
             Function = function;
-            Stack = new List<ConvertedVariable>();
+            Stack = new List<ConversionVariable>();
         }
 
         public override string ToString() {

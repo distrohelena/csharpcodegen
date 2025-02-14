@@ -1,7 +1,7 @@
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cs2.core {
-    public class ConvertedFunction {
+    public class ConversionFunction {
         public string Name { get; set; }
         public string Remap { get; set; }
 
@@ -14,9 +14,9 @@ namespace cs2.core {
         public bool IsAsync { get; set; }
         public bool IsConstructor { get; set; }
 
-        public List<ConvertedVariable> InParameters { get; set; }
+        public List<ConversionVariable> InParameters { get; set; }
 
-        public ConvertedVariableType? ReturnType { get; set; }
+        public VariableType? ReturnType { get; set; }
 
         public BlockSyntax? RawBlock { get; set; }
         public ArrowExpressionClauseSyntax? ArrowExpression { get; set; }
@@ -27,9 +27,12 @@ namespace cs2.core {
             }
         }
 
-        public ConvertedFunction() {
+        public List<ConversionFunctionVariableUsage> BodyVariables { get; set; }
+
+        public ConversionFunction() {
             Name = "";
-            InParameters = new List<ConvertedVariable>();
+            InParameters = new List<ConversionVariable>();
+            BodyVariables = new List<ConversionFunctionVariableUsage>();
         }
 
         public string GetGenericArguments() {

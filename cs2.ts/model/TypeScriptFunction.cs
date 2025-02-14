@@ -2,7 +2,7 @@
 
 namespace cs2.ts {
     public static class TypeScriptFunction {
-        public static void WriteLines(this ConvertedFunction fn, ConversionProcessor conversion, ConvertedProgram program, ConvertedClass cl, StreamWriter writer) {
+        public static void WriteLines(this ConversionFunction fn, ConversionProcessor conversion, ConversionProgram program, ConversionClass cl, StreamWriter writer) {
             List<string> lines = new List<string>();
             LayerContext context = new TypeScriptLayerContext((TypeScriptProgram)program);
 

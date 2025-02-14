@@ -41,11 +41,11 @@ namespace cs2.ts {
             int layer = context.GetClassLayer();
 
             // abstract class
-            ConvertedClass? staticClass = context.Program.Classes.Find(c => c.Name == name);
+            ConversionClass? staticClass = context.Program.Classes.Find(c => c.Name == name);
 
-            ConvertedClass? currentClass = context.GetCurrentClass();
+            ConversionClass? currentClass = context.GetCurrentClass();
 
-            var classVars = new List<ConvertedVariable>();
+            var classVars = new List<ConversionVariable>();
             context.Class.ForEach(fn => {
                 var result = fn?.Variables.Where(var => var.Name == name);
                 if (result != null) {
@@ -54,7 +54,7 @@ namespace cs2.ts {
             });
 
             // variable from the current class
-            ConvertedVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
+            ConversionVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
 
             if (classVar == null && staticClass == null) {
                 string camelCame = StringUtil.ToCamelCase(name);
@@ -65,7 +65,7 @@ namespace cs2.ts {
             }
 
             // function from the current class
-            ConvertedFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
+            ConversionFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
 
             bool paramsMatch = classFn?.InParameters?.Count == refTypes?.Count;
 
@@ -84,7 +84,7 @@ namespace cs2.ts {
                     searchName += StringUtil.CapitalizerFirstLetter(typeName);
                 }
 
-                ConvertedFunction similarFn = currentClass.Functions.Find(c => c.Name == searchName);
+                ConversionFunction similarFn = currentClass.Functions.Find(c => c.Name == searchName);
                 if (similarFn == null) {
                     // search for lower first letter
                     lowercase = name[0].ToString().ToLowerInvariant() + name.Remove(0, 1);
@@ -99,7 +99,7 @@ namespace cs2.ts {
                     name = similarFn.Name;
                 }
             } else if (!paramsMatch && classFn != null && classFn.InParameters != null && refTypes != null) {
-                ConvertedFunction overload = currentClass.Functions.Find(c => {
+                ConversionFunction overload = currentClass.Functions.Find(c => {
                     if (c.Name.StartsWith(name)) {
                         // check in parameters
                         if (c.InParameters == null ||
@@ -108,7 +108,7 @@ namespace cs2.ts {
                         }
 
                         for (int i = 0; i < c.InParameters.Count; i++) {
-                            ConvertedVariable inParam = c.InParameters[i];
+                            ConversionVariable inParam = c.InParameters[i];
                             ExpressionResult result = refTypes[i];
                             if (result.Type == null) {
                                 continue;
@@ -134,12 +134,12 @@ namespace cs2.ts {
             // current function
             FunctionStack? currentFn = context.GetCurrentFunction();
             // in-parameter for the current function
-            ConvertedVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
+            ConversionVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
 
             // current stack
-            ConvertedVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
+            ConversionVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
 
-            var matchingVars = new List<ConvertedVariable>();
+            var matchingVars = new List<ConversionVariable>();
             context.Function.ForEach(fn => {
                 var result = fn?.Stack.Where(var => var.Name == name);
                 if (result != null) {
@@ -184,7 +184,7 @@ namespace cs2.ts {
                 }
 
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
-                    ConvertedVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
+                    ConversionVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
                     if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(name);
                     } else {
@@ -335,7 +335,7 @@ namespace cs2.ts {
             int count = generic.TypeArgumentList.Arguments.Count;
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
-                ConvertedVariableType type = VariableUtil.GetVarType(genType, semantic);
+                VariableType type = VariableUtil.GetVarType(genType, semantic);
                 lines.Add(type.ToTypeScriptString((TypeScriptProgram)context.Program));
 
                 if (i < count - 1) {
@@ -559,7 +559,7 @@ namespace cs2.ts {
             // Process the expression being accessed (e.g., array or object)
             int startClass = context.DepthClass;
             ProcessExpression(semantic, context, elementAccess.Expression, lines);
-            List<ConvertedClass> saved = context.SavePopClass(startClass);
+            List<ConversionClass> saved = context.SavePopClass(startClass);
 
             // Add the opening bracket
             lines.Add("[");
@@ -616,7 +616,7 @@ namespace cs2.ts {
         }
 
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
-            ConvertedVariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
+            VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
 
             lines.Add("<");
             lines.Add(varType.ToTypeScriptString((TypeScriptProgram)context.Program)); // Type of the cast
@@ -941,7 +941,7 @@ namespace cs2.ts {
                 }
 
                 if (fn != null) {
-                    ConvertedVariable var = new ConvertedVariable();
+                    ConversionVariable var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
                     var.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
                     fn.Stack.Add(var);

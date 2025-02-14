@@ -101,13 +101,13 @@ namespace cs2.ts {
             stream.Dispose();
         }
 
-        private void writeStaticConstructor(ConvertedClass cl, StreamWriter writer) {
+        private void writeStaticConstructor(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && c.IsStatic).ToList();
             if (constructors.Count == 0) {
                 return;
             }
 
-            ConvertedFunction fn = constructors[0];
+            ConversionFunction fn = constructors[0];
             writer.WriteLine("    static {");
 
             fn.WriteLines(conversion, program, cl, writer);
@@ -116,7 +116,7 @@ namespace cs2.ts {
             writer.WriteLine($"");
         }
 
-        private void writeConstructors(ConvertedClass cl, StreamWriter writer) {
+        private void writeConstructors(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
             var classOverrides = cl.Extensions.Count(over => {
                 var extCl = program.Classes.FirstOrDefault(c => c.Name == over);
@@ -128,7 +128,7 @@ namespace cs2.ts {
             });
 
             if (constructors.Count == 1) {
-                ConvertedFunction fn = constructors[0];
+                ConversionFunction fn = constructors[0];
                 writer.Write($"    constructor(");
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
@@ -157,7 +157,7 @@ namespace cs2.ts {
                 string generic = cl.GetGenericArguments();
 
                 for (int i = 0; i < constructors.Count; i++) {
-                    ConvertedFunction fn = constructors[i];
+                    ConversionFunction fn = constructors[i];
                     writer.Write($"    static {fn.Name}{generic}(");
 
                     for (int k = 0; k < fn.InParameters.Count; k++) {
@@ -185,7 +185,7 @@ namespace cs2.ts {
             }
         }
 
-        private bool writeVariable(ConvertedClass cl, ConvertedVariable var, StreamWriter writer) {
+        private bool writeVariable(ConversionClass cl, ConversionVariable var, StreamWriter writer) {
             string access = var.AccessType.ToString().ToLowerInvariant();
             if (cl.DeclarationType == MemberDeclarationType.Interface) {
                 access = "";
@@ -269,7 +269,7 @@ namespace cs2.ts {
                     return true;
                 } else if (var.GetBlock != null || var.SetBlock != null) {
                     if (var.GetBlock != null) {
-                        ConvertedFunction fn = new ConvertedFunction();
+                        ConversionFunction fn = new ConversionFunction();
                         fn.Name = $"get_{var.Name}";
 
                         fn.RawBlock = var.GetBlock;
@@ -281,8 +281,8 @@ namespace cs2.ts {
                     }
 
                     if (var.SetBlock != null) {
-                        ConvertedFunction fn = new ConvertedFunction();
-                        ConvertedVariable value = new ConvertedVariable();
+                        ConversionFunction fn = new ConversionFunction();
+                        ConversionVariable value = new ConversionVariable();
                         value.VarType = var.VarType;
                         value.Name = "value";
                         fn.InParameters.Add(value);
@@ -303,7 +303,7 @@ namespace cs2.ts {
             return false;
         }
 
-        private void writeClass(ConvertedClass cl, StreamWriter writer) {
+        private void writeClass(ConversionClass cl, StreamWriter writer) {
             if (cl.IsNative) {
                 return;
             }
@@ -315,7 +315,7 @@ namespace cs2.ts {
             } else if (cl.DeclarationType == MemberDeclarationType.Abstract) {
                 writer.WriteLine($"export abstract class {cl.Name}{extends} {{");
             } else if (cl.DeclarationType == MemberDeclarationType.Delegate) {
-                ConvertedFunction del = cl.Functions[0];
+                ConversionFunction del = cl.Functions[0];
 
                 string generic = del.GetGenericArguments();
 
@@ -382,7 +382,7 @@ namespace cs2.ts {
             SortVariables(cl);
 
             for (int j = 0; j < cl.Variables.Count; j++) {
-                ConvertedVariable var = cl.Variables[j];
+                ConversionVariable var = cl.Variables[j];
                 if (writeVariable(cl, var, writer)) {
                     if (j != cl.Variables.Count - 1) {
                         writer.WriteLine();
@@ -401,7 +401,7 @@ namespace cs2.ts {
             var functions = cl.Functions.Where(c => !c.IsConstructor).ToList();
 
             for (int j = 0; j < functions.Count; j++) {
-                ConvertedFunction fn = functions[j];
+                ConversionFunction fn = functions[j];
                 string name = fn.Name;
 
                 string access = fn.AccessType.ToString().ToLowerInvariant();
@@ -467,10 +467,10 @@ namespace cs2.ts {
         }
 
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {
-            ConversionPreProcessor.PreProcessExpression(model, member, context);
+            ConversionPreProcessor.PreProcessExpression(model, context, member);
         }
 
-        protected override void ProcessClass(ConvertedClass cl, ConvertedProgram program) {
+        protected override void ProcessClass(ConversionClass cl, ConversionProgram program) {
             conversion.ProcessClass(cl, program);
         }
     }

@@ -1,7 +1,7 @@
 using Microsoft.CodeAnalysis;
 
 namespace cs2.core {
-    public class ConvertedClass {
+    public class ConversionClass {
         public string Name { get; set; }
 
         public MemberDeclarationType DeclarationType { get; set; }
@@ -9,20 +9,23 @@ namespace cs2.core {
         public bool IsNative { get; set; }
         public List<string> Extensions { get; set; }
 
-        public List<ConvertedVariable> Variables { get; set; }
-        public List<ConvertedFunction> Functions { get; set; }
+        public List<string> ReferencedClasses { get; set; }
+
+        public List<ConversionVariable> Variables { get; set; }
+        public List<ConversionFunction> Functions { get; set; }
 
         public List<object>? EnumMembers { get; set; }
         public List<string>? GenericArgs { get; set; }
 
         public SemanticModel Semantic { get; set; }
 
-        public ConvertedClass() {
+        public ConversionClass() {
             Name = string.Empty;
             DeclarationType = MemberDeclarationType.Class;
-            Variables = new List<ConvertedVariable>();
-            Functions = new List<ConvertedFunction>();
+            Variables = new List<ConversionVariable>();
+            Functions = new List<ConversionFunction>();
             Extensions = new List<string>();
+            ReferencedClasses = new List<string>();
         }
 
         public string GetGenericArguments() {

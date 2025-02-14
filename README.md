@@ -1,14 +1,21 @@
 # C# to (Any) Language Converter
 
 Supported Languages
-- TypeScript (cs2.ts)
 - C++ (cs2.cpp)
+- TypeScript (cs2.ts)
 
 Core Project Features
 - Base classes for conversion
 
 
 ## C# to TypeScript
+
+#### Why?
+In the process of developing a networking package, I needed to connect a client written in C# to a web one. 
+
+Using webasm, though it is a possible path, would make the library harder to deal with.
+
+With this converter I can develop applications in C# and use them on my TypeScript websites, guaranteeing that they are always up to date and with easy access to all interfaces and methods (no exports/extern access needed, the result is always native TypeScript). 
 
 Features
 - BinaryReader/BinaryWriter
@@ -53,3 +60,12 @@ Features
     - There are workarounds but nothing implemented
 - Tuples (public (string key, int value) MethodName())
 - In-line out keyword (just lazy not hard to implement)
+
+
+
+## C# to C++
+
+#### Why?
+
+#### Installing
+cs2.cpp needs doxygen on your PATH

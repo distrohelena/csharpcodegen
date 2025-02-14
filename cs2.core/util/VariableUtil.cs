@@ -4,16 +4,16 @@ using System.Diagnostics;
 
 namespace cs2.core {
     public static class VariableUtil {
-        private static ConvertedVariableType HandleArrayType(SemanticModel semantic, ArrayTypeSyntax arrayType) {
+        private static VariableType HandleArrayType(SemanticModel semantic, ArrayTypeSyntax arrayType) {
             // Get the element type of the array (e.g., int, string, etc.)
-            ConvertedVariableType elementType = GetVarType(arrayType.ElementType, semantic);
+            VariableType elementType = GetVarType(arrayType.ElementType, semantic);
 
             // Handle multidimensional arrays
             foreach (var rankSpecifier in arrayType.RankSpecifiers) {
                 int dimensions = rankSpecifier.Rank; // Rank is the number of commas + 1
                 for (int i = 0; i < dimensions; i++) {
                     // Wrap the element type in a List<> or Array-like TypeScript representation
-                    ConvertedVariableType arrayWrapper = new ConvertedVariableType(VariableDataType.Array, "Array");
+                    VariableType arrayWrapper = new VariableType(VariableDataType.Array, "Array");
                     arrayWrapper.GenericArgs.Add(elementType);
                     elementType = arrayWrapper; // Nest the previous element type
                 }
@@ -22,27 +22,27 @@ namespace cs2.core {
             return elementType;
         }
 
-        private static ConvertedVariableType HandleTupleType(SemanticModel semantic, TupleTypeSyntax tupleType) {
+        private static VariableType HandleTupleType(SemanticModel semantic, TupleTypeSyntax tupleType) {
             // Handle tuple types
-            ConvertedVariableType tupleWrapper = new ConvertedVariableType(VariableDataType.Tuple);
+            VariableType tupleWrapper = new VariableType(VariableDataType.Tuple);
 
             // Iterate over the elements in the tuple and get their types
             foreach (var element in tupleType.Elements) {
-                ConvertedVariableType elementType = GetVarType(element.Type, semantic);
+                VariableType elementType = GetVarType(element.Type, semantic);
                 tupleWrapper.GenericArgs.Add(elementType);
             }
 
             return tupleWrapper;
         }
 
-        private static ConvertedVariableType HandleQualifiedName(QualifiedNameSyntax qualifiedName) {
+        private static VariableType HandleQualifiedName(QualifiedNameSyntax qualifiedName) {
             // Handle qualified name types, e.g., System.Collections.Generic.List
             string fullQualifiedName = GetQualifiedName(qualifiedName);
 
             // Parse the last part as the actual type and treat the previous part as a namespace/module.
             string typeName = qualifiedName.Right.ToString();
 
-            ConvertedVariableType baseType = new ConvertedVariableType(GetVarDataType(typeName), typeName);
+            VariableType baseType = new VariableType(GetVarDataType(typeName), typeName);
             baseType.TypeName = typeName;
 
             return baseType;
@@ -73,25 +73,25 @@ namespace cs2.core {
             return $" = {assigned}";
         }
 
-        public static ConvertedVariableType GetVarType(string type) {
-            ConvertedVariableType baseType = new ConvertedVariableType(GetVarDataType(type), type);
+        public static VariableType GetVarType(string type) {
+            VariableType baseType = new VariableType(GetVarDataType(type), type);
 
             return baseType;
         }
 
-        public static ConvertedVariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
+        public static VariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
             if (type is IdentifierNameSyntax) {
                 IdentifierNameSyntax identifier = (IdentifierNameSyntax)type;
 
                 string identifierName = identifier.ToString();
-                ConvertedVariableType baseType = new ConvertedVariableType(GetVarDataType(identifierName), identifierName);
+                VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
 
                 return baseType;
             } else if (type is GenericNameSyntax) {
                 GenericNameSyntax generic = (GenericNameSyntax)type;
 
                 string identifierName = generic.Identifier.ToString();
-                ConvertedVariableType baseType = new ConvertedVariableType(GetVarDataType(identifierName), identifierName);
+                VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
 
                 foreach (var genType in generic.TypeArgumentList.Arguments) {
                     baseType.GenericArgs.Add(GetVarType(genType, semantic));
@@ -108,16 +108,34 @@ namespace cs2.core {
                 VariableDataType dataType;
                 switch (predefinedName) {
                     case "float":
+                        dataType = VariableDataType.Single;
+                        break;
                     case "double":
+                        dataType = VariableDataType.Double;
+                        break;
                     case "sbyte":
+                        dataType = VariableDataType.Int8;
+                        break;
                     case "byte":
+                        dataType = VariableDataType.UInt8;
+                        break;
                     case "short":
+                        dataType = VariableDataType.Int16;
+                        break;
                     case "ushort":
+                        dataType = VariableDataType.UInt16;
+                        break;
                     case "int":
+                        dataType = VariableDataType.Int32;
+                        break;
                     case "uint":
+                        dataType = VariableDataType.UInt32;
+                        break;
                     case "long":
+                        dataType = VariableDataType.Int64;
+                        break;
                     case "ulong":
-                        dataType = VariableDataType.Number;
+                        dataType = VariableDataType.UInt64;
                         break;
                     case "bool":
                         dataType = VariableDataType.Boolean;
@@ -133,7 +151,7 @@ namespace cs2.core {
                         break;
                     case "object":
                         dataType = VariableDataType.Object;
-                        return new ConvertedVariableType(dataType, predefinedName);
+                        return new VariableType(dataType, predefinedName);
                     default:
                         throw new ArgumentException();
                 }
@@ -143,18 +161,14 @@ namespace cs2.core {
                     predefinedName = clrTypeName;
                 }
 
-                return new ConvertedVariableType(dataType, predefinedName);
+                return new VariableType(dataType, predefinedName);
             } else if (type is ArrayTypeSyntax array) {
                 // Handle array types, including jagged and multidimensional arrays
-                ConvertedVariableType arrType = HandleArrayType(semantic, array);
-
-                if (arrType.ToString() == "Array<byte>") {
-                    return new ConvertedVariableType(VariableDataType.Object, "Uint8Array");
-                }
+                VariableType arrType = HandleArrayType(semantic, array);
 
                 return arrType;
             } else if (type is NullableTypeSyntax syntax) {
-                ConvertedVariableType baseType = GetVarType(syntax.ElementType, semantic);
+                VariableType baseType = GetVarType(syntax.ElementType, semantic);
                 baseType.IsNullable = true;
                 return baseType;
             } else if (type is TupleTypeSyntax tuple) {
@@ -167,7 +181,7 @@ namespace cs2.core {
                 Debugger.Break();
             }
 
-            return new ConvertedVariableType(VariableDataType.Object);
+            return new VariableType(VariableDataType.Object);
         }
 
         static string GetClrTypeName(SpecialType specialType) {
@@ -199,18 +213,29 @@ namespace cs2.core {
                 case "bool":
                     return VariableDataType.Boolean;
                 case "float":
+                    return VariableDataType.Single;
                 case "double":
+                    return VariableDataType.Double;
                 case "byte":
+                    return VariableDataType.UInt8;
+                case "sbyte":
+                    return VariableDataType.Int8;
                 case "short":
+                    return VariableDataType.Int16;
                 case "ushort":
+                    return VariableDataType.UInt16;
                 case "int":
+                    return VariableDataType.Int32;
                 case "uint":
+                    return VariableDataType.UInt32;
                 case "long":
+                    return VariableDataType.Int64;
                 case "ulong":
-                    return VariableDataType.Number;
+                    return VariableDataType.UInt64;
                 case "string":
-                case "char":
                     return VariableDataType.String;
+                case "char":
+                    return VariableDataType.Char;
 
                 case "List":
                     return VariableDataType.List;

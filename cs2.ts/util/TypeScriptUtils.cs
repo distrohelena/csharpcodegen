@@ -3,7 +3,7 @@ using Microsoft.CodeAnalysis;
 
 namespace cs2.ts {
     public static class TypeScriptUtils {
-        public static (string, string) GetInheritance(ConvertedProgram program, ConvertedClass cl) {
+        public static (string, string) GetInheritance(ConversionProgram program, ConversionClass cl) {
             string implements = "";
             string extends = "";
 

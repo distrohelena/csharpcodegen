@@ -2,7 +2,7 @@
 
 namespace cs2.cpp {
     public static class CPPFunction {
-        public static void WriteLines(this ConvertedFunction fn, ConversionProcessor conversion, ConvertedProgram program, ConvertedClass cl, StreamWriter writer) {
+        public static void WriteLines(this ConversionFunction fn, ConversionProcessor conversion, ConversionProgram program, ConversionClass cl, StreamWriter writer) {
             List<string> lines = new List<string>();
             LayerContext context = new CPPLayerContext(program);
 
@@ -21,12 +21,12 @@ namespace cs2.cpp {
             context.PopClass(start);
             context.PopFunction(startFn);
 
-            writer.Write("        ");
+            //writer.Write("    ");
             for (int k = 0; k < lines.Count; k++) {
                 string str = lines[k];
                 writer.Write(str);
                 if (str.IndexOf("\n") != -1 && k != lines.Count - 1) {
-                    writer.Write("        ");
+                    //writer.Write("    ");
                 }
             }
         }

@@ -1,4 +1,4 @@
-﻿using cs2.core.json;
+﻿using cs2.core.symbols;
 using Newtonsoft.Json;
 using PATH = System.IO.Path;
 

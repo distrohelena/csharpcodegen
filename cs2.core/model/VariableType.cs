@@ -1,28 +1,28 @@
 namespace cs2.core {
-    public class ConvertedVariableType {
+    public class VariableType {
         public VariableDataType Type { get; set; }
         public string TypeName { get; set; }
-        public List<ConvertedVariableType> Args { get; set; }
-        public List<ConvertedVariableType> GenericArgs { get; set; }
+        public List<VariableType> Args { get; set; }
+        public List<VariableType> GenericArgs { get; set; }
         public bool IsNullable { get; set; }
 
-        public ConvertedVariableType(
+        public VariableType(
             VariableDataType type = VariableDataType.Unknown,
             string typeName = null,
-            List<ConvertedVariableType>? args = null,
-            List<ConvertedVariableType>? genericArgs = null
+            List<VariableType>? args = null,
+            List<VariableType>? genericArgs = null
         ) {
             Type = type;
             TypeName = typeName;
 
             if (args == null) {
-                Args = new List<ConvertedVariableType>();
+                Args = new List<VariableType>();
             } else {
                 Args = args;
             }
 
             if (genericArgs == null) {
-                GenericArgs = new List<ConvertedVariableType>();
+                GenericArgs = new List<VariableType>();
             } else {
                 GenericArgs = genericArgs;
             }
@@ -31,7 +31,7 @@ namespace cs2.core {
         public override string ToString() {
             string genArgs = "";
             for (int i = 0; i < GenericArgs.Count; i++) {
-                ConvertedVariableType gen = GenericArgs[i];
+                VariableType gen = GenericArgs[i];
                 genArgs += gen.ToString();
                 if (i != GenericArgs.Count - 1) {
                     genArgs += ", ";

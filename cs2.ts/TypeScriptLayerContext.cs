@@ -6,8 +6,8 @@ namespace cs2.ts {
             : base(program) {
         }
 
-        public override void AddType(ConvertedVariableType varType) {
-            ConvertedClass? cl = Program.Classes.Find(c => c.Name == varType.GetTypeScriptType((TypeScriptProgram)Program));
+        public override void AddType(VariableType varType) {
+            ConversionClass? cl = Program.Classes.Find(c => c.Name == varType.GetTypeScriptType((TypeScriptProgram)Program));
             AddClass(cl);
         }
     }

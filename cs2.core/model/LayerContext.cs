@@ -1,8 +1,8 @@
 namespace cs2.core {
     public abstract class LayerContext {
-        public ConvertedProgram Program { get; private set; }
-        public List<ConvertedClass?> Class { get; private set; }
-        public List<ConvertedVariable?> Var { get; private set; }
+        public ConversionProgram Program { get; private set; }
+        public List<ConversionClass?> Class { get; private set; }
+        public List<ConversionVariable?> Var { get; private set; }
         public List<FunctionStack?> Function { get; private set; }
 
         public int DepthClass { get { return Class.Count; } }
@@ -10,10 +10,10 @@ namespace cs2.core {
 
         public bool IdentifyingFunction { get; private set; }
 
-        public LayerContext(ConvertedProgram program) {
+        public LayerContext(ConversionProgram program) {
             Program = program;
-            Class = new List<ConvertedClass?>();
-            Var = new List<ConvertedVariable?>();
+            Class = new List<ConversionClass?>();
+            Var = new List<ConversionVariable?>();
             Function = new List<FunctionStack?>();
         }
 
@@ -21,17 +21,17 @@ namespace cs2.core {
             Function.Add(fn);
         }
 
-        public abstract void AddType(ConvertedVariableType? varType);
+        public abstract void AddType(VariableType? varType);
            
 
-        public void AddClass(ConvertedClass? cl) {
+        public void AddClass(ConversionClass? cl) {
             if (cl == null) {
                 //Debugger.Break();
             }
             Class.Add(cl);
         }
 
-        public ConvertedClass? GetCurrentClass() {
+        public ConversionClass? GetCurrentClass() {
             if (Class.Count == 0) {
                 return null;
             }
@@ -56,8 +56,8 @@ namespace cs2.core {
             }
         }
 
-        public List<ConvertedClass> SavePopClass(int startDepth) {
-            List<ConvertedClass> list = new List<ConvertedClass>();
+        public List<ConversionClass> SavePopClass(int startDepth) {
+            List<ConversionClass> list = new List<ConversionClass>();
             int total = Class.Count - startDepth;
             if (total > 1) {
                 //Debugger.Break();
@@ -72,7 +72,7 @@ namespace cs2.core {
             return list;
         }
 
-        public void LoadClass(List<ConvertedClass> list) {
+        public void LoadClass(List<ConversionClass> list) {
             Class.AddRange(list);
         }
 

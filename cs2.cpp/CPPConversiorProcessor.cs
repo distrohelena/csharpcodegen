@@ -7,6 +7,12 @@ using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
     public class CPPConversiorProcessor : ConversionProcessor {
+        private CPPCodeConverter codeConverter;
+
+        public CPPConversiorProcessor(CPPCodeConverter converter) {
+            codeConverter = converter;
+        }
+
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
@@ -40,11 +46,11 @@ namespace cs2.cpp {
             int layer = context.GetClassLayer();
 
             // abstract class
-            ConvertedClass? staticClass = context.Program.Classes.Find(c => c.Name == name);
+            ConversionClass? staticClass = context.Program.Classes.Find(c => c.Name == name);
 
-            ConvertedClass? currentClass = context.GetCurrentClass();
+            ConversionClass? currentClass = context.GetCurrentClass();
 
-            var classVars = new List<ConvertedVariable>();
+            var classVars = new List<ConversionVariable>();
             context.Class.ForEach(fn => {
                 var result = fn?.Variables.Where(var => var.Name == name);
                 if (result != null) {
@@ -53,7 +59,7 @@ namespace cs2.cpp {
             });
 
             // variable from the current class
-            ConvertedVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
+            ConversionVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
 
             if (classVar == null && staticClass == null) {
                 string camelCame = StringUtil.ToCamelCase(name);
@@ -64,7 +70,7 @@ namespace cs2.cpp {
             }
 
             // function from the current class
-            ConvertedFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
+            ConversionFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
 
             bool paramsMatch = classFn?.InParameters?.Count == refTypes?.Count;
 
@@ -83,7 +89,7 @@ namespace cs2.cpp {
                     searchName += StringUtil.CapitalizerFirstLetter(typeName);
                 }
 
-                ConvertedFunction similarFn = currentClass.Functions.Find(c => c.Name == searchName);
+                ConversionFunction similarFn = currentClass.Functions.Find(c => c.Name == searchName);
                 if (similarFn == null) {
                     // search for lower first letter
                     lowercase = name[0].ToString().ToLowerInvariant() + name.Remove(0, 1);
@@ -98,7 +104,7 @@ namespace cs2.cpp {
                     name = similarFn.Name;
                 }
             } else if (!paramsMatch && classFn != null && classFn.InParameters != null && refTypes != null) {
-                ConvertedFunction overload = currentClass.Functions.Find(c => {
+                ConversionFunction overload = currentClass.Functions.Find(c => {
                     if (c.Name.StartsWith(name)) {
                         // check in parameters
                         if (c.InParameters == null ||
@@ -107,7 +113,7 @@ namespace cs2.cpp {
                         }
 
                         for (int i = 0; i < c.InParameters.Count; i++) {
-                            ConvertedVariable inParam = c.InParameters[i];
+                            ConversionVariable inParam = c.InParameters[i];
                             ExpressionResult result = refTypes[i];
                             if (result.Type == null) {
                                 continue;
@@ -133,12 +139,12 @@ namespace cs2.cpp {
             // current function
             FunctionStack? currentFn = context.GetCurrentFunction();
             // in-parameter for the current function
-            ConvertedVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
+            ConversionVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
 
             // current stack
-            ConvertedVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
+            ConversionVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
 
-            var matchingVars = new List<ConvertedVariable>();
+            var matchingVars = new List<ConversionVariable>();
             context.Function.ForEach(fn => {
                 var result = fn?.Stack.Where(var => var.Name == name);
                 if (result != null) {
@@ -183,7 +189,7 @@ namespace cs2.cpp {
                 }
 
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
-                    ConvertedVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
+                    ConversionVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
                     if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(name);
                     } else {
@@ -334,7 +340,7 @@ namespace cs2.cpp {
             int count = generic.TypeArgumentList.Arguments.Count;
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
-                ConvertedVariableType type = VariableUtil.GetVarType(genType, semantic);
+                VariableType type = VariableUtil.GetVarType(genType, semantic);
                 lines.Add(type.ToCPPString(context.Program));
 
                 if (i < count - 1) {
@@ -558,7 +564,7 @@ namespace cs2.cpp {
             // Process the expression being accessed (e.g., array or object)
             int startClass = context.DepthClass;
             ProcessExpression(semantic, context, elementAccess.Expression, lines);
-            List<ConvertedClass> saved = context.SavePopClass(startClass);
+            List<ConversionClass> saved = context.SavePopClass(startClass);
 
             // Add the opening bracket
             lines.Add("[");
@@ -615,7 +621,7 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
-            ConvertedVariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
+            VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
 
             lines.Add("<");
             lines.Add(varType.ToCPPString(context.Program)); // Type of the cast
@@ -818,17 +824,18 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessIfStatement(SemanticModel semantic, LayerContext context, IfStatementSyntax ifStatement, List<string> lines) {
-            lines.Add("if (");
+            lines.Add("    if (");
 
             int start = context.DepthClass;
             ExpressionResult condResult = ProcessExpression(semantic, context, ifStatement.Condition, lines);
             context.PopClass(start);
 
-            lines.Add(") {\n");
+            lines.Add(")\n");
+            lines.Add("    {\n");
 
             // Process the 'then' statements
             ExpressionResult result = ProcessStatement(semantic, context, ifStatement.Statement, lines);
-            lines.Add("\n}\n");
+            lines.Add("    }\n");
 
             // Process 'else' part if exists
             if (ifStatement.Else != null) {
@@ -889,40 +896,123 @@ namespace cs2.cpp {
             lines.Add("}\n\n");
         }
 
+        public VariableType ConvertToCPPType(VariableType parsedType, out CPPTypeData typeData) {
+            typeData = new CPPTypeData();
+
+            switch (parsedType.Type) {
+                case VariableDataType.Single: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "float");
+                    }
+                case VariableDataType.Double: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "double");
+                    }
+                case VariableDataType.UInt32: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "uint32_t");
+                    }
+                case VariableDataType.Int32: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "int32_t");
+                    }
+                case VariableDataType.UInt64: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "uint64_t");
+                    }
+                case VariableDataType.Int64: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "int64_t");
+                    }
+
+                case VariableDataType.String:
+
+                    if (codeConverter.CPPRules.UseStdString) {
+                        throw new NotImplementedException();
+                    } else {
+                        typeData.IsArray = true;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "char");
+                    }
+                default:
+                    typeData.IsArray = false;
+                    typeData.IsNativeType = false;
+                    typeData.IsPointer = true;
+                    return parsedType;
+            }
+        }
+
         protected override void ProcessDeclaration(
             SemanticModel semantic,
             LayerContext context,
             VariableDeclarationSyntax declaration,
             List<string> lines
             ) {
-            lines.Add("let ");
+            VariableType varType = VariableUtil.GetVarType(declaration.Type, semantic);
+
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(varType, out typeData);
+
+            FunctionStack fnStack = context.GetCurrentFunction();
+
+            string pointer = typeData.IsPointer ? " *" : " ";
+            List<string> newLines = [$"{cppType.TypeName}{pointer}"];
 
             FunctionStack? fn = context.GetCurrentFunction();
+            bool isConstant = true;
 
             int start = context.DepthClass;
 
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
-                lines.Add($"{variable.Identifier.ToString()}");
+                string name = variable.Identifier.ToString();
+                newLines.Add(name);
+
+                ConversionFunctionVariableUsage usage = fnStack.Function.BodyVariables.FirstOrDefault(c => c.Name == name);
+                if (usage != null && usage.Reassignment) {
+                    isConstant = false;
+                }
+
+                if (typeData.IsArray) {
+                    newLines.Add("[]");
+                }
 
                 if (i < declaration.Variables.Count - 1) {
-                    lines.Add(",");
+                    newLines.Add(",");
                 }
 
                 if (fn != null) {
-                    ConvertedVariable var = new ConvertedVariable();
+                    ConversionVariable var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
-                    var.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
+                    var.VarType = varType;
                     fn.Stack.Add(var);
                 }
 
                 if (variable.Initializer != null) {
-                    lines.Add($" = ");
-                    ProcessExpression(semantic, context, variable.Initializer.Value, lines);
+                    newLines.Add($" = ");
+                    ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
                 }
             }
 
             context.PopClass(start);
+
+            if (isConstant) {
+                lines.Add("const ");
+            }
+            lines.AddRange(newLines);
         }
 
         protected override ExpressionResult ProcessLiteralExpression(LayerContext context, LiteralExpressionSyntax literalExpression, List<string> lines) {

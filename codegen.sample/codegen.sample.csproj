@@ -20,4 +20,8 @@
     <ProjectReference Include="..\cs2.ts\cs2.ts.csproj" />
   </ItemGroup>
 
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="xcopy /Y /D &quot;$(SolutionDir)x64\$(Configuration)\cs2.cpp.symbols.exe&quot; &quot;$(TargetDir)&quot;&#xA;" />
+  </Target>
+
 </Project>

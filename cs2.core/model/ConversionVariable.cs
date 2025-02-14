@@ -1,11 +1,11 @@
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cs2.core {
-    public class ConvertedVariable {
+    public class ConversionVariable {
         public string Name { get; set; }
         public string Remap { get; set; }
 
-        public ConvertedVariableType VarType {
+        public VariableType VarType {
             get { return varType; }
             set {
                 varType = value;
@@ -29,11 +29,11 @@ namespace cs2.core {
         public BlockSyntax? SetBlock { get; set; }
         public ExpressionSyntax? ArrowExpression { get; set; }
 
-        private ConvertedVariableType varType;
+        private VariableType varType;
 
-        public ConvertedVariable() {
+        public ConversionVariable() {
             Name = "";
-            varType = new ConvertedVariableType();
+            varType = new VariableType();
         }
 
         public override string ToString() {

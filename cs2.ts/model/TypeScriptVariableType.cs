@@ -2,7 +2,7 @@
 
 namespace cs2.ts {
     public static class TypeScriptVariableType {
-        public static string GetTypeScriptType(this ConvertedVariableType varType, TypeScriptProgram program) {
+        public static string GetTypeScriptType(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
                 if (program.TypeMap.TryGetValue(typeName, out var type)) {
@@ -25,7 +25,7 @@ namespace cs2.ts {
             return typeName;
         }
 
-        public static string ToTypeScriptString(this ConvertedVariableType varType, TypeScriptProgram program) {
+        public static string ToTypeScriptString(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
                 if (program.TypeMap.TryGetValue(typeName, out var type)) {
@@ -52,7 +52,7 @@ namespace cs2.ts {
 
             string genArgs = "";
             for (int i = 0; i < varType.GenericArgs.Count; i++) {
-                ConvertedVariableType gen = varType.GenericArgs[i];
+                VariableType gen = varType.GenericArgs[i];
                 genArgs += gen.ToTypeScriptString(program);
                 if (i != varType.GenericArgs.Count - 1) {
                     genArgs += ", ";
