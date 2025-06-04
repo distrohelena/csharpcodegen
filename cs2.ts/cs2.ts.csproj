@@ -20,6 +20,9 @@
     <None Include=".net.ts\system\console.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+	  <None Include=".net.ts\system\convert.ts">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </None>
     <None Include=".net.ts\system\disposable.interface.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

@@ -38,6 +38,7 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("IDisposable", "./system/disposable.interface"));
             Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
             Requirements.Add(new TypeScriptKnownClass("ArrayUtil", "./system/array-util"));
+            Requirements.Add(new TypeScriptKnownClass("Convert", "./system/convert"));
 
             // system.collection.concurrent
             Requirements.Add(new TypeScriptKnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));

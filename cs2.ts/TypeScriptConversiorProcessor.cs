@@ -218,7 +218,9 @@ namespace cs2.ts {
                 return new ExpressionResult(true, VariablePath.Unknown, classVar.VarType);
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
-                return new ExpressionResult(true, VariablePath.Unknown, null);
+                ExpressionResult result = new ExpressionResult(true, VariablePath.Unknown, new VariableType(VariableDataType.Object, staticClass.Name));
+                result.Class = staticClass;
+                return result;
             } else if (classFn != null) {
                 if (classFn.ReturnType != null) {
                     // invoked function
@@ -235,30 +237,79 @@ namespace cs2.ts {
         }
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
-            lines.Add("new ");
+            List<string> newLines = new List<string>();
+            List<string> afterLines = new List<string>();
 
             int startDepth = context.DepthClass;
-            ProcessExpression(semantic, context, objectCreation.Type, lines);
+            ExpressionResult result = ProcessExpression(semantic, context, objectCreation.Type, afterLines);
             context.PopClass(startDepth);
 
-            if (objectCreation.ArgumentList == null) {
-                ProcessExpression(semantic, context, objectCreation.Initializer, lines);
+            bool foundMultiple = false;
+            List<ConversionFunction> constructors = null;
+            if (result.Class != null) {
+                constructors = result.Class.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
+                if (constructors.Count > 1) {
+                    foundMultiple = true;
+                }
+            }
+
+            if (foundMultiple) {
+                afterLines.Add(".New");
             } else {
-                lines.Add("(");
+                newLines.Add("new ");
+            }
+
+            List<ExpressionResult> types = new List<ExpressionResult>();
+
+            List<string> finalLines = new List<string>();
+            if (objectCreation.ArgumentList == null) {
+                types.Add(ProcessExpression(semantic, context, objectCreation.Initializer, finalLines));
+            } else {
+                finalLines.Add("(");
                 for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
                     var arg = objectCreation.ArgumentList.Arguments[i];
 
                     int startArg = context.DepthClass;
-                    ProcessExpression(semantic, context, arg.Expression, lines);
+                    types.Add(ProcessExpression(semantic, context, arg.Expression, finalLines));
                     context.PopClass(startArg);
 
                     if (i != objectCreation.ArgumentList.Arguments.Count - 1) {
-                        lines.Add(", ");
+                        finalLines.Add(", ");
                     }
                 }
-                lines.Add(")");
+                finalLines.Add(")");
             }
 
+            if (foundMultiple) {
+                ConversionFunction fn = constructors.Find(c => {
+                    if (c.InParameters.Count == types.Count) {
+                        // match parameters
+                        for (int i = 0; i < types.Count; i++) {
+                            ConversionVariable var = c.InParameters[i];
+                            ExpressionResult res = types[i];
+
+                            if (var.VarType.TypeName != res.Type.TypeName) {
+                                return false;
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+
+                    return true;
+                });
+
+                if (fn == null) {
+                    throw new Exception("Constructor not found");
+                }
+
+                int index = constructors.IndexOf(fn);
+                afterLines.Add($"{index + 1}");
+            }
+
+            lines.AddRange(newLines);
+            lines.AddRange(afterLines);
+            lines.AddRange(finalLines);
             return new ExpressionResult(false);
         }
 
@@ -553,7 +604,7 @@ namespace cs2.ts {
                 var fn = context.GetCurrentFunction().Function;
 
                 if (fn.ReturnType != null &&
-                    fn.ReturnType.GenericArgs != null && 
+                    fn.ReturnType.GenericArgs != null &&
                     fn.ReturnType.GenericArgs.Count == 1) {
                     if (lines[1] == "new Array(" &&
                         lines[2] == "0" &&
