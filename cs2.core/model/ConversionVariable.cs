@@ -29,7 +29,7 @@ namespace cs2.core {
         public BlockSyntax? SetBlock { get; set; }
         public ExpressionSyntax? ArrowExpression { get; set; }
 
-        private VariableType varType;
+        VariableType varType;
 
         public ConversionVariable() {
             Name = "";

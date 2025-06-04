@@ -1,7 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Nucleus;
 using System.Diagnostics;
 
 namespace cs2.core {
@@ -73,7 +72,7 @@ namespace cs2.core {
             } else if (expression is IdentifierNameSyntax identifier) {
                 return ProcessIdentifierNameSyntax(semantic, context, identifier, lines, refTypes);
             } else if (expression is ObjectCreationExpressionSyntax objectCreation) {
-                ProcessObjectCreationExpressionSyntax(semantic, context, objectCreation, lines);
+                return ProcessObjectCreationExpressionSyntax(semantic, context, objectCreation, lines);
             } else if (expression is MemberAccessExpressionSyntax memberAccess) {
                 return ProcessMemberAccessExpressionSyntax(semantic, context, memberAccess, lines, refTypes);
             } else if (expression is InvocationExpressionSyntax invocationExpression) {
@@ -131,7 +130,7 @@ namespace cs2.core {
             } else if (expression is AliasQualifiedNameSyntax) {
                 // ignore?
             } else if (expression is DeclarationExpressionSyntax declaration) {
-                throw new NotImplementedException();
+                return ProcessDeclarationExpressionSyntax(semantic, context, declaration, lines);
             } else {
                 //Debugger.Break();
                 return new ExpressionResult(false);
@@ -142,9 +141,11 @@ namespace cs2.core {
 
         protected abstract void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax generic, List<string> lines);
 
+        protected abstract ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines);
+
         protected abstract ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes);
 
-        protected abstract void ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines);
+        protected abstract ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines);
 
         protected abstract ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes);
 
@@ -222,16 +223,7 @@ namespace cs2.core {
 
                 return new ExpressionResult(true);
             } else if (statement is ReturnStatementSyntax ret) {
-                if (ret.Expression == null) {
-                    lines.Add("return;");
-                } else {
-                    lines.Add("return ");
-
-                    int start = context.Class.Count;
-                    ProcessExpression(semantic, context, ret.Expression, lines);
-                    lines.Add(";");
-                    context.PopClass(start);
-                }
+                ProcessReturnStatement(semantic, context, ret, lines);
             } else if (statement is LocalDeclarationStatementSyntax local) {
                 ProcessDeclaration(semantic, context, local.Declaration, lines);
                 lines.Add(";\n");
@@ -270,6 +262,8 @@ namespace cs2.core {
 
             return new ExpressionResult(false);
         }
+
+        protected abstract void ProcessReturnStatement(SemanticModel semantic, LayerContext context, ReturnStatementSyntax ret, List<string> lines);
 
         protected abstract void ProcessEmptyStatement(SemanticModel semantic, LayerContext context, EmptyStatementSyntax emptyStatement, List<string> lines);
 

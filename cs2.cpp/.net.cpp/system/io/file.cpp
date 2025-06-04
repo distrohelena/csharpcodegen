@@ -1,7 +1,7 @@
 #include "file.hpp"
 #include <fstream>
 
-bool File::Exists(char* fileName) {
+bool File::Exists(const char* fileName) {
 	if (!fileName)
 	{
 		return false;
@@ -11,7 +11,7 @@ bool File::Exists(char* fileName) {
 	return file.good();
 }
 
-bool File::Delete(char* fileName) {
+bool File::Delete(const char* fileName) {
 	if (!fileName)
 	{
 		return false;
@@ -20,7 +20,7 @@ bool File::Delete(char* fileName) {
 	return std::remove(fileName) == 0;
 }
 
-FileStream File::Open(char* filePath, FileMode fileMode)
+FileStream File::Open(const char* filePath, FileMode fileMode)
 {
 
 }

@@ -3,19 +3,26 @@ const fs = require("fs");
 const path = require("path");
 
 // Get file path from arguments
-const fileName = process.argv[2];
-if (!fileName) {
-    console.error("No file provided. Usage: node extractSymbols.js <file>");
+const dirToScan = process.argv[2];
+if (!dirToScan) {
+    console.error("No dir provided. Usage: node extractor.js <dir>");
     process.exit(1);
 }
 
-// Read the TypeScript file
-const sourceCode = fs.readFileSync(fileName, "utf8");
+function getAllFiles(dirPath, fileList = []) {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
 
-// Parse the TypeScript file
-const sourceFile = ts.createSourceFile(fileName, sourceCode, ts.ScriptTarget.Latest, true);
+    for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            getAllFiles(fullPath, fileList);
+        } else {
+            fileList.push(fullPath);
+        }
+    }
 
-const symbols = [];
+    return fileList;
+}
 
 // Traversal function
 function visit(node) {
@@ -148,12 +155,39 @@ function visit(node) {
     ts.forEachChild(node, visit); // Recursively visit child nodes
 }
 
-// Start traversal
-visit(sourceFile);
+console.log(`scanning folder: ${dirToScan}`);
+const allFiles = getAllFiles(dirToScan);
+console.log(`found: ${allFiles.length} files`);
 
-// Save the output to a JSON file
-const outputFileName = `${path.basename(fileName, path.extname(fileName))}.json`;
-const outputPath = path.join(path.dirname(fileName), outputFileName);
+let symbols;
+for (let i = 0; i < allFiles.length; i++) {
+    const fileName = allFiles[i];
+    if (!fileName.endsWith(".ts") || fileName.indexOf("node_modules") !== -1) {
+        console.log(`-- skipped: ${fileName}`);
+        continue;
+    }
 
-fs.writeFileSync(outputPath, JSON.stringify(symbols, null, 2), "utf8");
-console.log(`Extracted symbols saved to: ${outputPath}`);
+    // Read the TypeScript file
+    const sourceCode = fs.readFileSync(fileName, "utf8");
+
+    // Parse the TypeScript file
+    const sourceFile = ts.createSourceFile(fileName, sourceCode, ts.ScriptTarget.Latest, true);
+
+    symbols = [];
+
+    // Start traversal
+    visit(sourceFile);
+
+    // Save the output to a JSON file
+    const outputFileName = `${path.basename(fileName, path.extname(fileName))}.json`;
+    const outputPath = path.join(path.dirname(fileName), outputFileName);
+
+    if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath);
+    }
+
+    fs.writeFileSync(outputPath, JSON.stringify(symbols, null, 2), "utf8");
+    console.log(`extracted symbols saved to: ${outputPath}`);
+}
+
+console.log('success');

@@ -17,9 +17,11 @@ const char* GetFileMode(FileMode mode) {
 }
 
 // Constructor
-FileStream::FileStream(const std::string& path, FileMode mode) : file(nullptr), position(0), length(0) {
-    file = std::fopen(path.c_str(), GetFileMode(mode));
-    if (!file) throw std::runtime_error("Failed to open file: " + path);
+FileStream::FileStream(const char* path, FileMode mode) : file(nullptr), position(0), length(0) {
+    file = std::fopen(path, GetFileMode(mode));
+    if (!file) {
+        throw std::runtime_error("Failed to open file: " + path);
+    }
 
     UpdateLength();
 }

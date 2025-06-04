@@ -43,6 +43,14 @@ namespace cs2.cpp {
                 isMethod = true;
             }
 
+            VariablePath varPath = VariablePath.Unknown;
+            if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType) {
+                bool isType = nameSpaceType.IsType;
+                if (isType) {
+                    varPath = VariablePath.Static;
+                }
+            }
+
             int layer = context.GetClassLayer();
 
             // abstract class
@@ -201,23 +209,38 @@ namespace cs2.cpp {
             }
 
             if (stackVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType(context.Program)));
-                return new ExpressionResult(true, stackVar.VarType);
+                varPath = VariablePath.FunctionStack;
+                ConversionClass cl = context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType(context.Program));
+                context.AddClass(cl);
+                ExpressionResult res = new ExpressionResult(true, varPath, stackVar.VarType);
+                res.Class = cl;
+                res.Variable = stackVar;
+                return res;
             } else if (functionInVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType(context.Program)));
-                return new ExpressionResult(true, functionInVar.VarType);
+                ConversionClass cl = context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType(context.Program));
+                context.AddClass(cl);
+                ExpressionResult res = new ExpressionResult(true, varPath, functionInVar.VarType);
+                res.Class = cl;
+                res.Variable = functionInVar;
+                return res;
             } else if (classVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType(context.Program)));
-                return new ExpressionResult(true, classVar.VarType);
+                ConversionClass cl = context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType(context.Program));
+                context.AddClass(cl);
+                ExpressionResult res = new ExpressionResult(true, varPath, classVar.VarType);
+                res.Class = cl;
+                res.Variable = classVar;
+                return res;
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
-                return new ExpressionResult(true, null);
+                ExpressionResult res = new ExpressionResult(true, varPath, null);
+                res.Class = staticClass;
+                return res;
             } else if (classFn != null) {
                 if (classFn.ReturnType != null) {
                     // invoked function
                     if (classFn.ReturnType.Type != VariableDataType.Void) {
                         context.AddClass(context.Program.Classes.Find(c => c.Name == classFn.ReturnType.GetTypeScriptType(context.Program)));
-                        return new ExpressionResult(true, classFn.ReturnType);
+                        return new ExpressionResult(true, varPath, classFn.ReturnType);
                     }
                 }
             } else {
@@ -227,11 +250,11 @@ namespace cs2.cpp {
             return new ExpressionResult(true);
         }
 
-        protected override void ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
+        protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
             lines.Add("new ");
 
             int startDepth = context.DepthClass;
-            ProcessExpression(semantic, context, objectCreation.Type, lines);
+            ExpressionResult typeResult = ProcessExpression(semantic, context, objectCreation.Type, lines);
             context.PopClass(startDepth);
 
             if (objectCreation.ArgumentList == null) {
@@ -242,7 +265,7 @@ namespace cs2.cpp {
                     var arg = objectCreation.ArgumentList.Arguments[i];
 
                     int startArg = context.DepthClass;
-                    ProcessExpression(semantic, context, arg.Expression, lines);
+                    ExpressionResult expResult = ProcessExpression(semantic, context, arg.Expression, lines);
                     context.PopClass(startArg);
 
                     if (i != objectCreation.ArgumentList.Arguments.Count - 1) {
@@ -251,11 +274,27 @@ namespace cs2.cpp {
                 }
                 lines.Add(")");
             }
+
+            return new ExpressionResult(false);
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
-            if (ProcessExpression(semantic, context, memberAccess.Expression, lines).Processed) {
-                lines.Add(".");
+            ExpressionResult result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+            if (result.Processed) {
+                // shit is this static access, pointer access or direct access
+                switch (result.VarPath) {
+                    case VariablePath.Static:
+                        lines.Add("::");
+                        break;
+                    default: {
+                            lines.Add("->");
+
+                            if (result.Variable != null) {
+                                int xx = -1;
+                            }
+                        }
+                        break;
+                }
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
         }
@@ -557,7 +596,7 @@ namespace cs2.cpp {
             // Add the backtick to close the template literal
             lines.Add("`");
 
-            return new ExpressionResult(true, VariableUtil.GetVarType("string"));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
@@ -630,7 +669,7 @@ namespace cs2.cpp {
 
             ProcessExpression(semantic, context, castExpr.Expression, lines); // Expression being cast
 
-            return new ExpressionResult(true, varType);
+            return new ExpressionResult(true, VariablePath.Unknown, varType);
         }
 
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
@@ -709,7 +748,8 @@ namespace cs2.cpp {
             // process the body of the using statement
             ProcessStatement(semantic, context, usingStatement.Statement, lines);
 
-            lines.Add("} finally {\n");
+            lines.Add("} catch () {\n");
+            lines.Add("}\n");
 
             // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
@@ -720,7 +760,6 @@ namespace cs2.cpp {
                 lines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
             }
 
-            lines.Add("}\n");
         }
 
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
@@ -994,8 +1033,9 @@ namespace cs2.cpp {
                     newLines.Add(",");
                 }
 
+                ConversionVariable var = null;
                 if (fn != null) {
-                    ConversionVariable var = new ConversionVariable();
+                    var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
                     var.VarType = varType;
                     fn.Stack.Add(var);
@@ -1003,13 +1043,18 @@ namespace cs2.cpp {
 
                 if (variable.Initializer != null) {
                     newLines.Add($" = ");
-                    ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
+                    ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
+                    int xxx = -1;
+
+                    if (var != null) {
+
+                    }
                 }
             }
 
             context.PopClass(start);
 
-            if (isConstant) {
+            if (isConstant && typeData.IsNativeType) {
                 lines.Add("const ");
             }
             lines.AddRange(newLines);
@@ -1066,7 +1111,7 @@ namespace cs2.cpp {
 
             lines.Add(literalValue);
 
-            return new ExpressionResult(true, VariableUtil.GetVarType(type));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(type));
         }
 
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {

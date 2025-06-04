@@ -17,7 +17,7 @@ private:
     void UpdateLength();  // Helper to update file size
 
 public:
-    FileStream(const std::string& path, FileMode mode);
+    FileStream(const char* path, FileMode mode);
     ~FileStream() override;
 
     size_t Read(uint8_t* buffer, size_t offset, size_t count) override;

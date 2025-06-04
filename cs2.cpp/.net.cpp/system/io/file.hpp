@@ -6,11 +6,11 @@
 
 class File {
 public:
-	static bool Exists(char* fileName);
+	static bool Exists(const char* fileName);
 
-	static bool Delete(char* fileName);
+	static bool Delete(const char* fileName);
 
-	static FileStream Open(char* filePath, FileMode fileMode);
+	static FileStream Open(const char* filePath, FileMode fileMode);
 };
 
 #endif // FILE_HPP

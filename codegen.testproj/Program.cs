@@ -1,11 +1,11 @@
 ﻿class Program {
     static void Main() {
-//        BinaryFileTest.Main();
+        BinaryFileTest.Main();
 
-//        MemoryStreamTest.Main();
+        MemoryStreamTest.Main();
 
-//#if !TYPESCRIPT
-//        Console.ReadLine();
-//#endif
+#if !TYPESCRIPT
+        Console.ReadLine();
+#endif
     }
 }

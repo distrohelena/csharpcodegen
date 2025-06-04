@@ -313,6 +313,15 @@ namespace cs2.core {
                 foreach (var m in nameSpace.Members) {
                     PreProcessExpression(semantic, context, m);
                 }
+            } else if (exp is FileScopedNamespaceDeclarationSyntax fileNameSpace) {
+                string name = fileNameSpace.Name.ToString();
+                if (context.Program.Rules.IgnoredNamespaces.Any(c => name.Contains(c))) {
+                    return new ExpressionResult(false);
+                }
+
+                foreach (var m in fileNameSpace.Members) {
+                    PreProcessExpression(semantic, context, m);
+                }
             } else if (exp is ClassDeclarationSyntax classDecl) {
                 if (context.Program.Rules.IgnoredClasses.Any(c => classDecl.Identifier.ToString().Contains(c))) {
                     return new ExpressionResult(false);
@@ -407,11 +416,53 @@ namespace cs2.core {
                 PreProcessMemberAccessExpressionSyntax(semantic, context, memberAccess);
             } else if (exp is IdentifierNameSyntax identifier) {
                 PreProcessIdentifierNameSyntax(semantic, context, identifier);
+            } else if (exp is ReturnStatementSyntax ret) {
+                PreProcessReturnStatementSyntax(semantic, context, ret);
+            } else if (exp is TryStatementSyntax tryStatement) {
+                PreProcessTryStatementSyntax(semantic, context, tryStatement);
+            } else if (exp is BinaryExpressionSyntax ||
+                        exp is ThrowStatementSyntax ||
+                        exp is SwitchStatementSyntax ||
+                        exp is LockStatementSyntax ||
+                        exp is PostfixUnaryExpressionSyntax ||
+                        exp is PrefixUnaryExpressionSyntax ||
+                        exp is ForStatementSyntax ||
+                        exp is ConditionalAccessExpressionSyntax ||
+                        exp is WhileStatementSyntax ||
+                        exp is ForEachStatementSyntax) {
+                // ignore
             } else {
                 //Debugger.Break();
             }
 
             return new ExpressionResult(false);
+        }
+
+        protected static void PreProcessTryStatementSyntax(SemanticModel semantic, ConversionContext context, TryStatementSyntax tryStatement) {
+            PreProcessExpression(semantic, context, tryStatement.Block);
+            //PreProcessExpression(semantic, context, tryStatement.Catches);
+            //PreProcessExpression(semantic, context, tryStatement.Finally);
+        }
+
+        protected static void PreProcessReturnStatementSyntax(SemanticModel semantic, ConversionContext context, ReturnStatementSyntax ret) {
+            if (ret.Expression == null) {
+                return;
+            }
+
+            var typeInfo = semantic.GetTypeInfo(ret.Expression);
+
+            string type = typeInfo.ConvertedType.ToString();
+            ConversionClass cl = context.CurrentClass;
+            if (!cl.ReferencedClasses.Contains(type)) {
+                cl.ReferencedClasses.Add(type);
+            }
+
+            ConversionFunction fn = context.CurrentFunction;
+            if (fn.AnalyzedReturns == null) {
+                fn.AnalyzedReturns = new List<VariableType>();
+            }
+
+            fn.AnalyzedReturns.Add(VariableUtil.GetVarType(type));
         }
 
         protected static void PreProcessIdentifierNameSyntax(SemanticModel semantic, ConversionContext context, IdentifierNameSyntax identifier) {
@@ -425,16 +476,16 @@ namespace cs2.core {
                 }
             } else if (nsSymbol is IMethodSymbol methodSymbol) {
                 isMethod = true;
-            } 
-            
+            }
+
             if (nsSymbol is ITypeSymbol typeSymbol) {
                 int kksk = -1;
-            } 
-            
+            }
+
             if (nsSymbol is ITypeSymbol namedTypeSymbol) {
                 int kksk = -1;
-            } 
-            
+            }
+
             if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType) {
                 bool isType = nameSpaceType.IsType;
 

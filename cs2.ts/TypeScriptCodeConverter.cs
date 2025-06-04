@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
 using Nucleus;
+using System.Diagnostics;
 using System.Reflection;
 
 namespace cs2.ts {
@@ -440,6 +441,10 @@ namespace cs2.ts {
                     }
                 }
 
+                if (name == "WriteFloats" && cl.Name == "BinaryWriterExtensions") {
+                    Debugger.Break();
+                }
+
                 if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
                     writer.WriteLine(");");
                 } else {
@@ -449,6 +454,7 @@ namespace cs2.ts {
                     } else {
                         writer.WriteLine($"): {returnParameter} {{");
                     }
+
                     fn.WriteLines(conversion, program, cl, writer);
                     writer.WriteLine("    }");
                 }

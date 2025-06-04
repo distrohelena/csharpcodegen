@@ -22,13 +22,17 @@ namespace cs2.core {
         }
 
         public abstract void AddType(VariableType? varType);
-           
 
-        public void AddClass(ConversionClass? cl) {
+
+        public int AddClass(ConversionClass? cl) {
             if (cl == null) {
                 //Debugger.Break();
             }
+
+            int startValue = DepthClass;
             Class.Add(cl);
+
+            return startValue;
         }
 
         public ConversionClass? GetCurrentClass() {

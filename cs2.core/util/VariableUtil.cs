@@ -65,6 +65,8 @@ namespace cs2.core {
                 assigned = literal.Token.ToString();
             } else if (equals.Value is MemberAccessExpressionSyntax member) {
                 assigned = member.ToString();
+            } else if (equals.Value is PrefixUnaryExpressionSyntax unary) {
+                assigned = unary.ToString();
             } else {
                 Debugger.Break();
                 throw new NotSupportedException();

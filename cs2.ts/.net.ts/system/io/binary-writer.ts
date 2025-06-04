@@ -83,7 +83,7 @@ export class BinaryWriter implements IDisposable {
         this.stream.InternalWriteByte((high >> 24) & 0xF);
     }
 
-    writeFloat(value: number): void {
+    writeSingle(value: number): void {
         this.checkAlloc(4);
 
         // Create a DataView to handle the conversion to IEEE 754

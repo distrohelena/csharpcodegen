@@ -21,13 +21,14 @@ namespace cs2.ts {
             this.buildDotNetData();
 
             // system
+            Requirements.Add(new TypeScriptKnownClass("NotSupportedException", "./system/not-supported.exception"));
+            Requirements.Add(new TypeScriptKnownClass("NotImplementedException", "./system/not-implemented.exception"));
             Requirements.Add(new TypeScriptGenericKnownClass(17, 0, false, "Action", "./system/action"));
             Requirements.Add(new TypeScriptGenericKnownClass(17, 1, false, "Func", "./system/func"));
             Requirements.Add(new TypeScriptKnownClass("ConsoleColor", "./system/console-color"));
             Requirements.Add(new TypeScriptKnownClass("DateTime", "./system/date-time"));
             Requirements.Add(new TypeScriptKnownClass("TimeSpan", "./system/time-span"));
             Requirements.Add(new TypeScriptKnownClass("Exception", "./system/exception"));
-            Requirements.Add(new TypeScriptKnownClass("NotSupportedException", "./system/not-supported.exception"));
             Requirements.Add(new TypeScriptKnownClass("ArgumentException", "./system/argument.exception"));
             Requirements.Add(new TypeScriptKnownClass("Random", "./system/random"));
             Requirements.Add(new TypeScriptKnownClass("Attribute", "./system/attribute"));
@@ -36,6 +37,7 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("Console", "./system/console"));
             Requirements.Add(new TypeScriptKnownClass("IDisposable", "./system/disposable.interface"));
             Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
+            Requirements.Add(new TypeScriptKnownClass("ArrayUtil", "./system/array-util"));
 
             // system.collection.concurrent
             Requirements.Add(new TypeScriptKnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));
@@ -101,6 +103,9 @@ namespace cs2.ts {
             // WebSocketSharp
             Requirements.Add(new TypeScriptKnownClass("WebSocketWS", "./websocketsharp/websocket"));
             Requirements.Add(new TypeScriptKnownClass("WebSocketState", "./websocketsharp/websocket-state"));
+
+            // Blake2B
+            Requirements.Add(new TypeScriptKnownClass("Blake2b", "./blake2fast/blake2b"));
 
             switch (env) {
                 case TypeScriptEnvironment.Web:
@@ -194,10 +199,11 @@ namespace cs2.ts {
             return cl;
         }
 
-        private void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "") {
+        private void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "", string remapCl = "") {
             ConversionFunction fnToString = new ConversionFunction();
             fnToString.Name = name;
             fnToString.Remap = remap;
+            fnToString.RemapClass = remapCl;
             if (!string.IsNullOrEmpty(type)) {
                 fnToString.ReturnType = VariableUtil.GetVarType(type);
             }
@@ -216,6 +222,7 @@ namespace cs2.ts {
             ConversionClass clArray = makeClass("Array");
             Classes.Add(clArray);
             makeTypeScriptVariable("Length", "length", clArray, "int");
+            makeTypeScriptFunction("Copy", "copy", clArray, "", "ArrayUtil");
 
             ConversionClass clnumber = makeClass("number");
             Classes.Add(clnumber);
@@ -283,26 +290,26 @@ namespace cs2.ts {
             string npmOutput = npm.StandardOutput.ReadToEnd();
             Console.WriteLine($"---- result: {npmOutput}");
 
-            for (int i = 0; i < files.Count; i++) {
-                FileInfo f = files[i];
+            var process = new Process {
+                StartInfo = new ProcessStartInfo {
+                    FileName = "node",
+                    Arguments = $"\"{extractorPath}\" \"{dotNetFolder}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                }
+            };
 
-                var process = new Process {
-                    StartInfo = new ProcessStartInfo {
-                        FileName = "node",
-                        Arguments = $"\"{extractorPath}\" \"{f.FullName}\"",
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                    }
-                };
+            Console.WriteLine($"-- Processing folder: {dotNetFolder}");
 
-                Console.WriteLine($"-- Processing file: {f.Name}");
+            process.Start();
+            string output = process.StandardOutput.ReadToEnd();
+            string outputError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
 
-                process.Start();
-                string output = process.StandardOutput.ReadToEnd();
-                Console.WriteLine($"---- Result: {output}");
-                process.WaitForExit();
-            }
+            Console.WriteLine($"---- Result: {output}");
+            Console.WriteLine($"---- Result Error: {outputError}");
         }
 
         private void buildTypeMap() {

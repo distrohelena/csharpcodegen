@@ -4,6 +4,7 @@ namespace cs2.core {
     public class ConversionFunction {
         public string Name { get; set; }
         public string Remap { get; set; }
+        public string RemapClass { get; set; }
 
         public List<string>? GenericParameters { get; set; }
 
@@ -17,6 +18,13 @@ namespace cs2.core {
         public List<ConversionVariable> InParameters { get; set; }
 
         public VariableType? ReturnType { get; set; }
+
+        /// <summary>
+        /// Analyzes all return value statements and returns their exact types.
+        /// For example, in TypeScript we would normally return an Array<number>, but
+        /// we want an UInt8Array, and we can see trough the returned type (MemoryStream is correctly implemented outside)
+        /// </summary>
+        public List<VariableType>? AnalyzedReturns { get; set; }
 
         public BlockSyntax? RawBlock { get; set; }
         public ArrowExpressionClauseSyntax? ArrowExpression { get; set; }

@@ -4,7 +4,6 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Nucleus;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 
 namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
@@ -160,24 +159,33 @@ namespace cs2.ts {
 
 
                     if (isClassVar) {
+                        // semantic
+                        ISymbol? symbol = semantic.GetSymbolInfo(identifier).Symbol;
+
                         if (lines.Count > 1) {
                             string b2 = lines[lines.Count - 2];
                             string b1 = lines[lines.Count - 1];
 
                             if (b2 == "this" && b1.IndexOf(";") == -1) {
                             } else {
-                                lines.Add("this.");
+                                if (symbol != null && symbol.IsStatic) {
+                                    lines.Add($"{symbol.ContainingType.Name}.");
+                                } else if (b1 != "new ") {
+                                    lines.Add("this.");
+                                }
                             }
                         } else {
-                            // semantic
-                            ISymbol? symbol = semantic.GetSymbolInfo(identifier).Symbol;
                             if (symbol is INamedTypeSymbol namedTypeSymbol) {
-                                if (!namedTypeSymbol.IsStatic &&
+                                if (!symbol.IsStatic &&
                                     !namedTypeSymbol.IsType) {
                                     lines.Add("this.");
                                 }
                             } else {
-                                lines.Add("this.");
+                                if (symbol != null && symbol.IsStatic) {
+                                    lines.Add($"{symbol.ContainingType.Name}.");
+                                } else {
+                                    lines.Add("this.");
+                                }
                             }
                         }
                     }
@@ -191,28 +199,32 @@ namespace cs2.ts {
                         lines.Add(varOnClass.Remap);
                     }
                 } else {
+                    if (!string.IsNullOrEmpty(classFn.RemapClass)) {
+                        lines[lines.Count - 2] = classFn.RemapClass;
+                    }
+
                     lines.Add(classFn.Remap);
                 }
             }
 
             if (stackVar != null) {
                 context.AddClass(context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
-                return new ExpressionResult(true, stackVar.VarType);
+                return new ExpressionResult(true, VariablePath.Unknown, stackVar.VarType);
             } else if (functionInVar != null) {
                 context.AddClass(context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
-                return new ExpressionResult(true, functionInVar.VarType);
+                return new ExpressionResult(true, VariablePath.Unknown, functionInVar.VarType);
             } else if (classVar != null) {
                 context.AddClass(context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
-                return new ExpressionResult(true, classVar.VarType);
+                return new ExpressionResult(true, VariablePath.Unknown, classVar.VarType);
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
-                return new ExpressionResult(true, null);
+                return new ExpressionResult(true, VariablePath.Unknown, null);
             } else if (classFn != null) {
                 if (classFn.ReturnType != null) {
                     // invoked function
                     if (classFn.ReturnType.Type != VariableDataType.Void) {
                         context.AddClass(context.Program.Classes.Find(c => c.Name == classFn.ReturnType.GetTypeScriptType((TypeScriptProgram)context.Program)));
-                        return new ExpressionResult(true, classFn.ReturnType);
+                        return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
                     }
                 }
             } else {
@@ -222,7 +234,7 @@ namespace cs2.ts {
             return new ExpressionResult(true);
         }
 
-        protected override void ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
+        protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
             lines.Add("new ");
 
             int startDepth = context.DepthClass;
@@ -246,6 +258,8 @@ namespace cs2.ts {
                 }
                 lines.Add(")");
             }
+
+            return new ExpressionResult(false);
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
@@ -391,6 +405,15 @@ namespace cs2.ts {
             // Add the parameter of the lambda
             lines.Add(simpleLambda.Parameter.Identifier.Text);
 
+            int start;
+            TypeInfo type = semantic.GetTypeInfo(simpleLambda);
+            if (type.ConvertedType is INamedTypeSymbol namedFuncType) {
+                ITypeSymbol returnType = namedFuncType.TypeArguments[0];
+                start = context.AddClass(context.Program.Classes.Find(c => c.Name == returnType.Name));
+            } else {
+                throw new NotImplementedException();
+            }
+
             // Add the arrow (=>) for TypeScript arrow function
             lines.Add(" => ");
 
@@ -402,6 +425,8 @@ namespace cs2.ts {
                 ProcessStatement(semantic, context, (BlockSyntax)simpleLambda.Body, lines);
                 lines.Add("}\n");
             }
+
+            context.PopClass(start);
         }
 
         protected override void ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
@@ -516,6 +541,33 @@ namespace cs2.ts {
             context.AddClass(context.Program.Classes.Find(c => c.Name == name));
         }
 
+        protected override void ProcessReturnStatement(SemanticModel semantic, LayerContext context, ReturnStatementSyntax ret, List<string> lines) {
+            if (ret.Expression == null) {
+                lines.Add("return;");
+            } else {
+                lines.Add("return ");
+
+                int start = context.Class.Count;
+                ProcessExpression(semantic, context, ret.Expression, lines);
+
+                var fn = context.GetCurrentFunction().Function;
+
+                if (fn.ReturnType != null &&
+                    fn.ReturnType.GenericArgs != null && 
+                    fn.ReturnType.GenericArgs.Count == 1) {
+                    if (lines[1] == "new Array(" &&
+                        lines[2] == "0" &&
+                        lines[3] == ")" &&
+                        fn.ReturnType.GenericArgs[0].Type == VariableDataType.UInt8) {
+                        lines.RemoveRange(1, 3);
+                        lines.Add("new Uint8Array()");
+                    }
+                }
+
+                lines.Add(";");
+                context.PopClass(start);
+            }
+        }
 
         protected override void ProcessDefaultExpression(SemanticModel semantic, LayerContext context, DefaultExpressionSyntax defaultExpression, List<string> lines) {
             var type = defaultExpression.Type.ToString();
@@ -541,7 +593,11 @@ namespace cs2.ts {
                 if (content is InterpolationSyntax interpolation) {
                     // For interpolated expressions, wrap them in ${}
                     lines.Add("${");
+
+                    int startClass = context.DepthClass;
                     ProcessExpression(semantic, context, interpolation.Expression, lines);
+                    context.PopClass(startClass);
+
                     lines.Add("}");
                 } else if (content is InterpolatedStringTextSyntax text) {
                     // Regular string content
@@ -552,7 +608,7 @@ namespace cs2.ts {
             // Add the backtick to close the template literal
             lines.Add("`");
 
-            return new ExpressionResult(true, VariableUtil.GetVarType("string"));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
@@ -625,7 +681,7 @@ namespace cs2.ts {
 
             ProcessExpression(semantic, context, castExpr.Expression, lines); // Expression being cast
 
-            return new ExpressionResult(true, varType);
+            return new ExpressionResult(true, VariablePath.Unknown, varType);
         }
 
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
@@ -645,7 +701,10 @@ namespace cs2.ts {
             lines.Add("(");
             for (int i = 0; i < lambda.ParameterList.Parameters.Count; i++) {
                 var parameter = lambda.ParameterList.Parameters[i];
-                lines.Add(parameter.Identifier.ToString());
+
+                int xxx = -1;
+                //ProcessIdentifierNameSyntax(parameter.Identifier)
+                //lines.Add(parameter.Identifier.ToString());
 
                 if (i < lambda.ParameterList.Parameters.Count - 1) {
                     lines.Add(", ");
@@ -732,7 +791,7 @@ namespace cs2.ts {
                 lines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
             }
 
-            lines.Add("}\n");
+            lines.Add("}\n\n");
         }
 
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
@@ -1014,12 +1073,16 @@ namespace cs2.ts {
 
             lines.Add(literalValue);
 
-            return new ExpressionResult(true, VariableUtil.GetVarType(type));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(type));
         }
 
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {
             lines.Add(" = ");
             ProcessExpression(semantic, context, arrowExpression.Expression, lines);
+        }
+
+        protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
+            throw new NotImplementedException();
         }
     }
 }

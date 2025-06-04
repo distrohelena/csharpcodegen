@@ -53,6 +53,12 @@ namespace cs2.ts {
             string genArgs = "";
             for (int i = 0; i < varType.GenericArgs.Count; i++) {
                 VariableType gen = varType.GenericArgs[i];
+                if (gen.Type == VariableDataType.UInt8 &&
+                    varType.GenericArgs.Count == 1 &&
+                    varType.Type == VariableDataType.Array) {
+                    return "Uint8Array";
+                }
+
                 genArgs += gen.ToTypeScriptString(program);
                 if (i != varType.GenericArgs.Count - 1) {
                     genArgs += ", ";
