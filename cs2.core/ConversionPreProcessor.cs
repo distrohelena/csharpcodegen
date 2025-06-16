@@ -2,10 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Diagnostics;
-using System.Linq.Expressions;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Xml.Linq;
 
 namespace cs2.core {
     public class ConversionPreProcessor {
@@ -36,6 +33,48 @@ namespace cs2.core {
 
             if (classDecl.BaseList != null) {
                 foreach (var baseType in classDecl.BaseList.ChildNodes()) {
+                    if (baseType is SimpleBaseTypeSyntax) {
+                        SimpleBaseTypeSyntax baseSyntax = (SimpleBaseTypeSyntax)baseType;
+
+                        var type = VariableUtil.GetVarType(baseSyntax.Type!, semantic);
+                        cl.Extensions.Add(type.TypeName);
+                    } else {
+                        Debugger.Break();
+                    }
+                }
+            }
+
+
+            context.PopClass();
+        }
+
+        private static void ProcessStructDeclaration(SemanticModel semantic, StructDeclarationSyntax structDecl, ConversionContext context) {
+            // declare class
+            var cl = context.StartClass();
+            cl.Name = structDecl.Identifier.ToString();
+
+            bool isStatic;
+            bool isOverride;
+            MemberAccessType access;
+            MemberDeclarationType classType;
+            MemberUtil.GetModifiers(structDecl.Modifiers, out isStatic, out isOverride, out access, out classType);
+
+            cl.DeclarationType = classType;
+            cl.Semantic = semantic;
+
+            if (structDecl.TypeParameterList != null) {
+                cl.GenericArgs = new List<string>();
+                foreach (var type in structDecl.TypeParameterList.Parameters) {
+                    cl.GenericArgs.Add(type.ToString());
+                }
+            }
+
+            foreach (MemberDeclarationSyntax memberSyntax in structDecl.Members) {
+                PreProcessExpression(semantic, context, memberSyntax);
+            }
+
+            if (structDecl.BaseList != null) {
+                foreach (var baseType in structDecl.BaseList.ChildNodes()) {
                     if (baseType is SimpleBaseTypeSyntax) {
                         SimpleBaseTypeSyntax baseSyntax = (SimpleBaseTypeSyntax)baseType;
 
@@ -329,15 +368,11 @@ namespace cs2.core {
 
                 ProcessClassDeclaration(semantic, classDecl, context);
             } else if (exp is StructDeclarationSyntax structDecl) {
-                // declare class
-                var cl = context.StartClass();
-                cl.Name = structDecl.Identifier.ToString();
-
-                foreach (MemberDeclarationSyntax memberSyntax in structDecl.Members) {
-                    PreProcessExpression(semantic, context, memberSyntax);
+                if (context.Program.Rules.IgnoredClasses.Any(c => structDecl.Identifier.ToString().Contains(c))) {
+                    return new ExpressionResult(false);
                 }
 
-                context.PopClass();
+                ProcessStructDeclaration(semantic, structDecl, context);
             } else if (exp is InterfaceDeclarationSyntax ifaceDecl) {
                 // declare class
                 var cl = context.StartClass();

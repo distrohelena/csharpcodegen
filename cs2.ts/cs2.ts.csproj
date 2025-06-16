@@ -8,6 +8,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include=".net.ts\system\security\cryptography\aes-gcm.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\hash-algorithm.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\hmac-sha256.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include=".net.ts\blake2fast\blake2b.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -40,6 +52,12 @@
     </None>
     <None Include=".net.ts\system\not-implemented.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\random-number-generator.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\rfc-2898-derive-bytes.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\tuple.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

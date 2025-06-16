@@ -1,46 +1,47 @@
+import { IDisposable } from "../disposable.interface";
 import { SeekOrigin } from "./seek-origin";
 
-export abstract class Stream {
-    abstract Read(buffer: Uint8Array, offset: number, count: number): number;
-    abstract Write(buffer: Uint8Array, offset: number, count: number): void;
-    abstract Seek(offset: number, origin: SeekOrigin): number;
-    abstract SetLength(length: number): void;
+export abstract class Stream implements IDisposable {
+    abstract read(buffer: Uint8Array, offset: number, count: number): number;
+    abstract write(buffer: Uint8Array, offset: number, count: number): void;
+    abstract seek(offset: number, origin: SeekOrigin): number;
+    abstract setLength(length: number): void;
 
-    abstract get CanRead(): boolean;
-    abstract get CanWrite(): boolean;
-    abstract get CanSeek(): boolean;
-    get CanTimeout(): boolean {
+    abstract get canRead(): boolean;
+    abstract get canWrite(): boolean;
+    abstract get canSeek(): boolean;
+    get canTimeout(): boolean {
         return false;
     }
 
-    abstract InternalReserve(count: number): void;
-    abstract InternalWriteByte(byte: number): void;
-    abstract InternalReadByte(): number;
+    abstract internalReserve(count: number): void;
+    abstract internalWriteByte(byte: number): void;
+    abstract internalReadByte(): number;
 
-    abstract get Length(): number;
-    abstract get Position(): number;
-    abstract set Position(value: number);
+    abstract get length(): number;
+    abstract get position(): number;
+    abstract set position(value: number);
 
-    get ReadTimeout(): number {
+    get readTimeout(): number {
         throw new Error('Timeout not supposed');
     }
-    set ReadTimeout(value: number) {
-        throw new Error('Timeout not supposed');
-    }
-
-    get WriteTimeout(): number {
-        throw new Error('Timeout not supposed');
-    }
-    set WriteTimeout(value: number) {
+    set readTimeout(value: number) {
         throw new Error('Timeout not supposed');
     }
 
-    Dispose() {
+    get writeTimeout(): number {
+        throw new Error('Timeout not supposed');
+    }
+    set writeTimeout(value: number) {
+        throw new Error('Timeout not supposed');
     }
 
-    Close() {
+    dispose() {
     }
 
-    Flush() {
+    close() {
+    }
+
+    flush() {
     }
 }

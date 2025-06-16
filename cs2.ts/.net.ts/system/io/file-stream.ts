@@ -36,7 +36,7 @@ export class FileStream extends Stream {
         this._position = 0;
     }
 
-    Read(buffer: Uint8Array, offset: number, count: number): number {
+    read(buffer: Uint8Array, offset: number, count: number): number {
         const tempBuffer = Buffer.alloc(count);
         const bytesRead = fs.readSync(this.fd, tempBuffer, 0, count, this._position);
         buffer.set(tempBuffer.subarray(0, bytesRead), offset);
@@ -44,13 +44,13 @@ export class FileStream extends Stream {
         return bytesRead;
     }
 
-    Write(buffer: Uint8Array, offset: number, count: number): void {
+    write(buffer: Uint8Array, offset: number, count: number): void {
         const tempBuffer = Buffer.from(buffer.subarray(offset, offset + count));
         const bytesWritten = fs.writeSync(this.fd, tempBuffer, 0, count, this._position);
         this._position += bytesWritten;
     }
 
-    Seek(offset: number, origin: SeekOrigin): number {
+    seek(offset: number, origin: SeekOrigin): number {
         switch (origin) {
             case SeekOrigin.Begin:
                 this._position = offset;
@@ -65,60 +65,60 @@ export class FileStream extends Stream {
         return this._position;
     }
 
-    SetLength(length: number): void {
+    setLength(length: number): void {
         fs.ftruncateSync(this.fd, length);
     }
 
-    get CanRead(): boolean {
+    get canRead(): boolean {
         return true;
     }
 
-    get CanWrite(): boolean {
+    get canWrite(): boolean {
         return true;
     }
 
-    get CanSeek(): boolean {
+    get canSeek(): boolean {
         return true;
     }
 
-    InternalReserve(count: number): void {
+    internalReserve(count: number): void {
         // Not needed for file streams
     }
 
-    InternalWriteByte(byte: number): void {
+    internalWriteByte(byte: number): void {
         const buffer = new Uint8Array([byte]);
-        this.Write(buffer, 0, 1);
+        this.write(buffer, 0, 1);
     }
 
-    InternalReadByte(): number {
+    internalReadByte(): number {
         const buffer = new Uint8Array(1);
-        const bytesRead = this.Read(buffer, 0, 1);
+        const bytesRead = this.read(buffer, 0, 1);
         return bytesRead > 0 ? buffer[0] : -1;
     }
 
-    get Length(): number {
+    get length(): number {
         return fs.fstatSync(this.fd).size;
     }
 
-    get Position(): number {
+    get position(): number {
         return this._position;
     }
-    set Position(value: number) {
+    set position(value: number) {
         this._position = value;
     }
 
-    Dispose(): void {
-        this.Close();
+    dispose(): void {
+        this.close();
     }
 
-    Close(): void {
+    close(): void {
         if (this.fd !== undefined) {
             fs.closeSync(this.fd);
             this.fd = -1;
         }
     }
 
-    Flush(): void {
+    flush(): void {
         fs.fsyncSync(this.fd);
     }
 }

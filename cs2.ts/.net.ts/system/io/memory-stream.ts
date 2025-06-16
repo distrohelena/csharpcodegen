@@ -2,37 +2,37 @@ import { Stream } from "./stream";
 import { SeekOrigin } from "./seek-origin";
 
 export class MemoryStream extends Stream {
-    get CanRead(): boolean {
+    get canRead(): boolean {
         return true;
     }
-    get CanWrite(): boolean {
+    get canWrite(): boolean {
         return true;
     }
-    get CanSeek(): boolean {
+    get canSeek(): boolean {
         return true;
     }
-    get Length(): number {
+    get length(): number {
         return this.buffer.length;
     }
 
-    get Position(): number {
-        return this.position;
+    get position(): number {
+        return this._position;
     }
-    set Position(value: number) {
-        this.position = value;
+    set position(value: number) {
+        this._position = value;
     }
 
     private buffer: Uint8Array;
-    private position: number;
+    private _position: number;
 
     constructor(initialSize: number = 256) {
         super();
 
-        this.position = 0;
+        this._position = 0;
         this.buffer = new Uint8Array(initialSize);
     }
 
-    override InternalReserve(count: number) {
+    override internalReserve(count: number) {
         const requiredSize = this.position + count;
         if (requiredSize > this.buffer.length) {
             const newBuffer = new Uint8Array(Math.max(this.buffer.length * 2, requiredSize));
@@ -41,18 +41,18 @@ export class MemoryStream extends Stream {
         }
     }
 
-    override InternalWriteByte(byte: number): void {
+    override internalWriteByte(byte: number): void {
         this.buffer[this.position] = byte;
         this.position += 1;
     }
 
-    override InternalReadByte(): number {
+    override internalReadByte(): number {
         let value = this.buffer[this.position];
         this.position++;
         return value;
     }
 
-    override Read(buffer: Uint8Array, offset: number, count: number): number {
+    override read(buffer: Uint8Array, offset: number, count: number): number {
         const remaining = this.buffer.length - this.position;
         const toRead = Math.min(count, remaining);
 
@@ -65,7 +65,7 @@ export class MemoryStream extends Stream {
         return toRead;
     }
 
-    override Write(buffer: Uint8Array, offset: number, count: number): void {
+    override write(buffer: Uint8Array, offset: number, count: number): void {
         const requiredSize = this.position + count;
         if (requiredSize > this.buffer.length) {
             const newBuffer = new Uint8Array(Math.max(this.buffer.length * 2, requiredSize));
@@ -77,7 +77,7 @@ export class MemoryStream extends Stream {
         this.position += count;
     }
 
-    override Seek(offset: number, origin: SeekOrigin): number {
+    override seek(offset: number, origin: SeekOrigin): number {
         let newPosition: number;
 
         switch (origin) {
@@ -102,7 +102,7 @@ export class MemoryStream extends Stream {
         return this.position;
     }
 
-    SetLength(length: number): void {
+    setLength(length: number): void {
         if (length < this.buffer.length) {
             this.buffer = this.buffer.subarray(0, length);
         } else {
@@ -112,16 +112,16 @@ export class MemoryStream extends Stream {
         }
     }
 
-    GetLength(): number {
+    getLength(): number {
         return this.buffer.length;
     }
 
-    Close(): void {
+    close(): void {
         this.buffer = new Uint8Array(0); // Clear buffer
         this.position = 0;
     }
 
-    ToArray(): Uint8Array {
+    toArray(): Uint8Array {
         return this.buffer.subarray(0, this.position);
     }
 }

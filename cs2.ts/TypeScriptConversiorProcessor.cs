@@ -79,6 +79,12 @@ namespace cs2.ts {
                         continue;
                     }
 
+                    if (result.Type.Type == VariableDataType.Array) {
+                        for (int j = 0; j < result.Type.GenericArgs.Count; j++) {
+                            searchName += StringUtil.CapitalizerFirstLetter(result.Type.GenericArgs[j].TypeName);
+                        }
+                    }
+
                     string typeName = result.Type.TypeName;
                     searchName += StringUtil.CapitalizerFirstLetter(typeName);
                 }
@@ -480,7 +486,7 @@ namespace cs2.ts {
             context.PopClass(start);
         }
 
-        protected override void ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
+        protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
             // Check if there's an initializer (e.g., new int[] { 1, 2, 3 })
             if (arrayCreation.Initializer != null) {
                 lines.Add("[");
@@ -495,7 +501,13 @@ namespace cs2.ts {
             }
             // If it's an array with specified size (e.g., new int[5])
             else if (arrayCreation.Type.RankSpecifiers.Any()) {
-                lines.Add("new Array(");
+                if (arrayCreation.Type.ElementType is PredefinedTypeSyntax predefined &&
+                    predefined.Keyword.ToString() == "byte") {
+                    lines.Add("new Uint8Array(");
+                } else {
+                    lines.Add("new Array(");
+                }
+
                 foreach (var rankSpecifier in arrayCreation.Type.RankSpecifiers) {
                     foreach (var size in rankSpecifier.Sizes) {
                         ProcessExpression(semantic, context, size, lines);
@@ -503,6 +515,8 @@ namespace cs2.ts {
                 }
                 lines.Add(")");
             }
+
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
         }
 
         protected override void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {

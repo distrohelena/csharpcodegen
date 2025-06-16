@@ -16,6 +16,11 @@ export class BinaryWriter implements IDisposable {
         this.stream.InternalWriteByte(value);
     }
 
+    writeByteArray(data: Uint8Array): void {
+        this.checkAlloc(data.length);
+        this.stream.Write(data, 0, data.length);
+    }
+
     writeInt8(value: number): void {
         this.checkAlloc(1);
         this.stream.InternalWriteByte(value);

@@ -474,7 +474,9 @@ namespace cs2.ts {
                     }
                 }
 
-
+                if (cl.Name == "CryptoUtil" && name == "DoWork") {
+                    //Debugger.Break();
+                }
 
                 if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
                     writer.WriteLine(");");

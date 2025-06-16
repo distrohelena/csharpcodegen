@@ -88,6 +88,11 @@ namespace cs2.ts {
             // system.security.cryptography
             Requirements.Add(new TypeScriptKnownClass("SHA256", "./system/security/cryptography/sha256"));
             Requirements.Add(new TypeScriptKnownClass("MD5", "./system/security/cryptography/md5"));
+            Requirements.Add(new TypeScriptKnownClass("AesGcm", "./system/security/cryptography/aes-gcm"));
+            Requirements.Add(new TypeScriptKnownClass("HashAlgorithm", "./system/security/cryptography/hash-algorithm"));
+            Requirements.Add(new TypeScriptKnownClass("HMACSHA256", "./system/security/cryptography/hmac-sha256"));
+            Requirements.Add(new TypeScriptKnownClass("Rfc2898DeriveBytes", "./system/security/cryptography/rfc-2898-derive-bytes"));
+            Requirements.Add(new TypeScriptKnownClass("RandomNumberGenerator", "./system/security/cryptography/random-number-generator"));
 
             // system.text
             Requirements.Add(new TypeScriptKnownClass("Encoding", "./system/text/encoding"));
