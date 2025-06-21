@@ -9,5 +9,6 @@ namespace cs2.core {
             TypeMap = new Dictionary<string, string>();
             Rules = rules;
         }
+
     }
 }

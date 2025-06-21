@@ -2,8 +2,11 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Emit;
 using Nucleus;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
@@ -20,8 +23,38 @@ namespace cs2.ts {
             }
 
             startDepth = context.Class.Count;
-            ProcessExpression(semantic, context, assignment.Right, lines);
+
+            List<string> initLines = new List<string>();
+            ExpressionResult result = ProcessExpression(semantic, context, assignment.Right, initLines);
             context.PopClass(startDepth);
+
+            FunctionStack? fn = context.GetCurrentFunction();
+            if (result.Type != null &&
+                result.Type.TypeName.StartsWith("Promise<")) {
+                //lines.Add("await ");
+
+                if (!fn.Function.IsAsync) {
+                    fn.Function.IsAsync = true;
+                    if (fn.Function.ReturnType != null) {
+                        fn.Function.ReturnType = new VariableType(fn.Function.ReturnType);
+                        fn.Function.ReturnType.TypeName = $"Promise<{fn.Function.ReturnType.TypeName}>";
+                    }
+                }
+            }
+
+            lines.AddRange(initLines);
+        }
+
+        public static ConversionClass GetClass(TypeScriptProgram program, VariableType varType) {
+            string name = varType.GetTypeScriptType(program);
+            ConversionClass found = program.Classes.FirstOrDefault(c => c.Name == name);
+
+            if (found == null) {
+                name = varType.GetTypeScriptTypeNoGeneric(program);
+                found = program.Classes.FirstOrDefault(c => c.Name == name);
+            }
+
+            return found;
         }
 
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
@@ -54,6 +87,16 @@ namespace cs2.ts {
 
             // variable from the current class
             ConversionVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
+            if (classVar == null) {
+                // look at base classes
+                currentClass?.Extensions.ForEach(c => {
+                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == c);
+                    ConversionVariable? foundVar = cl?.Variables.Find(c => c.Name == name);
+                    if (foundVar != null) {
+                        classVar = foundVar;
+                    }
+                });
+            }
 
             if (classVar == null && staticClass == null) {
                 string camelCame = StringUtil.ToCamelCase(name);
@@ -65,6 +108,16 @@ namespace cs2.ts {
 
             // function from the current class
             ConversionFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
+            if (classFn == null) {
+                // look at base classes
+                currentClass?.Extensions.ForEach(c => {
+                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == c);
+                    ConversionFunction? foundFn = cl?.Functions.Find(c => c.Name == name);
+                    if (foundFn != null) {
+                        classFn = foundFn;
+                    }
+                });
+            }
 
             bool paramsMatch = classFn?.InParameters?.Count == refTypes?.Count;
 
@@ -214,13 +267,13 @@ namespace cs2.ts {
             }
 
             if (stackVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == stackVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
+                context.AddClass(GetClass((TypeScriptProgram)context.Program, stackVar.VarType));
                 return new ExpressionResult(true, VariablePath.Unknown, stackVar.VarType);
             } else if (functionInVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == functionInVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
+                context.AddClass(GetClass((TypeScriptProgram)context.Program, functionInVar.VarType));
                 return new ExpressionResult(true, VariablePath.Unknown, functionInVar.VarType);
             } else if (classVar != null) {
-                context.AddClass(context.Program.Classes.Find(c => c.Name == classVar.VarType.GetTypeScriptType((TypeScriptProgram)context.Program)));
+                context.AddClass(GetClass((TypeScriptProgram)context.Program, classVar.VarType));
                 return new ExpressionResult(true, VariablePath.Unknown, classVar.VarType);
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
@@ -231,10 +284,18 @@ namespace cs2.ts {
                 if (classFn.ReturnType != null) {
                     // invoked function
                     if (classFn.ReturnType.Type != VariableDataType.Void) {
-                        context.AddClass(context.Program.Classes.Find(c => c.Name == classFn.ReturnType.GetTypeScriptType((TypeScriptProgram)context.Program)));
+                        context.AddClass(GetClass((TypeScriptProgram)context.Program, classFn.ReturnType));
+
+                        if (classFn.IsAsync) {
+                            VariableType cloned = new VariableType(classFn.ReturnType);
+                            cloned.TypeName = $"Promise<{cloned.TypeName}>";
+                            return new ExpressionResult(true, VariablePath.Unknown, cloned);
+                        }
                         return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
                     }
                 }
+            } else if (currentClass?.DeclarationType == MemberDeclarationType.Enum) {
+                
             } else {
                 //Debugger.Break();
             }
@@ -243,6 +304,10 @@ namespace cs2.ts {
         }
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
+            if (objectCreation.Initializer is InitializerExpressionSyntax initializer) {
+                return ProcessExpression(semantic, context, objectCreation.Initializer, lines);
+            }
+
             List<string> newLines = new List<string>();
             List<string> afterLines = new List<string>();
 
@@ -277,6 +342,9 @@ namespace cs2.ts {
 
                     int startArg = context.DepthClass;
                     types.Add(ProcessExpression(semantic, context, arg.Expression, finalLines));
+                    if (types[i].Type == null) {
+                        //Debugger.Break();
+                    }
                     context.PopClass(startArg);
 
                     if (i != objectCreation.ArgumentList.Arguments.Count - 1) {
@@ -293,6 +361,10 @@ namespace cs2.ts {
                         for (int i = 0; i < types.Count; i++) {
                             ConversionVariable var = c.InParameters[i];
                             ExpressionResult res = types[i];
+
+                            if (res.Type == null) {
+                                return false;
+                            }
 
                             if (var.VarType.TypeName != res.Type.TypeName) {
                                 return false;
@@ -316,7 +388,7 @@ namespace cs2.ts {
             lines.AddRange(newLines);
             lines.AddRange(afterLines);
             lines.AddRange(finalLines);
-            return new ExpressionResult(false);
+            return result;
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
@@ -368,9 +440,16 @@ namespace cs2.ts {
             }
             argLines.Add(")");
 
-            int start = context.DepthClass;
-            ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, lines, types);
-            context.PopClass(start);
+            List<string> invoLines = new List<string>();
+            ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, invoLines, types);
+
+            if (result.Type != null &&
+                result.Type.TypeName.StartsWith("Promise<")) {
+                lines.Add("await ");
+                context.GetCurrentFunction().Function.IsAsync = true;
+            }
+
+            lines.AddRange(invoLines);
 
             lines.AddRange(argLines);
 
@@ -613,7 +692,16 @@ namespace cs2.ts {
                 lines.Add("return ");
 
                 int start = context.Class.Count;
-                ProcessExpression(semantic, context, ret.Expression, lines);
+
+                List<string> retLines = new List<string>();
+                ExpressionResult res = ProcessExpression(semantic, context, ret.Expression, retLines);
+
+                if (res.Type != null &&
+                    res.Type.TypeName.StartsWith("Promise<")) {
+                    //lines.Add("await ");
+                }
+
+                lines.AddRange(retLines);
 
                 var fn = context.GetCurrentFunction().Function;
 
@@ -817,46 +905,60 @@ namespace cs2.ts {
             lines.Add("let ");
 
             // process the resource declaration (if any)
+            List<string> nameLines = new List<string>();
             if (usingStatement.Declaration != null) {
                 var declaration = usingStatement.Declaration;
                 for (int i = 0; i < declaration.Variables.Count; i++) {
                     var variable = declaration.Variables[i];
-                    lines.Add($"{variable.Identifier.ToString()}");
+                    nameLines.Add($"{variable.Identifier.ToString()}");
 
                     if (i < declaration.Variables.Count - 1) {
-                        lines.Add(",");
+                        nameLines.Add(",");
                     }
                 }
-                lines.Add(";\n");
             } else if (usingStatement.Expression != null) {
+                Debugger.Break();
             }
 
-            lines.Add("try {\n");
+
+            List<string> declLines = new List<string>();
+            declLines.Add("try {\n");
 
             // process the resource declaration (if any)
             if (usingStatement.Declaration != null) {
-                ProcessDeclaration(semantic, context, usingStatement.Declaration, lines, true);
-                lines.Add(";\n");
+                ExpressionResult result = ProcessDeclaration(semantic, context, usingStatement.Declaration, declLines, true);
+
+                if (result.Type != null) {
+                    nameLines.Add($": {result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program)}");
+                }
             } else if (usingStatement.Expression != null) {
-                ProcessExpression(semantic, context, usingStatement.Expression, lines);
-                lines.Add(";\n");
+                ExpressionResult result = ProcessExpression(semantic, context, usingStatement.Expression, declLines);
+
+                if (result.Type != null) {
+                    nameLines.Add($": {result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program)}");
+                }
             }
+            nameLines.Add(";\n");
+            declLines.Add(";\n");
 
             // process the body of the using statement
-            ProcessStatement(semantic, context, usingStatement.Statement, lines);
+            ProcessStatement(semantic, context, usingStatement.Statement, declLines);
 
-            lines.Add("} finally {\n");
+            declLines.Add("} finally {\n");
 
             // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
                 foreach (var variable in usingStatement.Declaration.Variables) {
-                    lines.Add($"{variable.Identifier.Text}.dispose();\n");
+                    declLines.Add($"{variable.Identifier.Text}.dispose();\n");
                 }
             } else if (usingStatement.Expression != null) {
-                lines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
+                declLines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
             }
 
-            lines.Add("}\n\n");
+            declLines.Add("}\n\n");
+
+            lines.AddRange(nameLines);
+            lines.AddRange(declLines);
         }
 
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
@@ -879,6 +981,12 @@ namespace cs2.ts {
                 lines.Add("catch (");
                 if (catchClause.Declaration != null) {
                     lines.Add(catchClause.Declaration.Identifier.Text);
+
+                    FunctionStack? fn = context.GetCurrentFunction();
+                    ConversionVariable var = new ConversionVariable();
+                    var.Name = catchClause.Declaration.Identifier.Text;
+                    var.VarType = VariableUtil.GetVarType(catchClause.Declaration.Type, semantic);
+                    fn.Stack.Add(var);
                 } else {
                     lines.Add("err"); // Default error variable if none provided
                 }
@@ -1041,7 +1149,7 @@ namespace cs2.ts {
         }
 
 
-        protected void ProcessDeclaration(
+        protected ExpressionResult ProcessDeclaration(
             SemanticModel semantic,
             LayerContext context,
             VariableDeclarationSyntax declaration,
@@ -1056,6 +1164,8 @@ namespace cs2.ts {
 
             int start = context.DepthClass;
 
+            ExpressionResult initResult = default(ExpressionResult);
+
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
                 lines.Add($"{variable.Identifier.ToString()}");
@@ -1067,17 +1177,37 @@ namespace cs2.ts {
                 if (fn != null) {
                     ConversionVariable var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
+
                     var.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
                     fn.Stack.Add(var);
                 }
 
                 if (variable.Initializer != null) {
                     lines.Add($" = ");
-                    ProcessExpression(semantic, context, variable.Initializer.Value, lines);
+
+                    List<string> initLines = new List<string>();
+                    initResult = ProcessExpression(semantic, context, variable.Initializer.Value, initLines);
+
+                    if (initResult.Type != null &&
+                        initResult.Type.TypeName.StartsWith("Promise<")) {
+                        //lines.Add("await ");
+
+                        if (!fn.Function.IsAsync) {
+                            fn.Function.IsAsync = true;
+                            if (fn.Function.ReturnType != null) {
+                                fn.Function.ReturnType = new VariableType(fn.Function.ReturnType);
+                                fn.Function.ReturnType.TypeName = $"Promise<{fn.Function.ReturnType.TypeName}>";
+                            }
+                        }
+                    }
+
+                    lines.AddRange(initLines);
                 }
             }
 
             context.PopClass(start);
+
+            return initResult;
         }
 
         protected override ExpressionResult ProcessLiteralExpression(LayerContext context, LiteralExpressionSyntax literalExpression, List<string> lines) {

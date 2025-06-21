@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Diagnostics;
+using System.Xml.Linq;
 
 namespace cs2.core {
     public static class VariableUtil {
@@ -82,10 +83,12 @@ namespace cs2.core {
         }
 
         public static VariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
+            var typeInfo = semantic.GetTypeInfo(type);
+
             if (type is IdentifierNameSyntax) {
                 IdentifierNameSyntax identifier = (IdentifierNameSyntax)type;
 
-                string identifierName = identifier.ToString();
+                string identifierName = typeInfo.Type.Name;
                 VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
 
                 return baseType;

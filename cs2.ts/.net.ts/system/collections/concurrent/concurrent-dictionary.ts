@@ -1,148 +1,115 @@
-export class ConcurrentDictionary<TKey, TValue> {
-    private items: Map<TKey, TValue> = new Map();
-    private lock: Promise<void> = Promise.resolve();
+import { IDictionary } from "../generic/dictionary.interface";
+import { KeyValuePair } from "../generic/key-value-pair";
+import { List } from "../generic/list";
 
-    // Acquire a lock for concurrency-safe operations
-    private async acquireLock(): Promise<void> {
-        let release: () => void;
-        const newLock = new Promise<void>((resolve) => (release = resolve));
-        const previousLock = this.lock;
-        this.lock = newLock;
-        await previousLock;
-        release!();
+export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
+    private items: { [key: string]: TValue } = {};
+    private keyToString: (key: TKey) => string;
+    private _count: number = 0;
+
+    constructor(keyToString?: (key: TKey) => string) {
+        this.keyToString = keyToString || ((key: TKey) => JSON.stringify(key));
     }
 
-    // Add or update a key-value pair
-    public async AddOrUpdate(key: TKey, value: TValue): Promise<void> {
-        await this.acquireLock();
-        try {
-            this.items.set(key, value);
-        } finally {
-            // Lock released automatically after the operation
+    // Add a key-value pair to the dictionary
+    public add(key: TKey, value: TValue): void {
+        const stringKey = this.keyToString(key);
+        if (this.items.hasOwnProperty(stringKey)) {
+            throw new Error("Key already exists in dictionary.");
         }
+        this.items[stringKey] = value;
+        this._count++;
     }
 
-    // Add or update using a factory for the update value based on the existing value
-    public async AddOrUpdateWithFactory(
-        key: TKey,
-        addValue: TValue,
-        updateValueFactory: (existingValue: TValue) => TValue
-    ): Promise<void> {
-        await this.acquireLock();
-        try {
-            const existingValue = this.items.get(key);
-            if (existingValue !== undefined) {
-                this.items.set(key, updateValueFactory(existingValue));
-            } else {
-                this.items.set(key, addValue);
-            }
-        } finally {
-            // Lock released automatically after the operation
+    // Try to get the value by key, returning a boolean for success/failure
+    public tryGetValue(key: TKey, outValue: { value?: TValue }): boolean {
+        const stringKey = this.keyToString(key);
+        if (this.items.hasOwnProperty(stringKey)) {
+            outValue.value = this.items[stringKey];
+            return true;
         }
-    }
-
-    // Try to add a new key-value pair, only if it does not already exist
-    public async TryAdd(key: TKey, value: TValue): Promise<boolean> {
-        await this.acquireLock();
-        try {
-            if (!this.items.has(key)) {
-                this.items.set(key, value);
-                return true;
-            }
-            return false;
-        } finally {
-            // Lock released automatically after the operation
-        }
-    }
-
-    // Try to get a value without throwing an error if not found
-    public async TryGetValue(key: TKey, outValue: { value?: TValue }): Promise<boolean> {
-        await this.acquireLock();
-        try {
-            const value = this.items.get(key);
-            if (value !== undefined) {
-                outValue.value = value;
-                return true;
-            }
-            outValue.value = undefined;
-            return false;
-        } finally {
-            // Lock released automatically after the operation
-        }
-    }
-
-    // Get a value by key using indexing
-    public async get(key: TKey): Promise<TValue | undefined> {
-        return this.Get(key);
+        outValue.value = undefined;
+        return false;
     }
 
     // Set value by key using indexing
-    public async set(key: TKey, value: TValue): Promise<void> {
-        return this.AddOrUpdate(key, value);
+    public set(key: TKey, value: TValue): void {
+        this.add(key, value);
     }
 
-    // Get a value by key
-    public async Get(key: TKey): Promise<TValue | undefined> {
-        await this.acquireLock();
-        try {
-            return this.items.get(key);
-        } finally {
-            // Lock released automatically after the operation
-        }
+    // Get the value by key
+    public get(key: TKey): TValue | undefined {
+        const stringKey = this.keyToString(key);
+        return this.items.hasOwnProperty(stringKey) ? this.items[stringKey] : undefined;
     }
 
     // Remove an item by key
-    public async Remove(key: TKey): Promise<boolean> {
-        await this.acquireLock();
-        try {
-            return this.items.delete(key);
-        } finally {
-            // Lock released automatically after the operation
+    public remove(key: TKey): boolean {
+        const stringKey = this.keyToString(key);
+        if (this.items.hasOwnProperty(stringKey)) {
+            delete this.items[stringKey];
+            this._count--;
+            return true;
         }
+        return false;
     }
 
-    // Check if the dictionary contains a key
-    public async ContainsKey(key: TKey): Promise<boolean> {
-        await this.acquireLock();
-        try {
-            return this.items.has(key);
-        } finally {
-            // Lock released automatically after the operation
-        }
+    // Check if a key exists
+    public containsKey(key: TKey): boolean {
+        const stringKey = this.keyToString(key);
+        return this.items.hasOwnProperty(stringKey);
     }
 
     // Get the count of elements in the dictionary
-    public get Count(): number {
-        return this.items.size;
+    public get count(): number {
+        return this.count;
+    }
+
+    // Get all keys in the dictionary
+    public get keys(): TKey[] {
+        return Object.keys(this.items).map(key => JSON.parse(key));
+    }
+
+    // Get all values in the dictionary
+    public get values(): TValue[] {
+        return Object.values(this.items);
     }
 
     // Clear the dictionary
-    public async Clear(): Promise<void> {
-        await this.acquireLock();
-        try {
-            this.items.clear();
-        } finally {
-            // Lock released automatically after the operation
+    public clear(): void {
+        this.items = {};
+        this._count = 0;
+    }
+
+    // Iterate over the dictionary using a callback function
+    public forEach(callback: (key: TKey, value: TValue) => void): void {
+        for (const key in this.items) {
+            if (this.items.hasOwnProperty(key)) {
+                callback(JSON.parse(key), this.items[key]);
+            }
         }
     }
 
-    // Get all keys in sorted order
-    public async Keys(): Promise<TKey[]> {
-        await this.acquireLock();
-        try {
-            return Array.from(this.items.keys());
-        } finally {
-            // Lock released automatically after the operation
-        }
+    public orderBy(
+        selector: (pair: KeyValuePair<TKey, TValue>) => any
+    ): List<KeyValuePair<TKey, TValue>> {
+        const result: Array<KeyValuePair<TKey, TValue>> = [];
+
+        this.forEach((key, value) => {
+            result.push({ key, value });
+        });
+
+        const list = new List<KeyValuePair<TKey, TValue>>();
+
+        list.addRange(result.sort((a, b) => {
+            const aKey = selector(a);
+            const bKey = selector(b);
+            if (aKey < bKey) return -1;
+            if (aKey > bKey) return 1;
+            return 0;
+        }));
+
+        return list;
     }
 
-    // Get all values in sorted order
-    public async Values(): Promise<TValue[]> {
-        await this.acquireLock();
-        try {
-            return Array.from(this.items.values());
-        } finally {
-            // Lock released automatically after the operation
-        }
-    }
 }

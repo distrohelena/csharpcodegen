@@ -9,7 +9,7 @@ export class Guid {
     }
 
     // Static method to create a new GUID
-    public static NewGuid(): Guid {
+    public static newGuid(): Guid {
         const byteArray = new Uint8Array(16);
         for (let i = 0; i < 16; i++) {
             byteArray[i] = Math.floor(Math.random() * 256);
@@ -24,7 +24,7 @@ export class Guid {
     }
 
     // Static method to parse a GUID from a string
-    public static Parse(value: string): Guid {
+    public static parse(value: string): Guid {
         const hexRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (!hexRegex.test(value)) {
             throw new Error('Invalid GUID format');
@@ -50,29 +50,29 @@ export class Guid {
     }
 
     // Constructor to create a GUID from a byte array
-    public static FromByteArray(byteArray: Uint8Array): Guid {
+    public static fromByteArray(byteArray: Uint8Array): Guid {
         return new Guid(byteArray);
     }
 
     // Method to check if another GUID is equal to the current one
-    public Equals(other: Guid): boolean {
+    public equals(other: Guid): boolean {
         return this.byteArray.every((byte, index) => byte === other.byteArray[index]);
     }
 
     // Method to return the string representation of the GUID
-    public ToString(): string {
+    public toString(): string {
         const hexPairs = Array.from(this.byteArray).map(byte => byte.toString(16).padStart(2, '0'));
         return `${hexPairs.slice(3, 4).join('')}${hexPairs.slice(2, 3).join('')}${hexPairs.slice(1, 2).join('')}${hexPairs.slice(0, 1).join('')}-${hexPairs.slice(5, 6).join('')}${hexPairs.slice(4, 5).join('')}-${hexPairs.slice(7, 8).join('')}${hexPairs.slice(6, 7).join('')}-${hexPairs.slice(8, 10).join('')}-${hexPairs.slice(10).join('')}`;
     }
 
     // Static method to check if a string is a valid GUID
-    public static IsValid(value: string): boolean {
+    public static isValid(value: string): boolean {
         const hexRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         return hexRegex.test(value);
     }
 
     // Method to return the byte array representation of the GUID
-    public ToByteArray(): Uint8Array {
+    public toByteArray(): Uint8Array {
         return this.byteArray;
     }
 }

@@ -46,7 +46,10 @@ namespace cs2.core {
         public virtual void ProcessBlock(SemanticModel semantic, LayerContext context, BlockSyntax block, List<string> lines, int depth = 1) {
             foreach (var statement in block.Statements) {
                 List<string> newLines = new List<string>();
+
+                int start = context.DepthClass;
                 ExpressionResult result = ProcessStatement(semantic, context, statement, newLines, depth);
+                context.PopClass(start);
 
                 if (result.BeforeLines != null) {
                     lines.AddRange(result.BeforeLines);

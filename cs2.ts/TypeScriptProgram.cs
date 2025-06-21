@@ -3,6 +3,7 @@ using cs2.core.symbols;
 using Nucleus;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace cs2.ts {
     public class TypeScriptProgram : ConversionProgram {
@@ -21,15 +22,17 @@ namespace cs2.ts {
             this.buildDotNetData();
 
             // system
+            Requirements.Add(new TypeScriptKnownClass("InvalidOperationException", "./system/invalid-operation.exception"));
             Requirements.Add(new TypeScriptKnownClass("NotSupportedException", "./system/not-supported.exception"));
             Requirements.Add(new TypeScriptKnownClass("NotImplementedException", "./system/not-implemented.exception"));
+            Requirements.Add(new TypeScriptKnownClass("ArgumentException", "./system/argument.exception"));
+            Requirements.Add(new TypeScriptKnownClass("ArgumentNullException", "./system/argument-null.exception"));
             Requirements.Add(new TypeScriptGenericKnownClass(17, 0, false, "Action", "./system/action"));
             Requirements.Add(new TypeScriptGenericKnownClass(17, 1, false, "Func", "./system/func"));
             Requirements.Add(new TypeScriptKnownClass("ConsoleColor", "./system/console-color"));
             Requirements.Add(new TypeScriptKnownClass("DateTime", "./system/date-time"));
             Requirements.Add(new TypeScriptKnownClass("TimeSpan", "./system/time-span"));
             Requirements.Add(new TypeScriptKnownClass("Exception", "./system/exception"));
-            Requirements.Add(new TypeScriptKnownClass("ArgumentException", "./system/argument.exception"));
             Requirements.Add(new TypeScriptKnownClass("Random", "./system/random"));
             Requirements.Add(new TypeScriptKnownClass("Attribute", "./system/attribute"));
             Requirements.Add(new TypeScriptKnownClass("Version", "./system/version"));
@@ -37,7 +40,7 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("Console", "./system/console"));
             Requirements.Add(new TypeScriptKnownClass("IDisposable", "./system/disposable.interface"));
             Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
-            Requirements.Add(new TypeScriptKnownClass("ArrayUtil", "./system/array-util"));
+            Requirements.Add(new TypeScriptKnownClass("NativeArrayUtil", "./system/nat-array-util"));
             Requirements.Add(new TypeScriptKnownClass("Convert", "./system/convert"));
 
             // system.collection.concurrent
@@ -92,7 +95,16 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("HashAlgorithm", "./system/security/cryptography/hash-algorithm"));
             Requirements.Add(new TypeScriptKnownClass("HMACSHA256", "./system/security/cryptography/hmac-sha256"));
             Requirements.Add(new TypeScriptKnownClass("Rfc2898DeriveBytes", "./system/security/cryptography/rfc-2898-derive-bytes"));
+            Requirements.Add(new TypeScriptKnownClass("HashAlgorithmName", "./system/security/cryptography/hash-algorithm-name"));
             Requirements.Add(new TypeScriptKnownClass("RandomNumberGenerator", "./system/security/cryptography/random-number-generator"));
+            Requirements.Add(new TypeScriptKnownClass("ECParameters", "./system/security/cryptography/ec-parameters"));
+            Requirements.Add(new TypeScriptKnownClass("ECDiffieHellman", "./system/security/cryptography/ec-diffie-helman"));
+            Requirements.Add(new TypeScriptKnownClass("ECDiffieHellmanPublicKey", "./system/security/cryptography/ec-diffie-helman-public-key"));
+            Requirements.Add(new TypeScriptKnownClass("ECCurve", "./system/security/cryptography/ec-curve"));
+            Requirements.Add(new TypeScriptKnownClass("ECCurveType", "./system/security/cryptography/ec-curve-type"));
+            Requirements.Add(new TypeScriptKnownClass("ECPoint", "./system/security/cryptography/ec-point"));
+            Requirements.Add(new TypeScriptKnownClass("ECDsa", "./system/security/cryptography/ecdsa"));
+            Requirements.Add(new TypeScriptKnownClass("CryptographicException", "./system/security/cryptography/cryptographic-exception"));
 
             // system.text
             Requirements.Add(new TypeScriptKnownClass("Encoding", "./system/text/encoding"));
@@ -228,7 +240,8 @@ namespace cs2.ts {
             ConversionClass clArray = makeClass("Array");
             Classes.Add(clArray);
             makeTypeScriptVariable("Length", "length", clArray, "int");
-            makeTypeScriptFunction("Copy", "copy", clArray, "", "ArrayUtil");
+            makeTypeScriptFunction("Copy", "copy", clArray, "", "NativeArrayUtil");
+            makeTypeScriptFunction("SequenceEqual", "sequenceEqual", clArray, "", "NativeArrayUtil");
 
             ConversionClass clnumber = makeClass("number");
             Classes.Add(clnumber);

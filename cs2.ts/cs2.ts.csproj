@@ -8,7 +8,40 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include=".net.ts\system\argument-null.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\invalid-operation.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\security\cryptography\aes-gcm.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\cryptographic-exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-curve-type.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-diffie-helman-public-key.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-point.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-curve.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-parameters.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ec-diffie-helman.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\ecdsa.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\security\cryptography\hash-algorithm-name.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\security\cryptography\hash-algorithm.ts">
@@ -23,7 +56,7 @@
     <None Include=".net.ts\blake2fast\blake2b.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include=".net.ts\system\array-util.ts">
+    <None Include=".net.ts\system\nat-array-util.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\collections\generic\queue.ts">

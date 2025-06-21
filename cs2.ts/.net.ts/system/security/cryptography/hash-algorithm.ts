@@ -1,13 +1,17 @@
 import { createHash } from 'crypto';
+import { IDisposable } from '../../disposable.interface';
 
 /**
  * A utility class to compute cryptographic hashes.
  */
-export class HashAlgorithm {
+export class HashAlgorithm implements IDisposable {
     private algorithm: string;
 
     private constructor(algorithm: string) {
         this.algorithm = algorithm.toLowerCase();
+    }
+
+    dispose(): void {
     }
 
     /**
@@ -28,7 +32,7 @@ export class HashAlgorithm {
      * @param data - The data to hash.
      * @returns A Buffer containing the hash.
      */
-    public computeHash(data: Buffer): Buffer {
+    public computeHash(data: Uint8Array): Uint8Array {
         return createHash(this.algorithm).update(data).digest();
     }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace cs2.core {
     public abstract class LayerContext {
         public ConversionProgram Program { get; private set; }

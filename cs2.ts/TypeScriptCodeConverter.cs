@@ -187,10 +187,6 @@ namespace cs2.ts {
                     context.AddClass(cl);
                     context.AddFunction(new FunctionStack(fn));
 
-                    if (cl.Name == "ClientSettings") {
-                        //Debugger.Break();
-                    }
-
                     if (fn.ArrowExpression != null) {
                         conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, lines);
                     } else if (fn.RawBlock != null) {
@@ -277,6 +273,9 @@ namespace cs2.ts {
                     writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
                     writer.WriteLine($"        return this._{var.Name};");
                     writer.WriteLine($"    }}");
+                    writer.WriteLine($"    private{isStatic} set {var.Name}(value: {type}) {{");
+                    writer.WriteLine($"        this._{var.Name} = value;");
+                    writer.WriteLine($"    }}");
                     return true;
                 } else if (var.ArrowExpression != null) {
                     writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
@@ -335,6 +334,23 @@ namespace cs2.ts {
             }
 
             return false;
+        }
+
+        private void preprocessClass(ConversionClass cl) {
+            if (cl.IsNative) {
+                return;
+            }
+
+            var functions = cl.Functions.Where(c => !c.IsConstructor).ToList();
+            for (int j = 0; j < functions.Count; j++) {
+                ConversionFunction fn = functions[j];
+
+                if (cl.Name == "ApplicationManager" && fn.Name == "BootApplication") {
+                    //Debugger.Break();
+                }
+
+                fn.WriteLines(conversion, program, cl);
+            }
         }
 
         private void writeClass(ConversionClass cl, StreamWriter writer) {
@@ -449,6 +465,12 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
 
+                if (cl.Name == "CryptoUtil" && name == "ComputeHmacSha256") {
+                    //Debugger.Break();
+                }
+
+                List<string> lines = fn.WriteLines(conversion, program, cl);
+
                 string generic = fn.GetGenericArguments();
                 string clType = fn.GetClassType();
                 string async = fn.GetAsync();
@@ -474,21 +496,21 @@ namespace cs2.ts {
                     }
                 }
 
-                if (cl.Name == "CryptoUtil" && name == "DoWork") {
-                    //Debugger.Break();
-                }
-
                 if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
                     writer.WriteLine(");");
                 } else {
                     string returnParameter = fn.ReturnType?.ToTypeScriptString(tsProgram);
+                    if (fn.IsAsync && !string.IsNullOrWhiteSpace(returnParameter)) {
+                        returnParameter = $"Promise<{returnParameter}>";
+                    }
+
                     if (string.IsNullOrEmpty(returnParameter)) {
                         writer.WriteLine($") {{");
                     } else {
                         writer.WriteLine($"): {returnParameter} {{");
                     }
 
-                    fn.WriteLines(conversion, program, cl, writer);
+                    TypeScriptFunction.PrintLines(writer, lines);
                     writer.WriteLine("    }");
                 }
             }
@@ -499,6 +521,14 @@ namespace cs2.ts {
 
         private void writeOutput(StreamWriter writer) {
             SortProgram();
+
+            // pre-process
+            int steps = 3;
+            for (int i = 0; i < steps; i++) {
+                for (int j = 0; j < program.Classes.Count; j++) {
+                    preprocessClass(program.Classes[j]);
+                }
+            }
 
             for (int i = 0; i < program.Classes.Count; i++) {
                 writeClass(program.Classes[i], writer);

@@ -25,6 +25,28 @@ namespace cs2.ts {
             return typeName;
         }
 
+        public static string GetTypeScriptTypeNoGeneric(this VariableType varType, TypeScriptProgram program) {
+            string typeName = varType.TypeName;
+            if (varType.GenericArgs.Count == 0) {
+                if (program.TypeMap.TryGetValue(typeName, out var type)) {
+                    typeName = type;
+                }
+            }
+
+            return typeName;
+        }
+
+        public static string ToTypeScriptStringNoAsync(this VariableType varType, TypeScriptProgram program) {
+            string value = ToTypeScriptString(varType, program);
+
+            if (value.StartsWith("Promise<")) {
+                value = value.Remove(0, 8);
+                value = value.Remove(value.Length - 1);
+            }
+
+            return value;
+        }
+
         public static string ToTypeScriptString(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {

@@ -1,19 +1,24 @@
-import { pbkdf2Sync, createHash } from 'crypto';
+import { BinaryLike, pbkdf2Sync } from 'crypto';
+import { HashAlgorithmName } from './hash-algorithm-name';
+import { IDisposable } from '../../disposable.interface';
 
 /**
  * Mimics the C# Rfc2898DeriveBytes class using Node.js crypto.
  */
-export class Rfc2898DeriveBytes {
-    private password: Buffer;
-    private salt: Buffer;
+export class Rfc2898DeriveBytes implements IDisposable {
+    private password: BinaryLike;
+    private salt: BinaryLike;
     private iterations: number;
     private hashAlgorithm: string;
 
-    constructor(password: string | Buffer, salt: Buffer, iterations: number, hashAlgorithm: string = 'sha256') {
-        this.password = typeof password === 'string' ? Buffer.from(password, 'utf8') : password;
+    constructor(password: BinaryLike, salt: BinaryLike, iterations: number, hashAlgorithm: HashAlgorithmName) {
+        this.password = password;
         this.salt = salt;
         this.iterations = iterations;
         this.hashAlgorithm = hashAlgorithm.toLowerCase();
+    }
+
+    dispose(): void {
     }
 
     /**

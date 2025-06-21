@@ -4,12 +4,12 @@ export class Stopwatch {
     private _startTimeMillis = 0;
     private _running: boolean = false;
     private _totalTimeRunning = 0;
-    
-    get IsRunning() {
+
+    get isRunning(): boolean {
         return this._running;
     }
 
-    get Elapsed() {
+    get elapsed(): TimeSpan {
         if (this._running) {
             this.updateTime();
         }
@@ -17,30 +17,30 @@ export class Stopwatch {
         return new TimeSpan(0, 0, 0, 0, this._totalTimeRunning);
     }
 
-    static StartNew(): Stopwatch {
-        return new Stopwatch().Start();
+    static startNew(): Stopwatch {
+        return new Stopwatch().start();
     }
 
-    Start(): Stopwatch {
+    start(): Stopwatch {
         this._running = true;
         this._startTimeMillis = performance.now();
         
         return this;
     }
 
-    Restart() {
-        this.Start();
+    restart(): void {
+        this.start();
     }
 
     /**
      */
-    Stop(): void {
+    stop(): void {
         this.updateTime();
 
         this._running = false;
     }
 
-    private updateTime() {
+    private updateTime(): void {
         this._totalTimeRunning = performance.now() - this._startTimeMillis;
     }
 }

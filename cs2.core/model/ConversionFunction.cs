@@ -11,6 +11,8 @@ namespace cs2.core {
         public MemberAccessType AccessType { get; set; }
         public MemberDeclarationType DeclarationType { get; set; }
 
+        public List<string> Flags { get; set; }
+
         public bool IsStatic { get; set; }
         public bool IsAsync { get; set; }
         public bool IsConstructor { get; set; }

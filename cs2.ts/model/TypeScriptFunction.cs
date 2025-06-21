@@ -2,7 +2,12 @@
 
 namespace cs2.ts {
     public static class TypeScriptFunction {
-        public static void WriteLines(this ConversionFunction fn, ConversionProcessor conversion, ConversionProgram program, ConversionClass cl, StreamWriter writer) {
+        public static List<string> WriteLines(
+            this ConversionFunction fn, 
+            ConversionProcessor conversion, 
+            ConversionProgram program, 
+            ConversionClass cl, 
+            StreamWriter writer = null) {
             List<string> lines = new List<string>();
             LayerContext context = new TypeScriptLayerContext((TypeScriptProgram)program);
 
@@ -12,6 +17,7 @@ namespace cs2.ts {
             context.AddClass(cl);
             context.AddFunction(new FunctionStack(fn));
 
+            lines.Add("        ");
             if (fn.ArrowExpression != null) {
                 conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, lines);
             } else if (fn.RawBlock != null) {
@@ -21,7 +27,14 @@ namespace cs2.ts {
             context.PopClass(start);
             context.PopFunction(startFn);
 
-            writer.Write("        ");
+            if (writer != null) {
+                PrintLines(writer, lines);
+            }
+
+            return lines;
+        }
+
+        public static void PrintLines(StreamWriter writer, List<string> lines) {
             for (int k = 0; k < lines.Count; k++) {
                 string str = lines[k];
                 writer.Write(str);

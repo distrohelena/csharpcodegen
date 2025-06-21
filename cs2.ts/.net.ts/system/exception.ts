@@ -8,4 +8,8 @@ export class Exception {
     constructor(message: string) {
         this._message = message;
     }
+
+    public get stackTrace(): string {
+        return "";
+    }
 }

@@ -8,9 +8,7 @@ export class RandomNumberGenerator implements IDisposable {
     dispose(): void {
     }
 
-    getBytes(length: number): Uint8Array {
-        const buffer = new Uint8Array(length);
-
+    getBytes(buffer: Uint8Array) {
         if (typeof window !== "undefined" && window.crypto?.getRandomValues) {
             // Browser
             window.crypto.getRandomValues(buffer);
@@ -20,8 +18,6 @@ export class RandomNumberGenerator implements IDisposable {
             const bytes = nodeCrypto.randomBytes(length);
             buffer.set(bytes);
         }
-
-        return buffer;
     }
 
     getInt(min: number, max: number): number {

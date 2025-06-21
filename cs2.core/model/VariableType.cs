@@ -28,6 +28,14 @@ namespace cs2.core {
             }
         }
 
+        public VariableType(VariableType source) {
+            Type = source.Type;
+            TypeName = source.TypeName;
+            Args = source.Args.ToList();
+            GenericArgs = source.GenericArgs.ToList();
+            IsNullable = source.IsNullable;
+        }
+
         public override string ToString() {
             string genArgs = "";
             for (int i = 0; i < GenericArgs.Count; i++) {
