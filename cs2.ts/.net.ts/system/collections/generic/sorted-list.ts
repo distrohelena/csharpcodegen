@@ -9,14 +9,14 @@ export class SortedList<TKey, TValue> {
                 return target.Get(prop as unknown as TKey);
             },
             set: (target, prop: string, value: TValue) => {
-                target.Add(prop as unknown as TKey, value);
+                target.add(prop as unknown as TKey, value);
                 return true;
             }
         });
     }
 
     // Add a key-value pair to the list
-    public Add(key: TKey, value: TValue): void {
+    public add(key: TKey, value: TValue): void {
         this.items.push([key, value]);
         this.Sort();
     }
@@ -69,5 +69,14 @@ export class SortedList<TKey, TValue> {
     // Find the index of a key
     private FindIndex(key: TKey): number {
         return this.items.findIndex(([itemKey]) => this.comparer(itemKey, key) === 0);
+    }
+
+    public tryGetValue(key: TKey, outValue: { value?: TValue }): boolean {
+        if (this.ContainsKey(key)) {
+            outValue.value = this.Get(key);
+            return true;
+        }
+        outValue.value = undefined;
+        return false;
     }
 }

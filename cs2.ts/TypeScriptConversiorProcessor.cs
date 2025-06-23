@@ -2,11 +2,9 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Emit;
 using Nucleus;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 
 namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
@@ -271,7 +269,9 @@ namespace cs2.ts {
                 return new ExpressionResult(true, VariablePath.Unknown, stackVar.VarType);
             } else if (functionInVar != null) {
                 context.AddClass(GetClass((TypeScriptProgram)context.Program, functionInVar.VarType));
-                return new ExpressionResult(true, VariablePath.Unknown, functionInVar.VarType);
+                ExpressionResult res = new ExpressionResult(true, VariablePath.Unknown, functionInVar.VarType);
+                res.Variable = functionInVar;
+                return res;
             } else if (classVar != null) {
                 context.AddClass(GetClass((TypeScriptProgram)context.Program, classVar.VarType));
                 return new ExpressionResult(true, VariablePath.Unknown, classVar.VarType);
@@ -295,7 +295,7 @@ namespace cs2.ts {
                     }
                 }
             } else if (currentClass?.DeclarationType == MemberDeclarationType.Enum) {
-                
+
             } else {
                 //Debugger.Break();
             }
@@ -423,12 +423,17 @@ namespace cs2.ts {
 
                 int startArg = context.DepthClass;
                 int argLinesIndex = argLines.Count;
-                types.Add(ProcessExpression(semantic, context, arg.Expression, argLines));
+                ExpressionResult res = ProcessExpression(semantic, context, arg.Expression, argLines);
+                types.Add(res);
                 context.PopClass(startArg);
 
                 if (isRef) {
                     string outName = argLines[argLinesIndex];
-                    outs.Add(outName, strName);
+                    if (res.Variable != null && res.Variable.Modifier == ParameterModifier.Out) {
+                        outs.Add(outName + ".value", strName);
+                    } else {
+                        outs.Add(outName, strName);
+                    }
                     argLines.RemoveAt(argLinesIndex);
                     argLines.Add(strName);
                 }
@@ -689,8 +694,6 @@ namespace cs2.ts {
             if (ret.Expression == null) {
                 lines.Add("return;");
             } else {
-                lines.Add("return ");
-
                 int start = context.Class.Count;
 
                 List<string> retLines = new List<string>();
@@ -701,7 +704,21 @@ namespace cs2.ts {
                     //lines.Add("await ");
                 }
 
-                lines.AddRange(retLines);
+                if (res.BeforeLines != null) {
+                    lines.AddRange(res.BeforeLines);
+                }
+
+                if (res.AfterLines == null || res.AfterLines.Count == 0) {
+                    lines.Add("return ");
+                    lines.AddRange(retLines);
+                } else {
+                    lines.Add("var ___result = ");
+                    lines.AddRange(retLines);
+                    lines.Add(";\n");
+
+                    lines.AddRange(res.AfterLines);
+                    lines.Add("return ___result");
+                }
 
                 var fn = context.GetCurrentFunction().Function;
 

@@ -42,6 +42,7 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
             Requirements.Add(new TypeScriptKnownClass("NativeArrayUtil", "./system/nat-array-util"));
             Requirements.Add(new TypeScriptKnownClass("Convert", "./system/convert"));
+            Requirements.Add(new TypeScriptKnownClass("Environment", "./system/environment"));
 
             // system.collection.concurrent
             Requirements.Add(new TypeScriptKnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));
@@ -254,6 +255,7 @@ namespace cs2.ts {
             makeTypeScriptFunction("Length", "length", clString, "int");
             makeTypeScriptFunction("Replace", "replace", clString, "string");
             makeTypeScriptFunction("Remove", "slice", clString, "string");
+            makeTypeScriptFunction("Substring", "substring", clString, "string");
             Classes.Add(clString);
 
             ConversionClass clBool = makeClass("boolean");

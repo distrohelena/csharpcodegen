@@ -136,12 +136,15 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(tsProgram);
+                    string? def = param.DefaultValue;
+                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
+                        def = "";
+                    }
 
-                    if (k == fn.InParameters.Count - 1) {
-                        // last
-                        writer.Write($"{param.Name}: {type}");
-                    } else {
-                        writer.Write($"{param.Name}: {type}, ");
+                    writer.Write($"{param.Name}: {type}{def}");
+
+                    if (k != fn.InParameters.Count - 1) {
+                        writer.Write($", ");
                     }
                 }
 
@@ -165,12 +168,15 @@ namespace cs2.ts {
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
                         string type = param.VarType.ToTypeScriptString(tsProgram);
+                        string? def = param.DefaultValue;
+                        if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
+                            def = "";
+                        }
 
-                        if (k == fn.InParameters.Count - 1) {
-                            // last
-                            writer.Write($"{param.Name}: {type}");
-                        } else {
-                            writer.Write($"{param.Name}: {type}, ");
+                        writer.Write($"{param.Name}: {type}{def}");
+
+                        if (k != fn.InParameters.Count - 1) {
+                            writer.Write($", ");
                         }
                     }
 
@@ -465,7 +471,7 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
 
-                if (cl.Name == "CryptoUtil" && name == "ComputeHmacSha256") {
+                if (cl.Name == "Node" && name == "TryGetEdge") {
                     //Debugger.Break();
                 }
 
@@ -489,7 +495,11 @@ namespace cs2.ts {
                         def = "";
                     }
 
-                    writer.Write($"{param.Name}: {type}{def}");
+                    if (param.Modifier == core.ParameterModifier.Out) {
+                        writer.Write($"{param.Name}: {{ value: {type}{def} }}");
+                    } else {
+                        writer.Write($"{param.Name}: {type}{def}");
+                    }
 
                     if (k != fn.InParameters.Count - 1) {
                         writer.Write($", ");

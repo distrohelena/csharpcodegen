@@ -76,4 +76,22 @@ export class List<T> extends Array<T> {
             throw new Error("Index out of range.");
         }
     }
+
+    // Get a range of elements starting at index, with specified count
+    public getRange(index: number, count: number): List<T> {
+        if (index < 0 || count < 0 || index + count > this.length) {
+            throw new Error("Index and count must be non-negative and within the bounds of the list.");
+        }
+        const range = this.slice(index, index + count);
+        return new List<T>(...range);
+    }
+
+    // Remove a range of elements starting at index, with specified count
+    public removeRange(index: number, count: number): void {
+        if (index < 0 || count < 0 || index + count > this.length) {
+            throw new Error("Index and count must be non-negative and within the bounds of the list.");
+        }
+        this.splice(index, count);
+    }
+
 }

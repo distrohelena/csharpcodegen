@@ -21,6 +21,7 @@ namespace cs2.core {
         public bool IsOverride { get; set; }
         public bool IsGet { get; set; }
         public bool IsSet { get; set; }
+        public ParameterModifier Modifier { get; set; }
 
         public string? Assignment { get; set; }
         public string? DefaultValue { get; set; }

@@ -5,10 +5,16 @@ import { ECParameters } from "./ec-parameters";
 export class ECDiffieHellmanPublicKey implements IDisposable {
     private _rawKey: Uint8Array;
     private _curve: ECCurve;
+    private _key: CryptoKey;
 
-    constructor(rawKey: Uint8Array, curve: ECCurve) {
+    get key(): CryptoKey {
+        return this._key;
+    }
+
+    constructor(rawKey: Uint8Array, curve: ECCurve, key: CryptoKey) {
         this._rawKey = rawKey;
         this._curve = curve;
+        this._key = key;
     }
 
     dispose(): void {

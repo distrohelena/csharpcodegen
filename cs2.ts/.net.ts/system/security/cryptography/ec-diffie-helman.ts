@@ -2,6 +2,7 @@ import { IDisposable } from "../../disposable.interface";
 import { ECCurve } from "./ec-curve";
 import { ECDiffieHellmanPublicKey } from "./ec-diffie-helman-public-key";
 import { ECParameters } from "./ec-parameters";
+import { HashAlgorithmName } from "./hash-algorithm-name";
 
 export class ECDiffieHellman implements IDisposable {
     private _publicKey: ECDiffieHellmanPublicKey;
@@ -37,7 +38,7 @@ export class ECDiffieHellman implements IDisposable {
             instance.curve = curve;
 
             const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));
-            instance._publicKey = new ECDiffieHellmanPublicKey(raw, curve);
+            instance._publicKey = new ECDiffieHellmanPublicKey(raw, curve, keyPair.publicKey);
         }
 
         return instance;
@@ -109,26 +110,43 @@ export class ECDiffieHellman implements IDisposable {
         this.keyPair = { publicKey, privateKey: privateKey! };
     }
 
-    /**
-     * Derives a key using ECDH and SHA-256, equivalent to DeriveKeyFromHash.
-     * @param privateKey - Our private ECDH CryptoKey.
-     * @param publicKey - Recipient's public ECDH CryptoKey.
-     * @returns A Uint8Array representing the derived shared secret (hashed).
-     */
-    async deriveKeyFromHash(privateKey: CryptoKey, publicKey: CryptoKey): Promise<Uint8Array> {
+    public async deriveKeyFromHash(
+        otherPublicKey: ECDiffieHellmanPublicKey,
+        hashAlgorithm: HashAlgorithmName,
+        prependData?: Uint8Array,
+        appendData?: Uint8Array
+    ): Promise<Uint8Array> {
         const sharedSecret = await crypto.subtle.deriveBits(
             {
                 name: "ECDH",
-                public: publicKey
+                public: otherPublicKey.key
             },
-            privateKey,
+            this.keyPair.privateKey,
             256 // bits
         );
 
-        // Hash the raw shared secret with SHA-256
-        const hash = await crypto.subtle.digest("SHA-256", sharedSecret);
+        // Apply prepend and append if needed (like C# API supports)
+        let finalInput = new Uint8Array(sharedSecret);
+        if (prependData || appendData) {
+            const totalLength = (prependData?.length || 0) + finalInput.length + (appendData?.length || 0);
+            const full = new Uint8Array(totalLength);
+            let offset = 0;
+            if (prependData) {
+                full.set(prependData, offset);
+                offset += prependData.length;
+            }
+            full.set(finalInput, offset);
+            offset += finalInput.length;
+            if (appendData) {
+                full.set(appendData, offset);
+            }
+            finalInput = full;
+        }
+
+        const hash = await crypto.subtle.digest(hashAlgorithm, finalInput);
         return new Uint8Array(hash);
     }
+
 
 }
 

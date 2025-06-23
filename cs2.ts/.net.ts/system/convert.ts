@@ -14,4 +14,18 @@
             return Uint8Array.from(Buffer.from(base64, "base64"));
         }
     }
+
+    static toBase64String(bytes: Uint8Array): string {
+        if (typeof btoa === "function") {
+            // Browser
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        } else {
+            // Node.js
+            return Buffer.from(bytes).toString("base64");
+        }
+    }
 }

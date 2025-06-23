@@ -7,8 +7,8 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
     private keyToString: (key: TKey) => string;
     private _count: number = 0;
 
-    constructor(keyToString?: (key: TKey) => string) {
-        this.keyToString = keyToString || ((key: TKey) => JSON.stringify(key));
+    constructor(concurrencyLevel: number, threads: number) {
+        this.keyToString = ((key: TKey) => JSON.stringify(key));
     }
 
     // Add a key-value pair to the dictionary

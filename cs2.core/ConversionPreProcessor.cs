@@ -104,10 +104,16 @@ namespace cs2.core {
             func.Name = context.CurrentClass.Name;
 
             List<ConversionVariable> inParams = new List<ConversionVariable>();
+
             foreach (ParameterSyntax inParam in constructor.ParameterList.ChildNodes()) {
                 ConversionVariable v = new ConversionVariable();
                 v.Name = inParam.Identifier.ToString();
                 v.VarType = VariableUtil.GetVarType(inParam.Type, semantic);
+
+                if (inParam.Default != null) {
+                    v.DefaultValue = VariableUtil.ProcessAssignment(inParam.Default);
+                }
+
                 inParams.Add(v);
             }
             func.InParameters = inParams;
@@ -148,6 +154,11 @@ namespace cs2.core {
                 }
             }
 
+            if (context.CurrentClass.Name == "Node" &&
+                name == "TryGetEdge") {
+                //Debugger.Break();
+            }
+
             foreach (ParameterSyntax inParam in method.ParameterList.ChildNodes()) {
                 ConversionVariable v = new ConversionVariable();
                 v.Name = inParam.Identifier.ToString();
@@ -156,6 +167,28 @@ namespace cs2.core {
                 if (inParam.Default != null) {
                     v.DefaultValue = VariableUtil.ProcessAssignment(inParam.Default);
                 }
+
+                ParameterModifier modifier = ParameterModifier.None;
+                foreach (var mod in inParam.Modifiers) {
+                    switch (mod.Kind()) {
+                        case SyntaxKind.InKeyword:
+                            modifier |= ParameterModifier.In;
+                            break;
+                        case SyntaxKind.OutKeyword:
+                            modifier |= ParameterModifier.Out;
+                            break;
+                        case SyntaxKind.RefKeyword:
+                            modifier |= ParameterModifier.Ref;
+                            break;
+                        case SyntaxKind.ParamsKeyword:
+                            modifier |= ParameterModifier.Params;
+                            break;
+                        case SyntaxKind.ThisKeyword:
+                            modifier |= ParameterModifier.This;
+                            break;
+                    }
+                }
+                v.Modifier = modifier;
 
                 func.InParameters.Add(v);
             }
