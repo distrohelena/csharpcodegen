@@ -33,6 +33,11 @@ namespace cs2.ts {
                 }
             }
 
+            int generic = typeName.IndexOf("<");
+            if (generic != -1) {
+                typeName = typeName.Substring(0, generic);
+            }
+
             return typeName;
         }
 

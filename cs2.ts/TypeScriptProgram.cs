@@ -74,8 +74,11 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("DirectoryInfo", "./system/io/directory-info"));
             Requirements.Add(new TypeScriptKnownClass("FileInfo", "./system/io/file-info"));
             Requirements.Add(new TypeScriptKnownClass("FileMode", "./system/io/file-mode"));
+            Requirements.Add(new TypeScriptKnownClass("FileAccess", "./system/io/file-access"));
+            Requirements.Add(new TypeScriptKnownClass("FileShare", "./system/io/file-share"));
             Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));
             Requirements.Add(new TypeScriptKnownClass("File", "./system/io/file"));
+            Requirements.Add(new TypeScriptKnownClass("Path", "./system/io/path"));
             Requirements.Add(new TypeScriptKnownClass("SearchOption", "./system/io/search-option"));
             Requirements.Add(new TypeScriptKnownClass("StreamReader", "./system/io/stream-reader"));
             Requirements.Add(new TypeScriptKnownClass("TextWriter", "./system/io/text-writer"));
@@ -122,9 +125,14 @@ namespace cs2.ts {
             // WebSocketSharp
             Requirements.Add(new TypeScriptKnownClass("WebSocketWS", "./websocketsharp/websocket"));
             Requirements.Add(new TypeScriptKnownClass("WebSocketState", "./websocketsharp/websocket-state"));
+            Requirements.Add(new TypeScriptKnownClass("ErrorEventArgs", "./websocketsharp/error-event-args"));
+            Requirements.Add(new TypeScriptKnownClass("MessageEventArgs", "./websocketsharp/message-event-args"));
 
             // Blake2B
             Requirements.Add(new TypeScriptKnownClass("Blake2b", "./blake2fast/blake2b"));
+
+            // Newtonsoft.Json
+            Requirements.Add(new TypeScriptKnownClass("JsonConvert", "./newtonsoft.json/jsonconvert"));
 
             switch (env) {
                 case TypeScriptEnvironment.Web:
@@ -253,8 +261,11 @@ namespace cs2.ts {
 
             ConversionClass clString = makeClass("string");
             makeTypeScriptFunction("Length", "length", clString, "int");
+            makeTypeScriptFunction("IndexOf", "indexOf", clString, "string");
             makeTypeScriptFunction("Replace", "replace", clString, "string");
             makeTypeScriptFunction("Remove", "slice", clString, "string");
+            makeTypeScriptFunction("StartsWith", "startsWith", clString, "string");
+            makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
             Classes.Add(clString);
 
@@ -342,11 +353,11 @@ namespace cs2.ts {
             TypeMap.Add("int", "number");
             TypeMap.Add("Int16", "number");
             TypeMap.Add("Int32", "number");
-            TypeMap.Add("Int64", "number");
+            TypeMap.Add("Int64", "bigint");
             TypeMap.Add("uint", "number");
             TypeMap.Add("UInt16", "number");
             TypeMap.Add("UInt32", "number");
-            TypeMap.Add("UInt64", "number");
+            TypeMap.Add("UInt64", "bigint");
             TypeMap.Add("long", "number");
             TypeMap.Add("ulong", "number");
             TypeMap.Add("float", "number");

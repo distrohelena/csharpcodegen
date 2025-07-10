@@ -44,27 +44,27 @@ export class TimeSpan {
     }
 
     // Factory methods
-    public static FromTicks(ticks: number): TimeSpan {
+    public static fromTicks(ticks: number): TimeSpan {
         return new TimeSpan(ticks);
     }
 
-    public static FromDays(days: number): TimeSpan {
+    public static fromDays(days: number): TimeSpan {
         return new TimeSpan(days, 0, 0, 0, 0);
     }
 
-    public static FromHours(hours: number): TimeSpan {
+    public static fromHours(hours: number): TimeSpan {
         return new TimeSpan(0, hours, 0, 0, 0);
     }
 
-    public static FromMinutes(minutes: number): TimeSpan {
+    public static fromMinutes(minutes: number): TimeSpan {
         return new TimeSpan(0, 0, minutes, 0, 0);
     }
 
-    public static FromSeconds(seconds: number): TimeSpan {
+    public static fromSeconds(seconds: number): TimeSpan {
         return new TimeSpan(0, 0, 0, seconds, 0);
     }
 
-    public static FromMilliseconds(milliseconds: number): TimeSpan {
+    public static fromMilliseconds(milliseconds: number): TimeSpan {
         return new TimeSpan(0, 0, 0, 0, milliseconds);
     }
 
@@ -114,19 +114,19 @@ export class TimeSpan {
     }
 
     // Methods
-    public Add(ts: TimeSpan): TimeSpan {
+    public add(ts: TimeSpan): TimeSpan {
         return new TimeSpan(0, 0, 0, 0, this._milliseconds + ts.TotalMilliseconds);
     }
 
-    public Subtract(ts: TimeSpan): TimeSpan {
+    public subtract(ts: TimeSpan): TimeSpan {
         return new TimeSpan(0, 0, 0, 0, this._milliseconds - ts.TotalMilliseconds);
     }
 
-    public Negate(): TimeSpan {
+    public negate(): TimeSpan {
         return new TimeSpan(0, 0, 0, 0, -this._milliseconds);
     }
 
-    public ToString(): string {
+    public toString(): string {
         const days = this.Days > 0 ? `${this.Days}.` : '';
         const hours = this.Hours.toString().padStart(2, '0');
         const minutes = this.Minutes.toString().padStart(2, '0');
@@ -136,15 +136,15 @@ export class TimeSpan {
     }
 
     // Static methods for comparison and equality
-    public static Compare(ts1: TimeSpan, ts2: TimeSpan): number {
+    public static compare(ts1: TimeSpan, ts2: TimeSpan): number {
         return ts1.TotalMilliseconds - ts2.TotalMilliseconds;
     }
 
-    public static Equals(ts1: TimeSpan, ts2: TimeSpan): boolean {
+    public static equals(ts1: TimeSpan, ts2: TimeSpan): boolean {
         return ts1.TotalMilliseconds === ts2.TotalMilliseconds;
     }
 
-    public Duration(): TimeSpan {
+    public duration(): TimeSpan {
         return new TimeSpan(0, 0, 0, 0, Math.abs(this._milliseconds));
     }
 }

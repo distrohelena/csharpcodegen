@@ -8,16 +8,32 @@ using System.Text.RegularExpressions;
 
 namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
+        private static bool IsInsideObjectInitializer(AssignmentExpressionSyntax assignment) {
+            // Walk up until we find the nearest InitializerExpression
+            var initializer = assignment.Parent?.AncestorsAndSelf()
+                .OfType<InitializerExpressionSyntax>()
+                .FirstOrDefault();
+
+            if (initializer == null)
+                return false;
+
+            // Then check if that initializer belongs to an ObjectCreationExpression
+            var objectCreation = initializer.Parent as ObjectCreationExpressionSyntax;
+            return objectCreation != null;
+        }
+
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
             context.PopClass(startDepth);
 
             string operatorVal = assignment.OperatorToken.ToString();
+
             if (assignResult.Type?.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
                 lines.Add($" = ");
             } else {
-                lines.Add($" {operatorVal} ");
+                bool isInsideObject = IsInsideObjectInitializer(assignment);
+                lines.Add(isInsideObject ? " : " : $" {operatorVal} ");
             }
 
             startDepth = context.Class.Count;
@@ -872,9 +888,8 @@ namespace cs2.ts {
             for (int i = 0; i < lambda.ParameterList.Parameters.Count; i++) {
                 var parameter = lambda.ParameterList.Parameters[i];
 
-                int xxx = -1;
-                //ProcessIdentifierNameSyntax(parameter.Identifier)
-                //lines.Add(parameter.Identifier.ToString());
+                //ProcessIdentifierNameSyntax(semantic, context, parameter.Ident, lines, null);
+                lines.Add(parameter.Identifier.ToString());
 
                 if (i < lambda.ParameterList.Parameters.Count - 1) {
                     lines.Add(", ");

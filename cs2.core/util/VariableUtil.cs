@@ -88,10 +88,14 @@ namespace cs2.core {
             if (type is IdentifierNameSyntax) {
                 IdentifierNameSyntax identifier = (IdentifierNameSyntax)type;
 
-                string identifierName = typeInfo.Type.Name;
-                VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
+                string identifierName = identifier.ToString();
 
-                return baseType;
+                if (identifierName == "var") {
+                    string typeInfoName = typeInfo.Type.Name;
+                    return new VariableType(GetVarDataType(typeInfoName), typeInfoName);
+                } else {
+                    return new VariableType(GetVarDataType(identifierName), identifierName);
+                }
             } else if (type is GenericNameSyntax) {
                 GenericNameSyntax generic = (GenericNameSyntax)type;
 
@@ -191,6 +195,8 @@ namespace cs2.core {
 
         static string GetClrTypeName(SpecialType specialType) {
             return specialType switch {
+                SpecialType.System_Int16 => "Int16",
+                SpecialType.System_UInt16 => "UInt16",
                 SpecialType.System_Int32 => "Int32",
                 SpecialType.System_UInt32 => "UInt32",
                 SpecialType.System_Single => "Single",

@@ -4,6 +4,10 @@ import { Stream } from "./stream";
 export class BinaryReader implements IDisposable {
     private stream: Stream;
 
+    public get BaseStream(): Stream {
+        return this.stream;
+    }
+
     constructor(stream: Stream) {
         this.stream = stream;
     }
@@ -11,18 +15,22 @@ export class BinaryReader implements IDisposable {
     dispose(): void {
     }
 
+    flush() {
+
+    }
+
     readByte(): number {
-        return this.stream.InternalReadByte();
+        return this.stream.internalReadByte();
     }
 
     readInt8(): number {
-        const value = this.stream.InternalReadByte();
+        const value = this.stream.internalReadByte();
         return value < 0x80 ? value : value - 0x100;
     }
 
     readUInt16(): number {
-        const low = this.stream.InternalReadByte();
-        const high = this.stream.InternalReadByte();
+        const low = this.stream.internalReadByte();
+        const high = this.stream.internalReadByte();
         return (high << 8) | low;
     }
 
@@ -32,10 +40,10 @@ export class BinaryReader implements IDisposable {
     }
 
     readUInt32(): number {
-        const b1 = this.stream.InternalReadByte();
-        const b2 = this.stream.InternalReadByte();
-        const b3 = this.stream.InternalReadByte();
-        const b4 = this.stream.InternalReadByte();
+        const b1 = this.stream.internalReadByte();
+        const b2 = this.stream.internalReadByte();
+        const b3 = this.stream.internalReadByte();
+        const b4 = this.stream.internalReadByte();
         return (b4 << 24) | (b3 << 16) | (b2 << 8) | b1;
     }
 
@@ -57,17 +65,17 @@ export class BinaryReader implements IDisposable {
 
     readSingle(): number {
         const buffer = new Uint8Array(4);
-        buffer[0] = this.stream.InternalReadByte();
-        buffer[1] = this.stream.InternalReadByte();
-        buffer[2] = this.stream.InternalReadByte();
-        buffer[3] = this.stream.InternalReadByte();
+        buffer[0] = this.stream.internalReadByte();
+        buffer[1] = this.stream.internalReadByte();
+        buffer[2] = this.stream.internalReadByte();
+        buffer[3] = this.stream.internalReadByte();
         return new DataView(buffer.buffer).getFloat32(0, true); // Little-endian
     }
 
     readDouble(): number {
         const buffer = new Uint8Array(8);
         for (let i = 0; i < 8; i++) {
-            buffer[i] = this.stream.InternalReadByte();
+            buffer[i] = this.stream.internalReadByte();
         }
         return new DataView(buffer.buffer).getFloat64(0, true); // Little-endian
     }
@@ -75,7 +83,7 @@ export class BinaryReader implements IDisposable {
     readBytes(length: number): Uint8Array {
         const buffer = new Uint8Array(length);
         for (let i = 0; i < length; i++) {
-            buffer[i] = this.stream.InternalReadByte();
+            buffer[i] = this.stream.internalReadByte();
         }
         return buffer;
     }
@@ -89,7 +97,7 @@ export class BinaryReader implements IDisposable {
     readStringZeroUtf8(): string {
         const bytes = [];
         while (true) {
-            const byte = this.stream.InternalReadByte();
+            const byte = this.stream.internalReadByte();
             if (byte === 0) break;
             bytes.push(byte);
         }

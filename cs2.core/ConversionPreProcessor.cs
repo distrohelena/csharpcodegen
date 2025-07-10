@@ -11,6 +11,10 @@ namespace cs2.core {
             var cl = context.StartClass();
             cl.Name = classDecl.Identifier.ToString();
 
+            if (cl.Name == "ApplicationPacket") {
+                //Debugger.Break();
+            }
+
             bool isStatic;
             bool isOverride;
             MemberAccessType access;
@@ -25,6 +29,10 @@ namespace cs2.core {
                 foreach (var type in classDecl.TypeParameterList.Parameters) {
                     cl.GenericArgs.Add(type.ToString());
                 }
+            }
+
+            if (cl.Name == "WebSocketClientMessageHandler") {
+                //Debugger.Break();
             }
 
             foreach (MemberDeclarationSyntax memberSyntax in classDecl.Members) {

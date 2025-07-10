@@ -1,3 +1,5 @@
+import { List } from "./list";
+
 export class SortedList<TKey, TValue> {
     private items: Array<[TKey, TValue]> = [];
     private comparer: (a: TKey, b: TKey) => number;
@@ -43,7 +45,7 @@ export class SortedList<TKey, TValue> {
     }
 
     // Get the count of elements in the list
-    public Count(): number {
+    public get Count(): number {
         return this.items.length;
     }
 
@@ -53,8 +55,8 @@ export class SortedList<TKey, TValue> {
     }
 
     // Get all values in sorted order
-    public Values(): TValue[] {
-        return this.items.map(([, value]) => value);
+    public get Values(): List<TValue> {
+        return new List<TValue>(...this.items.map(([, value]) => value));
     }
 
     public Clear() {

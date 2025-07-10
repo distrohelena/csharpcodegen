@@ -14,4 +14,13 @@ export class File {
     static open(filePath: string, fileMode: FileMode): FileStream {
         return new FileStream(filePath, fileMode);
     }
+
+    static openRead(filePath: string): FileStream {
+        return new FileStream(filePath, FileMode.Open);
+    }
+
+    static openWrite(filePath: string): FileStream {
+        return new FileStream(filePath, FileMode.OpenOrCreate);
+    }
+
 }

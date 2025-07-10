@@ -25,11 +25,38 @@ export class MemoryStream extends Stream {
     private buffer: Uint8Array;
     private _position: number;
 
-    constructor(initialSize: number = 256) {
+    constructor(buffer?: Uint8Array);
+    constructor(buffer: Uint8Array, writable: boolean);
+    constructor(buffer: Uint8Array, index: number, count: number);
+    constructor(buffer: Uint8Array, index: number, count: number, writable: boolean);
+    constructor(buffer: Uint8Array, index: number, count: number, writable: boolean, publiclyVisible: boolean);
+    constructor(initialSizeOrBuffer?: number | Uint8Array, index?: number | boolean, count?: number, writable: boolean = true, publiclyVisible: boolean = false) {
         super();
 
         this._position = 0;
-        this.buffer = new Uint8Array(initialSize);
+
+        if (typeof initialSizeOrBuffer === "number") {
+            // constructor(initialSize: number)
+            this.buffer = new Uint8Array(initialSizeOrBuffer);
+        } else {
+            const buffer = initialSizeOrBuffer;
+
+            if (typeof index === "boolean") {
+                // constructor(buffer: Uint8Array, writable: boolean)
+                this.buffer = buffer;
+                this._position = 0;
+            } else if (typeof index === "number" && typeof count === "number") {
+                // constructor(buffer: Uint8Array, index: number, count: number [, writable] [, publiclyVisible])
+                if (index < 0 || count < 0 || index + count > buffer.length) {
+                    throw new RangeError("Index and count must be within the bounds of the buffer.");
+                }
+
+                this.buffer = buffer.subarray(index, index + count);
+            } else {
+                // constructor(buffer: Uint8Array)
+                this.buffer = buffer;
+            }
+        }
     }
 
     override internalReserve(count: number) {

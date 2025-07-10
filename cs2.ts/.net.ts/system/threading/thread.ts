@@ -10,7 +10,7 @@ export class Thread {
         Atomics.wait(int32Array, 0, 0, milliseconds);
     }
 
-    constructor(workerFunction: () => void) {
+    constructor(workerFunction: (state: any) => void) {
         let fnCode = workerFunction.toString();
         const endArg = fnCode.indexOf(')');
         if (endArg !== -1) {

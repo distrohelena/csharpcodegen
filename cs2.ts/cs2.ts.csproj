@@ -8,6 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include=".net.ts\newtonsoft.json\jsonconvert.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\environment.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -80,11 +83,20 @@
     <None Include=".net.ts\system\io\file-mode.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\io\file-access.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\io\file-share.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\io\file-stream.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\io\file.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\io\path.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\not-implemented.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
@@ -259,6 +271,12 @@
     </None>
     <None Include=".net.ts\system\security\cryptography\sha256.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\websocketsharp\message-event-args.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\websocketsharp\error-event-args.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\websocketsharp\websocket-state.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

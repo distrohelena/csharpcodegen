@@ -265,6 +265,16 @@ namespace cs2.ts {
                 }
 
                 // check for property
+                if (var.DeclarationType == MemberDeclarationType.Abstract) {
+                    if (var.IsGet && var.IsSet) {
+                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
+                        writer.WriteLine($"    {access}{isStatic} abstract set {var.Name}(value: {type});");
+                        return true;
+                    } else if (var.IsGet) {
+                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
+                        return true;
+                    }
+                }
                 if (var.IsGet && var.IsSet) {
                     writer.WriteLine($"    private{isStatic} _{var.Name}: {type}{assignment};");
                     writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
@@ -350,6 +360,10 @@ namespace cs2.ts {
             var functions = cl.Functions.Where(c => !c.IsConstructor).ToList();
             for (int j = 0; j < functions.Count; j++) {
                 ConversionFunction fn = functions[j];
+
+                if (fn.Name == "Dispose") {
+                    fn.Remap = "dispose";
+                }
 
                 if (cl.Name == "ApplicationManager" && fn.Name == "BootApplication") {
                     //Debugger.Break();
@@ -471,7 +485,7 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
 
-                if (cl.Name == "Node" && name == "TryGetEdge") {
+                if (cl.Name == "ECDHKey" && name == "GetPublicKey") {
                     //Debugger.Break();
                 }
 

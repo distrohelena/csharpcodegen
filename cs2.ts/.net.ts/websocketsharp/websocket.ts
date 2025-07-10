@@ -2,6 +2,7 @@ import { WebSocketState } from "./websocket-state";
 
 export class WebSocketWS {
     private webSocket: WebSocket;
+    private _address: string;
 
     public OnOpen: (sender, e) => void;
     public OnClose: (sender, e) => void;
@@ -11,6 +12,10 @@ export class WebSocketWS {
     private state: WebSocketState;
     get readyState(): WebSocketState {
         return this.state;
+    }
+
+    get address(): string {
+        return this._address;
     }
 
     private url: string;
@@ -67,7 +72,7 @@ export class WebSocketWS {
         this.webSocket.close();
     }
 
-    public Send(buffer: Buffer) {
+    public Send(buffer: ArrayBufferLike) {
         if (this.state != WebSocketState.Open) {
             return;
         }
