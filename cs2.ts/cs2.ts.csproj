@@ -11,6 +11,9 @@
     <None Include=".net.ts\newtonsoft.json\jsonconvert.ts">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\app-domain.ts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\environment.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -62,7 +65,10 @@
     <None Include=".net.ts\blake2fast\blake2b.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include=".net.ts\system\nat-array-util.ts">
+    <None Include=".net.ts\system\util\nat-string-util.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\util\nat-array-util.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\collections\generic\queue.ts">

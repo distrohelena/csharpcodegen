@@ -98,7 +98,7 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
         const result: Array<KeyValuePair<TKey, TValue>> = [];
 
         this.forEach((key, value) => {
-            result.push({ key, value });
+            result.push({ Key: key, Value: value });
         });
 
         const list = new List<KeyValuePair<TKey, TValue>>();

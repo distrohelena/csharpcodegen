@@ -62,7 +62,7 @@ export class WebSocketWS {
             const arrBuffer = event.data as ArrayBuffer; // Directly get the ArrayBuffer
             const uint8Array = new Uint8Array(arrBuffer); // Convert to Uint8Array if needed
             this.OnMessage(null, {
-                RawData: uint8Array
+                rawData: uint8Array
             });
         }
 
@@ -72,7 +72,7 @@ export class WebSocketWS {
         this.webSocket.close();
     }
 
-    public Send(buffer: ArrayBufferLike) {
+    public Send(buffer: Uint8Array) {
         if (this.state != WebSocketState.Open) {
             return;
         }

@@ -180,6 +180,10 @@ namespace cs2.ts {
                         }
                     }
 
+                    if (cl.Name == "ClientSettings" && fn.Name == "New2") {
+                        //Debugger.Break();
+                    }
+
                     writer.WriteLine($"): {cl.Name}{generic} {{");
 
                     writer.WriteLine($"const __obj = new {cl.Name}();");
@@ -485,8 +489,8 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
 
-                if (cl.Name == "ECDHKey" && name == "GetPublicKey") {
-                    //Debugger.Break();
+                if (cl.Name == "WebSocketClientMessageHandler" && name == "CreateWs") {
+                    Debugger.Break();
                 }
 
                 List<string> lines = fn.WriteLines(conversion, program, cl);
@@ -494,6 +498,10 @@ namespace cs2.ts {
                 string generic = fn.GetGenericArguments();
                 string clType = fn.GetClassType();
                 string async = fn.GetAsync();
+
+                if (cl.DeclarationType == MemberDeclarationType.Interface) {
+                    async = "";
+                }
 
                 if (fn.IsStatic) {
                     writer.Write($"    {access}static {async}{fn.Remap}{generic}(");
@@ -551,6 +559,71 @@ namespace cs2.ts {
             for (int i = 0; i < steps; i++) {
                 for (int j = 0; j < program.Classes.Count; j++) {
                     preprocessClass(program.Classes[j]);
+                }
+            }
+
+            // check for async functions in inheritance hierarchy
+            for (int j = 0; j < program.Classes.Count; j++) {
+                ConversionClass cl = program.Classes[j];
+                for (int i = 0; i < cl.Functions.Count; i++) {
+                    ConversionFunction fn = cl.Functions[i];
+
+                    if (fn.IsAsync) {
+                        // check parent and child classes for the same function name
+                        // and make them async too
+                        string functionName = fn.Name;
+
+                        // Check all classes that might have this function (parent or child)
+                        for (int k = 0; k < program.Classes.Count; k++) {
+                            ConversionClass otherClass = program.Classes[k];
+
+                            // Skip the current class
+                            if (otherClass == cl) continue;
+
+                            // Check if this class extends the current class or vice versa
+                            bool isRelated = cl.Extensions.Contains(otherClass.Name) ||
+                                           otherClass.Extensions.Contains(cl.Name);
+
+                            if (isRelated) {
+                                // Find the same function in the related class
+                                ConversionFunction relatedFn = otherClass.Functions.FirstOrDefault(f => f.Name == functionName);
+                                if (relatedFn != null) {
+                                    // Make the related function async too
+                                    relatedFn.IsAsync = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Also check for base class async functions that need to propagate to derived classes
+            for (int j = 0; j < program.Classes.Count; j++) {
+                ConversionClass cl = program.Classes[j];
+                for (int i = 0; i < cl.Functions.Count; i++) {
+                    ConversionFunction fn = cl.Functions[i];
+
+                    if (fn.IsAsync) {
+                        string functionName = fn.Name;
+
+                        // Find all classes that extend this class (derived classes)
+                        for (int k = 0; k < program.Classes.Count; k++) {
+                            ConversionClass derivedClass = program.Classes[k];
+
+                            // Skip the current class
+                            if (derivedClass == cl) continue;
+
+                            // Check if derived class extends this class
+                            if (derivedClass.Extensions.Contains(cl.Name)) {
+                                // Find the same function in the derived class
+                                ConversionFunction derivedFn = derivedClass.Functions.FirstOrDefault(f => f.Name == functionName);
+                                if (derivedFn != null) {
+                                    // Make the derived function async too
+                                    derivedFn.IsAsync = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

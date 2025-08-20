@@ -1,6 +1,8 @@
-import { IDisposable } from "../../disposable.interface";
+﻿import { IDisposable } from "../../disposable.interface";
 import { ECCurve } from "./ec-curve";
 import { ECParameters } from "./ec-parameters";
+import { p256 } from '@noble/curves/p256';
+import * as asn1 from 'asn1.js';
 
 export class ECDsa implements IDisposable {
     private keyPair!: CryptoKeyPair;
@@ -12,6 +14,24 @@ export class ECDsa implements IDisposable {
 
     dispose(): void {
         // Cleanup resources if necessary
+    }
+
+    static toBase64Url(bytes: Uint8Array): string {
+        const binary = String.fromCharCode(...bytes);
+        const base64 = btoa(binary);
+        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    static fromBase64Url(base64url: string): Uint8Array {
+        // Pad base64url to valid base64 length
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+            + '==='.slice((base64url.length + 3) % 4);
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
     }
 
     static async create(): Promise<ECDsa>;
@@ -63,40 +83,51 @@ export class ECDsa implements IDisposable {
     }
 
     async importParameters(parameters: ECParameters): Promise<void> {
-        const publicRaw = new Uint8Array(1 + parameters.Q.X.length + parameters.Q.Y.length);
-        publicRaw[0] = 0x04; // Uncompressed format
-        publicRaw.set(parameters.Q.X, 1);
-        publicRaw.set(parameters.Q.Y, 1 + parameters.Q.X.length);
+        let publicKey: CryptoKey;
+        let privateKey: CryptoKey | undefined = undefined;
 
-        const publicKey = await crypto.subtle.importKey(
+        let x: Uint8Array;
+        let y: Uint8Array;
+
+        if (parameters.Q) {
+            x = parameters.Q.X;
+            y = parameters.Q.Y;
+        } else {
+            // Derive public point from private scalar
+            const point = p256.getPublicKey(parameters.D, false); // uncompressed
+            x = point.slice(1, 33);
+            y = point.slice(33, 65);
+        }
+
+        const jwk: JsonWebKey = {
+            kty: "EC",
+            crv: "P-256",
+            d: toBase64Url(parameters.D),
+            x: toBase64Url(x),
+            y: toBase64Url(y),
+            ext: true
+        };
+
+        privateKey = await crypto.subtle.importKey(
+            "jwk",
+            jwk,
+            { name: "ECDSA", namedCurve: "P-256" },
+            true,
+            ["sign"]
+        );
+
+        const publicRaw = new Uint8Array(1 + x.length + y.length);
+        publicRaw[0] = 0x04;
+        publicRaw.set(x, 1);
+        publicRaw.set(y, 1 + x.length);
+
+        publicKey = await crypto.subtle.importKey(
             "raw",
             publicRaw,
             { name: "ECDSA", namedCurve: "P-256" },
             true,
             []
         );
-
-        let privateKey: CryptoKey | undefined = undefined;
-
-        if (parameters.D) {
-            // Import private key in JWK format (easier for EC than ASN.1)
-            const jwk: JsonWebKey = {
-                kty: "EC",
-                crv: "P-256",
-                x: toBase64Url(parameters.Q.X),
-                y: toBase64Url(parameters.Q.Y),
-                d: toBase64Url(parameters.D),
-                ext: true,
-            };
-
-            privateKey = await crypto.subtle.importKey(
-                "jwk",
-                jwk,
-                { name: "ECDSA", namedCurve: "P-256" },
-                true,
-                ["sign"]
-            );
-        }
 
         this.keyPair = { publicKey, privateKey: privateKey! };
     }
@@ -131,16 +162,30 @@ export class ECDsa implements IDisposable {
     }
 }
 
-// Helper to extract 'D' (private key) from PKCS#8
-function extractPrivateKeyD(pkcs8: Uint8Array): Uint8Array {
-    const dTag = 0x04; // OCTET STRING
-    const index = pkcs8.lastIndexOf(dTag);
-    if (index === -1 || index + 1 >= pkcs8.length) {
-        throw new Error("Private key component 'D' not found");
-    }
+const ECPrivateKeyASN = asn1.define('ECPrivateKey', function (this: any) {
+    this.seq().obj(
+        this.key('version').int(),
+        this.key('privateKey').octstr(),
+        this.key('publicKey').optional().explicit(1).bitstr()
+    );
+});
 
-    const length = pkcs8[index + 1];
-    return pkcs8.slice(index + 2, index + 2 + length);
+const PrivateKeyInfoASN = asn1.define('PrivateKeyInfo', function (this: any) {
+    this.seq().obj(
+        this.key('version').int(),
+        this.key('algorithm').seq().obj(
+            this.key('algorithm').objid(),
+            this.key('parameters').optional().any()
+        ),
+        this.key('privateKey').octstr()
+    );
+});
+
+function extractPrivateKeyD(pkcs8: Uint8Array): Uint8Array {
+    const buffer = Buffer.from(pkcs8); // ✅ Convert to Buffer
+    const decoded = PrivateKeyInfoASN.decode(buffer, 'der');
+    const ecPrivate = ECPrivateKeyASN.decode(decoded.privateKey, 'der');
+    return ecPrivate.privateKey;
 }
 
 // Base64url encode helper

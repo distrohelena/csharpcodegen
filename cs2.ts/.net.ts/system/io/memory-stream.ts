@@ -35,6 +35,11 @@ export class MemoryStream extends Stream {
 
         this._position = 0;
 
+        if (initialSizeOrBuffer === undefined) {
+            this.buffer = new Uint8Array(0); // or an initial default size like new Uint8Array(256)
+            return;
+        }
+
         if (typeof initialSizeOrBuffer === "number") {
             // constructor(initialSize: number)
             this.buffer = new Uint8Array(initialSizeOrBuffer);

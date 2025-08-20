@@ -43,12 +43,14 @@ namespace cs2.core {
             }
         }
 
-        public virtual void ProcessBlock(SemanticModel semantic, LayerContext context, BlockSyntax block, List<string> lines, int depth = 1) {
+        public virtual ExpressionResult ProcessBlock(SemanticModel semantic, LayerContext context, BlockSyntax block, List<string> lines, int depth = 1) {
+            ExpressionResult result = default;
+
             foreach (var statement in block.Statements) {
                 List<string> newLines = new List<string>();
 
                 int start = context.DepthClass;
-                ExpressionResult result = ProcessStatement(semantic, context, statement, newLines, depth);
+                result = ProcessStatement(semantic, context, statement, newLines, depth);
                 context.PopClass(start);
 
                 if (result.BeforeLines != null) {
@@ -61,6 +63,8 @@ namespace cs2.core {
                     lines.AddRange(result.AfterLines);
                 }
             }
+
+            return result;
         }
 
         public virtual ExpressionResult ProcessExpression(
@@ -224,7 +228,7 @@ namespace cs2.core {
                     lines.AddRange(result.AfterLines);
                 }
 
-                return new ExpressionResult(true);
+                return result;
             } else if (statement is ReturnStatementSyntax ret) {
                 ProcessReturnStatement(semantic, context, ret, lines);
             } else if (statement is LocalDeclarationStatementSyntax local) {

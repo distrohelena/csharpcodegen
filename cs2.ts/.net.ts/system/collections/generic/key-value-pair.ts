@@ -1,9 +1,9 @@
 export class KeyValuePair<T, N> {
-    key: T;
-    value: N;
+    Key: T;
+    Value: N;
 
     constructor(key: T, value: N) {
-        this.key = key;
-        this.value = value;
+        this.Key = key;
+        this.Value = value;
     }
 }

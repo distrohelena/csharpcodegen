@@ -1,11 +1,13 @@
-﻿var blake2b = require('blake2b');
+﻿import { blake2b } from 'blakejs';
 
 export class Blake2b {
+    /**
+     * Computes a BLAKE2b hash.
+     * @param hashSize Output hash size in bytes (up to 64)
+     * @param buffer Input data
+     * @returns Hash as Uint8Array
+     */
     static computeHash(hashSize: number, buffer: Uint8Array): Uint8Array {
-        var output = new Uint8Array(64);
-
-        blake2b(output.length).update(buffer).digest('hex');
-
-        return output;
+        return blake2b(buffer, null, hashSize);
     }
 }

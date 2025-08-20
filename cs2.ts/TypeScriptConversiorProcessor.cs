@@ -219,6 +219,10 @@ namespace cs2.ts {
                 }
             });
 
+            if (name == "Dispose") {
+                name = "dispose";
+            }
+
             if (currentClass == null) {
                 lines.Add(name);
             } else {
@@ -280,6 +284,8 @@ namespace cs2.ts {
                 }
             }
 
+
+
             if (stackVar != null) {
                 context.AddClass(GetClass((TypeScriptProgram)context.Program, stackVar.VarType));
                 return new ExpressionResult(true, VariablePath.Unknown, stackVar.VarType);
@@ -309,6 +315,10 @@ namespace cs2.ts {
                         }
                         return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
                     }
+                } else if (classFn.IsAsync) {
+                    VariableType cloned = new VariableType(VariableDataType.Void);
+                    cloned.TypeName = $"Promise<{cloned.TypeName}>";
+                    return new ExpressionResult(true, VariablePath.Unknown, cloned);
                 }
             } else if (currentClass?.DeclarationType == MemberDeclarationType.Enum) {
 
@@ -427,9 +437,9 @@ namespace cs2.ts {
             foreach (var arg in invocationExpression.ArgumentList.Arguments) {
                 string refKeyword = arg.RefKindKeyword.ToString();
                 string strName = string.Empty;
-                bool isRef = false;
-                if (refKeyword != "") {
-                    isRef = true;
+                bool isOut = false;
+                if (refKeyword == "out") {
+                    isOut = true;
                     beforeLines.Add("let ");
                     strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
                     strName = StringUtil.Replace(strName, "-", "");
@@ -443,7 +453,7 @@ namespace cs2.ts {
                 types.Add(res);
                 context.PopClass(startArg);
 
-                if (isRef) {
+                if (isOut) {
                     string outName = argLines[argLinesIndex];
                     if (res.Variable != null && res.Variable.Modifier == ParameterModifier.Out) {
                         outs.Add(outName + ".value", strName);
@@ -676,6 +686,7 @@ namespace cs2.ts {
 
             string name = type;
             switch (type) {
+                case "uint":
                 case "int":
                 case "long":
                 case "float":
@@ -689,7 +700,7 @@ namespace cs2.ts {
                     name = "Boolean";
                     break;
                 case "string":
-                    name = "Boolean";
+                    name = "String";
                     break;
                 case "char":
                     name = "String";
@@ -845,7 +856,13 @@ namespace cs2.ts {
 
         protected override void ProcessMemberBindingExpression(SemanticModel semantic, LayerContext context, MemberBindingExpressionSyntax memberBinding, List<string> lines) {
             // Access the member (property, method, etc.)
-            lines.Add(memberBinding.Name.ToString());
+            string name = memberBinding.Name.ToString();
+
+            if (name == "Dispose") {
+                name = "dispose";
+            }
+
+            lines.Add(name);
         }
 
         protected override void ProcessConditionalAccessExpression(SemanticModel semantic, LayerContext context, ConditionalAccessExpressionSyntax conditionalAccess, List<string> lines) {
@@ -884,6 +901,8 @@ namespace cs2.ts {
         }
 
         protected override void ProcessLambdaExpression(SemanticModel semantic, LayerContext context, ParenthesizedLambdaExpressionSyntax lambda, List<string> lines) {
+            int startIndex = lines.Count;
+
             lines.Add("(");
             for (int i = 0; i < lambda.ParameterList.Parameters.Count; i++) {
                 var parameter = lambda.ParameterList.Parameters[i];
@@ -899,10 +918,14 @@ namespace cs2.ts {
 
             if (lambda.Body is BlockSyntax block) {
                 lines.Add("{\n");
-                ProcessBlock(semantic, context, block, lines);
+                ExpressionResult result = ProcessBlock(semantic, context, block, lines);
                 lines.Add("}\n");
+
+                if (result.Type != null && result.Type.TypeName.StartsWith("Promise<")) {
+                    lines.Insert(startIndex, "async ");
+                }
             } else {
-                ProcessExpression(semantic, context, (ExpressionSyntax)lambda.Body, lines);
+                ExpressionResult result = ProcessExpression(semantic, context, (ExpressionSyntax)lambda.Body, lines);
                 lines.Add(";\n");
             }
         }
@@ -1039,7 +1062,7 @@ namespace cs2.ts {
             lines.Add("for (let ");
             lines.Add(forEachStatement.Identifier.Text);
             lines.Add(" of ");
-            ProcessExpression(semantic, context, forEachStatement.Expression, lines);
+            ExpressionResult result = ProcessExpression(semantic, context, forEachStatement.Expression, lines);
             lines.Add(") {\n");
 
             // Process the body of the forEach loop

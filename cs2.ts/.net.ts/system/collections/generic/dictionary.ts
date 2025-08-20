@@ -96,7 +96,7 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         const result: Array<KeyValuePair<TKey, TValue>> = [];
 
         this.forEach((key, value) => {
-            result.push({ key, value });
+            result.push({ Key: key, Value: value });
         });
 
         const list = new List<KeyValuePair<TKey, TValue>>();
@@ -112,4 +112,22 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         return list;
     }
 
+    [Symbol.iterator](): Iterator<KeyValuePair<TKey, TValue>> {
+        const entries: KeyValuePair<TKey, TValue>[] = [];
+
+        this.forEach((key, value) => {
+            entries.push({ Key: key, Value: value });
+        });
+
+        let index = 0;
+
+        return {
+            next(): IteratorResult<KeyValuePair<TKey, TValue>> {
+                if (index < entries.length) {
+                    return { value: entries[index++], done: false };
+                }
+                return { value: undefined as any, done: true };
+            }
+        };
+    }
 }

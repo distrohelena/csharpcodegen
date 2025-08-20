@@ -1,8 +1,26 @@
-import { IDisposable } from "../../disposable.interface";
+﻿import { IDisposable } from "../../disposable.interface";
 import { ECCurve } from "./ec-curve";
 import { ECDiffieHellmanPublicKey } from "./ec-diffie-helman-public-key";
 import { ECParameters } from "./ec-parameters";
 import { HashAlgorithmName } from "./hash-algorithm-name";
+import { p256 } from '@noble/curves/p256';
+import * as asn1 from 'asn1.js';
+
+// Helper to convert HashAlgorithmName to Web Crypto API format
+function toWebCryptoHashAlgorithm(hashAlgorithm: HashAlgorithmName): string {
+    switch (hashAlgorithm) {
+        case HashAlgorithmName.SHA1:
+            return 'SHA-1';
+        case HashAlgorithmName.SHA256:
+            return 'SHA-256';
+        case HashAlgorithmName.SHA384:
+            return 'SHA-384';
+        case HashAlgorithmName.SHA512:
+            return 'SHA-512';
+        default:
+            throw new Error(`Unsupported hash algorithm: ${hashAlgorithm}`);
+    }
+}
 
 export class ECDiffieHellman implements IDisposable {
     private _publicKey: ECDiffieHellmanPublicKey;
@@ -71,11 +89,36 @@ export class ECDiffieHellman implements IDisposable {
         return result;
     }
 
+
+    toBase64Url(bytes: Uint8Array): string {
+        const binary = String.fromCharCode(...bytes);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    fromBase64Url(base64url: string): Uint8Array {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+            + '==='.slice((base64url.length + 3) % 4);
+        return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    }
+
     async importParameters(parameters: ECParameters): Promise<void> {
-        const publicRaw = new Uint8Array(1 + parameters.Q.X.length + parameters.Q.Y.length);
-        publicRaw[0] = 0x04; // Uncompressed format
-        publicRaw.set(parameters.Q.X, 1);
-        publicRaw.set(parameters.Q.Y, 1 + parameters.Q.X.length);
+        let x: Uint8Array;
+        let y: Uint8Array;
+
+        if (!parameters.Q) {
+            // Derive public key from private scalar using noble-curves
+            const pub = p256.getPublicKey(parameters.D, false); // uncompressed format
+            x = pub.slice(1, 33);
+            y = pub.slice(33, 65);
+        } else {
+            x = parameters.Q.X;
+            y = parameters.Q.Y;
+        }
+
+        const publicRaw = new Uint8Array(1 + x.length + y.length);
+        publicRaw[0] = 0x04;
+        publicRaw.set(x, 1);
+        publicRaw.set(y, 1 + x.length);
 
         const publicKey = await crypto.subtle.importKey(
             "raw",
@@ -88,12 +131,11 @@ export class ECDiffieHellman implements IDisposable {
         let privateKey: CryptoKey | undefined = undefined;
 
         if (parameters.D) {
-            // Import private key in JWK format (easier for EC than ASN.1)
             const jwk: JsonWebKey = {
                 kty: "EC",
                 crv: "P-256",
-                x: toBase64Url(parameters.Q.X),
-                y: toBase64Url(parameters.Q.Y),
+                x: this.toBase64Url(x),
+                y: this.toBase64Url(y),
                 d: toBase64Url(parameters.D),
                 ext: true,
             };
@@ -107,8 +149,12 @@ export class ECDiffieHellman implements IDisposable {
             );
         }
 
+        const raw = new Uint8Array(await crypto.subtle.exportKey("raw", publicKey));
+        this._publicKey = new ECDiffieHellmanPublicKey(raw, parameters.Curve, publicKey);
+
         this.keyPair = { publicKey, privateKey: privateKey! };
     }
+
 
     public async deriveKeyFromHash(
         otherPublicKey: ECDiffieHellmanPublicKey,
@@ -143,23 +189,38 @@ export class ECDiffieHellman implements IDisposable {
             finalInput = full;
         }
 
-        const hash = await crypto.subtle.digest(hashAlgorithm, finalInput);
+        const webCryptoHashAlgorithm = toWebCryptoHashAlgorithm(hashAlgorithm);
+        const hash = await crypto.subtle.digest(webCryptoHashAlgorithm, finalInput);
         return new Uint8Array(hash);
     }
-
-
 }
+
+const ECPrivateKeyASN = asn1.define('ECPrivateKey', function (this: any) {
+    this.seq().obj(
+        this.key('version').int(),
+        this.key('privateKey').octstr(),
+        this.key('publicKey').optional().explicit(1).bitstr()
+    );
+});
+
+const PrivateKeyInfoASN = asn1.define('PrivateKeyInfo', function (this: any) {
+    this.seq().obj(
+        this.key('version').int(),
+        this.key('algorithm').seq().obj(
+            this.key('algorithm').objid(),
+            this.key('parameters').optional().any()
+        ),
+        this.key('privateKey').octstr()
+    );
+});
+
 
 // Helper to extract 'D' (private key) from PKCS#8
 function extractPrivateKeyD(pkcs8: Uint8Array): Uint8Array {
-    const dTag = 0x04; // OCTET STRING
-    const index = pkcs8.lastIndexOf(dTag);
-    if (index === -1 || index + 1 >= pkcs8.length) {
-        throw new Error("Private key component 'D' not found");
-    }
-
-    const length = pkcs8[index + 1];
-    return pkcs8.slice(index + 2, index + 2 + length);
+    const buffer = Buffer.from(pkcs8); // ✅ Convert to Buffer
+    const decoded = PrivateKeyInfoASN.decode(buffer, 'der');
+    const ecPrivate = ECPrivateKeyASN.decode(decoded.privateKey, 'der');
+    return ecPrivate.privateKey;
 }
 
 // Base64url encode helper

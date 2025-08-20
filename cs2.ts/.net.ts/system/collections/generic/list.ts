@@ -53,11 +53,6 @@ export class List<T> extends Array<T> {
         return this.filter(predicate);
     }
 
-    // Get the index of an item
-    public indexOf(item: T): number {
-        return this.indexOf(item);
-    }
-
     // Get the number of items in the list
     public get count(): number {
         return this.length;

@@ -3,7 +3,6 @@ using cs2.core.symbols;
 using Nucleus;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 
 namespace cs2.ts {
     public class TypeScriptProgram : ConversionProgram {
@@ -40,9 +39,11 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("Console", "./system/console"));
             Requirements.Add(new TypeScriptKnownClass("IDisposable", "./system/disposable.interface"));
             Requirements.Add(new TypeScriptKnownClass("Guid", "./system/guid"));
-            Requirements.Add(new TypeScriptKnownClass("NativeArrayUtil", "./system/nat-array-util"));
+            Requirements.Add(new TypeScriptKnownClass("NativeArrayUtil", "./system/util/nat-array-util"));
+            Requirements.Add(new TypeScriptKnownClass("NativeStringUtil", "./system/util/nat-string-util"));
             Requirements.Add(new TypeScriptKnownClass("Convert", "./system/convert"));
             Requirements.Add(new TypeScriptKnownClass("Environment", "./system/environment"));
+            Requirements.Add(new TypeScriptKnownClass("AppDomain", "./system/app-domain"));
 
             // system.collection.concurrent
             Requirements.Add(new TypeScriptKnownClass("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"));
@@ -259,6 +260,10 @@ namespace cs2.ts {
             makeTypeScriptFunction("MaxValue", "MAX_VALUE", clNumber, "int");
             Classes.Add(clNumber);
 
+            ConversionClass clUint = makeClass("uint");
+            makeTypeScriptFunction("Parse", "parse", clUint, "uint");
+            Classes.Add(clUint);
+
             ConversionClass clString = makeClass("string");
             makeTypeScriptFunction("Length", "length", clString, "int");
             makeTypeScriptFunction("IndexOf", "indexOf", clString, "string");
@@ -267,7 +272,12 @@ namespace cs2.ts {
             makeTypeScriptFunction("StartsWith", "startsWith", clString, "string");
             makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
+            makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clString, "string");
             Classes.Add(clString);
+
+            ConversionClass clStringUpper = makeClass("String");
+            makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clStringUpper, "string", "NativeStringUtil");
+            Classes.Add(clStringUpper);
 
             ConversionClass clBool = makeClass("boolean");
             Classes.Add(clBool);
