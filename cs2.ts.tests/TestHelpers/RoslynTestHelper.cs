@@ -7,6 +7,10 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cs2.ts.tests.TestHelpers {
+    /// <summary>
+    /// Small helpers for building Roslyn compilations and extracting nodes for tests.
+    /// Keeps unit tests concise and focused on processor behavior.
+    /// </summary>
     internal static class RoslynTestHelper {
         public static (Compilation Compilation, SemanticModel Model, CompilationUnitSyntax Root) CreateCompilation(string code) {
             var syntaxTree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest));
@@ -29,14 +33,23 @@ namespace cs2.ts.tests.TestHelpers {
             return (compilation, model, root);
         }
 
+        /// <summary>
+        /// Returns the first method declaration found in the compilation unit.
+        /// </summary>
         public static MethodDeclarationSyntax GetFirstMethod(CompilationUnitSyntax root) {
             return root.DescendantNodes().OfType<MethodDeclarationSyntax>().First();
         }
 
+        /// <summary>
+        /// Finds a method by its identifier text.
+        /// </summary>
         public static MethodDeclarationSyntax GetMethodByName(CompilationUnitSyntax root, string name) {
             return root.DescendantNodes().OfType<MethodDeclarationSyntax>().First(m => m.Identifier.ValueText == name);
         }
 
+        /// <summary>
+        /// Ensures and returns the single statement inside a method body.
+        /// </summary>
         public static StatementSyntax GetSingleStatement(MethodDeclarationSyntax method) {
             if (method.Body != null && method.Body.Statements.Count == 1) {
                 return method.Body.Statements[0];
@@ -44,6 +57,9 @@ namespace cs2.ts.tests.TestHelpers {
             throw new InvalidOperationException("Method must contain exactly one statement for this helper.");
         }
 
+        /// <summary>
+        /// Returns the first expression found inside the method body.
+        /// </summary>
         public static ExpressionSyntax GetFirstExpression(MethodDeclarationSyntax method) {
             var expr = method.DescendantNodes().OfType<ExpressionSyntax>().FirstOrDefault();
             if (expr == null) throw new InvalidOperationException("No expression found in method body.");

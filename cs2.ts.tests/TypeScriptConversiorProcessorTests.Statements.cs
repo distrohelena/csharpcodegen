@@ -4,6 +4,10 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
 
 namespace cs2.ts.tests {
+    /// <summary>
+    /// Statement-level tests for control flow, declarations, and other constructs.
+    /// Ensures TS emission compiles and preserves intent.
+    /// </summary>
     public class TypeScriptConversiorProcessorTests_Statements {
         [Fact]
         public void ReturnStatement_EmitsReturn() {

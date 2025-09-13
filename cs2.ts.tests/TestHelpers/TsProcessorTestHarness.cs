@@ -6,6 +6,10 @@ using cs2.core;
 using Microsoft.CodeAnalysis.CSharp;
 
 namespace cs2.ts.tests.TestHelpers {
+    /// <summary>
+    /// Centralizes processor + context setup and runs conversions while validating
+    /// generated TypeScript snippets for syntax and basic type correctness.
+    /// </summary>
     internal static class TsProcessorTestHarness {
         public static (TypeScriptConversiorProcessor Processor, TypeScriptLayerContext Context, TypeScriptProgram Program) Create() {
             var rules = new ConversionRules();
@@ -27,6 +31,9 @@ namespace cs2.ts.tests.TestHelpers {
             context.AddFunction(new FunctionStack(fn));
         }
 
+        /// <summary>
+        /// Processes a statement, returns resulting TS lines, and validates them via ts compiler.
+        /// </summary>
         public static List<string> RunProcessStatement(TypeScriptConversiorProcessor proc, TypeScriptLayerContext context, SemanticModel model, StatementSyntax stmt) {
             var lines = new List<string>();
             if (stmt.Parent is BlockSyntax block) {
@@ -39,6 +46,9 @@ namespace cs2.ts.tests.TestHelpers {
             return lines;
         }
 
+        /// <summary>
+        /// Processes an expression, returns resulting TS lines, and validates them via ts compiler.
+        /// </summary>
         public static List<string> RunProcessExpression(TypeScriptConversiorProcessor proc, TypeScriptLayerContext context, SemanticModel model, ExpressionSyntax expr) {
             var lines = new List<string>();
             proc.ProcessExpression(model, context, expr, lines);
@@ -48,6 +58,9 @@ namespace cs2.ts.tests.TestHelpers {
 
         public static string JoinLines(IEnumerable<string> lines) => string.Concat(lines);
 
+        /// <summary>
+        /// Processes a block, returns both TS lines and the last ExpressionResult (for assertions on Before/After lines).
+        /// </summary>
         public static (List<string> Lines, cs2.core.ExpressionResult Result) RunProcessBlock(TypeScriptConversiorProcessor proc, TypeScriptLayerContext context, SemanticModel model, BlockSyntax block) {
             var lines = new List<string>();
             var result = proc.ProcessBlock(model, context, block, lines, depth: 0);

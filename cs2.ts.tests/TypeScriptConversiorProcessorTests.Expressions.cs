@@ -7,6 +7,10 @@ using System.Linq;
 using Xunit;
 
 namespace cs2.ts.tests {
+    /// <summary>
+    /// Expression-level tests for TypeScriptConversiorProcessor. Each test asserts on the emitted
+    /// TypeScript snippet and also validates syntax via the TypeScript compiler when available.
+    /// </summary>
     public class TypeScriptConversiorProcessorTests_Expressions {
         [Fact]
         public void Assignment_Basic_EmitsEquals() {
@@ -77,12 +81,10 @@ namespace cs2.ts.tests {
             var code = @"class C { static void Foo(out int x){ x = 1; } void M(){ int x; Foo(out x); } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var method = RoslynTestHelper.GetMethodByName(root, "M");
-            var invoke = method.DescendantNodes().OfType<InvocationExpressionSyntax>().First();
 
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
-            var lines = new List<string>();
-            var result = proc.ProcessExpression(model, ctx, invoke, lines);
+            var (lines, result) = TsProcessorTestHarness.RunProcessBlock(proc, ctx, model, method.Body!);
             // Expect temporary out var and afterLines assignment back
             Assert.NotNull(result.BeforeLines);
             Assert.Contains("let ", string.Concat(result.BeforeLines));

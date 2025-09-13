@@ -326,10 +326,6 @@ namespace cs2.ts {
             string dotNetFolder = Path.Combine(startFolder, ".net.ts");
             string extractorPath = Path.Combine(dotNetFolder, "extractor.js");
 
-            List<FileInfo> files = new List<FileInfo>();
-            DirectoryUtil.RecursiveList(new DirectoryInfo(Path.Combine(dotNetFolder, "system")), files);
-            DirectoryUtil.RecursiveList(new DirectoryInfo(Path.Combine(dotNetFolder, "websocketsharp")), files);
-
             string shell;
             string shellArguments;
 

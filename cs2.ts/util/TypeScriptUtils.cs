@@ -24,9 +24,7 @@ namespace cs2.ts {
                 if (extCl == null) {
                     var knownClass = ((TypeScriptProgram)program).Requirements.FirstOrDefault(c => c.Name == ext);
 
-                    if (knownClass == null) {
-                        //throw new Exception($"Class not found: {ext}");
-                    }
+                    // If not found here, it may be provided externally by the TS runtime.
                 }
 
                 if (extCl?.DeclarationType == MemberDeclarationType.Interface ||
