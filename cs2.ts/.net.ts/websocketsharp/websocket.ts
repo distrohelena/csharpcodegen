@@ -48,6 +48,8 @@ export class WebSocketWS {
         }
 
         this.webSocket.onclose = (event) => {
+            this.state = WebSocketState.Closed;
+
             if (this.OnClose) {
                 this.OnClose(event, {
                     Reason: event.reason

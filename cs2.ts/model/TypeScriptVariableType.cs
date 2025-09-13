@@ -1,7 +1,13 @@
 ﻿using cs2.core;
 
 namespace cs2.ts {
+    /// <summary>
+    /// Extension methods for mapping project VariableType to TypeScript type strings.
+    /// </summary>
     public static class TypeScriptVariableType {
+        /// <summary>
+        /// Returns the TS type name, including generic arity adjustments for known classes.
+        /// </summary>
         public static string GetTypeScriptType(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
@@ -25,6 +31,9 @@ namespace cs2.ts {
             return typeName;
         }
 
+        /// <summary>
+        /// Returns the TS type name without generic arguments (e.g., Dictionary&lt;,&gt; -> Dictionary).
+        /// </summary>
         public static string GetTypeScriptTypeNoGeneric(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
@@ -41,6 +50,9 @@ namespace cs2.ts {
             return typeName;
         }
 
+        /// <summary>
+        /// Returns TS type string with Promise&lt;T&gt; unwrapped when present.
+        /// </summary>
         public static string ToTypeScriptStringNoAsync(this VariableType varType, TypeScriptProgram program) {
             string value = ToTypeScriptString(varType, program);
 
@@ -52,6 +64,9 @@ namespace cs2.ts {
             return value;
         }
 
+        /// <summary>
+        /// Returns full TS type string, handling arrays, tuples, and generics.
+        /// </summary>
         public static string ToTypeScriptString(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {

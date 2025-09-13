@@ -5,6 +5,10 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace cs2.ts {
+    /// <summary>
+    /// Holds TypeScript target configuration, known-class metadata and type mappings.
+    /// Responsible for wiring the TS runtime symbols and native remaps used by the converter.
+    /// </summary>
     public class TypeScriptProgram : ConversionProgram {
         public List<TypeScriptKnownClass> Requirements { get; private set; }
 
@@ -13,6 +17,10 @@ namespace cs2.ts {
             Requirements = new List<TypeScriptKnownClass>();
         }
 
+        /// <summary>
+        /// Configures the TypeScript program with .NET-like runtime symbols and mappings for the given environment.
+        /// Loads symbol JSON from .net.ts, sets up native remaps, and populates <see cref="Classes"/>.
+        /// </summary>
         public void AddDotNet(TypeScriptEnvironment env) {
             this.buildTypeMap();
 
@@ -209,14 +217,23 @@ namespace cs2.ts {
             }
         }
 
+        /// <summary>
+        /// NodeJS-specific environment shims.
+        /// </summary>
         private void addNode() {
             Requirements.Add(new TypeScriptKnownClass("NodeDirectory", "./system/io/node-directory", "Directory"));
         }
 
+        /// <summary>
+        /// Web-specific environment shims.
+        /// </summary>
         private void addWeb() {
             Requirements.Add(new TypeScriptKnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
         }
 
+        /// <summary>
+        /// Creates a native (non-generated) class placeholder with common members.
+        /// </summary>
         private ConversionClass makeClass(string name) {
             ConversionClass cl = new ConversionClass();
             cl.Name = name;
@@ -227,6 +244,9 @@ namespace cs2.ts {
             return cl;
         }
 
+        /// <summary>
+        /// Adds a remapped function to a native class placeholder.
+        /// </summary>
         private void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "", string remapCl = "") {
             ConversionFunction fnToString = new ConversionFunction();
             fnToString.Name = name;
@@ -238,6 +258,9 @@ namespace cs2.ts {
             cl.Functions.Add(fnToString);
         }
 
+        /// <summary>
+        /// Adds a remapped variable to a native class placeholder.
+        /// </summary>
         private void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type) {
             ConversionVariable fnToString = new ConversionVariable();
             fnToString.Name = name;
@@ -246,6 +269,9 @@ namespace cs2.ts {
             cl.Variables.Add(fnToString);
         }
 
+        /// <summary>
+        /// Registers native TS prototypes/methods that emulate .NET members (e.g., Array, string, Math).
+        /// </summary>
         private void buildNativeRemap() {
             ConversionClass clArray = makeClass("Array");
             Classes.Add(clArray);
@@ -291,6 +317,10 @@ namespace cs2.ts {
             Classes.Add(clUint8Array);
         }
 
+        /// <summary>
+        /// Ensures .net.ts dependencies are installed, then runs the symbol extractor to generate JSON
+        /// that describes available TS classes/interfaces/enums. This JSON is consumed to populate Requirements.
+        /// </summary>
         private void buildDotNetData() {
             string startFolder = AssemblyUtil.GetStartFolder();
             string dotNetFolder = Path.Combine(startFolder, ".net.ts");
@@ -354,6 +384,9 @@ namespace cs2.ts {
             Console.WriteLine($"---- Result Error: {outputError}");
         }
 
+        /// <summary>
+        /// Maps common .NET primitive types to TypeScript equivalents.
+        /// </summary>
         private void buildTypeMap() {
             TypeMap.Add("object", "any");
 
@@ -363,11 +396,11 @@ namespace cs2.ts {
             TypeMap.Add("int", "number");
             TypeMap.Add("Int16", "number");
             TypeMap.Add("Int32", "number");
-            TypeMap.Add("Int64", "bigint");
+            TypeMap.Add("Int64", "number");
             TypeMap.Add("uint", "number");
             TypeMap.Add("UInt16", "number");
             TypeMap.Add("UInt32", "number");
-            TypeMap.Add("UInt64", "bigint");
+            TypeMap.Add("UInt64", "number");
             TypeMap.Add("long", "number");
             TypeMap.Add("ulong", "number");
             TypeMap.Add("float", "number");

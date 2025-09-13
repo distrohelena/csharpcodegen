@@ -8,6 +8,10 @@ using System.Reflection;
 using System.Xml.Linq;
 
 namespace cs2.ts {
+    /// <summary>
+    /// Converts C# code to TypeScript using Roslyn and TypeScriptProgram metadata.
+    /// Writes TS output and copies required runtime helpers from .net.ts.
+    /// </summary>
     public class TypeScriptCodeConverter : CodeConverter {
         string assemblyName;
         string version;
@@ -39,6 +43,9 @@ namespace cs2.ts {
             targetFramework = "";
         }
 
+        /// <summary>
+        /// Writes the generated TypeScript file and copies runtime helpers into <paramref name="outputFolder"/>.
+        /// </summary>
         public void WriteFile(string outputFolder, string fileName) {
             var replacements = new Dictionary<string, string>() {
                 { "ASSEMBLY_NAME", assemblyName },
@@ -103,6 +110,9 @@ namespace cs2.ts {
             stream.Dispose();
         }
 
+        /// <summary>
+        /// Emits static initializer block for classes with static constructors.
+        /// </summary>
         private void writeStaticConstructor(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && c.IsStatic).ToList();
             if (constructors.Count == 0) {
@@ -118,6 +128,9 @@ namespace cs2.ts {
             writer.WriteLine($"");
         }
 
+        /// <summary>
+        /// Emits constructor overloads and factory methods for TypeScript.
+        /// </summary>
         private void writeConstructors(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
             var classOverrides = cl.Extensions.Count(over => {
@@ -490,7 +503,7 @@ namespace cs2.ts {
                 }
 
                 if (cl.Name == "WebSocketClientMessageHandler" && name == "CreateWs") {
-                    Debugger.Break();
+                    //Debugger.Break();
                 }
 
                 List<string> lines = fn.WriteLines(conversion, program, cl);

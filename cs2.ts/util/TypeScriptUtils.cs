@@ -2,7 +2,14 @@ using cs2.core;
 using Microsoft.CodeAnalysis;
 
 namespace cs2.ts {
+    /// <summary>
+    /// Utility helpers for TypeScript code generation.
+    /// </summary>
     public static class TypeScriptUtils {
+        /// <summary>
+        /// Computes implements/extends clauses for a given class based on its extensions and declaration type.
+        /// Returns a tuple of formatted strings: (implements, extends).
+        /// </summary>
         public static (string, string) GetInheritance(ConversionProgram program, ConversionClass cl) {
             string implements = "";
             string extends = "";

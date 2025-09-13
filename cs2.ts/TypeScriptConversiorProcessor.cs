@@ -7,6 +7,9 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace cs2.ts {
+    /// <summary>
+    /// Processes Roslyn syntax nodes into TypeScript code lines following project rules and mappings.
+    /// </summary>
     public class TypeScriptConversiorProcessor : ConversionProcessor {
         private static bool IsInsideObjectInitializer(AssignmentExpressionSyntax assignment) {
             // Walk up until we find the nearest InitializerExpression
@@ -22,6 +25,9 @@ namespace cs2.ts {
             return objectCreation != null;
         }
 
+        /// <summary>
+        /// Handles assignment expressions, including event-like callbacks (+=/-=) and object initializers.
+        /// </summary>
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
@@ -59,6 +65,9 @@ namespace cs2.ts {
             lines.AddRange(initLines);
         }
 
+        /// <summary>
+        /// Resolves the ConversionClass for a given VariableType within the TypeScript program.
+        /// </summary>
         public static ConversionClass GetClass(TypeScriptProgram program, VariableType varType) {
             string name = varType.GetTypeScriptType(program);
             ConversionClass found = program.Classes.FirstOrDefault(c => c.Name == name);
@@ -71,6 +80,9 @@ namespace cs2.ts {
             return found;
         }
 
+        /// <summary>
+        /// Emits identifier references, supporting dynamic resolution of overloaded members based on argument types.
+        /// </summary>
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             string name = identifier.ToString();
             bool isMethod = false;
@@ -153,6 +165,10 @@ namespace cs2.ts {
                     }
 
                     string typeName = result.Type.TypeName;
+                    if (string.IsNullOrEmpty(typeName)) {
+                        continue;
+                    }
+
                     searchName += StringUtil.CapitalizerFirstLetter(typeName);
                 }
 
