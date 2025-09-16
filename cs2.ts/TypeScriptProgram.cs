@@ -85,9 +85,7 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("FileMode", "./system/io/file-mode"));
             Requirements.Add(new TypeScriptKnownClass("FileAccess", "./system/io/file-access"));
             Requirements.Add(new TypeScriptKnownClass("FileShare", "./system/io/file-share"));
-            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));
-            Requirements.Add(new TypeScriptKnownClass("File", "./system/io/file"));
-            Requirements.Add(new TypeScriptKnownClass("Path", "./system/io/path"));
+            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));            Requirements.Add(new TypeScriptKnownClass("Path", "./system/io/path"));
             Requirements.Add(new TypeScriptKnownClass("SearchOption", "./system/io/search-option"));
             Requirements.Add(new TypeScriptKnownClass("StreamReader", "./system/io/stream-reader"));
             Requirements.Add(new TypeScriptKnownClass("TextWriter", "./system/io/text-writer"));
@@ -222,6 +220,8 @@ namespace cs2.ts {
         /// </summary>
         private void addNode() {
             Requirements.Add(new TypeScriptKnownClass("NodeDirectory", "./system/io/node-directory", "Directory"));
+            Requirements.Add(new TypeScriptKnownClass("File", "./system/io/node-file"));
+            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/node-file-stream"));
         }
 
         /// <summary>
@@ -229,6 +229,8 @@ namespace cs2.ts {
         /// </summary>
         private void addWeb() {
             Requirements.Add(new TypeScriptKnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
+            Requirements.Add(new TypeScriptKnownClass("File", "./system/io/file"));
+            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));
         }
 
         /// <summary>
@@ -414,3 +416,4 @@ namespace cs2.ts {
         }
     }
 }
+

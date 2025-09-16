@@ -1,135 +1,36 @@
-import { Stream } from "./stream";
-import { SeekOrigin } from "./seek-origin";
-import * as fs from "fs";
 import { FileMode } from "./file-mode";
-import { FileAccess } from "./file-access";
-import { FileShare } from "./file-share";
+import { MemoryStream } from "./memory-stream";
+import { ensureFileBuffer, readFileBuffer, writeFileBuffer } from "./file-storage";
 
-export class FileStream extends Stream {
-    private fd: number;
-    private _position: number = 0;
+export class FileStream extends MemoryStream {
+    private readonly path: string;
+    private readonly mode: FileMode;
 
-    constructor(path: string, mode: FileMode = FileMode.Open, access: FileAccess = FileAccess.ReadWrite, share: FileShare = FileShare.None) {
-        super();
-        let flag: string;
-        
-        // Determine the file access mode based on FileAccess enum
-        let canRead = (access === FileAccess.Read || access === FileAccess.ReadWrite);
-        let canWrite = (access === FileAccess.Write || access === FileAccess.ReadWrite);
-        
-        switch (mode) {
-            case FileMode.Append:
-                flag = "a+";
-                break;
-            case FileMode.Create:
-                flag = canRead ? "w+" : "w";
-                break;
-            case FileMode.CreateNew:
-                flag = canRead ? "wx+" : "wx";
-                break;
-            case FileMode.Open:
-                flag = canWrite ? "r+" : "r";
-                break;
-            case FileMode.OpenOrCreate:
-                flag = canWrite ? "r+" : "r";
-                break;
-            case FileMode.Truncate:
-                flag = canRead ? "w+" : "w";
-                break;
-            default:
-                throw new Error("Invalid FileMode");
-        }
-        
-        // Note: FileShare is not directly supported in Node.js fs.openSync
-        // In a real implementation, you might need to handle file sharing differently
-        // For now, we'll just use the mode flag
-        this.fd = fs.openSync(path, flag);
-        this._position = 0;
-    }
-
-    read(buffer: Uint8Array, offset: number, count: number): number {
-        const tempBuffer = new Uint8Array(count);
-        const bytesRead = fs.readSync(this.fd, tempBuffer, 0, count, this._position);
-        buffer.set(tempBuffer.subarray(0, bytesRead), offset);
-        this._position += bytesRead;
-        return bytesRead;
-    }
-
-    write(buffer: Uint8Array, offset: number, count: number): void {
-        const tempBuffer = buffer.subarray(offset, offset + count);
-        const bytesWritten = fs.writeSync(this.fd, tempBuffer, 0, count, this._position);
-        this._position += bytesWritten;
-    }
-
-    seek(offset: number, origin: SeekOrigin): number {
-        switch (origin) {
-            case SeekOrigin.Begin:
-                this._position = offset;
-                break;
-            case SeekOrigin.Current:
-                this._position += offset;
-                break;
-            case SeekOrigin.End:
-                this._position = this.length + offset;
-                break;
-        }
-        return this._position;
-    }
-
-    setLength(length: number): void {
-        fs.ftruncateSync(this.fd, length);
-    }
-
-    get canRead(): boolean {
-        return true;
-    }
-
-    get canWrite(): boolean {
-        return true;
-    }
-
-    get canSeek(): boolean {
-        return true;
-    }
-
-    internalReserve(count: number): void {
-        // Not needed for file streams
-    }
-
-    internalWriteByte(byte: number): void {
-        const buffer = new Uint8Array([byte]);
-        this.write(buffer, 0, 1);
-    }
-
-    internalReadByte(): number {
-        const buffer = new Uint8Array(1);
-        const bytesRead = this.read(buffer, 0, 1);
-        return bytesRead > 0 ? buffer[0] : -1;
-    }
-
-    get length(): number {
-        return fs.fstatSync(this.fd).size;
-    }
-
-    get position(): number {
-        return this._position;
-    }
-    set position(value: number) {
-        this._position = value;
-    }
-
-    dispose(): void {
-        this.close();
-    }
-
-    close(): void {
-        if (this.fd !== undefined) {
-            fs.closeSync(this.fd);
-            this.fd = -1;
+    constructor(path: string, mode: FileMode) {
+        const buffer = readFileBuffer(path);
+        super(buffer);
+        this.path = path;
+        this.mode = mode;
+        if (mode === FileMode.Append) {
+            this.position = this.length;
         }
     }
 
-    flush(): void {
-        fs.fsyncSync(this.fd);
+    override dispose(): void {
+        this.commit();
+    }
+
+    override close(): void {
+        this.commit();
+        super.close();
+    }
+
+    override flush(): void {
+        this.commit();
+    }
+
+    private commit() {
+        ensureFileBuffer(this.path, this.mode);
+        writeFileBuffer(this.path, this.toArray());
     }
 }

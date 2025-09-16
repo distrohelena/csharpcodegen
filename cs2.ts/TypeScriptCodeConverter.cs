@@ -5,6 +5,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
 using Nucleus;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Xml.Linq;
 
@@ -37,6 +39,8 @@ namespace cs2.ts {
             TypeScriptReflectionEmitter.GlobalOptions = resolvedOptions.Reflection.Clone();
 
             var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
+
+            EnsureRuntimeMetadata();
 
             workspace = MSBuildWorkspace.Create();
 
@@ -726,6 +730,55 @@ namespace cs2.ts {
             }
         }
 
+        static void EnsureRuntimeMetadata()
+        {
+            try
+            {
+                string baseDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+                string runtimeDir = Path.Combine(baseDir, ".net.ts");
+                if (!Directory.Exists(runtimeDir)) {
+                    return;
+                }
+
+                var tsFiles = Directory.EnumerateFiles(runtimeDir, "*.ts", SearchOption.AllDirectories)
+                    .Where(f => f.IndexOf("node_modules", StringComparison.OrdinalIgnoreCase) == -1)
+                    .Where(f => f.IndexOf(string.Concat(Path.DirectorySeparatorChar, "src", Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) == -1);
+
+                bool missingMetadata = tsFiles.Any(f => !File.Exists(Path.ChangeExtension(f, ".json")));
+                if (!missingMetadata) {
+                    return;
+                }
+
+                string extractor = Path.Combine(runtimeDir, "extractor.js");
+                if (!File.Exists(extractor)) {
+                    Console.WriteLine("Warning: extractor.js not found; metadata may be stale.");
+                    return;
+                }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "node",
+                    Arguments = $"\"{extractor}\" \"{runtimeDir}\"",
+                    WorkingDirectory = runtimeDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(psi);
+                if (process == null) {
+                    Console.WriteLine("Warning: failed to launch metadata extractor (node not found?).");
+                    return;
+                }
+                process.WaitForExit();
+                if (process.ExitCode != 0) {
+                    Console.WriteLine($"Warning: metadata extractor exited with code {process.ExitCode}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: unable to regenerate runtime metadata: {ex.Message}");
+            }
+        }
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {
             ConversionPreProcessor.PreProcessExpression(model, context, member);
         }
@@ -735,3 +788,4 @@ namespace cs2.ts {
         }
     }
 }
+
