@@ -23,6 +23,7 @@ namespace cs2.core {
 
             cl.DeclarationType = classType;
             cl.Semantic = semantic;
+            cl.TypeSymbol = semantic.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
 
             if (classDecl.TypeParameterList != null) {
                 cl.GenericArgs = new List<string>();
@@ -69,6 +70,7 @@ namespace cs2.core {
 
             cl.DeclarationType = classType;
             cl.Semantic = semantic;
+            cl.TypeSymbol = semantic.GetDeclaredSymbol(structDecl) as INamedTypeSymbol;
 
             if (structDecl.TypeParameterList != null) {
                 cl.GenericArgs = new List<string>();
@@ -238,6 +240,8 @@ namespace cs2.core {
             MemberUtil.GetModifiers(delegateDecl.Modifiers, out isStatic, out isOverride, out access, out classType);
 
             cl.DeclarationType = MemberDeclarationType.Delegate;
+            cl.Semantic = semantic;
+            cl.TypeSymbol = semantic.GetDeclaredSymbol(delegateDecl) as INamedTypeSymbol;
 
             ConversionFunction func = context.StartFn();
             func.IsStatic = isStatic;
@@ -419,6 +423,8 @@ namespace cs2.core {
                 var cl = context.StartClass();
                 cl.Name = ifaceDecl.Identifier.ToString();
                 cl.DeclarationType = MemberDeclarationType.Interface;
+                cl.Semantic = semantic;
+                cl.TypeSymbol = semantic.GetDeclaredSymbol(ifaceDecl) as INamedTypeSymbol;
 
                 foreach (MemberDeclarationSyntax memberSyntax in ifaceDecl.Members) {
                     PreProcessExpression(semantic, context, memberSyntax);
@@ -442,6 +448,8 @@ namespace cs2.core {
                 cl.DeclarationType = MemberDeclarationType.Enum;
                 cl.Name = Enum.Identifier.ToString();
                 cl.EnumMembers = new List<object>();
+                cl.Semantic = semantic;
+                cl.TypeSymbol = semantic.GetDeclaredSymbol(Enum) as INamedTypeSymbol;
 
                 if (Enum.BaseList != null) {
                     foreach (var baseType in Enum.BaseList.ChildNodes()) {

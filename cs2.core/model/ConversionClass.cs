@@ -19,6 +19,8 @@ namespace cs2.core {
 
         public SemanticModel Semantic { get; set; }
 
+        public INamedTypeSymbol? TypeSymbol { get; set; }
+
         public ConversionClass() {
             Name = string.Empty;
             DeclarationType = MemberDeclarationType.Class;

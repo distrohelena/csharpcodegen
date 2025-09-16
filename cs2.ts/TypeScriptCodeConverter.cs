@@ -1,4 +1,5 @@
 using cs2.core;
+using cs2.ts.util;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -19,12 +20,21 @@ namespace cs2.ts {
 
         TypeScriptConversiorProcessor conversion;
         TypeScriptProgram tsProgram;
+        readonly TypeScriptConversionOptions conversionOptions;
+        bool needsReflectionTypeImport;
+        bool needsReflectionEnumImport;
+        bool needsReflectionMetadataImport;
 
         protected override string[] PreProcessorSymbols { get { return ["TYPESCRIPT"]; } }
 
-        public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env)
+        public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions? options = null)
             : base(rules) {
             this.rules = rules;
+
+            var resolvedOptions = options?.Clone() ?? TypeScriptConversionOptions.Default.Clone();
+            resolvedOptions.Reflection.EnableReflection = resolvedOptions.EnableReflection;
+            conversionOptions = resolvedOptions;
+            TypeScriptReflectionEmitter.GlobalOptions = resolvedOptions.Reflection.Clone();
 
             var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
 
@@ -76,6 +86,8 @@ namespace cs2.ts {
             Stream stream = File.OpenWrite(outputFile);
             StreamWriter writer = new StreamWriter(stream);
 
+            ComputeReflectionImports();
+
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
                     string imports = "";
@@ -100,6 +112,7 @@ namespace cs2.ts {
                 }
             }
 
+            TypeScriptReflectionEmitter.EmitRuntimeImport(writer, needsReflectionTypeImport, needsReflectionEnumImport, needsReflectionMetadataImport, conversionOptions.Reflection);
             writer.WriteLine();
 
             writeOutput(writer);
@@ -395,6 +408,11 @@ namespace cs2.ts {
                 return;
             }
 
+            var typeSymbol = cl.TypeSymbol as INamedTypeSymbol;
+            bool emitReflection = conversionOptions.EnableReflection && typeSymbol != null;
+            bool emitStaticReflection = emitReflection && conversionOptions.UseStaticReflectionCache;
+            bool emitTrailingReflection = emitReflection && !conversionOptions.UseStaticReflectionCache;
+
             var (implements, extends) = TypeScriptUtils.GetInheritance(program, cl);
 
             if (cl.DeclarationType == MemberDeclarationType.Interface) {
@@ -432,6 +450,11 @@ namespace cs2.ts {
                 }
 
                 writer.WriteLine(";");
+                if (emitReflection && typeSymbol != null) {
+                    writer.WriteLine();
+                    TypeScriptReflectionEmitter.EmitInterfaceNamespaceReflection(writer, typeSymbol, del.Remap, conversionOptions.Reflection);
+                    needsReflectionMetadataImport = true;
+                }
                 writer.WriteLine();
 
                 return;
@@ -447,6 +470,10 @@ namespace cs2.ts {
                     }
                 }
                 writer.WriteLine($"}}");
+                if (emitReflection && typeSymbol != null) {
+                    TypeScriptReflectionEmitter.EmitEnumNamespaceReflection(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
+                    needsReflectionEnumImport = true;
+                }
                 writer.WriteLine();
 
                 return;
@@ -478,6 +505,12 @@ namespace cs2.ts {
             }
 
             if (cl.Variables.Count > 0) {
+                writer.WriteLine();
+            }
+
+            if (emitStaticReflection) {
+                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol!, cl.Name, conversionOptions.Reflection);
+                needsReflectionTypeImport = true;
                 writer.WriteLine();
             }
 
@@ -561,7 +594,55 @@ namespace cs2.ts {
             }
 
             writer.WriteLine($"}}");
+            if (cl.DeclarationType == MemberDeclarationType.Interface) {
+                if (emitReflection && typeSymbol != null) {
+                    TypeScriptReflectionEmitter.EmitInterfaceNamespaceReflection(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
+                    needsReflectionMetadataImport = true;
+                }
+            } else if (emitTrailingReflection && typeSymbol != null) {
+                TypeScriptReflectionEmitter.EmitRegisterForType(writer, typeSymbol, cl.Name, conversionOptions.Reflection.RegisterTypeIdent);
+                needsReflectionTypeImport = true;
+            }
             writer.WriteLine();
+        }
+
+        private void ComputeReflectionImports() {
+            needsReflectionTypeImport = false;
+            needsReflectionEnumImport = false;
+            needsReflectionMetadataImport = false;
+
+            if (!conversionOptions.EnableReflection) {
+                return;
+            }
+
+            foreach (var cl in program.Classes) {
+                if (cl.IsNative) {
+                    continue;
+                }
+
+                if (cl.TypeSymbol is not INamedTypeSymbol) {
+                    continue;
+                }
+
+                switch (cl.DeclarationType) {
+                    case MemberDeclarationType.Enum:
+                        needsReflectionEnumImport = true;
+                        break;
+                    case MemberDeclarationType.Interface:
+                        needsReflectionMetadataImport = true;
+                        break;
+                    case MemberDeclarationType.Delegate:
+                        needsReflectionMetadataImport = true;
+                        break;
+                    default:
+                        needsReflectionTypeImport = true;
+                        break;
+                }
+
+                if (needsReflectionTypeImport && needsReflectionEnumImport && needsReflectionMetadataImport) {
+                    break;
+                }
+            }
         }
 
         private void writeOutput(StreamWriter writer) {
