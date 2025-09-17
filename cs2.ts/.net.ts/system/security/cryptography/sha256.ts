@@ -1,15 +1,8 @@
+﻿import { createHash } from "crypto";
+
 export class SHA256 {
-    static Create(): SHA256 {
-        return null as any;
-    }
-
     static async hashData(data: Uint8Array): Promise<Uint8Array> {
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        return new Uint8Array(hashBuffer);
-    }
-
-    async computeHash(data: Uint8Array): Promise<Uint8Array> {
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        return new Uint8Array(hashBuffer);
+        const hash = createHash("sha256").update(Buffer.from(data)).digest();
+        return new Uint8Array(hash);
     }
 }

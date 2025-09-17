@@ -1,4 +1,4 @@
-﻿import { blake2b } from 'blakejs';
+﻿import { createHash } from "crypto";
 
 export class Blake2b {
     /**
@@ -8,6 +8,11 @@ export class Blake2b {
      * @returns Hash as Uint8Array
      */
     static computeHash(hashSize: number, buffer: Uint8Array): Uint8Array {
-        return blake2b(buffer, null, hashSize);
+        if (hashSize <= 0 || hashSize > 64) {
+            throw new RangeError("hashSize must be between 1 and 64 bytes.");
+        }
+
+        const digest = createHash("blake2b512").update(Buffer.from(buffer)).digest();
+        return new Uint8Array(digest).subarray(0, hashSize);
     }
 }

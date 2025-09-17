@@ -1,8 +1,9 @@
 ﻿import { IDisposable } from "../../disposable.interface";
 import { ECCurve } from "./ec-curve";
 import { ECParameters } from "./ec-parameters";
-import { p256 } from '@noble/curves/p256';
-import * as asn1 from 'asn1.js';
+import { p256 } from "@noble/curves/p256";
+import * as asn1 from "asn1.js";
+import { cloneToArrayBuffer } from "./buffer-util";
 
 export class ECDsa implements IDisposable {
     private keyPair!: CryptoKeyPair;
@@ -18,20 +19,13 @@ export class ECDsa implements IDisposable {
 
     static toBase64Url(bytes: Uint8Array): string {
         const binary = String.fromCharCode(...bytes);
-        const base64 = btoa(binary);
-        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const base64 = Buffer.from(binary, "binary").toString("base64");
+        return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
     static fromBase64Url(base64url: string): Uint8Array {
-        // Pad base64url to valid base64 length
-        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
-            + '==='.slice((base64url.length + 3) % 4);
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes;
+        const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((base64url.length + 3) % 4);
+        return new Uint8Array(Buffer.from(base64, "base64"));
     }
 
     static async create(): Promise<ECDsa>;
@@ -93,8 +87,7 @@ export class ECDsa implements IDisposable {
             x = parameters.Q.X;
             y = parameters.Q.Y;
         } else {
-            // Derive public point from private scalar
-            const point = p256.getPublicKey(parameters.D, false); // uncompressed
+            const point = p256.getPublicKey(parameters.D!, false);
             x = point.slice(1, 33);
             y = point.slice(33, 65);
         }
@@ -102,7 +95,7 @@ export class ECDsa implements IDisposable {
         const jwk: JsonWebKey = {
             kty: "EC",
             crv: "P-256",
-            d: toBase64Url(parameters.D),
+            d: toBase64Url(parameters.D!),
             x: toBase64Url(x),
             y: toBase64Url(y),
             ext: true
@@ -123,7 +116,7 @@ export class ECDsa implements IDisposable {
 
         publicKey = await crypto.subtle.importKey(
             "raw",
-            publicRaw,
+            cloneToArrayBuffer(publicRaw),
             { name: "ECDSA", namedCurve: "P-256" },
             true,
             []
@@ -132,7 +125,6 @@ export class ECDsa implements IDisposable {
         this.keyPair = { publicKey, privateKey: privateKey! };
     }
 
-    // Sign a message using ECDSA
     async signHash(message: Uint8Array): Promise<Uint8Array> {
         if (!this.keyPair || !this.keyPair.privateKey) {
             throw new Error("Private key is not initialized");
@@ -141,13 +133,12 @@ export class ECDsa implements IDisposable {
         const signature = await crypto.subtle.sign(
             { name: "ECDSA", hash: { name: "SHA-256" } },
             this.keyPair.privateKey,
-            message
+            cloneToArrayBuffer(message)
         );
 
         return new Uint8Array(signature);
     }
 
-    // Verify a message signature using ECDSA
     async verifyHash(message: Uint8Array, signature: Uint8Array): Promise<boolean> {
         if (!this.keyPair || !this.keyPair.publicKey) {
             throw new Error("Public key is not initialized");
@@ -156,39 +147,37 @@ export class ECDsa implements IDisposable {
         return await crypto.subtle.verify(
             { name: "ECDSA", hash: { name: "SHA-256" } },
             this.keyPair.publicKey,
-            signature,
-            message
+            cloneToArrayBuffer(signature),
+            cloneToArrayBuffer(message)
         );
     }
 }
 
-const ECPrivateKeyASN = asn1.define('ECPrivateKey', function (this: any) {
+const ECPrivateKeyASN = asn1.define("ECPrivateKey", function (this: any) {
     this.seq().obj(
-        this.key('version').int(),
-        this.key('privateKey').octstr(),
-        this.key('publicKey').optional().explicit(1).bitstr()
+        this.key("version").int(),
+        this.key("privateKey").octstr(),
+        this.key("publicKey").optional().explicit(1).bitstr()
     );
 });
 
-const PrivateKeyInfoASN = asn1.define('PrivateKeyInfo', function (this: any) {
+const PrivateKeyInfoASN = asn1.define("PrivateKeyInfo", function (this: any) {
     this.seq().obj(
-        this.key('version').int(),
-        this.key('algorithm').seq().obj(
-            this.key('algorithm').objid(),
-            this.key('parameters').optional().any()
+        this.key("version").int(),
+        this.key("algorithm").seq().obj(
+            this.key("algorithm").objid(),
+            this.key("parameters").optional().any()
         ),
-        this.key('privateKey').octstr()
+        this.key("privateKey").octstr()
     );
 });
 
 function extractPrivateKeyD(pkcs8: Uint8Array): Uint8Array {
-    const buffer = Buffer.from(pkcs8); // ✅ Convert to Buffer
-    const decoded = PrivateKeyInfoASN.decode(buffer, 'der');
-    const ecPrivate = ECPrivateKeyASN.decode(decoded.privateKey, 'der');
-    return ecPrivate.privateKey;
+    const decoded = PrivateKeyInfoASN.decode(Buffer.from(pkcs8), "der");
+    const ecPrivate = ECPrivateKeyASN.decode(decoded.privateKey, "der");
+    return new Uint8Array(ecPrivate.privateKey);
 }
 
-// Base64url encode helper
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes)
         .toString("base64")

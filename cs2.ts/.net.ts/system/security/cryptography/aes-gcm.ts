@@ -1,4 +1,8 @@
-import { IDisposable } from '../../disposable.interface';
+﻿import { IDisposable } from "../../disposable.interface";
+import { webcrypto as nodeWebcrypto } from "crypto";
+import { cloneToArrayBuffer, concatUint8Arrays } from "./buffer-util";
+
+const subtle = (globalThis.crypto?.subtle ?? nodeWebcrypto.subtle);
 
 /**
  * A class to perform AES-GCM encryption.
@@ -21,23 +25,23 @@ export class AesGcm implements IDisposable {
      * @param tag - Buffer to receive authentication tag (16 bytes).
      */
     public async encrypt(iv: Uint8Array, data: Uint8Array, cipherText: Uint8Array, tag: Uint8Array): Promise<void> {
-        const cryptoKey = await crypto.subtle.importKey(
+        const cryptoKey = await subtle.importKey(
             "raw",
-            this.key,
+            cloneToArrayBuffer(this.key),
             { name: "AES-GCM" },
             false,
             ["encrypt"]
         );
 
         const encrypted = new Uint8Array(
-            await crypto.subtle.encrypt(
+            await subtle.encrypt(
                 {
                     name: "AES-GCM",
-                    iv: iv,
+                    iv: cloneToArrayBuffer(iv),
                     tagLength: 128 // 16 bytes
                 },
                 cryptoKey,
-                data
+                cloneToArrayBuffer(data)
             )
         );
 
@@ -56,29 +60,25 @@ export class AesGcm implements IDisposable {
      * @param output - Buffer to receive the decrypted plaintext.
      */
     public async decrypt(iv: Uint8Array, ciphertext: Uint8Array, tag: Uint8Array, output: Uint8Array): Promise<void> {
-        const cryptoKey = await crypto.subtle.importKey(
+        const cryptoKey = await subtle.importKey(
             "raw",
-            this.key,
+            cloneToArrayBuffer(this.key),
             { name: "AES-GCM" },
             false,
             ["decrypt"]
         );
 
-        // Combine ciphertext || tag
-        const combined = new Uint8Array(ciphertext.length + tag.length);
-        combined.set(ciphertext, 0);
-        combined.set(tag, ciphertext.length);
+        const combined = concatUint8Arrays(ciphertext, tag);
 
-        // Decrypt
         const decrypted = new Uint8Array(
-            await crypto.subtle.decrypt(
+            await subtle.decrypt(
                 {
                     name: "AES-GCM",
-                    iv: iv,
+                    iv: cloneToArrayBuffer(iv),
                     tagLength: 128 // 16 bytes
                 },
                 cryptoKey,
-                combined
+                cloneToArrayBuffer(combined)
             )
         );
 

@@ -31,6 +31,7 @@ namespace cs2.ts {
 
         public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions? options = null)
             : base(rules) {
+            Directory.SetCurrentDirectory(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
             this.rules = rules;
 
             var resolvedOptions = options?.Clone() ?? TypeScriptConversionOptions.Default.Clone();
@@ -512,8 +513,9 @@ namespace cs2.ts {
                 writer.WriteLine();
             }
 
-            if (emitStaticReflection) {
-                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol!, cl.Name, conversionOptions.Reflection);
+            if (emitStaticReflection && cl.DeclarationType != MemberDeclarationType.Interface && cl.DeclarationType != MemberDeclarationType.Delegate && cl.DeclarationType != MemberDeclarationType.Enum) {
+                                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol!, cl.Name, conversionOptions.Reflection);
+                Console.WriteLine($"-- reflection cache field emitted for {cl.Name} ({cl.DeclarationType})");
                 needsReflectionTypeImport = true;
                 writer.WriteLine();
             }
@@ -730,10 +732,8 @@ namespace cs2.ts {
             }
         }
 
-        static void EnsureRuntimeMetadata()
-        {
-            try
-            {
+        static void EnsureRuntimeMetadata() {
+            try {
                 string baseDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
                 string runtimeDir = Path.Combine(baseDir, ".net.ts");
                 if (!Directory.Exists(runtimeDir)) {
@@ -755,8 +755,50 @@ namespace cs2.ts {
                     return;
                 }
 
-                var psi = new ProcessStartInfo
-                {
+                string typesDir = Path.Combine(runtimeDir, "node_modules", "typescript");
+                if (!Directory.Exists(typesDir)) {
+                    string packageJson = Path.Combine(runtimeDir, "package.json");
+                    if (!File.Exists(packageJson)) {
+                        Console.WriteLine("Metadata not regenerated: package.json not found in .net.ts.");
+                        return;
+                    }
+
+                    Console.WriteLine("-- npm install");
+                    var npmInstall = OperatingSystem.IsWindows()
+                        ? new ProcessStartInfo("cmd.exe", "/c npm install")
+                        : new ProcessStartInfo("npm", "install");
+                    npmInstall.WorkingDirectory = runtimeDir;
+                    npmInstall.UseShellExecute = false;
+                    npmInstall.CreateNoWindow = true;
+                    npmInstall.RedirectStandardOutput = true;
+                    npmInstall.RedirectStandardError = true;
+
+                    using (var npmProcess = Process.Start(npmInstall)) {
+                        if (npmProcess == null) {
+                            Console.WriteLine("Warning: failed to launch npm install (npm not found?).");
+                            return;
+                        }
+
+                        npmProcess.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
+                        npmProcess.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
+                        npmProcess.BeginOutputReadLine();
+                        npmProcess.BeginErrorReadLine();
+
+                        if (!npmProcess.WaitForExit((int)TimeSpan.FromMinutes(3).TotalMilliseconds)) {
+                            Console.WriteLine("Warning: npm install timed out after 3 minutes.");
+                            try { npmProcess.Kill(); } catch { }
+                            return;
+                        }
+
+                        npmProcess.WaitForExit();
+                        if (npmProcess.ExitCode != 0) {
+                            Console.WriteLine($"Warning: npm install exited with code {npmProcess.ExitCode}.");
+                            return;
+                        }
+                    }
+                }
+
+                var psi = new ProcessStartInfo {
                     FileName = "node",
                     Arguments = $"\"{extractor}\" \"{runtimeDir}\"",
                     WorkingDirectory = runtimeDir,
@@ -773,9 +815,7 @@ namespace cs2.ts {
                 if (process.ExitCode != 0) {
                     Console.WriteLine($"Warning: metadata extractor exited with code {process.ExitCode}.");
                 }
-            }
-            catch (Exception ex)
-            {
+            } catch (Exception ex) {
                 Console.WriteLine($"Warning: unable to regenerate runtime metadata: {ex.Message}");
             }
         }
@@ -788,4 +828,10 @@ namespace cs2.ts {
         }
     }
 }
+
+
+
+
+
+
 

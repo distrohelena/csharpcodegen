@@ -2,3 +2,6 @@
 obj/
 bin/
 x64/
+cs2.ts/.net.ts/node_modules
+node/
+node.zip

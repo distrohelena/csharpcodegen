@@ -1,8 +1,8 @@
-﻿import { BinaryLike } from 'crypto';
-import { IDisposable } from '../../disposable.interface';
+﻿import { createHmac } from "crypto";
+import { IDisposable } from "../../disposable.interface";
 
 export class HMACSHA256 implements IDisposable {
-    private key: Uint8Array;
+    private readonly key: Uint8Array;
 
     constructor(key: Uint8Array) {
         this.key = key;
@@ -12,23 +12,9 @@ export class HMACSHA256 implements IDisposable {
     }
 
     async computeHash(data: Uint8Array): Promise<Uint8Array> {
-        // Import the key
-        const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            this.key,
-            { name: 'HMAC', hash: 'SHA-256' },
-            false,
-            ['sign']
-        );
-
-        // Sign the data (this computes HMAC)
-        const signature = await crypto.subtle.sign(
-            'HMAC',
-            cryptoKey,
-            data
-        );
-
-        return new Uint8Array(signature);
+        const mac = createHmac("sha256", Buffer.from(this.key))
+            .update(Buffer.from(data))
+            .digest();
+        return new Uint8Array(mac);
     }
-
 }

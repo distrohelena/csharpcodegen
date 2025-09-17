@@ -1,7 +1,8 @@
-using cs2.core;
+﻿using cs2.core;
 using cs2.core.symbols;
 using Nucleus;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace cs2.ts {
@@ -59,6 +60,8 @@ namespace cs2.ts {
             // system.collection.generic
             Requirements.Add(new TypeScriptKnownClass("IDictionary", "./system/collections/generic/dictionary.interface"));
             Requirements.Add(new TypeScriptKnownClass("Dictionary", "./system/collections/generic/dictionary"));
+            Requirements.Add(new TypeScriptKnownClass("ICollection", "./system/collections/generic/icollection"));
+            Requirements.Add(new TypeScriptKnownClass("Dictionary", "./system/collections/generic/dictionary"));
             Requirements.Add(new TypeScriptKnownClass("List", "./system/collections/generic/list"));
             Requirements.Add(new TypeScriptKnownClass("KeyValuePair", "./system/collections/generic/key-value-pair"));
             Requirements.Add(new TypeScriptKnownClass("SortedList", "./system/collections/generic/sorted-list"));
@@ -85,7 +88,8 @@ namespace cs2.ts {
             Requirements.Add(new TypeScriptKnownClass("FileMode", "./system/io/file-mode"));
             Requirements.Add(new TypeScriptKnownClass("FileAccess", "./system/io/file-access"));
             Requirements.Add(new TypeScriptKnownClass("FileShare", "./system/io/file-share"));
-            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));            Requirements.Add(new TypeScriptKnownClass("Path", "./system/io/path"));
+            Requirements.Add(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));            
+            Requirements.Add(new TypeScriptKnownClass("Path", "./system/io/path"));
             Requirements.Add(new TypeScriptKnownClass("SearchOption", "./system/io/search-option"));
             Requirements.Add(new TypeScriptKnownClass("StreamReader", "./system/io/stream-reader"));
             Requirements.Add(new TypeScriptKnownClass("TextWriter", "./system/io/text-writer"));
@@ -325,40 +329,64 @@ namespace cs2.ts {
         /// </summary>
         private void buildDotNetData() {
             string startFolder = AssemblyUtil.GetStartFolder();
+            string assemblyFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
             string dotNetFolder = Path.Combine(startFolder, ".net.ts");
+            if (!Directory.Exists(dotNetFolder)) {
+                dotNetFolder = Path.Combine(assemblyFolder, ".net.ts");
+            }
             string extractorPath = Path.Combine(dotNetFolder, "extractor.js");
 
-            string shell;
-            string shellArguments;
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-                shell = "cmd.exe";
-                shellArguments = "/c npm install --verbose"; // Windows cmd uses /c to run the command
-            } else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
-                shell = "/bin/bash"; // Use bash for macOS/Linux
-                shellArguments = "-c \"npm install --verbose\""; // Use -c to run the command
-            } else {
-                throw new PlatformNotSupportedException("Unsupported operating system.");
+            if (!Directory.Exists(dotNetFolder)) {
+                throw new DirectoryNotFoundException($"Expected TypeScript runtime at '{dotNetFolder}'.");
             }
 
-            var npm = new Process {
-                StartInfo = new ProcessStartInfo {
-                    FileName = shell,
-                    Arguments = shellArguments,
-                    WorkingDirectory = dotNetFolder, // Set the working directory to your project folder
-                    RedirectStandardOutput = true, // Redirect the output
-                    RedirectStandardError = true,  // Redirect errors
-                    UseShellExecute = false,       // Do not use the shell to execute
-                    CreateNoWindow = true          // Run without creating a window
+            string typesDir = Path.Combine(dotNetFolder, "node_modules", "typescript");
+            if (!Directory.Exists(typesDir)) {
+                string packageJson = Path.Combine(dotNetFolder, "package.json");
+                if (!File.Exists(packageJson)) {
+                    throw new FileNotFoundException($"Expected package.json in '{dotNetFolder}'.");
                 }
-            };
 
-            Console.WriteLine($"-- npm install");
+                Console.WriteLine("-- npm install");
+                ProcessStartInfo npmInfo;
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                    npmInfo = new ProcessStartInfo("cmd.exe", "/c npm install");
+                } else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                    npmInfo = new ProcessStartInfo("npm", "install");
+                } else {
+                    throw new PlatformNotSupportedException("Unsupported operating system.");
+                }
 
-            npm.Start();
-            npm.WaitForExit();
-            string npmOutput = npm.StandardOutput.ReadToEnd();
-            Console.WriteLine($"---- result: {npmOutput}");
+                npmInfo.WorkingDirectory = dotNetFolder;
+                npmInfo.UseShellExecute = false;
+                npmInfo.CreateNoWindow = true;
+                npmInfo.RedirectStandardOutput = true;
+                npmInfo.RedirectStandardError = true;
+
+                using (var npmProcess = Process.Start(npmInfo)) {
+                    if (npmProcess == null) {
+                        throw new InvalidOperationException("npm install failed to start (npm not found?).");
+                    }
+
+                    npmProcess.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
+                    npmProcess.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
+                    npmProcess.BeginOutputReadLine();
+                    npmProcess.BeginErrorReadLine();
+
+                    if (!npmProcess.WaitForExit((int)TimeSpan.FromMinutes(3).TotalMilliseconds)) {
+                        try { npmProcess.Kill(); } catch { }
+                        throw new TimeoutException("npm install timed out after 3 minutes.");
+                    }
+
+                    if (npmProcess.ExitCode != 0) {
+                        throw new InvalidOperationException($"npm install exited with code {npmProcess.ExitCode}.");
+                    }
+                }
+            }
+
+            if (!File.Exists(extractorPath)) {
+                throw new FileNotFoundException($"extractor.js not found in '{dotNetFolder}'.");
+            }
 
             var process = new Process {
                 StartInfo = new ProcessStartInfo {
@@ -378,10 +406,17 @@ namespace cs2.ts {
             string outputError = process.StandardError.ReadToEnd();
             process.WaitForExit();
 
-            Console.WriteLine($"---- Result: {output}");
-            Console.WriteLine($"---- Result Error: {outputError}");
-        }
+            if (!string.IsNullOrWhiteSpace(output)) {
+                Console.WriteLine(output);
+            }
+            if (!string.IsNullOrWhiteSpace(outputError)) {
+                Console.WriteLine(outputError);
+            }
 
+            if (process.ExitCode != 0) {
+                throw new InvalidOperationException($"Metadata extractor exited with code {process.ExitCode}.");
+            }
+        }
         /// <summary>
         /// Maps common .NET primitive types to TypeScript equivalents.
         /// </summary>
@@ -416,4 +451,6 @@ namespace cs2.ts {
         }
     }
 }
+
+
 
