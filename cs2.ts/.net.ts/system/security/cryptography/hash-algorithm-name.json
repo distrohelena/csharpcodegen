@@ -1,0 +1,24 @@
+[
+  {
+    "type": "enum",
+    "name": "HashAlgorithmName",
+    "members": [
+      {
+        "name": "SHA1",
+        "value": "'sha1'"
+      },
+      {
+        "name": "SHA256",
+        "value": "'sha256'"
+      },
+      {
+        "name": "SHA384",
+        "value": "\"sha384\""
+      },
+      {
+        "name": "SHA512",
+        "value": "'sha512'"
+      }
+    ]
+  }
+]

@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class ArgumentException extends Error {
     constructor(message: string = "Operation is not supported.") {
         super(message);

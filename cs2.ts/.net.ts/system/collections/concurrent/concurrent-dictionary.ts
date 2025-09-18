@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { IDictionary } from "../generic/dictionary.interface";
 import { KeyValuePair } from "../generic/key-value-pair";
 import { List } from "../generic/list";

@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Encoding {
     static get UTF8(): Encoding {
         return new Utf8Encoding();

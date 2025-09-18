@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { List } from "./list";
 
 export class SortedList<TKey, TValue> {

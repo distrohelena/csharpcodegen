@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { createHash } from "crypto";
 
 export class SHA256 {

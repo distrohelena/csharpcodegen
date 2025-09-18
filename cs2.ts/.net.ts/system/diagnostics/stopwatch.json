@@ -1,0 +1,63 @@
+[
+  {
+    "type": "class",
+    "name": "Stopwatch",
+    "members": [
+      {
+        "type": "property",
+        "name": "_startTimeMillis",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "_running",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "_totalTimeRunning",
+        "propertyType": "any"
+      },
+      {
+        "type": "getter",
+        "name": "isRunning",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "elapsed",
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "startNew",
+        "parameters": [],
+        "returnType": "Stopwatch"
+      },
+      {
+        "type": "method",
+        "name": "start",
+        "parameters": [],
+        "returnType": "Stopwatch"
+      },
+      {
+        "type": "method",
+        "name": "restart",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "stop",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "updateTime",
+        "parameters": [],
+        "returnType": "void"
+      }
+    ]
+  }
+]

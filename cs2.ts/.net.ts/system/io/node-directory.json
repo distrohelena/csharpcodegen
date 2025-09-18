@@ -1,0 +1,106 @@
+[
+  {
+    "type": "class",
+    "name": "NodeDirectory",
+    "members": [
+      {
+        "type": "method",
+        "name": "CreateDirectory",
+        "parameters": [
+          {
+            "name": "dirPath",
+            "type": "string"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Exists",
+        "parameters": [
+          {
+            "name": "dirPath",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "Delete",
+        "parameters": [
+          {
+            "name": "dirPath",
+            "type": "string"
+          },
+          {
+            "name": "recursive",
+            "type": "boolean"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "GetFiles",
+        "parameters": [
+          {
+            "name": "dirPath",
+            "type": "string"
+          },
+          {
+            "name": "searchPattern",
+            "type": "string"
+          }
+        ],
+        "returnType": "string[]"
+      },
+      {
+        "type": "method",
+        "name": "GetDirectories",
+        "parameters": [
+          {
+            "name": "dirPath",
+            "type": "string"
+          }
+        ],
+        "returnType": "string[]"
+      },
+      {
+        "type": "method",
+        "name": "Move",
+        "parameters": [
+          {
+            "name": "sourceDir",
+            "type": "string"
+          },
+          {
+            "name": "destDir",
+            "type": "string"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "matchPattern",
+        "parameters": [
+          {
+            "name": "fileName",
+            "type": "string"
+          },
+          {
+            "name": "searchPattern",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "regexPattern",
+    "variableType": "any"
+  }
+]

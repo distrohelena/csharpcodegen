@@ -1,0 +1,23 @@
+[
+  {
+    "type": "class",
+    "name": "Exception",
+    "members": [
+      {
+        "type": "property",
+        "name": "_message",
+        "propertyType": "any"
+      },
+      {
+        "type": "getter",
+        "name": "Message",
+        "returnType": "string"
+      },
+      {
+        "type": "getter",
+        "name": "stackTrace",
+        "returnType": "string"
+      }
+    ]
+  }
+]

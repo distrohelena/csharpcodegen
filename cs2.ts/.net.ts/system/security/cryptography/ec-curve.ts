@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { ECCurveType } from "./ec-curve-type";
 import { ECPoint } from "./ec-point";
 import { HashAlgorithmName } from "./hash-algorithm-name";

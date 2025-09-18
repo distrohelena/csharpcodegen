@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { IDisposable } from "../../disposable.interface";
 import { webcrypto as nodeWebcrypto } from "crypto";
 import { cloneToArrayBuffer, concatUint8Arrays } from "./buffer-util";

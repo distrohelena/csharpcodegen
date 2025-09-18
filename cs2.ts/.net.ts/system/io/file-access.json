@@ -1,0 +1,20 @@
+[
+  {
+    "type": "enum",
+    "name": "FileAccess",
+    "members": [
+      {
+        "name": "Read",
+        "value": "1"
+      },
+      {
+        "name": "Write",
+        "value": "2"
+      },
+      {
+        "name": "ReadWrite",
+        "value": "3"
+      }
+    ]
+  }
+]

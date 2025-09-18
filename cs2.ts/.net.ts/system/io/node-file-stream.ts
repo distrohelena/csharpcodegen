@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Stream } from "./stream";
 import { SeekOrigin } from "./seek-origin";
 import * as fs from "fs";

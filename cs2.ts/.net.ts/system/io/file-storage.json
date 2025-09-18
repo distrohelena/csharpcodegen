@@ -1,0 +1,80 @@
+[
+  {
+    "type": "variable",
+    "name": "storage",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "fileExists",
+    "parameters": [
+      {
+        "name": "path",
+        "type": "string"
+      }
+    ],
+    "returnType": "boolean"
+  },
+  {
+    "type": "function",
+    "name": "readFileBuffer",
+    "parameters": [
+      {
+        "name": "path",
+        "type": "string"
+      }
+    ],
+    "returnType": "Uint8Array"
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "writeFileBuffer",
+    "parameters": [
+      {
+        "name": "path",
+        "type": "string"
+      },
+      {
+        "name": "data",
+        "type": "Uint8Array"
+      }
+    ],
+    "returnType": "void"
+  },
+  {
+    "type": "function",
+    "name": "deleteFileBuffer",
+    "parameters": [
+      {
+        "name": "path",
+        "type": "string"
+      }
+    ],
+    "returnType": "void"
+  },
+  {
+    "type": "function",
+    "name": "ensureFileBuffer",
+    "parameters": [
+      {
+        "name": "path",
+        "type": "string"
+      },
+      {
+        "name": "mode",
+        "type": "FileMode"
+      }
+    ],
+    "returnType": "void"
+  },
+  {
+    "type": "variable",
+    "name": "exists",
+    "variableType": "any"
+  }
+]

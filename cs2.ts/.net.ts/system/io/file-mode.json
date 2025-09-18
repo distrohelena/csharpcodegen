@@ -1,0 +1,32 @@
+[
+  {
+    "type": "enum",
+    "name": "FileMode",
+    "members": [
+      {
+        "name": "Append",
+        "value": null
+      },
+      {
+        "name": "Create",
+        "value": null
+      },
+      {
+        "name": "CreateNew",
+        "value": null
+      },
+      {
+        "name": "Open",
+        "value": null
+      },
+      {
+        "name": "OpenOrCreate",
+        "value": null
+      },
+      {
+        "name": "Truncate",
+        "value": null
+      }
+    ]
+  }
+]

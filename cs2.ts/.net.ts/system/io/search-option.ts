@@ -1,3 +1,4 @@
+// @ts-nocheck
 //
 // Summary:
 //     Specifies whether to search the current directory, or the current directory and

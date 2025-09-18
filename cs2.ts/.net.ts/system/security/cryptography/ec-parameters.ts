@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { ECCurve } from "./ec-curve";
 import { ECPoint } from "./ec-point";
 

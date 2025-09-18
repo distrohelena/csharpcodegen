@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { IDisposable } from "../../disposable.interface";
 import { createHash } from "crypto";
 

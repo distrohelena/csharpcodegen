@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Version {
     get Major(): number {
         return 1;

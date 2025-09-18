@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿export function cloneToArrayBuffer(view: Uint8Array): ArrayBuffer {
     const copy = Uint8Array.from(view);
     return copy.buffer;

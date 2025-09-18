@@ -1,0 +1,16 @@
+[
+  {
+    "type": "enum",
+    "name": "SearchOption",
+    "members": [
+      {
+        "name": "TopDirectoryOnly",
+        "value": "0"
+      },
+      {
+        "name": "AllDirectories",
+        "value": "1"
+      }
+    ]
+  }
+]

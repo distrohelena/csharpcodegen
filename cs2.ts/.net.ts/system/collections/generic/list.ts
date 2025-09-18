@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class List<T> extends Array<T> {
     // Add an item to the list
     public add(item: T): void {

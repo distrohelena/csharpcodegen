@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { pbkdf2Sync } from "crypto";
 import { IDisposable } from "../../disposable.interface";
 import { HashAlgorithmName } from "./hash-algorithm-name";

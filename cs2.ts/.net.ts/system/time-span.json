@@ -1,0 +1,264 @@
+[
+  {
+    "type": "class",
+    "name": "TimeSpan",
+    "members": [
+      {
+        "type": "property",
+        "name": "_milliseconds",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "NanosecondsPerTick",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerMicrosecond",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerMillisecond",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerSecond",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerMinute",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerHour",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "TicksPerDay",
+        "propertyType": "any"
+      },
+      {
+        "type": "method",
+        "name": "fromTicks",
+        "parameters": [
+          {
+            "name": "ticks",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "fromDays",
+        "parameters": [
+          {
+            "name": "days",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "fromHours",
+        "parameters": [
+          {
+            "name": "hours",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "fromMinutes",
+        "parameters": [
+          {
+            "name": "minutes",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "fromSeconds",
+        "parameters": [
+          {
+            "name": "seconds",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "fromMilliseconds",
+        "parameters": [
+          {
+            "name": "milliseconds",
+            "type": "number"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "getter",
+        "name": "Days",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Hours",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Minutes",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Seconds",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Milliseconds",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Ticks",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TotalDays",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TotalHours",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TotalMinutes",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TotalSeconds",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TotalMilliseconds",
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "add",
+        "parameters": [
+          {
+            "name": "ts",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "subtract",
+        "parameters": [
+          {
+            "name": "ts",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "negate",
+        "parameters": [],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "toString",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "compare",
+        "parameters": [
+          {
+            "name": "ts1",
+            "type": "TimeSpan"
+          },
+          {
+            "name": "ts2",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "equals",
+        "parameters": [
+          {
+            "name": "ts1",
+            "type": "TimeSpan"
+          },
+          {
+            "name": "ts2",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "duration",
+        "parameters": [],
+        "returnType": "TimeSpan"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "days",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "hours",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "minutes",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "seconds",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "milliseconds",
+    "variableType": "any"
+  }
+]

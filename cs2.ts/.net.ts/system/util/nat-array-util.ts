@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿export class NativeArrayUtil {
     static copy(src: Uint8Array, dest: Uint8Array, length: number): void;
     static copy(src: Uint8Array, srcOffset: number, dest: Uint8Array, destOffset: number, length: number): void;
@@ -40,4 +41,16 @@
         return result === 0;
     }
 }
-\n\ndeclare global {\n    interface Uint8Array {\n        AsSpan(start?: number, length?: number): Uint8Array;\n    }\n}\n\nUint8Array.prototype.AsSpan = function(start: number = 0, length?: number): Uint8Array {\n    const end = length === undefined ? undefined : start + length;\n    return this.subarray(start, end);\n};\n
+
+
+declare global {
+    interface Uint8Array {
+        AsSpan(start?: number, length?: number): Uint8Array;
+    }
+}
+
+Uint8Array.prototype.AsSpan = function(start: number = 0, length?: number): Uint8Array {
+    const end = length === undefined ? undefined : start + length;
+    return this.subarray(start, end);
+};
+

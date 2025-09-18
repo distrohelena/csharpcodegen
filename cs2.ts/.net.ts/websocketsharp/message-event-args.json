@@ -1,0 +1,13 @@
+[
+  {
+    "type": "class",
+    "name": "MessageEventArgs",
+    "members": [
+      {
+        "type": "property",
+        "name": "rawData",
+        "propertyType": "Uint8Array"
+      }
+    ]
+  }
+]

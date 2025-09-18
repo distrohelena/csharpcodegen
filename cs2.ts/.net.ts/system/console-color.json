@@ -1,0 +1,72 @@
+[
+  {
+    "type": "enum",
+    "name": "ConsoleColor",
+    "members": [
+      {
+        "name": "Black",
+        "value": "0"
+      },
+      {
+        "name": "DarkBlue",
+        "value": "1"
+      },
+      {
+        "name": "DarkGreen",
+        "value": "2"
+      },
+      {
+        "name": "DarkCyan",
+        "value": "3"
+      },
+      {
+        "name": "DarkRed",
+        "value": "4"
+      },
+      {
+        "name": "DarkMagenta",
+        "value": "5"
+      },
+      {
+        "name": "DarkYellow",
+        "value": "6"
+      },
+      {
+        "name": "Gray",
+        "value": "7"
+      },
+      {
+        "name": "DarkGray",
+        "value": "8"
+      },
+      {
+        "name": "Blue",
+        "value": "9"
+      },
+      {
+        "name": "Green",
+        "value": "10"
+      },
+      {
+        "name": "Cyan",
+        "value": "11"
+      },
+      {
+        "name": "Red",
+        "value": "12"
+      },
+      {
+        "name": "Magenta",
+        "value": "13"
+      },
+      {
+        "name": "Yellow",
+        "value": "14"
+      },
+      {
+        "name": "White",
+        "value": "15"
+      }
+    ]
+  }
+]

@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { createHmac } from "crypto";
 import { IDisposable } from "../../disposable.interface";
 

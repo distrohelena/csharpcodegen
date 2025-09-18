@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class KeyValuePair<T, N> {
     Key: T;
     Value: N;

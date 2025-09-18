@@ -1,0 +1,18 @@
+[
+  {
+    "type": "class",
+    "name": "Point",
+    "members": [
+      {
+        "type": "property",
+        "name": "X",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "Y",
+        "propertyType": "number"
+      }
+    ]
+  }
+]

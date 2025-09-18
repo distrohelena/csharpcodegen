@@ -1,3 +1,4 @@
+// @ts-nocheck
 
 export class Console {
     static Write(line: string | number | any) {

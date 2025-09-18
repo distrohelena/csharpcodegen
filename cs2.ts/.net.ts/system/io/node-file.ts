@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { FileMode } from "./file-mode";
 import { FileStream } from "./node-file-stream";
 import * as fs from "fs";

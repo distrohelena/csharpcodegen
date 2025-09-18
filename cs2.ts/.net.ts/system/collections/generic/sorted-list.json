@@ -1,0 +1,130 @@
+[
+  {
+    "type": "class",
+    "name": "SortedList",
+    "members": [
+      {
+        "type": "property",
+        "name": "items",
+        "propertyType": "Array<[TKey, TValue]>"
+      },
+      {
+        "type": "property",
+        "name": "comparer",
+        "propertyType": "(a: TKey, b: TKey) => number"
+      },
+      {
+        "type": "method",
+        "name": "add",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          },
+          {
+            "name": "value",
+            "type": "TValue"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Remove",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "Get",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          }
+        ],
+        "returnType": "TValue | undefined"
+      },
+      {
+        "type": "method",
+        "name": "ContainsKey",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "Count",
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "Keys",
+        "parameters": [],
+        "returnType": "TKey[]"
+      },
+      {
+        "type": "getter",
+        "name": "Values",
+        "returnType": "List<TValue>"
+      },
+      {
+        "type": "method",
+        "name": "Clear",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Sort",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "FindIndex",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "tryGetValue",
+        "parameters": [
+          {
+            "name": "key",
+            "type": "TKey"
+          },
+          {
+            "name": "outValue",
+            "type": "{ value?: TValue }"
+          }
+        ],
+        "returnType": "boolean"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "index",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "index",
+    "variableType": "any"
+  }
+]

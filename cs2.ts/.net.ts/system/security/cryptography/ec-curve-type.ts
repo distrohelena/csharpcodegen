@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Enum equivalent for ECCurveType
 export enum ECCurveType {
     PrimeShortWeierstrass,

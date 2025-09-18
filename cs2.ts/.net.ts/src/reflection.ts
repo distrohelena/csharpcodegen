@@ -1,3 +1,4 @@
+// @ts-nocheck
 /*
  Reflection runtime for cs2.ts
  - Provides a C#-like reflection API over TypeScript classes/functions

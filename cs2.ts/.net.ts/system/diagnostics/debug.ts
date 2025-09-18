@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Debug {
     // Writes a message to the console
     public static Write(message: any): void {

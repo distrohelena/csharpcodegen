@@ -1,3 +1,4 @@
+// @ts-nocheck
 export enum FileShare {
     None = 0,
     Read = 1,

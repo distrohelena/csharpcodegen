@@ -1,0 +1,105 @@
+[
+  {
+    "type": "variable",
+    "name": "subtle",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "AesGcm",
+    "members": [
+      {
+        "type": "property",
+        "name": "key",
+        "propertyType": "Uint8Array"
+      },
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "encrypt",
+        "parameters": [
+          {
+            "name": "iv",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "cipherText",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "tag",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<void>"
+      },
+      {
+        "type": "method",
+        "name": "decrypt",
+        "parameters": [
+          {
+            "name": "iv",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "ciphertext",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "tag",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "output",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<void>"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "cryptoKey",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "encrypted",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "tagLength",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "ciphertextLength",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "cryptoKey",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "combined",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "decrypted",
+    "variableType": "any"
+  }
+]

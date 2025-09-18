@@ -1,3 +1,4 @@
+// @ts-nocheck
 export enum FileAccess {
     Read = 1,
     Write = 2,

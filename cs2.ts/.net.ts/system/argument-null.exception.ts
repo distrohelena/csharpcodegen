@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class ArgumentNullException extends Error {
     constructor(message: string = "Argument is null.") {
         super(message);

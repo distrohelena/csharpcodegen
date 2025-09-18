@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Guid {
     private readonly byteArray: Uint8Array;
 

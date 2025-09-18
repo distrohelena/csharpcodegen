@@ -1,0 +1,18 @@
+[
+  {
+    "type": "class",
+    "name": "ECPoint",
+    "members": [
+      {
+        "type": "property",
+        "name": "X",
+        "propertyType": "Uint8Array"
+      },
+      {
+        "type": "property",
+        "name": "Y",
+        "propertyType": "Uint8Array"
+      }
+    ]
+  }
+]

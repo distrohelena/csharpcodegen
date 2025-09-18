@@ -1,0 +1,28 @@
+[
+  {
+    "type": "class",
+    "name": "Rectangle",
+    "members": [
+      {
+        "type": "property",
+        "name": "X",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "Y",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "Width",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "Height",
+        "propertyType": "number"
+      }
+    ]
+  }
+]

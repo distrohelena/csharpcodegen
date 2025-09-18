@@ -1,7 +1,9 @@
-﻿using cs2.core;
+using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System;
+using System.Linq;
 using Nucleus;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -29,6 +31,58 @@ namespace cs2.ts {
         /// Handles assignment expressions, including event-like callbacks (+=/-=) and object initializers.
         /// </summary>
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (assignment.Left is ElementAccessExpressionSyntax elementAccess &&
+                IsDictionaryLike(semantic.GetTypeInfo(elementAccess.Expression).Type) &&
+                assignment.OperatorToken.ValueText == "=") {
+                int dictStartDepth = context.Class.Count;
+                List<string> targetLines = new List<string>();
+                ProcessExpression(semantic, context, elementAccess.Expression, targetLines);
+                context.PopClass(dictStartDepth);
+
+                lines.AddRange(targetLines);
+                lines.Add(".set(");
+
+                var elementArguments = elementAccess.ArgumentList.Arguments;
+                List<string> keyLines = new List<string>();
+                for (int i = 0; i < elementArguments.Count; i++) {
+                    var argument = elementArguments[i];
+                    dictStartDepth = context.Class.Count;
+                    ProcessExpression(semantic, context, argument.Expression, keyLines);
+                    context.PopClass(dictStartDepth);
+                    if (i != elementArguments.Count - 1) {
+                        keyLines.Add(", ");
+                    }
+                }
+
+                lines.AddRange(keyLines);
+                if (keyLines.Count > 0) {
+                    lines.Add(", ");
+                }
+
+                dictStartDepth = context.Class.Count;
+                List<string> valueLines = new List<string>();
+                ExpressionResult valueResult = ProcessExpression(semantic, context, assignment.Right, valueLines);
+                context.PopClass(dictStartDepth);
+
+                FunctionStack? functionStack = context.GetCurrentFunction();
+                if (functionStack != null &&
+                    valueResult.Type != null &&
+                    valueResult.Type.TypeName.StartsWith("Promise<")) {
+                    if (!functionStack.Function.IsAsync) {
+                        functionStack.Function.IsAsync = true;
+                        if (functionStack.Function.ReturnType != null) {
+                            functionStack.Function.ReturnType = new VariableType(functionStack.Function.ReturnType);
+                            functionStack.Function.ReturnType.TypeName = $"Promise<{functionStack.Function.ReturnType.TypeName}>";
+                        }
+                    }
+                }
+
+                lines.AddRange(valueLines);
+                lines.Add(")");
+
+                return;
+            }
+
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
             context.PopClass(startDepth);
@@ -63,6 +117,7 @@ namespace cs2.ts {
             }
 
             lines.AddRange(initLines);
+
         }
 
         /// <summary>
@@ -78,6 +133,30 @@ namespace cs2.ts {
             }
 
             return found;
+        }
+
+        private static bool IsDictionaryLike(ITypeSymbol? type) {
+            if (type == null) {
+                return false;
+            }
+
+            if (type.Name.Contains("Dictionary") || type.Name == "IDictionary" || type.Name == "IReadOnlyDictionary") {
+                return true;
+            }
+
+            if (type.AllInterfaces.Any(i => i.Name.Contains("Dictionary") || i.Name == "IDictionary" || i.Name == "IReadOnlyDictionary")) {
+                return true;
+            }
+
+            var baseType = type.BaseType;
+            while (baseType != null) {
+                if (baseType.Name.Contains("Dictionary") || baseType.Name == "IDictionary" || baseType.Name == "IReadOnlyDictionary") {
+                    return true;
+                }
+                baseType = baseType.BaseType;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -347,6 +426,10 @@ namespace cs2.ts {
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
             if (objectCreation.Initializer is InitializerExpressionSyntax initializer) {
+                if (TryProcessDictionaryCreation(semantic, context, objectCreation, initializer, lines, out var dictResult)) {
+                    return dictResult;
+                }
+
                 return ProcessExpression(semantic, context, objectCreation.Initializer, lines);
             }
 
@@ -376,7 +459,7 @@ namespace cs2.ts {
 
             List<string> finalLines = new List<string>();
             if (objectCreation.ArgumentList == null) {
-                types.Add(ProcessExpression(semantic, context, objectCreation.Initializer, finalLines));
+                finalLines.Add("()");
             } else {
                 finalLines.Add("(");
                 for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
@@ -433,7 +516,96 @@ namespace cs2.ts {
             return result;
         }
 
-        protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+        
+        private bool TryProcessDictionaryCreation(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            InitializerExpressionSyntax initializer,
+            List<string> lines,
+            out ExpressionResult result) {
+
+            result = default;
+
+            if (objectCreation.ArgumentList != null && objectCreation.ArgumentList.Arguments.Count > 0) {
+                return false;
+            }
+
+            var typeInfo = semantic.GetTypeInfo(objectCreation);
+            if (!IsDictionaryType(typeInfo.Type)) {
+                return false;
+            }
+
+            List<string> typeLines = new List<string>();
+            int startDepth = context.DepthClass;
+            result = ProcessExpression(semantic, context, objectCreation.Type, typeLines);
+            context.PopClass(startDepth);
+
+            List<string> beforeLines = new List<string>();
+            List<string> entryStrings = new List<string>();
+
+            foreach (var element in initializer.Expressions) {
+                if (element is not InitializerExpressionSyntax complex || complex.Expressions.Count < 2) {
+                    return false;
+                }
+
+                string keyText = BuildExpressionString(semantic, context, complex.Expressions[0], beforeLines);
+                string valueText = BuildExpressionString(semantic, context, complex.Expressions[1], beforeLines);
+                entryStrings.Add($"[{keyText}, {valueText}]");
+            }
+
+            if (beforeLines.Count > 0) {
+                lines.AddRange(beforeLines);
+            }
+
+            lines.Add("new ");
+            lines.AddRange(typeLines);
+
+            if (entryStrings.Count == 0) {
+                lines.Add("()");
+            } else {
+                lines.Add("(undefined, [ ");
+                for (int i = 0; i < entryStrings.Count; i++) {
+                    if (i > 0) {
+                        lines.Add(", ");
+                    }
+                    lines.Add(entryStrings[i]);
+                }
+                lines.Add(" ])");
+            }
+
+            return true;
+        }
+
+        private static bool IsDictionaryType(ITypeSymbol? typeSymbol) {
+            if (typeSymbol is INamedTypeSymbol named) {
+                var constructedFrom = named.ConstructedFrom ?? named;
+                if (constructedFrom.Name == "Dictionary") {
+                    string ns = constructedFrom.ContainingNamespace?.ToDisplayString();
+                    return ns == "System.Collections.Generic";
+                }
+            }
+            return false;
+        }
+
+        private string BuildExpressionString(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> beforeLines) {
+            List<string> parts = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult res = ProcessExpression(semantic, context, expression, parts);
+            context.PopClass(startDepth);
+
+            if (res.BeforeLines != null && res.BeforeLines.Count > 0) {
+                beforeLines.AddRange(res.BeforeLines);
+            }
+
+            if (res.AfterLines != null && res.AfterLines.Count > 0) {
+                parts.AddRange(res.AfterLines);
+            }
+
+            return string.Concat(parts);
+        }
+
+protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
             if (ProcessExpression(semantic, context, memberAccess.Expression, lines).Processed) {
                 lines.Add(".");
             }
@@ -441,6 +613,51 @@ namespace cs2.ts {
         }
 
         protected override ExpressionResult ProcessInvocationExpressionSyntax(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocationExpression, List<string> lines) {
+            if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name.Identifier.Text == "AsSpan") {
+                int targetStart = context.DepthClass;
+                List<string> targetLines = new List<string>();
+                ExpressionResult targetResult = ProcessExpression(semantic, context, memberAccess.Expression, targetLines);
+                context.PopClass(targetStart);
+
+                lines.AddRange(targetLines);
+                lines.Add(".subarray(");
+
+                var arguments = invocationExpression.ArgumentList.Arguments;
+                List<string> startLines = new List<string>();
+                if (arguments.Count > 0) {
+                    int argStart = context.DepthClass;
+                    ProcessExpression(semantic, context, arguments[0].Expression, startLines);
+                    context.PopClass(argStart);
+                    lines.AddRange(startLines);
+                } else {
+                    lines.Add("0");
+                }
+
+                if (arguments.Count > 1) {
+                    lines.Add(", ");
+                    if (startLines.Count == 0) {
+                        lines.Add("0");
+                    } else {
+                        lines.AddRange(startLines);
+                    }
+                    lines.Add(" + ");
+
+                    int lengthStart = context.DepthClass;
+                    List<string> lengthLines = new List<string>();
+                    ProcessExpression(semantic, context, arguments[1].Expression, lengthLines);
+                    context.PopClass(lengthStart);
+                    lines.AddRange(lengthLines);
+                }
+
+                lines.Add(")");
+
+                ExpressionResult spanResult = new ExpressionResult(true, targetResult.VarPath, targetResult.Type) { Class = targetResult.Class, Variable = targetResult.Variable };
+                spanResult.BeforeLines = null;
+                spanResult.AfterLines = null;
+                return spanResult;
+            }
+
             List<string> argLines = ["("];
             int count = 0;
             List<ExpressionResult> types = new List<ExpressionResult>();
@@ -580,33 +797,94 @@ namespace cs2.ts {
         }
 
         protected override void ProcessTypeOfExpression(SemanticModel semantic, LayerContext context, TypeOfExpressionSyntax typeOfExpression, List<string> lines) {
+            var tsProgram = (TypeScriptProgram)context.Program;
+            VariableType variableType = VariableUtil.GetVarType(typeOfExpression.Type, semantic);
+            string tsType = variableType.ToTypeScriptString(tsProgram);
+
+            string target = NormalizeTypeForTypeof(tsType);
             lines.Add("typeof ");
-            ProcessExpression(semantic, context, typeOfExpression.Type, lines);
+            lines.Add(target);
+        }
+
+        private static string NormalizeTypeForTypeof(string tsType) {
+            if (string.IsNullOrWhiteSpace(tsType)) {
+                return "Object";
+            }
+
+            if (tsType.EndsWith("[]", StringComparison.Ordinal)) {
+                return "Array";
+            }
+
+            if (tsType.StartsWith("Array<", StringComparison.Ordinal)) {
+                return "Array";
+            }
+
+            int genericIndex = tsType.IndexOf('<');
+            if (genericIndex > 0) {
+                tsType = tsType.Substring(0, genericIndex);
+            }
+
+            return tsType switch {
+                "number" => "Number",
+                "boolean" => "Boolean",
+                "string" => "String",
+                "any" => "Object",
+                _ => tsType
+            };
         }
 
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
-            // Add the parameter of the lambda
-            lines.Add(simpleLambda.Parameter.Identifier.Text);
-
-            int start;
             TypeInfo type = semantic.GetTypeInfo(simpleLambda);
+            int start;
             if (type.ConvertedType is INamedTypeSymbol namedFuncType) {
-                ITypeSymbol returnType = namedFuncType.TypeArguments[0];
+                var invoke = namedFuncType.DelegateInvokeMethod;
+                if (invoke == null) {
+                    throw new NotImplementedException();
+                }
+
+                ITypeSymbol returnType = invoke.ReturnType;
                 start = context.AddClass(context.Program.Classes.Find(c => c.Name == returnType.Name));
             } else {
                 throw new NotImplementedException();
             }
 
-            // Add the arrow (=>) for TypeScript arrow function
+            bool isAsync = false;
+            List<string> bodyLines = new List<string>();
+            ExpressionResult bodyResult = default;
+            bool hasBodyResult = false;
+
+            if (simpleLambda.Body is ExpressionSyntax expressionBody) {
+                bodyResult = ProcessExpression(semantic, context, expressionBody, bodyLines);
+                hasBodyResult = true;
+                if (bodyResult.Type != null && bodyResult.Type.TypeName.StartsWith("Promise<", StringComparison.Ordinal)) {
+                    isAsync = true;
+                }
+                if (!isAsync && bodyLines.Any(l => l.Contains("await "))) {
+                    isAsync = true;
+                }
+            }
+
+            if (isAsync) {
+                lines.Add("async ");
+            }
+
+            lines.Add(simpleLambda.Parameter.Identifier.Text);
             lines.Add(" => ");
 
-            // Process the body of the lambda, which could be an expression or a block
+            if (hasBodyResult && bodyResult.BeforeLines != null) {
+                lines.AddRange(bodyResult.BeforeLines);
+            }
+
             if (simpleLambda.Body is ExpressionSyntax) {
-                ProcessExpression(semantic, context, (ExpressionSyntax)simpleLambda.Body, lines);
-            } else if (simpleLambda.Body is BlockSyntax) {
+                lines.AddRange(bodyLines);
+            } else if (simpleLambda.Body is BlockSyntax block) {
                 lines.Add("{\n");
-                ProcessStatement(semantic, context, (BlockSyntax)simpleLambda.Body, lines);
+                ProcessStatement(semantic, context, block, lines);
                 lines.Add("}\n");
+            }
+
+            if (hasBodyResult && bodyResult.AfterLines != null) {
+                lines.AddRange(bodyResult.AfterLines);
             }
 
             context.PopClass(start);
@@ -695,7 +973,6 @@ namespace cs2.ts {
 
             lines.Add("]");
         }
-
 
         protected override void ProcessPredefinedType(SemanticModel semantic, LayerContext context, PredefinedTypeSyntax predefinedType, List<string> lines) {
             var type = predefinedType.Keyword.ValueText;
@@ -825,23 +1102,43 @@ namespace cs2.ts {
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
-            // Process the expression being accessed (e.g., array or object)
             int startClass = context.DepthClass;
-            ProcessExpression(semantic, context, elementAccess.Expression, lines);
+            List<string> targetLines = new List<string>();
+            ProcessExpression(semantic, context, elementAccess.Expression, targetLines);
             List<ConversionClass> saved = context.SavePopClass(startClass);
 
-            // Add the opening bracket
+            ITypeSymbol? expressionType = semantic.GetTypeInfo(elementAccess.Expression).Type;
+            if (IsDictionaryLike(expressionType)) {
+                lines.AddRange(targetLines);
+                lines.Add(".get(");
+
+                for (int i = 0; i < elementAccess.ArgumentList.Arguments.Count; i++) {
+                    var argument = elementAccess.ArgumentList.Arguments[i];
+                    startClass = context.DepthClass;
+                    List<string> keyLines = new List<string>();
+                    ProcessExpression(semantic, context, argument.Expression, keyLines);
+                    context.PopClass(startClass);
+
+                    lines.AddRange(keyLines);
+                    if (i != elementAccess.ArgumentList.Arguments.Count - 1) {
+                        lines.Add(", ");
+                    }
+                }
+
+                lines.Add(")");
+                context.LoadClass(saved);
+                return;
+            }
+
+            lines.AddRange(targetLines);
             lines.Add("[");
 
-            // Process the index argument
             foreach (var argument in elementAccess.ArgumentList.Arguments) {
                 startClass = context.DepthClass;
                 ProcessExpression(semantic, context, argument.Expression, lines);
                 context.PopClass(startClass);
-
             }
 
-            // Add the closing bracket
             lines.Add("]");
 
             context.LoadClass(saved);
@@ -922,8 +1219,6 @@ namespace cs2.ts {
             lines.Add("(");
             for (int i = 0; i < lambda.ParameterList.Parameters.Count; i++) {
                 var parameter = lambda.ParameterList.Parameters[i];
-
-                //ProcessIdentifierNameSyntax(semantic, context, parameter.Ident, lines, null);
                 lines.Add(parameter.Identifier.ToString());
 
                 if (i < lambda.ParameterList.Parameters.Count - 1) {
@@ -932,19 +1227,44 @@ namespace cs2.ts {
             }
             lines.Add(") => ");
 
+            bool isAsync = false;
+
             if (lambda.Body is BlockSyntax block) {
                 lines.Add("{\n");
                 ExpressionResult result = ProcessBlock(semantic, context, block, lines);
                 lines.Add("}\n");
 
-                if (result.Type != null && result.Type.TypeName.StartsWith("Promise<")) {
-                    lines.Insert(startIndex, "async ");
+                if (result.Type != null && result.Type.TypeName.StartsWith("Promise<", StringComparison.Ordinal)) {
+                    isAsync = true;
                 }
-            } else {
-                ExpressionResult result = ProcessExpression(semantic, context, (ExpressionSyntax)lambda.Body, lines);
-                lines.Add(";\n");
+            } else if (lambda.Body is ExpressionSyntax expressionBody) {
+                List<string> bodyLines = new List<string>();
+                ExpressionResult result = ProcessExpression(semantic, context, expressionBody, bodyLines);
+
+                if (result.BeforeLines != null) {
+                    lines.AddRange(result.BeforeLines);
+                }
+
+                if (result.Type != null && result.Type.TypeName.StartsWith("Promise<", StringComparison.Ordinal)) {
+                    isAsync = true;
+                }
+
+                if (!isAsync && bodyLines.Any(l => l.Contains("await "))) {
+                    isAsync = true;
+                }
+
+                lines.AddRange(bodyLines);
+
+                if (result.AfterLines != null) {
+                    lines.AddRange(result.AfterLines);
+                }
+            }
+
+            if (isAsync) {
+                lines.Insert(startIndex, "async ");
             }
         }
+
 
         protected override void ProcessEmptyStatement(SemanticModel semantic, LayerContext context, EmptyStatementSyntax emptyStatement, List<string> lines) {
             lines.Add(";\n");
@@ -970,7 +1290,6 @@ namespace cs2.ts {
             // Close the `while` statement
             lines.Add(");\n");
         }
-
 
         protected override void ProcessUsingStatement(SemanticModel semantic, LayerContext context, UsingStatementSyntax usingStatement, List<string> lines) {
             lines.Add("let ");
@@ -1020,10 +1339,10 @@ namespace cs2.ts {
             // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
                 foreach (var variable in usingStatement.Declaration.Variables) {
-                    declLines.Add($"{variable.Identifier.Text}.dispose();\n");
+                    declLines.Add($"{variable.Identifier.Text}?.dispose();\n");
                 }
             } else if (usingStatement.Expression != null) {
-                declLines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
+                declLines.Add(usingStatement.Expression.ToString() + "?.dispose();\n");
             }
 
             declLines.Add("}\n\n");
@@ -1039,7 +1358,6 @@ namespace cs2.ts {
             // Process the body of the lock statement
             ProcessStatement(semantic, context, lockStatement.Statement, lines);
         }
-
 
         protected override void ProcessTryStatement(SemanticModel semantic, LayerContext context, TryStatementSyntax tryStatement, List<string> lines) {
             // Process the 'try' block
@@ -1348,7 +1666,42 @@ namespace cs2.ts {
         }
 
         protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
-            throw new NotImplementedException();
+            if (declaration.Designation is SingleVariableDesignationSyntax single) {
+                string identifier = single.Identifier.Text;
+                lines.Add(identifier);
+
+                var variableType = VariableUtil.GetVarType(declaration.Type, semantic);
+
+                ConversionVariable conversionVariable = null;
+                var fn = context.GetCurrentFunction();
+                if (fn != null) {
+                    conversionVariable = new ConversionVariable {
+                        Name = identifier,
+                        VarType = variableType,
+                        Modifier = ParameterModifier.Out
+                    };
+                    fn.Stack.Add(conversionVariable);
+                }
+
+                var result = new ExpressionResult(true, conversionVariable != null ? VariablePath.FunctionStack : VariablePath.Unknown, variableType);
+                if (conversionVariable != null) {
+                    result.Variable = conversionVariable;
+                }
+
+                return result;
+            }
+
+            if (declaration.Designation is DiscardDesignationSyntax) {
+                lines.Add("_");
+                return new ExpressionResult(true);
+            }
+
+            lines.Add(declaration.Designation.ToString());
+            return new ExpressionResult(true);
         }
     }
 }
+
+
+
+

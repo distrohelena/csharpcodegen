@@ -1,0 +1,41 @@
+[
+  {
+    "type": "class",
+    "name": "MD5",
+    "members": [
+      {
+        "type": "method",
+        "name": "Create",
+        "parameters": [],
+        "returnType": "MD5"
+      },
+      {
+        "type": "method",
+        "name": "hashData",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<Uint8Array>"
+      },
+      {
+        "type": "method",
+        "name": "computeHash",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<Uint8Array>"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "hash",
+    "variableType": "any"
+  }
+]

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
@@ -28,7 +28,7 @@ namespace cs2.ts.util
         public string RegisterMetadataIdent { get; set; } = "registerMetadata";
 
         // Module path for the runtime import
-        public string RuntimeImportModule { get; set; } = "./.net.ts/src/index";
+        public string RuntimeImportModule { get; set; } = "./src/index";
 
         public TypeScriptReflectionOptions Clone() {
             return new TypeScriptReflectionOptions {
@@ -60,7 +60,7 @@ namespace cs2.ts.util
         );
 
         // Emit import for runtime helpers based on what we plan to use in this file
-        // Example: import { registerType, registerEnum } from "./.net.ts/src/index";
+        // Example: import { registerType, registerEnum } from "./src/index";
         public static void EmitRuntimeImport(TextWriter w, bool needType, bool needEnum, bool needMetadata, TypeScriptReflectionOptions? options = null)
         {
             options ??= GlobalOptions ?? TypeScriptReflectionOptions.Default;
@@ -90,7 +90,7 @@ namespace cs2.ts.util
             if (!options.EnableReflection) return;
             var fieldName = options.PrivateStaticFieldName;
             var meta = BuildTypeMetadata(type);
-            w.Write("private static readonly ");
+            w.Write("static readonly ");
             w.Write(fieldName);
             w.Write(" = ");
             w.Write(options.RegisterTypeIdent);

@@ -1,0 +1,18 @@
+[
+  {
+    "type": "class",
+    "name": "Size",
+    "members": [
+      {
+        "type": "property",
+        "name": "Width",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "Height",
+        "propertyType": "number"
+      }
+    ]
+  }
+]

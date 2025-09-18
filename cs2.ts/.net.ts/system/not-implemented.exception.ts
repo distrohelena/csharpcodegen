@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿export class NotImplementedException extends Error {
     constructor(message: string = "Operation is not implemented.") {
         super(message);

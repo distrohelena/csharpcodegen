@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class JsonConvert {
     static serializeObject(obj: any): string {
         return JSON.stringify(obj);

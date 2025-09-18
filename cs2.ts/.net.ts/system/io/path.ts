@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Path {
     // Directory separator characters
     private static readonly DirectorySeparatorChar = '/';

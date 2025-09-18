@@ -1,0 +1,279 @@
+[
+  {
+    "type": "class",
+    "name": "BinaryWriter",
+    "members": [
+      {
+        "type": "property",
+        "name": "stream",
+        "propertyType": "Stream"
+      },
+      {
+        "type": "getter",
+        "name": "BaseStream",
+        "returnType": "Stream"
+      },
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "flush",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeByte",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeByteArray",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeInt8",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeUInt16",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeInt16",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeUInt32",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeInt32",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeUInt64",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "bigint"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeInt64",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeSingle",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeDouble",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeUint8Array",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeString",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "write7BitEncodedInt",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "getLength",
+        "parameters": [],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "writeBoolean",
+        "parameters": [
+          {
+            "name": "bool",
+            "type": "boolean"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeBool",
+        "parameters": [
+          {
+            "name": "bool",
+            "type": "boolean"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "writeArray",
+        "parameters": [
+          {
+            "name": "array",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "checkAlloc",
+        "parameters": [
+          {
+            "name": "size",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "i",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "byte",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "high",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "view",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "view",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "encodedString",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "length",
+    "variableType": "any"
+  }
+]

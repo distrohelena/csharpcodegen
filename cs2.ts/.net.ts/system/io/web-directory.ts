@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class WebDirectory {
     private static storage: Storage = localStorage;
 

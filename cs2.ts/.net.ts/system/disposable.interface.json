@@ -1,0 +1,14 @@
+[
+  {
+    "type": "interface",
+    "name": "IDisposable",
+    "members": [
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      }
+    ]
+  }
+]

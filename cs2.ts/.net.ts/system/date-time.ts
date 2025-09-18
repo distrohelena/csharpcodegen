@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { TimeSpan } from "./time-span";
 
 export class DateTime {

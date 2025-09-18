@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class TimeSpan {
     private _milliseconds: number;
 

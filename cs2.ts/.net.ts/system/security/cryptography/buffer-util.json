@@ -1,0 +1,49 @@
+[
+  {
+    "type": "function",
+    "name": "cloneToArrayBuffer",
+    "parameters": [
+      {
+        "name": "view",
+        "type": "Uint8Array"
+      }
+    ],
+    "returnType": "ArrayBuffer"
+  },
+  {
+    "type": "variable",
+    "name": "copy",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "concatUint8Arrays",
+    "parameters": [
+      {
+        "name": "arrays",
+        "type": "Uint8Array[]"
+      }
+    ],
+    "returnType": "Uint8Array"
+  },
+  {
+    "type": "variable",
+    "name": "total",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "result",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "offset",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "arr",
+    "variableType": "any"
+  }
+]

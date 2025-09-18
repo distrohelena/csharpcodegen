@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Stopwatch } from "../diagnostics/stopwatch";
 
 export class Thread {

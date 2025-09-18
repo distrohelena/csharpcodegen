@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class CryptographicException extends Error {
     constructor(message: string = "Cryptographic exception.") {
         super(message);

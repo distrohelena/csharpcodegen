@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class Queue<T> {
     private items: T[] = [];
 

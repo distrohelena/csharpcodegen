@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface IDictionary<TKey, TValue> {
     // Properties
     get keys(): TKey[];

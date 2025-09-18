@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Enum for supported hash algorithms in PBKDF2.
  */

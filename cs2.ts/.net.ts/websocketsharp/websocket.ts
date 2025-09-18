@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { WebSocketState } from "./websocket-state";
 
 export class WebSocketWS {

@@ -324,4 +324,15 @@
     <ProjectReference Include="..\cs2.core\cs2.core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include=".net.ts\src\index.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\src\reflection.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\src\node-globals.d.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

@@ -1,0 +1,213 @@
+[
+  {
+    "type": "class",
+    "name": "MemoryStream",
+    "members": [
+      {
+        "type": "getter",
+        "name": "canRead",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "canWrite",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "canSeek",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "length",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "position",
+        "returnType": "number"
+      },
+      {
+        "type": "setter",
+        "name": "position",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ]
+      },
+      {
+        "type": "property",
+        "name": "buffer",
+        "propertyType": "Uint8Array"
+      },
+      {
+        "type": "property",
+        "name": "_position",
+        "propertyType": "number"
+      },
+      {
+        "type": "method",
+        "name": "internalReserve",
+        "parameters": [
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "internalWriteByte",
+        "parameters": [
+          {
+            "name": "byte",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "internalReadByte",
+        "parameters": [],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "read",
+        "parameters": [
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "write",
+        "parameters": [
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "seek",
+        "parameters": [
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "origin",
+            "type": "SeekOrigin"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "setLength",
+        "parameters": [
+          {
+            "name": "length",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "getLength",
+        "parameters": [],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "close",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "toArray",
+        "parameters": [],
+        "returnType": "Uint8Array"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "requiredSize",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "newBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "value",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "remaining",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "toRead",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "requiredSize",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "newBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "newPosition",
+    "variableType": "number"
+  },
+  {
+    "type": "variable",
+    "name": "newBuffer",
+    "variableType": "any"
+  }
+]

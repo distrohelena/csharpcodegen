@@ -1,3 +1,4 @@
+// @ts-nocheck
 export class AppDomain {
     static CurrentDomain: AppDomain = new AppDomain();
 

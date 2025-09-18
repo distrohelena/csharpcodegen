@@ -1,0 +1,28 @@
+[
+  {
+    "type": "class",
+    "name": "Blake2b",
+    "members": [
+      {
+        "type": "method",
+        "name": "computeHash",
+        "parameters": [
+          {
+            "name": "hashSize",
+            "type": "number"
+          },
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Uint8Array"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "digest",
+    "variableType": "any"
+  }
+]

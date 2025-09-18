@@ -1,0 +1,13 @@
+[
+  {
+    "type": "class",
+    "name": "AssemblyName",
+    "members": [
+      {
+        "type": "getter",
+        "name": "Version",
+        "returnType": "Version"
+      }
+    ]
+  }
+]

@@ -1,0 +1,19 @@
+[
+  {
+    "type": "class",
+    "name": "NativeStringUtil",
+    "members": [
+      {
+        "type": "method",
+        "name": "isNullOrEmpty",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "string | null"
+          }
+        ],
+        "returnType": "boolean"
+      }
+    ]
+  }
+]

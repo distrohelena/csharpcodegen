@@ -1,3 +1,5 @@
+﻿using System;
+using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -28,8 +30,12 @@ namespace cs2.core {
             project = AsyncUtil.RunSync(() => workspace.OpenProjectAsync(csprojPath));
 
             // Create custom parse options with preprocessor symbols
-            var customParseOptions = ((CSharpParseOptions)project.ParseOptions)
-                .WithPreprocessorSymbols(PreProcessorSymbols);
+            var parseOptions = (CSharpParseOptions)project.ParseOptions;
+            var symbols = new HashSet<string>(parseOptions.PreprocessorSymbolNames, StringComparer.OrdinalIgnoreCase);
+            foreach (var symbol in PreProcessorSymbols) {
+                symbols.Add(symbol);
+            }
+            var customParseOptions = parseOptions.WithPreprocessorSymbols(symbols);
 
             // Update the project with new parse options
             project = project.WithParseOptions(customParseOptions);
@@ -151,3 +157,6 @@ namespace cs2.core {
         protected abstract void ProcessClass(ConversionClass cl, ConversionProgram program);
     }
 }
+
+
+

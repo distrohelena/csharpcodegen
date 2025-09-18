@@ -1,0 +1,96 @@
+[
+  {
+    "type": "class",
+    "name": "WebSocketWS",
+    "members": [
+      {
+        "type": "property",
+        "name": "webSocket",
+        "propertyType": "WebSocket"
+      },
+      {
+        "type": "property",
+        "name": "_address",
+        "propertyType": "string"
+      },
+      {
+        "type": "property",
+        "name": "OnOpen",
+        "propertyType": "(sender, e) => void"
+      },
+      {
+        "type": "property",
+        "name": "OnClose",
+        "propertyType": "(sender, e) => void"
+      },
+      {
+        "type": "property",
+        "name": "OnMessage",
+        "propertyType": "(sender, message) => void"
+      },
+      {
+        "type": "property",
+        "name": "OnError",
+        "propertyType": "(sender, message) => void"
+      },
+      {
+        "type": "property",
+        "name": "state",
+        "propertyType": "WebSocketState"
+      },
+      {
+        "type": "getter",
+        "name": "readyState",
+        "returnType": "WebSocketState"
+      },
+      {
+        "type": "getter",
+        "name": "address",
+        "returnType": "string"
+      },
+      {
+        "type": "property",
+        "name": "url",
+        "propertyType": "string"
+      },
+      {
+        "type": "property",
+        "name": "connecting",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "Connect",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Close",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Send",
+        "parameters": [
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "arrBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "uint8Array",
+    "variableType": "any"
+  }
+]

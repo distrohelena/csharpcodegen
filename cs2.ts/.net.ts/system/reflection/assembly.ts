@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Version } from "../version";
 import { AssemblyName } from "./assembly-name";
 

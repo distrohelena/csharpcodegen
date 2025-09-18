@@ -1,0 +1,445 @@
+[
+  {
+    "type": "class",
+    "name": "Path",
+    "members": [
+      {
+        "type": "property",
+        "name": "DirectorySeparatorChar",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "AltDirectorySeparatorChar",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "VolumeSeparatorChar",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "PathSeparator",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "InvalidFileNameChars",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "InvalidPathChars",
+        "propertyType": "any"
+      },
+      {
+        "type": "method",
+        "name": "combine",
+        "parameters": [
+          {
+            "name": "path1",
+            "type": "string"
+          },
+          {
+            "name": "path2",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "combineMultiple",
+        "parameters": [
+          {
+            "name": "paths",
+            "type": "string[]"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getDirectoryName",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string | null"
+      },
+      {
+        "type": "method",
+        "name": "getFileName",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getFileNameWithoutExtension",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getExtension",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getPathRoot",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string | null"
+      },
+      {
+        "type": "method",
+        "name": "getRandomFileName",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getTempFileName",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getTempPath",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "hasExtension",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "isPathRooted",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "changeExtension",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "extension",
+            "type": "string | null"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "normalizeSeparators",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getFullPath",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getAbsolutePath",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "getRelativePath",
+        "parameters": [
+          {
+            "name": "relativeTo",
+            "type": "string"
+          },
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "join",
+        "parameters": [
+          {
+            "name": "paths",
+            "type": "string[]"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "resolve",
+        "parameters": [
+          {
+            "name": "paths",
+            "type": "string[]"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "normalize",
+        "parameters": [
+          {
+            "name": "path",
+            "type": "string"
+          }
+        ],
+        "returnType": "string"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath1",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath2",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "trimmedPath1",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "trimmedPath2",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "result",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "i",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "parts",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "volume",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "rest",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "lastSeparatorIndex",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "lastSeparatorIndex",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "fileName",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "extension",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "fileName",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "lastDotIndex",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "parts",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "volume",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "rest",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "chars",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "result",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "i",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "parts",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "rest",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "currentExtension",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "pathWithoutExtension",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedExtension",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedRelativeTo",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "relativePart",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "normalizedPath",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "segments",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "result",
+    "variableType": "string[]"
+  },
+  {
+    "type": "variable",
+    "name": "segment",
+    "variableType": "any"
+  }
+]

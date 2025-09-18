@@ -1,0 +1,30 @@
+[
+  {
+    "type": "class",
+    "name": "JsonConvert",
+    "members": [
+      {
+        "type": "method",
+        "name": "serializeObject",
+        "parameters": [
+          {
+            "name": "obj",
+            "type": "any"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "deserializeObject",
+        "parameters": [
+          {
+            "name": "json",
+            "type": "string"
+          }
+        ],
+        "returnType": "T"
+      }
+    ]
+  }
+]

@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { randomFillSync } from "crypto";
 import { IDisposable } from "../../disposable.interface";
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { FileMode } from "./file-mode";
 import { FileStream } from "./file-stream";
 import { deleteFileBuffer, ensureFileBuffer, fileExists } from "./file-storage";

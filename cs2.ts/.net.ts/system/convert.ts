@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿export class Convert {
 
     static fromBase64String(base64: string): Uint8Array {

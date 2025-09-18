@@ -1,3 +1,4 @@
+// @ts-nocheck
 export enum WebSocketState {
     /// <summary>
     /// Equivalent to numeric value 0. Indicates that a new interface has

@@ -1,0 +1,177 @@
+[
+  {
+    "type": "class",
+    "name": "Queue",
+    "members": [
+      {
+        "type": "property",
+        "name": "items",
+        "propertyType": "T[]"
+      },
+      {
+        "type": "method",
+        "name": "Add",
+        "parameters": [
+          {
+            "name": "item",
+            "type": "T"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "AddRange",
+        "parameters": [
+          {
+            "name": "items",
+            "type": "T[]"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Remove",
+        "parameters": [
+          {
+            "name": "item",
+            "type": "T"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "RemoveAt",
+        "parameters": [
+          {
+            "name": "index",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Clear",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Contains",
+        "parameters": [
+          {
+            "name": "item",
+            "type": "T"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "Get",
+        "parameters": [
+          {
+            "name": "index",
+            "type": "number"
+          }
+        ],
+        "returnType": "T"
+      },
+      {
+        "type": "method",
+        "name": "Find",
+        "parameters": [
+          {
+            "name": "predicate",
+            "type": "(item: T) => boolean"
+          }
+        ],
+        "returnType": "T | undefined"
+      },
+      {
+        "type": "method",
+        "name": "FindAll",
+        "parameters": [
+          {
+            "name": "predicate",
+            "type": "(item: T) => boolean"
+          }
+        ],
+        "returnType": "T[]"
+      },
+      {
+        "type": "method",
+        "name": "IndexOf",
+        "parameters": [
+          {
+            "name": "item",
+            "type": "T"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Count",
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "ToArray",
+        "parameters": [],
+        "returnType": "T[]"
+      },
+      {
+        "type": "method",
+        "name": "Insert",
+        "parameters": [
+          {
+            "name": "index",
+            "type": "number"
+          },
+          {
+            "name": "item",
+            "type": "T"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Sort",
+        "parameters": [
+          {
+            "name": "compareFn",
+            "type": "(a: T, b: T) => number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "Reverse",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "ForEach",
+        "parameters": [
+          {
+            "name": "callback",
+            "type": "(item: T, index: number) => void"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "index",
+    "variableType": "any"
+  }
+]

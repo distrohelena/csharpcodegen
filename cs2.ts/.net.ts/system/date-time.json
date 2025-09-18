@@ -1,0 +1,277 @@
+[
+  {
+    "type": "class",
+    "name": "DateTime",
+    "members": [
+      {
+        "type": "property",
+        "name": "_date",
+        "propertyType": "Date"
+      },
+      {
+        "type": "getter",
+        "name": "UtcNow",
+        "returnType": "DateTime"
+      },
+      {
+        "type": "getter",
+        "name": "Now",
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "FromTicks",
+        "parameters": [
+          {
+            "name": "ticks",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "Parse",
+        "parameters": [
+          {
+            "name": "dateString",
+            "type": "string"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "getter",
+        "name": "Year",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Month",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Day",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Hour",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Minute",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Second",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Millisecond",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Ticks",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "TimeOfDay",
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "AddDays",
+        "parameters": [
+          {
+            "name": "days",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "AddHours",
+        "parameters": [
+          {
+            "name": "hours",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "AddMinutes",
+        "parameters": [
+          {
+            "name": "minutes",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "AddSeconds",
+        "parameters": [
+          {
+            "name": "seconds",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "AddMilliseconds",
+        "parameters": [
+          {
+            "name": "milliseconds",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "SubtractDays",
+        "parameters": [
+          {
+            "name": "days",
+            "type": "number"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "Subtract",
+        "parameters": [
+          {
+            "name": "ts",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "Add",
+        "parameters": [
+          {
+            "name": "ts",
+            "type": "TimeSpan"
+          }
+        ],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "SubtractDateTime",
+        "parameters": [
+          {
+            "name": "other",
+            "type": "DateTime"
+          }
+        ],
+        "returnType": "TimeSpan"
+      },
+      {
+        "type": "method",
+        "name": "ToString",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "ToLocalTime",
+        "parameters": [],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "ToUniversalTime",
+        "parameters": [],
+        "returnType": "DateTime"
+      },
+      {
+        "type": "method",
+        "name": "Compare",
+        "parameters": [
+          {
+            "name": "dt1",
+            "type": "DateTime"
+          },
+          {
+            "name": "dt2",
+            "type": "DateTime"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "Equals",
+        "parameters": [
+          {
+            "name": "dt1",
+            "type": "DateTime"
+          },
+          {
+            "name": "dt2",
+            "type": "DateTime"
+          }
+        ],
+        "returnType": "boolean"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "now",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "ms",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "date",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "date",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "newDate",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "newDate",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "localDate",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "offset",
+    "variableType": "any"
+  }
+]

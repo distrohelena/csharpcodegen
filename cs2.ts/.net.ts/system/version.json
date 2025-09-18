@@ -1,0 +1,18 @@
+[
+  {
+    "type": "class",
+    "name": "Version",
+    "members": [
+      {
+        "type": "getter",
+        "name": "Major",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "Minor",
+        "returnType": "number"
+      }
+    ]
+  }
+]

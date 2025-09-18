@@ -1,0 +1,13 @@
+[
+  {
+    "type": "class",
+    "name": "Environment",
+    "members": [
+      {
+        "type": "getter",
+        "name": "processorCount",
+        "returnType": "number"
+      }
+    ]
+  }
+]

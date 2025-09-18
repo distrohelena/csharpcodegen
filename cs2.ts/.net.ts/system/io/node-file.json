@@ -1,0 +1,67 @@
+[
+  {
+    "type": "class",
+    "name": "File",
+    "members": [
+      {
+        "type": "method",
+        "name": "exists",
+        "parameters": [
+          {
+            "name": "filePath",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "delete",
+        "parameters": [
+          {
+            "name": "filePath",
+            "type": "string"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "open",
+        "parameters": [
+          {
+            "name": "filePath",
+            "type": "string"
+          },
+          {
+            "name": "fileMode",
+            "type": "FileMode"
+          }
+        ],
+        "returnType": "FileStream"
+      },
+      {
+        "type": "method",
+        "name": "openRead",
+        "parameters": [
+          {
+            "name": "filePath",
+            "type": "string"
+          }
+        ],
+        "returnType": "FileStream"
+      },
+      {
+        "type": "method",
+        "name": "openWrite",
+        "parameters": [
+          {
+            "name": "filePath",
+            "type": "string"
+          }
+        ],
+        "returnType": "FileStream"
+      }
+    ]
+  }
+]

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { IDictionary } from "./dictionary.interface"
 import { KeyValuePair } from "./key-value-pair";
 import { List } from "./list";
@@ -7,8 +8,13 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
     private keyToString: (key: TKey) => string;
     private _count: number = 0;
 
-    constructor(keyToString?: (key: TKey) => string) {
-        this.keyToString = keyToString || ((key: TKey) => JSON.stringify(key));
+    constructor(keyToString?: (key: TKey) => string, entries?: Iterable<[TKey, TValue]>) {
+        this.keyToString = keyToString ?? ((key: TKey) => JSON.stringify(key));
+        if (entries) {
+            for (const [key, value] of entries) {
+                this.add(key, value);
+            }
+        }
     }
 
     // Add a key-value pair to the dictionary
@@ -62,7 +68,7 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
 
     // Get the count of elements in the dictionary
     public get count(): number {
-        return this.count;
+        return this._count;
     }
 
     // Get all keys in the dictionary

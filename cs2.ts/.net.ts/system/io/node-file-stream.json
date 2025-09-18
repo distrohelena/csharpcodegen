@@ -1,0 +1,213 @@
+[
+  {
+    "type": "class",
+    "name": "FileStream",
+    "members": [
+      {
+        "type": "property",
+        "name": "fd",
+        "propertyType": "number"
+      },
+      {
+        "type": "property",
+        "name": "_position",
+        "propertyType": "number"
+      },
+      {
+        "type": "method",
+        "name": "read",
+        "parameters": [
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "write",
+        "parameters": [
+          {
+            "name": "buffer",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "seek",
+        "parameters": [
+          {
+            "name": "offset",
+            "type": "number"
+          },
+          {
+            "name": "origin",
+            "type": "SeekOrigin"
+          }
+        ],
+        "returnType": "number"
+      },
+      {
+        "type": "method",
+        "name": "setLength",
+        "parameters": [
+          {
+            "name": "length",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "getter",
+        "name": "canRead",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "canWrite",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "canSeek",
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "internalReserve",
+        "parameters": [
+          {
+            "name": "count",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "internalWriteByte",
+        "parameters": [
+          {
+            "name": "byte",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "internalReadByte",
+        "parameters": [],
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "length",
+        "returnType": "number"
+      },
+      {
+        "type": "getter",
+        "name": "position",
+        "returnType": "number"
+      },
+      {
+        "type": "setter",
+        "name": "position",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "number"
+          }
+        ]
+      },
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "close",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "flush",
+        "parameters": [],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "flag",
+    "variableType": "string"
+  },
+  {
+    "type": "variable",
+    "name": "canRead",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "canWrite",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "tempBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "bytesRead",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "tempBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "bytesWritten",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "buffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "bytesRead",
+    "variableType": "any"
+  }
+]

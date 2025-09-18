@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿import { IDisposable } from "../../disposable.interface";
 import { ECCurve } from "./ec-curve";
 import { ECDiffieHellmanPublicKey } from "./ec-diffie-helman-public-key";

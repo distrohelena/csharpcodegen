@@ -1,0 +1,20 @@
+[
+  {
+    "type": "enum",
+    "name": "SeekOrigin",
+    "members": [
+      {
+        "name": "Begin",
+        "value": null
+      },
+      {
+        "name": "Current",
+        "value": null
+      },
+      {
+        "name": "End",
+        "value": null
+      }
+    ]
+  }
+]

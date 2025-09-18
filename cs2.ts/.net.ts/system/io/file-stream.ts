@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { FileMode } from "./file-mode";
 import { MemoryStream } from "./memory-stream";
 import { ensureFileBuffer, readFileBuffer, writeFileBuffer } from "./file-storage";

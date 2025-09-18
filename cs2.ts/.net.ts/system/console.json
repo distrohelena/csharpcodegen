@@ -1,0 +1,30 @@
+[
+  {
+    "type": "class",
+    "name": "Console",
+    "members": [
+      {
+        "type": "method",
+        "name": "Write",
+        "parameters": [
+          {
+            "name": "line",
+            "type": "string | number | any"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "WriteLine",
+        "parameters": [
+          {
+            "name": "line",
+            "type": "string | number | any"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "type": "class",
+    "name": "KeyValuePair",
+    "members": [
+      {
+        "type": "property",
+        "name": "Key",
+        "propertyType": "T"
+      },
+      {
+        "type": "property",
+        "name": "Value",
+        "propertyType": "N"
+      }
+    ]
+  }
+]

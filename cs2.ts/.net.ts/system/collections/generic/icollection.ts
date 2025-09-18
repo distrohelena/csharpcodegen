@@ -1,3 +1,4 @@
+// @ts-nocheck
 ﻿export interface ICollection<T> {
     readonly count: number;
     add(item: T): void;

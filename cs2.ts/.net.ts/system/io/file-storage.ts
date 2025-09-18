@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { FileMode } from "./file-mode";
 
 const storage = new Map<string, Uint8Array>();

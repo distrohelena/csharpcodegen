@@ -1,0 +1,24 @@
+[
+  {
+    "type": "class",
+    "name": "SHA256",
+    "members": [
+      {
+        "type": "method",
+        "name": "hashData",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<Uint8Array>"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "hash",
+    "variableType": "any"
+  }
+]

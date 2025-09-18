@@ -1,0 +1,82 @@
+[
+  {
+    "type": "class",
+    "name": "Thread",
+    "members": [
+      {
+        "type": "property",
+        "name": "worker",
+        "propertyType": "Worker | null"
+      },
+      {
+        "type": "property",
+        "name": "isRunning",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "Sleep",
+        "parameters": [
+          {
+            "name": "milliseconds",
+            "type": "number"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "start",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "stop",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "isAlive",
+        "parameters": [],
+        "returnType": "boolean"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "sharedBuffer",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "int32Array",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "fnCode",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "endArg",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "test",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "workerBlob",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "workerUrl",
+    "variableType": "any"
+  }
+]

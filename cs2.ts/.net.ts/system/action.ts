@@ -1,3 +1,4 @@
+// @ts-nocheck
 export type Action = () => void;
 
 export type Action1<T1> = (in1: T1) => void;

@@ -1,0 +1,1038 @@
+[
+  {
+    "type": "enum",
+    "name": "BindingFlags",
+    "members": [
+      {
+        "name": "Default",
+        "value": "0"
+      },
+      {
+        "name": "IgnoreCase",
+        "value": "1 << 0"
+      },
+      {
+        "name": "DeclaredOnly",
+        "value": "1 << 1"
+      },
+      {
+        "name": "Instance",
+        "value": "1 << 2"
+      },
+      {
+        "name": "Static",
+        "value": "1 << 3"
+      },
+      {
+        "name": "Public",
+        "value": "1 << 4"
+      },
+      {
+        "name": "NonPublic",
+        "value": "1 << 5"
+      },
+      {
+        "name": "FlattenHierarchy",
+        "value": "1 << 6"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "kTypeTag",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "kMemberTag",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "ReflectionRegistry",
+    "members": [
+      {
+        "type": "property",
+        "name": "byFullName",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "byCtor",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "byId",
+        "propertyType": "any"
+      },
+      {
+        "type": "method",
+        "name": "register",
+        "parameters": [
+          {
+            "name": "ctor",
+            "type": "any"
+          },
+          {
+            "name": "metadata",
+            "type": "TypeMetadata"
+          }
+        ],
+        "returnType": "Type"
+      },
+      {
+        "type": "method",
+        "name": "registerMetadataOnly",
+        "parameters": [
+          {
+            "name": "metadata",
+            "type": "TypeMetadata"
+          }
+        ],
+        "returnType": "Type"
+      },
+      {
+        "type": "method",
+        "name": "getByCtor",
+        "parameters": [
+          {
+            "name": "ctor",
+            "type": "any | null | undefined"
+          }
+        ],
+        "returnType": "Type | undefined"
+      },
+      {
+        "type": "method",
+        "name": "getByFullName",
+        "parameters": [
+          {
+            "name": "fullName",
+            "type": "string"
+          }
+        ],
+        "returnType": "Type | undefined"
+      },
+      {
+        "type": "method",
+        "name": "getById",
+        "parameters": [
+          {
+            "name": "id",
+            "type": "string"
+          }
+        ],
+        "returnType": "Type | undefined"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "existing",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "t",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "existing",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "t",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "registry",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "MemberInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "[kMemberTag]",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "name",
+        "propertyType": "string"
+      },
+      {
+        "type": "property",
+        "name": "declaringType",
+        "propertyType": "Type"
+      },
+      {
+        "type": "property",
+        "name": "isStatic",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "isPublic",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "attributes",
+        "propertyType": "AttributeData[]"
+      },
+      {
+        "type": "method",
+        "name": "GetCustomAttributes",
+        "parameters": [],
+        "returnType": "any[]"
+      }
+    ]
+  },
+  {
+    "type": "class",
+    "name": "ParameterInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "name",
+        "propertyType": "string"
+      },
+      {
+        "type": "property",
+        "name": "parameterType",
+        "propertyType": "Type"
+      },
+      {
+        "type": "property",
+        "name": "hasDefaultValue",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "defaultValue",
+        "propertyType": "any"
+      }
+    ]
+  },
+  {
+    "type": "class",
+    "name": "MethodInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "returnType",
+        "propertyType": "Type"
+      },
+      {
+        "type": "property",
+        "name": "isAbstract",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "isVirtual",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "parameters",
+        "propertyType": "ParameterInfo[]"
+      },
+      {
+        "type": "property",
+        "name": "signature",
+        "propertyType": "string"
+      },
+      {
+        "type": "method",
+        "name": "Invoke",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "any"
+          },
+          {
+            "name": "parameters",
+            "type": "any[]"
+          }
+        ],
+        "returnType": "any"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "owner",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "fn",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "PropertyInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "propertyType",
+        "propertyType": "Type"
+      },
+      {
+        "type": "property",
+        "name": "canRead",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "property",
+        "name": "canWrite",
+        "propertyType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "GetValue",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "any"
+          }
+        ],
+        "returnType": "any"
+      },
+      {
+        "type": "method",
+        "name": "SetValue",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "any"
+          },
+          {
+            "name": "value",
+            "type": "any"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "owner",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "owner",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "FieldInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "fieldType",
+        "propertyType": "Type"
+      },
+      {
+        "type": "method",
+        "name": "GetValue",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "any"
+          }
+        ],
+        "returnType": "any"
+      },
+      {
+        "type": "method",
+        "name": "SetValue",
+        "parameters": [
+          {
+            "name": "target",
+            "type": "any"
+          },
+          {
+            "name": "value",
+            "type": "any"
+          }
+        ],
+        "returnType": "void"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "owner",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "owner",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "ConstructorInfo",
+    "members": [
+      {
+        "type": "property",
+        "name": "parameters",
+        "propertyType": "ParameterInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "Invoke",
+        "parameters": [
+          {
+            "name": "parameters",
+            "type": "any[]"
+          }
+        ],
+        "returnType": "any"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "ctor",
+    "variableType": "any"
+  },
+  {
+    "type": "class",
+    "name": "Type",
+    "members": [
+      {
+        "type": "property",
+        "name": "[kTypeTag]",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "meta",
+        "propertyType": "TypeMetadata"
+      },
+      {
+        "type": "property",
+        "name": "_ctor",
+        "propertyType": "any | null"
+      },
+      {
+        "type": "property",
+        "name": "methodsCache",
+        "propertyType": "MethodInfo[]"
+      },
+      {
+        "type": "property",
+        "name": "propsCache",
+        "propertyType": "PropertyInfo[]"
+      },
+      {
+        "type": "property",
+        "name": "fieldsCache",
+        "propertyType": "FieldInfo[]"
+      },
+      {
+        "type": "property",
+        "name": "ctorsCache",
+        "propertyType": "ConstructorInfo[]"
+      },
+      {
+        "type": "property",
+        "name": "baseTypeResolved",
+        "propertyType": "Type | null"
+      },
+      {
+        "type": "property",
+        "name": "interfacesResolved",
+        "propertyType": "Type[]"
+      },
+      {
+        "type": "property",
+        "name": "void",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "object",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "string",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "boolean",
+        "propertyType": "any"
+      },
+      {
+        "type": "property",
+        "name": "number",
+        "propertyType": "any"
+      },
+      {
+        "type": "method",
+        "name": "_bindCtor",
+        "parameters": [
+          {
+            "name": "ctor",
+            "type": "any"
+          }
+        ],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "get",
+        "parameters": [
+          {
+            "name": "fullNameOrCtor",
+            "type": "string | any | null | undefined"
+          }
+        ],
+        "returnType": "Type | undefined"
+      },
+      {
+        "type": "method",
+        "name": "GetType",
+        "parameters": [
+          {
+            "name": "fullName",
+            "type": "string"
+          }
+        ],
+        "returnType": "Type | null"
+      },
+      {
+        "type": "method",
+        "name": "of",
+        "parameters": [
+          {
+            "name": "obj",
+            "type": "any"
+          }
+        ],
+        "returnType": "Type | null"
+      },
+      {
+        "type": "getter",
+        "name": "Name",
+        "returnType": "string"
+      },
+      {
+        "type": "getter",
+        "name": "Namespace",
+        "returnType": "string | undefined"
+      },
+      {
+        "type": "getter",
+        "name": "FullName",
+        "returnType": "string"
+      },
+      {
+        "type": "getter",
+        "name": "fullName",
+        "returnType": "string"
+      },
+      {
+        "type": "getter",
+        "name": "Assembly",
+        "returnType": "string"
+      },
+      {
+        "type": "getter",
+        "name": "IsClass",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "IsInterface",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "IsEnum",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "IsArray",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "IsGenericType",
+        "returnType": "boolean"
+      },
+      {
+        "type": "getter",
+        "name": "BaseType",
+        "returnType": "Type | null"
+      },
+      {
+        "type": "method",
+        "name": "GetInterfaces",
+        "parameters": [],
+        "returnType": "Type[]"
+      },
+      {
+        "type": "method",
+        "name": "GetElementType",
+        "parameters": [],
+        "returnType": "Type | null"
+      },
+      {
+        "type": "method",
+        "name": "GetMethods",
+        "parameters": [
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "MethodInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "GetMethod",
+        "parameters": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "MethodInfo | null"
+      },
+      {
+        "type": "method",
+        "name": "GetProperties",
+        "parameters": [
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "PropertyInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "GetProperty",
+        "parameters": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "PropertyInfo | null"
+      },
+      {
+        "type": "method",
+        "name": "GetFields",
+        "parameters": [
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "FieldInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "GetField",
+        "parameters": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "FieldInfo | null"
+      },
+      {
+        "type": "method",
+        "name": "GetConstructors",
+        "parameters": [
+          {
+            "name": "bindingFlags",
+            "type": "BindingFlags"
+          }
+        ],
+        "returnType": "ConstructorInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "GetCustomAttributes",
+        "parameters": [],
+        "returnType": "any[]"
+      },
+      {
+        "type": "method",
+        "name": "IsSubclassOf",
+        "parameters": [
+          {
+            "name": "t",
+            "type": "Type | null"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "IsAssignableFrom",
+        "parameters": [
+          {
+            "name": "t",
+            "type": "Type | null"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "_ensureMethods",
+        "parameters": [],
+        "returnType": "MethodInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "_ensureProps",
+        "parameters": [],
+        "returnType": "PropertyInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "_ensureFields",
+        "parameters": [],
+        "returnType": "FieldInfo[]"
+      },
+      {
+        "type": "method",
+        "name": "_ensureCtors",
+        "parameters": [],
+        "returnType": "ConstructorInfo[]"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "ctor",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "all",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "methods",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "cmp",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "all",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "props",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "cmp",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "all",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "fields",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "cmp",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "all",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "isPublic",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "items",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "b",
+    "variableType": "Type | null"
+  },
+  {
+    "type": "variable",
+    "name": "declared",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "base",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "inherited",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "declared",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "base",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "inherited",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "declared",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "base",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "inherited",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "filterMembers",
+    "parameters": [
+      {
+        "name": "items",
+        "type": "T[]"
+      },
+      {
+        "name": "bindingFlags",
+        "type": "BindingFlags"
+      },
+      {
+        "name": "self",
+        "type": "Type"
+      }
+    ],
+    "returnType": "T[]"
+  },
+  {
+    "type": "variable",
+    "name": "isPublic",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "isStaticAllowed",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "isInstanceAllowed",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "declaredOnly",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "staticHierarchy",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "registerType",
+    "parameters": [
+      {
+        "name": "ctor",
+        "type": "any"
+      },
+      {
+        "name": "metadata",
+        "type": "TypeMetadata"
+      }
+    ],
+    "returnType": "Type"
+  },
+  {
+    "type": "function",
+    "name": "registerMetadata",
+    "parameters": [
+      {
+        "name": "metadata",
+        "type": "TypeMetadata"
+      }
+    ],
+    "returnType": "Type"
+  },
+  {
+    "type": "function",
+    "name": "getTypeOf",
+    "parameters": [
+      {
+        "name": "obj",
+        "type": "any"
+      }
+    ],
+    "returnType": "Type | null"
+  },
+  {
+    "type": "function",
+    "name": "getType",
+    "parameters": [
+      {
+        "name": "fullName",
+        "type": "string"
+      }
+    ],
+    "returnType": "Type | null"
+  },
+  {
+    "type": "function",
+    "name": "createInstance",
+    "parameters": [
+      {
+        "name": "type",
+        "type": "Type"
+      },
+      {
+        "name": "args",
+        "type": "any[]"
+      }
+    ],
+    "returnType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "ci",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "isType",
+    "parameters": [
+      {
+        "name": "x",
+        "type": "any"
+      }
+    ],
+    "returnType": "x is Type"
+  },
+  {
+    "type": "function",
+    "name": "isMember",
+    "parameters": [
+      {
+        "name": "x",
+        "type": "any"
+      }
+    ],
+    "returnType": "x is MemberInfo"
+  },
+  {
+    "type": "function",
+    "name": "constructAttributes",
+    "parameters": [
+      {
+        "name": "attrs",
+        "type": "AttributeData[]"
+      }
+    ],
+    "returnType": "any[]"
+  },
+  {
+    "type": "function",
+    "name": "registerEnum",
+    "parameters": [
+      {
+        "name": "ctor",
+        "type": "any"
+      },
+      {
+        "name": "metadata",
+        "type": "TypeMetadata"
+      }
+    ],
+    "returnType": "Type"
+  },
+  {
+    "type": "variable",
+    "name": "values",
+    "variableType": "EnumValueMetadata[]"
+  },
+  {
+    "type": "variable",
+    "name": "k",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "v",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "Activator",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "System",
+    "variableType": "any"
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "type": "enum",
+    "name": "WebSocketState",
+    "members": [
+      {
+        "name": "New",
+        "value": "0"
+      },
+      {
+        "name": "Connecting",
+        "value": "1"
+      },
+      {
+        "name": "Open",
+        "value": "2"
+      },
+      {
+        "name": "Closing",
+        "value": "3"
+      },
+      {
+        "name": "Closed",
+        "value": "4"
+      }
+    ]
+  }
+]

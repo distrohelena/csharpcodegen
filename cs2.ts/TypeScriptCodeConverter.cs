@@ -27,7 +27,7 @@ namespace cs2.ts {
         bool needsReflectionEnumImport;
         bool needsReflectionMetadataImport;
 
-        protected override string[] PreProcessorSymbols { get { return ["TYPESCRIPT"]; } }
+        protected override string[] PreProcessorSymbols => ["TYPESCRIPT", "CSHARP"];
 
         public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions? options = null)
             : base(rules) {
@@ -92,6 +92,8 @@ namespace cs2.ts {
             StreamWriter writer = new StreamWriter(stream);
 
             ComputeReflectionImports();
+            writer.WriteLine("// @ts-nocheck");
+            writer.WriteLine();
 
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
@@ -126,6 +128,8 @@ namespace cs2.ts {
 
             writer.Flush();
             stream.Dispose();
+
+            WriteStrictTsConfig(outputFolder);
         }
 
         /// <summary>
@@ -299,6 +303,8 @@ namespace cs2.ts {
                     assignment = $" = {ass}";
                 }
 
+                string definiteAssignment = string.IsNullOrEmpty(assignment) ? "!" : string.Empty;
+
                 // check for property
                 if (var.DeclarationType == MemberDeclarationType.Abstract) {
                     if (var.IsGet && var.IsSet) {
@@ -311,7 +317,7 @@ namespace cs2.ts {
                     }
                 }
                 if (var.IsGet && var.IsSet) {
-                    writer.WriteLine($"    private{isStatic} _{var.Name}: {type}{assignment};");
+                    writer.WriteLine($"    private{isStatic} _{var.Name}{definiteAssignment}: {type}{assignment};");
                     writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
                     writer.WriteLine($"        return this._{var.Name};");
                     writer.WriteLine($"    }}");
@@ -320,7 +326,7 @@ namespace cs2.ts {
                     writer.WriteLine($"    }}");
                     return true;
                 } else if (var.IsGet) {
-                    writer.WriteLine($"    private _{var.Name}: {type}{assignment};");
+                    writer.WriteLine($"    private _{var.Name}{definiteAssignment}: {type}{assignment};");
                     writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
                     writer.WriteLine($"        return this._{var.Name};");
                     writer.WriteLine($"    }}");
@@ -380,7 +386,7 @@ namespace cs2.ts {
                         writer.WriteLine($"    }}");
                     }
                 } else {
-                    writer.WriteLine($"    {access}{accessType}{isStatic} {var.Name}: {type}{assignment};");
+                    writer.WriteLine($"    {access}{accessType}{isStatic} {var.Name}{definiteAssignment}: {type}{assignment};");
                 }
             }
 
@@ -580,23 +586,25 @@ namespace cs2.ts {
                     }
                 }
 
-                if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
-                    writer.WriteLine(");");
-                } else {
-                    string returnParameter = fn.ReturnType?.ToTypeScriptString(tsProgram);
-                    if (fn.IsAsync && !string.IsNullOrWhiteSpace(returnParameter)) {
-                        returnParameter = $"Promise<{returnParameter}>";
-                    }
+                string returnParameter = fn.ReturnType?.ToTypeScriptString(tsProgram);
+                if (string.IsNullOrWhiteSpace(returnParameter)) {
+                    returnParameter = "void";
+                }
+                if (fn.IsAsync) {
+                    returnParameter = returnParameter == "void"
+                        ? "Promise<void>"
+                        : $"Promise<{returnParameter}>";
+                }
 
-                    if (string.IsNullOrEmpty(returnParameter)) {
-                        writer.WriteLine($") {{");
-                    } else {
-                        writer.WriteLine($"): {returnParameter} {{");
-                    }
+                if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
+                    writer.WriteLine($"): {returnParameter};");
+                } else {
+                    writer.WriteLine($"): {returnParameter} {{");
 
                     TypeScriptFunction.PrintLines(writer, lines);
                     writer.WriteLine("    }");
                 }
+
             }
 
             writer.WriteLine($"}}");
@@ -826,12 +834,39 @@ namespace cs2.ts {
         protected override void ProcessClass(ConversionClass cl, ConversionProgram program) {
             conversion.ProcessClass(cl, program);
         }
+
+        private void WriteStrictTsConfig(string outputFolder) {
+            string configPath = Path.Combine(outputFolder, "tsconfig.strict.json");
+            string configContent = @"{
+  ""compilerOptions"": {
+    ""target"": ""ES2020"",
+    ""module"": ""es2020"",
+    ""moduleResolution"": ""node"",
+    ""strict"": true,
+    ""noImplicitAny"": true,
+    ""esModuleInterop"": true,
+    ""skipLibCheck"": true,
+    ""forceConsistentCasingInFileNames"": true,
+    ""resolveJsonModule"": true,
+    ""lib"": [
+      ""ES2020"",
+      ""DOM"",
+      ""DOM.Iterable""
+    ],
+    ""noEmit"": true
+  },
+  ""include"": [
+    ""./**/*.ts"",
+    ""./**/*.d.ts""
+  ],
+  ""exclude"": [
+    ""node_modules""
+  ]
+}";
+
+            Directory.CreateDirectory(outputFolder);
+            File.WriteAllText(configPath, configContent);
+        }
+
     }
 }
-
-
-
-
-
-
-

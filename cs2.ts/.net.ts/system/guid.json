@@ -1,0 +1,115 @@
+[
+  {
+    "type": "class",
+    "name": "Guid",
+    "members": [
+      {
+        "type": "property",
+        "name": "byteArray",
+        "propertyType": "Uint8Array"
+      },
+      {
+        "type": "method",
+        "name": "newGuid",
+        "parameters": [],
+        "returnType": "Guid"
+      },
+      {
+        "type": "method",
+        "name": "parse",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ],
+        "returnType": "Guid"
+      },
+      {
+        "type": "method",
+        "name": "fromByteArray",
+        "parameters": [
+          {
+            "name": "byteArray",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Guid"
+      },
+      {
+        "type": "method",
+        "name": "equals",
+        "parameters": [
+          {
+            "name": "other",
+            "type": "Guid"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "toString",
+        "parameters": [],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "isValid",
+        "parameters": [
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ],
+        "returnType": "boolean"
+      },
+      {
+        "type": "method",
+        "name": "toByteArray",
+        "parameters": [],
+        "returnType": "Uint8Array"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "byteArray",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "i",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "hexRegex",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "byteArray",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "hexString",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "i",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "hexPairs",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "hexRegex",
+    "variableType": "any"
+  }
+]

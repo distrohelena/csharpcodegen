@@ -1,0 +1,259 @@
+[
+  {
+    "type": "class",
+    "name": "ECDsa",
+    "members": [
+      {
+        "type": "property",
+        "name": "keyPair",
+        "propertyType": "CryptoKeyPair"
+      },
+      {
+        "type": "property",
+        "name": "curve",
+        "propertyType": "ECCurve"
+      },
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "toBase64Url",
+        "parameters": [
+          {
+            "name": "bytes",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "string"
+      },
+      {
+        "type": "method",
+        "name": "fromBase64Url",
+        "parameters": [
+          {
+            "name": "base64url",
+            "type": "string"
+          }
+        ],
+        "returnType": "Uint8Array"
+      },
+      {
+        "type": "method",
+        "name": "create",
+        "parameters": [],
+        "returnType": "Promise<ECDsa>"
+      },
+      {
+        "type": "method",
+        "name": "create",
+        "parameters": [
+          {
+            "name": "curve",
+            "type": "ECCurve"
+          }
+        ],
+        "returnType": "Promise<ECDsa>"
+      },
+      {
+        "type": "method",
+        "name": "create",
+        "parameters": [
+          {
+            "name": "curve",
+            "type": "ECCurve"
+          }
+        ],
+        "returnType": "Promise<ECDsa>"
+      },
+      {
+        "type": "method",
+        "name": "exportParameters",
+        "parameters": [
+          {
+            "name": "includePrivate",
+            "type": "boolean"
+          }
+        ],
+        "returnType": "Promise<ECParameters>"
+      },
+      {
+        "type": "method",
+        "name": "importParameters",
+        "parameters": [
+          {
+            "name": "parameters",
+            "type": "ECParameters"
+          }
+        ],
+        "returnType": "Promise<void>"
+      },
+      {
+        "type": "method",
+        "name": "signHash",
+        "parameters": [
+          {
+            "name": "message",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<Uint8Array>"
+      },
+      {
+        "type": "method",
+        "name": "verifyHash",
+        "parameters": [
+          {
+            "name": "message",
+            "type": "Uint8Array"
+          },
+          {
+            "name": "signature",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<boolean>"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "binary",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "base64",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "base64",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "instance",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "keyPair",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "raw",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "coordinateLength",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "x",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "y",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "result",
+    "variableType": "ECParameters"
+  },
+  {
+    "type": "variable",
+    "name": "pkcs8",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "publicKey",
+    "variableType": "CryptoKey"
+  },
+  {
+    "type": "variable",
+    "name": "privateKey",
+    "variableType": "CryptoKey | undefined"
+  },
+  {
+    "type": "variable",
+    "name": "x",
+    "variableType": "Uint8Array"
+  },
+  {
+    "type": "variable",
+    "name": "y",
+    "variableType": "Uint8Array"
+  },
+  {
+    "type": "variable",
+    "name": "point",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "jwk",
+    "variableType": "JsonWebKey"
+  },
+  {
+    "type": "variable",
+    "name": "publicRaw",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "signature",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "ECPrivateKeyASN",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "PrivateKeyInfoASN",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "extractPrivateKeyD",
+    "parameters": [
+      {
+        "name": "pkcs8",
+        "type": "Uint8Array"
+      }
+    ],
+    "returnType": "Uint8Array"
+  },
+  {
+    "type": "variable",
+    "name": "decoded",
+    "variableType": "any"
+  },
+  {
+    "type": "variable",
+    "name": "ecPrivate",
+    "variableType": "any"
+  },
+  {
+    "type": "function",
+    "name": "toBase64Url",
+    "parameters": [
+      {
+        "name": "bytes",
+        "type": "Uint8Array"
+      }
+    ],
+    "returnType": "string"
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "type": "class",
+    "name": "HMACSHA256",
+    "members": [
+      {
+        "type": "property",
+        "name": "key",
+        "propertyType": "Uint8Array"
+      },
+      {
+        "type": "method",
+        "name": "dispose",
+        "parameters": [],
+        "returnType": "void"
+      },
+      {
+        "type": "method",
+        "name": "computeHash",
+        "parameters": [
+          {
+            "name": "data",
+            "type": "Uint8Array"
+          }
+        ],
+        "returnType": "Promise<Uint8Array>"
+      }
+    ]
+  },
+  {
+    "type": "variable",
+    "name": "mac",
+    "variableType": "any"
+  }
+]
