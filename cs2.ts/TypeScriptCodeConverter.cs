@@ -1,9 +1,13 @@
 using cs2.core;
+using cs2.core.Pipeline;
 using cs2.ts.util;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
 using Nucleus;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -23,11 +27,13 @@ namespace cs2.ts {
         TypeScriptConversiorProcessor conversion;
         TypeScriptProgram tsProgram;
         readonly TypeScriptConversionOptions conversionOptions;
+        readonly string[] preprocessorSymbols;
+        readonly bool includeProjectPreprocessorSymbols;
         bool needsReflectionTypeImport;
         bool needsReflectionEnumImport;
         bool needsReflectionMetadataImport;
 
-        protected override string[] PreProcessorSymbols => ["TYPESCRIPT", "CSHARP"];
+        protected override string[] PreProcessorSymbols => preprocessorSymbols;
 
         public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions? options = null)
             : base(rules) {
@@ -38,6 +44,9 @@ namespace cs2.ts {
             resolvedOptions.Reflection.EnableReflection = resolvedOptions.EnableReflection;
             conversionOptions = resolvedOptions;
             TypeScriptReflectionEmitter.GlobalOptions = resolvedOptions.Reflection.Clone();
+
+            preprocessorSymbols = BuildPreprocessorSymbols(resolvedOptions);
+            includeProjectPreprocessorSymbols = resolvedOptions.IncludeProjectDefinedPreprocessorSymbols;
 
             var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
 
@@ -56,6 +65,45 @@ namespace cs2.ts {
             assemblyName = "";
             version = "";
             targetFramework = "";
+        }
+
+        private static string[] BuildPreprocessorSymbols(TypeScriptConversionOptions options) {
+            HashSet<string> symbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TYPESCRIPT", "CSHARP" };
+
+            if (options.AdditionalPreprocessorSymbols != null) {
+                foreach (string symbol in options.AdditionalPreprocessorSymbols) {
+                    if (string.IsNullOrWhiteSpace(symbol)) {
+                        continue;
+                    }
+
+                    symbols.Add(symbol.Trim());
+                }
+            }
+
+            return symbols.ToArray();
+        }
+
+        protected override void ConfigurePipeline(ConversionPipelineBuilder builder) {
+            base.ConfigurePipeline(builder);
+
+            var preprocessorFilter = new TypeScriptPreprocessorFilterStage(this);
+            var metadataStage = new TypeScriptAssemblyMetadataStage(this);
+
+            int applyIndex = -1;
+            for (int i = 0; i < builder.Stages.Count; i++) {
+                if (builder.Stages[i] is ApplyPreprocessorSymbolsStage) {
+                    applyIndex = i;
+                    break;
+                }
+            }
+
+            if (applyIndex >= 0) {
+                builder.Insert(applyIndex + 1, preprocessorFilter);
+                builder.Insert(applyIndex + 2, metadataStage);
+            } else {
+                builder.AddStage(preprocessorFilter);
+                builder.AddStage(metadataStage);
+            }
         }
 
         /// <summary>
@@ -130,6 +178,12 @@ namespace cs2.ts {
             stream.Dispose();
 
             WriteStrictTsConfig(outputFolder);
+        }
+
+        private void SetAssemblyMetadata(string assembly, string resolvedVersion, string framework) {
+            assemblyName = assembly ?? string.Empty;
+            version = resolvedVersion ?? string.Empty;
+            targetFramework = framework ?? string.Empty;
         }
 
         /// <summary>
@@ -866,6 +920,71 @@ namespace cs2.ts {
 
             Directory.CreateDirectory(outputFolder);
             File.WriteAllText(configPath, configContent);
+        }
+
+        private sealed class TypeScriptPreprocessorFilterStage : IConversionStage {
+            private readonly TypeScriptCodeConverter owner;
+
+            public TypeScriptPreprocessorFilterStage(TypeScriptCodeConverter owner) {
+                this.owner = owner;
+            }
+
+            public void Execute(ConversionSession session) {
+                if (owner.includeProjectPreprocessorSymbols) {
+                    return;
+                }
+
+                if (session.Project.ParseOptions is not CSharpParseOptions parseOptions) {
+                    return;
+                }
+
+                CSharpParseOptions updated = parseOptions.WithPreprocessorSymbols(owner.preprocessorSymbols);
+                session.Project = session.Project.WithParseOptions(updated);
+            }
+        }
+
+        private sealed class TypeScriptAssemblyMetadataStage : IConversionStage {
+            private readonly TypeScriptCodeConverter owner;
+
+            public TypeScriptAssemblyMetadataStage(TypeScriptCodeConverter owner) {
+                this.owner = owner;
+            }
+
+            public void Execute(ConversionSession session) {
+                string assembly = session.Project.AssemblyName ?? string.Empty;
+                string version = string.Empty;
+                string framework = string.Empty;
+
+                string? projectFile = session.Project.FilePath;
+                if (!string.IsNullOrEmpty(projectFile) && File.Exists(projectFile)) {
+                    try {
+                        XDocument document = XDocument.Load(projectFile);
+                        assembly = ReadProperty(document, "AssemblyName") ?? assembly;
+                        version = ReadProperty(document, "Version")
+                                  ?? ReadProperty(document, "AssemblyVersion")
+                                  ?? ReadProperty(document, "FileVersion")
+                                  ?? version;
+                        framework = ReadProperty(document, "TargetFramework")
+                                    ?? ReadProperty(document, "TargetFrameworks")
+                                    ?? framework;
+                    } catch (Exception ex) {
+                        Console.WriteLine($"Warning: unable to read assembly metadata: {ex.Message}");
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(framework) && framework.Contains(';')) {
+                    framework = framework.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? framework;
+                }
+
+                owner.SetAssemblyMetadata(assembly, version, framework);
+            }
+
+            private static string? ReadProperty(XDocument document, string propertyName) {
+                return document.Root?
+                    .Descendants()
+                    .FirstOrDefault(node => node.Name.LocalName.Equals(propertyName, StringComparison.OrdinalIgnoreCase))?
+                    .Value;
+            }
         }
 
     }

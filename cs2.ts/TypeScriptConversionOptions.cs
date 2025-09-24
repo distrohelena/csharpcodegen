@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using cs2.ts.util;
 
 namespace cs2.ts {
@@ -24,13 +25,25 @@ namespace cs2.ts {
         public TypeScriptReflectionOptions Reflection { get; set; } = new TypeScriptReflectionOptions { EnableReflection = true };
 
         /// <summary>
+        /// Additional preprocessor symbols that should be treated as defined during TypeScript conversion.
+        /// </summary>
+        public List<string> AdditionalPreprocessorSymbols { get; set; } = new();
+
+        /// <summary>
+        /// When true, retain preprocessor symbols defined in the source project in addition to the TypeScript ones.
+        /// </summary>
+        public bool IncludeProjectDefinedPreprocessorSymbols { get; set; }
+
+        /// <summary>
         /// Creates a shallow copy so that callers can tweak options without mutating shared instances.
         /// </summary>
         public TypeScriptConversionOptions Clone() {
             return new TypeScriptConversionOptions {
                 EnableReflection = EnableReflection,
                 UseStaticReflectionCache = UseStaticReflectionCache,
-                Reflection = Reflection.Clone()
+                Reflection = Reflection.Clone(),
+                AdditionalPreprocessorSymbols = new List<string>(AdditionalPreprocessorSymbols),
+                IncludeProjectDefinedPreprocessorSymbols = IncludeProjectDefinedPreprocessorSymbols
             };
         }
     }

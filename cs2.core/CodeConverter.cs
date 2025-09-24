@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
 using Nucleus;
+using cs2.core.Pipeline;
 
 namespace cs2.core {
     public abstract class CodeConverter {
@@ -27,46 +27,34 @@ namespace cs2.core {
                 return;
             }
 
+            if (program == null) {
+                throw new InvalidOperationException("Conversion program must be initialized before loading a project.");
+            }
+
+            workspace ??= MSBuildWorkspace.Create();
+            context ??= new ConversionContext(program);
+
             project = AsyncUtil.RunSync(() => workspace.OpenProjectAsync(csprojPath));
 
-            // Create custom parse options with preprocessor symbols
-            var parseOptions = (CSharpParseOptions)project.ParseOptions;
-            var symbols = new HashSet<string>(parseOptions.PreprocessorSymbolNames, StringComparer.OrdinalIgnoreCase);
-            foreach (var symbol in PreProcessorSymbols) {
-                symbols.Add(symbol);
-            }
-            var customParseOptions = parseOptions.WithPreprocessorSymbols(symbols);
+            ConversionSession session = new ConversionSession(project, workspace, program, context, rules, this);
+            ConversionPipeline pipeline = BuildPipeline();
+            pipeline.Execute(session);
 
-            // Update the project with new parse options
-            project = project.WithParseOptions(customParseOptions);
+            project = session.Project;
+        }
 
-            foreach (var document in project.Documents) {
-                Console.WriteLine($"-- Processing: {document.Name}");
+        protected virtual ConversionPipeline BuildPipeline() {
+            ConversionPipelineBuilder builder = new ConversionPipelineBuilder();
+            ConfigurePipeline(builder);
+            return builder.Build();
+        }
 
-                // Parse the syntax tree
-                SyntaxTree syntaxTree = AsyncUtil.RunSync(() => document.GetSyntaxTreeAsync());
-                if (syntaxTree == null) continue;
-
-                // Access the semantic model
-                var semanticModel = AsyncUtil.RunSync(() => document.GetSemanticModelAsync());
-                if (semanticModel == null) continue;
-
-                // Example: Find all classes in the syntax tree
-                CompilationUnitSyntax root = (CompilationUnitSyntax)AsyncUtil.RunSync(() => syntaxTree.GetRootAsync());
-
-                foreach (MemberDeclarationSyntax member in root.Members) {
-                    PreProcessExpression(semanticModel, member, context);
-                }
-            }
-
-            for (int i = 0; i < program.Classes.Count; i++) {
-                ConversionClass cl = program.Classes[i];
-                if (cl.IsNative) {
-                    continue;
-                }
-
-                ProcessClass(cl, program);
-            }
+        protected virtual void ConfigurePipeline(ConversionPipelineBuilder builder) {
+            builder.AddStage(new ResetConversionStateStage())
+                   .AddStage(new ApplyPreprocessorSymbolsStage(PreProcessorSymbols))
+                   .AddStage(new DocumentPreprocessingStage())
+                   .AddStage(new ClassProcessingStage())
+                   .AddStage(new ProgramSortingStage());
         }
 
         protected virtual void SortProgram() {
@@ -155,6 +143,23 @@ namespace cs2.core {
         protected abstract void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context);
 
         protected abstract void ProcessClass(ConversionClass cl, ConversionProgram program);
+
+        internal void RunPreProcess(SemanticModel model, MemberDeclarationSyntax member, ConversionContext ctx) {
+            PreProcessExpression(model, member, ctx);
+        }
+
+        internal void RunProcessClass(ConversionClass cl, ConversionProgram conversionProgram) {
+            ProcessClass(cl, conversionProgram);
+        }
+
+        internal void SortMembers(ConversionClass cl) {
+            SortVariables(cl);
+            SortFunctions(cl);
+        }
+
+        internal void SortProgramInternal() {
+            SortProgram();
+        }
     }
 }
 

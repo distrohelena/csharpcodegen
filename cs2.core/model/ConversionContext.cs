@@ -12,6 +12,15 @@ namespace cs2.core {
             classes = new List<ConversionClass>();
         }
 
+        public void Reset() {
+            Program.Classes.RemoveAll(cl => !cl.IsNative);
+            classes.Clear();
+
+            CurrentClass = null;
+            CurrentVar = null;
+            CurrentFunction = null;
+        }
+
         public void AssignFunction(ConversionFunction fn) {
             CurrentFunction = fn;
         }
