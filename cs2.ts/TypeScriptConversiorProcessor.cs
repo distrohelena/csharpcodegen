@@ -2,8 +2,6 @@ using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using System;
-using System.Linq;
 using Nucleus;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
