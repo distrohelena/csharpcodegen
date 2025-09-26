@@ -1,5 +1,5 @@
 // @ts-nocheck
-﻿import { md5 } from "@noble/hashes/md5";
+﻿import { md5 } from "@noble/hashes/legacy";
 
 export class MD5 {
     static Create(): MD5 {

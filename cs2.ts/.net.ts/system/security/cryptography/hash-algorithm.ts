@@ -2,7 +2,7 @@
 import { IDisposable } from "../../disposable.interface";
 import { sha1 } from "@noble/hashes/sha1";
 import { sha256 } from "@noble/hashes/sha256";
-import { md5 } from "@noble/hashes/md5";
+import { md5 } from "@noble/hashes/legacy";
 
 type HashFunction = (data: Uint8Array) => Uint8Array;
 

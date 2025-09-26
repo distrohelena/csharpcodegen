@@ -39,45 +39,68 @@ class ReflectionRegistry {
         this.byId = new Map();
     }
     register(ctor, metadata) {
+        var _c;
         const existing = this.byFullName.get(metadata.fullName);
         if (existing) {
-            if (!this.byCtor.has(ctor)) {
+            if (ctor && !this.byCtor.has(ctor)) {
+                const type = existing.toType();
+                (_c = type._bindCtor) === null || _c === void 0 ? void 0 : _c.call(type, ctor);
                 this.byCtor.set(ctor, existing);
-                existing._bindCtor(ctor);
             }
-            return existing;
+            return existing.toType();
         }
-        const t = new Type(metadata, ctor);
-        this.byFullName.set(t.fullName, t);
+        const typeHolder = new LazyType(metadata, ctor);
+        this.byFullName.set(metadata.fullName, typeHolder);
         if (metadata.typeId)
-            this.byId.set(metadata.typeId, t);
+            this.byId.set(metadata.typeId, typeHolder);
         if (ctor)
-            this.byCtor.set(ctor, t);
-        return t;
+            this.byCtor.set(ctor, typeHolder);
+        return typeHolder.toType();
     }
     registerMetadataOnly(metadata) {
         const existing = this.byFullName.get(metadata.fullName);
         if (existing)
-            return existing;
-        const t = new Type(metadata, null);
-        this.byFullName.set(t.fullName, t);
+            return existing.toType();
+        const typeHolder = new LazyType(metadata, null);
+        this.byFullName.set(metadata.fullName, typeHolder);
         if (metadata.typeId)
-            this.byId.set(metadata.typeId, t);
-        return t;
+            this.byId.set(metadata.typeId, typeHolder);
+        return typeHolder.toType();
     }
     getByCtor(ctor) {
         if (!ctor)
             return undefined;
-        return this.byCtor.get(ctor);
+        const handle = this.byCtor.get(ctor);
+        return handle === null || handle === void 0 ? void 0 : handle.toType();
     }
     getByFullName(fullName) {
-        return this.byFullName.get(fullName);
+        const handle = this.byFullName.get(fullName);
+        return handle === null || handle === void 0 ? void 0 : handle.toType();
     }
     getById(id) {
-        return this.byId.get(id);
+        const handle = this.byId.get(id);
+        return handle === null || handle === void 0 ? void 0 : handle.toType();
     }
 }
 const registry = new ReflectionRegistry();
+class LazyType {
+    constructor(metadata, ctor) {
+        this.instance = null;
+        this.meta = metadata;
+        if (ctor) {
+            this.instance = new Type(metadata, ctor);
+        }
+    }
+    get fullName() {
+        return this.meta.fullName;
+    }
+    toType() {
+        if (!this.instance) {
+            this.instance = new Type(this.meta, null);
+        }
+        return this.instance;
+    }
+}
 class MemberInfo {
     constructor(declaringType, name, isStatic, isPublic, attributes) {
         this[_a] = true;
@@ -196,6 +219,37 @@ class Type {
         this._ctor = ctor;
     }
     _bindCtor(ctor) { this._ctor = ctor; }
+    static ensurePrimitives() {
+        if (Type.primitivesInitialized) {
+            return;
+        }
+        Type.primitiveVoid = registry.registerMetadataOnly({ name: "Void", fullName: "System.Void", isClass: false });
+        Type.primitiveObject = registry.registerMetadataOnly({ name: "Object", fullName: "System.Object", isClass: true });
+        Type.primitiveString = registry.registerMetadataOnly({ name: "String", fullName: "System.String", isClass: true });
+        Type.primitiveBoolean = registry.registerMetadataOnly({ name: "Boolean", fullName: "System.Boolean", isClass: true });
+        Type.primitiveNumber = registry.registerMetadataOnly({ name: "Double", fullName: "System.Double", isClass: true });
+        Type.primitivesInitialized = true;
+    }
+    static get Void() {
+        Type.ensurePrimitives();
+        return Type.primitiveVoid;
+    }
+    static get object() {
+        Type.ensurePrimitives();
+        return Type.primitiveObject;
+    }
+    static get string() {
+        Type.ensurePrimitives();
+        return Type.primitiveString;
+    }
+    static get boolean() {
+        Type.ensurePrimitives();
+        return Type.primitiveBoolean;
+    }
+    static get number() {
+        Type.ensurePrimitives();
+        return Type.primitiveNumber;
+    }
     static get(fullNameOrCtor) {
         if (!fullNameOrCtor)
             return undefined;
@@ -357,11 +411,7 @@ class Type {
 }
 exports.Type = Type;
 _b = kTypeTag;
-Type.void = registry.registerMetadataOnly({ name: "Void", fullName: "System.Void", isClass: false });
-Type.object = registry.registerMetadataOnly({ name: "Object", fullName: "System.Object", isClass: true });
-Type.string = registry.registerMetadataOnly({ name: "String", fullName: "System.String", isClass: true });
-Type.boolean = registry.registerMetadataOnly({ name: "Boolean", fullName: "System.Boolean", isClass: true });
-Type.number = registry.registerMetadataOnly({ name: "Double", fullName: "System.Double", isClass: true });
+Type.primitivesInitialized = false;
 function filterMembers(items, bindingFlags, self) {
     const isPublic = (m) => m.isPublic || (!!(bindingFlags & BindingFlags.NonPublic));
     const isStaticAllowed = (m) => (bindingFlags & BindingFlags.Static) ? m.isStatic : true;

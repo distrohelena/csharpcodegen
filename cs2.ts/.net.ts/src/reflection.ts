@@ -95,51 +95,83 @@ export enum BindingFlags {
 const kTypeTag = Symbol.for("cs2.ts.reflection.type");
 const kMemberTag = Symbol.for("cs2.ts.reflection.member");
 
+interface ReflectionTypeHandle {
+  readonly meta: TypeMetadata;
+  fullName: string;
+  bindCtor(ctor: any): void;
+}
+
 class ReflectionRegistry {
-  private byFullName = new Map<string, Type>();
-  private byCtor = new WeakMap<any, Type>();
-  private byId = new Map<string, Type>();
+  private byFullName = new Map<string, ReflectionTypeHandle>();
+  private byCtor = new WeakMap<any, ReflectionTypeHandle>();
+  private byId = new Map<string, ReflectionTypeHandle>();
 
   register(ctor: any, metadata: TypeMetadata): Type {
     const existing = this.byFullName.get(metadata.fullName);
     if (existing) {
-      if (!this.byCtor.has(ctor)) {
+      if (ctor && !this.byCtor.has(ctor)) {
+        const type = existing.toType();
+        type._bindCtor?.(ctor);
         this.byCtor.set(ctor, existing);
-        (existing as any)._bindCtor(ctor);
       }
-      return existing;
+      return existing.toType();
     }
-    const t = new Type(metadata, ctor);
-    this.byFullName.set(t.fullName, t);
-    if (metadata.typeId) this.byId.set(metadata.typeId, t);
-    if (ctor) this.byCtor.set(ctor, t);
-    return t;
+    const typeHolder = new LazyType(metadata, ctor);
+    this.byFullName.set(metadata.fullName, typeHolder);
+    if (metadata.typeId) this.byId.set(metadata.typeId, typeHolder);
+    if (ctor) this.byCtor.set(ctor, typeHolder);
+    return typeHolder.toType();
   }
 
   registerMetadataOnly(metadata: TypeMetadata): Type {
     const existing = this.byFullName.get(metadata.fullName);
-    if (existing) return existing;
-    const t = new Type(metadata, null);
-    this.byFullName.set(t.fullName, t);
-    if (metadata.typeId) this.byId.set(metadata.typeId, t);
-    return t;
+    if (existing) return existing.toType();
+    const typeHolder = new LazyType(metadata, null);
+    this.byFullName.set(metadata.fullName, typeHolder);
+    if (metadata.typeId) this.byId.set(metadata.typeId, typeHolder);
+    return typeHolder.toType();
   }
 
   getByCtor(ctor: any | null | undefined): Type | undefined {
     if (!ctor) return undefined;
-    return this.byCtor.get(ctor);
+    const handle = this.byCtor.get(ctor);
+    return handle?.toType();
   }
 
   getByFullName(fullName: string): Type | undefined {
-    return this.byFullName.get(fullName);
+    const handle = this.byFullName.get(fullName);
+    return handle?.toType();
   }
 
   getById(id: string): Type | undefined {
-    return this.byId.get(id);
+    const handle = this.byId.get(id);
+    return handle?.toType();
   }
 }
 
 const registry = new ReflectionRegistry();
+
+class LazyType {
+  private instance: Type | null = null;
+  readonly meta: TypeMetadata;
+  constructor(metadata: TypeMetadata, ctor: any | null) {
+    this.meta = metadata;
+    if (ctor) {
+      this.instance = new Type(metadata, ctor);
+    }
+  }
+
+  get fullName(): string {
+    return this.meta.fullName;
+  }
+
+  toType(): Type {
+    if (!this.instance) {
+      this.instance = new Type(this.meta, null);
+    }
+    return this.instance;
+  }
+}
 
 export abstract class MemberInfo {
   readonly [kMemberTag] = true;
@@ -282,12 +314,12 @@ export class Type {
   private ctorsCache?: ConstructorInfo[];
   private baseTypeResolved?: Type | null;
   private interfacesResolved?: Type[];
-
-  static readonly void = registry.registerMetadataOnly({ name: "Void", fullName: "System.Void", isClass: false });
-  static readonly object = registry.registerMetadataOnly({ name: "Object", fullName: "System.Object", isClass: true });
-  static readonly string = registry.registerMetadataOnly({ name: "String", fullName: "System.String", isClass: true });
-  static readonly boolean = registry.registerMetadataOnly({ name: "Boolean", fullName: "System.Boolean", isClass: true });
-  static readonly number = registry.registerMetadataOnly({ name: "Double", fullName: "System.Double", isClass: true });
+  private static primitivesInitialized = false;
+  private static primitiveVoid: Type;
+  private static primitiveObject: Type;
+  private static primitiveString: Type;
+  private static primitiveBoolean: Type;
+  private static primitiveNumber: Type;
 
   constructor(metadata: TypeMetadata, ctor: any | null) {
     this.meta = metadata;
@@ -295,6 +327,44 @@ export class Type {
   }
 
   _bindCtor(ctor: any) { this._ctor = ctor; }
+
+  private static ensurePrimitives(): void {
+    if (Type.primitivesInitialized) {
+      return;
+    }
+
+    Type.primitiveVoid = registry.registerMetadataOnly({ name: "Void", fullName: "System.Void", isClass: false });
+    Type.primitiveObject = registry.registerMetadataOnly({ name: "Object", fullName: "System.Object", isClass: true });
+    Type.primitiveString = registry.registerMetadataOnly({ name: "String", fullName: "System.String", isClass: true });
+    Type.primitiveBoolean = registry.registerMetadataOnly({ name: "Boolean", fullName: "System.Boolean", isClass: true });
+    Type.primitiveNumber = registry.registerMetadataOnly({ name: "Double", fullName: "System.Double", isClass: true });
+    Type.primitivesInitialized = true;
+  }
+
+  static get Void(): Type {
+    Type.ensurePrimitives();
+    return Type.primitiveVoid;
+  }
+
+  static get object(): Type {
+    Type.ensurePrimitives();
+    return Type.primitiveObject;
+  }
+
+  static get string(): Type {
+    Type.ensurePrimitives();
+    return Type.primitiveString;
+  }
+
+  static get boolean(): Type {
+    Type.ensurePrimitives();
+    return Type.primitiveBoolean;
+  }
+
+  static get number(): Type {
+    Type.ensurePrimitives();
+    return Type.primitiveNumber;
+  }
 
   static get(fullNameOrCtor: string | any | null | undefined): Type | undefined {
     if (!fullNameOrCtor) return undefined;
