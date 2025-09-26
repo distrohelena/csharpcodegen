@@ -1,9 +1,7 @@
 // @ts-nocheck
 ﻿import { IDisposable } from "../../disposable.interface";
-import { webcrypto as nodeWebcrypto } from "crypto";
-import { cloneToArrayBuffer, concatUint8Arrays } from "./buffer-util";
-
-const subtle = (globalThis.crypto?.subtle ?? nodeWebcrypto.subtle);
+import { concatUint8Arrays } from "./buffer-util";
+import { getSubtleCrypto, toArrayBuffer } from "./web-crypto";
 
 /**
  * A class to perform AES-GCM encryption.
@@ -26,9 +24,10 @@ export class AesGcm implements IDisposable {
      * @param tag - Buffer to receive authentication tag (16 bytes).
      */
     public async encrypt(iv: Uint8Array, data: Uint8Array, cipherText: Uint8Array, tag: Uint8Array): Promise<void> {
+        const subtle = getSubtleCrypto();
         const cryptoKey = await subtle.importKey(
             "raw",
-            cloneToArrayBuffer(this.key),
+            toArrayBuffer(this.key),
             { name: "AES-GCM" },
             false,
             ["encrypt"]
@@ -38,11 +37,11 @@ export class AesGcm implements IDisposable {
             await subtle.encrypt(
                 {
                     name: "AES-GCM",
-                    iv: cloneToArrayBuffer(iv),
+                    iv: toArrayBuffer(iv),
                     tagLength: 128 // 16 bytes
                 },
                 cryptoKey,
-                cloneToArrayBuffer(data)
+                toArrayBuffer(data)
             )
         );
 
@@ -61,9 +60,10 @@ export class AesGcm implements IDisposable {
      * @param output - Buffer to receive the decrypted plaintext.
      */
     public async decrypt(iv: Uint8Array, ciphertext: Uint8Array, tag: Uint8Array, output: Uint8Array): Promise<void> {
+        const subtle = getSubtleCrypto();
         const cryptoKey = await subtle.importKey(
             "raw",
-            cloneToArrayBuffer(this.key),
+            toArrayBuffer(this.key),
             { name: "AES-GCM" },
             false,
             ["decrypt"]
@@ -75,11 +75,11 @@ export class AesGcm implements IDisposable {
             await subtle.decrypt(
                 {
                     name: "AES-GCM",
-                    iv: cloneToArrayBuffer(iv),
+                    iv: toArrayBuffer(iv),
                     tagLength: 128 // 16 bytes
                 },
                 cryptoKey,
-                cloneToArrayBuffer(combined)
+                toArrayBuffer(combined)
             )
         );
 

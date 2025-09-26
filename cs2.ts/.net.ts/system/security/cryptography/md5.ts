@@ -1,5 +1,5 @@
 // @ts-nocheck
-﻿import { createHash } from "crypto";
+﻿import { md5 } from "@noble/hashes/md5";
 
 export class MD5 {
     static Create(): MD5 {
@@ -7,8 +7,7 @@ export class MD5 {
     }
 
     static async hashData(data: Uint8Array): Promise<Uint8Array> {
-        const hash = createHash("md5").update(Buffer.from(data)).digest();
-        return new Uint8Array(hash);
+        return new Uint8Array(md5(data));
     }
 
     async computeHash(data: Uint8Array): Promise<Uint8Array> {

@@ -1,5 +1,6 @@
 // @ts-nocheck
-﻿import { createHmac } from "crypto";
+﻿import { hmac } from "@noble/hashes/hmac";
+import { sha256 } from "@noble/hashes/sha256";
 import { IDisposable } from "../../disposable.interface";
 
 export class HMACSHA256 implements IDisposable {
@@ -13,9 +14,6 @@ export class HMACSHA256 implements IDisposable {
     }
 
     async computeHash(data: Uint8Array): Promise<Uint8Array> {
-        const mac = createHmac("sha256", Buffer.from(this.key))
-            .update(Buffer.from(data))
-            .digest();
-        return new Uint8Array(mac);
+        return new Uint8Array(hmac(sha256, this.key, data));
     }
 }

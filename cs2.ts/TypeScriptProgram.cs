@@ -120,6 +120,7 @@ namespace cs2.ts {
             AddRequirement(new TypeScriptKnownClass("Rfc2898DeriveBytes", "./system/security/cryptography/rfc-2898-derive-bytes"));
             AddRequirement(new TypeScriptKnownClass("HashAlgorithmName", "./system/security/cryptography/hash-algorithm-name"));
             AddRequirement(new TypeScriptKnownClass("RandomNumberGenerator", "./system/security/cryptography/random-number-generator"));
+            AddRequirement(new TypeScriptKnownClass("WebCryptoUtil", "./system/security/cryptography/web-crypto"));
             AddRequirement(new TypeScriptKnownClass("ECParameters", "./system/security/cryptography/ec-parameters"));
             AddRequirement(new TypeScriptKnownClass("ECDiffieHellman", "./system/security/cryptography/ec-diffie-helman"));
             AddRequirement(new TypeScriptKnownClass("ECDiffieHellmanPublicKey", "./system/security/cryptography/ec-diffie-helman-public-key"));

@@ -1,6 +1,6 @@
 // @ts-nocheck
-﻿import { randomFillSync } from "crypto";
 import { IDisposable } from "../../disposable.interface";
+import { getRuntimeCrypto } from "./web-crypto";
 
 export class RandomNumberGenerator implements IDisposable {
     static create(): RandomNumberGenerator {
@@ -11,7 +11,7 @@ export class RandomNumberGenerator implements IDisposable {
     }
 
     getBytes(buffer: Uint8Array): void {
-        randomFillSync(buffer);
+        getRuntimeCrypto().getRandomValues(buffer);
     }
 
     getInt(min: number, max: number): number {

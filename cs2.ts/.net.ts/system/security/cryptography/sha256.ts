@@ -1,9 +1,8 @@
 // @ts-nocheck
-﻿import { createHash } from "crypto";
+﻿import { sha256 } from "@noble/hashes/sha256";
 
 export class SHA256 {
     static async hashData(data: Uint8Array): Promise<Uint8Array> {
-        const hash = createHash("sha256").update(Buffer.from(data)).digest();
-        return new Uint8Array(hash);
+        return new Uint8Array(sha256(data));
     }
 }

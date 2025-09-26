@@ -1,5 +1,5 @@
 // @ts-nocheck
-﻿import { createHash } from "crypto";
+﻿import { blake2b } from "@noble/hashes/blake2b";
 
 export class Blake2b {
     /**
@@ -13,7 +13,7 @@ export class Blake2b {
             throw new RangeError("hashSize must be between 1 and 64 bytes.");
         }
 
-        const digest = createHash("blake2b512").update(Buffer.from(buffer)).digest();
-        return new Uint8Array(digest).subarray(0, hashSize);
+        const digest = blake2b(buffer, { dkLen: hashSize });
+        return new Uint8Array(digest);
     }
 }

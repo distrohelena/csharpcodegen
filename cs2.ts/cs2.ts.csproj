@@ -50,6 +50,9 @@
     <None Include=".net.ts\system\security\cryptography\ecdsa.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\security\cryptography\web-crypto.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\security\cryptography\hash-algorithm-name.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

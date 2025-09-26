@@ -1,15 +1,18 @@
 // @ts-nocheck
-﻿import { IDisposable } from "../../disposable.interface";
-import { createHash } from "crypto";
+import { IDisposable } from "../../disposable.interface";
+import { sha1 } from "@noble/hashes/sha1";
+import { sha256 } from "@noble/hashes/sha256";
+import { md5 } from "@noble/hashes/md5";
 
-/**
- * A utility class to compute cryptographic hashes using Node.js crypto.
- */
+type HashFunction = (data: Uint8Array) => Uint8Array;
+
 export class HashAlgorithm implements IDisposable {
-    private algorithm: string;
+    private readonly algorithm: string;
+    private readonly hashFunction: HashFunction;
 
-    private constructor(algorithm: string) {
+    private constructor(algorithm: string, hashFunction: HashFunction) {
         this.algorithm = algorithm.toUpperCase();
+        this.hashFunction = hashFunction;
     }
 
     dispose(): void {
@@ -17,16 +20,19 @@ export class HashAlgorithm implements IDisposable {
 
     public static create(algorithm: string): HashAlgorithm | null {
         const normalized = algorithm.toUpperCase();
-        const supported = new Set(["SHA-256", "SHA-1", "MD5"]);
-        if (supported.has(normalized)) {
-            return new HashAlgorithm(normalized);
+        switch (normalized) {
+            case "SHA-256":
+                return new HashAlgorithm(normalized, sha256);
+            case "SHA-1":
+                return new HashAlgorithm(normalized, sha1);
+            case "MD5":
+                return new HashAlgorithm(normalized, md5);
+            default:
+                return null;
         }
-        return null;
     }
 
     public async computeHash(data: Uint8Array): Promise<Uint8Array> {
-        const nodeAlgorithm = this.algorithm.replace(/-/g, "").toLowerCase();
-        const hash = createHash(nodeAlgorithm).update(Buffer.from(data)).digest();
-        return new Uint8Array(hash);
+        return new Uint8Array(this.hashFunction(data));
     }
 }
