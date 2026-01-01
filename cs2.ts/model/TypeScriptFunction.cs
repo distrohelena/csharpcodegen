@@ -31,7 +31,6 @@ namespace cs2.ts {
             context.AddClass(cl);
             context.AddFunction(new FunctionStack(fn));
 
-            lines.Add("        ");
             if (fn.ArrowExpression != null) {
                 conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, lines);
             } else if (fn.RawBlock != null) {
@@ -49,7 +48,7 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Writes already-rendered lines to the output stream with indentation preservation.
+        /// Writes already-rendered lines to the output stream.
         /// </summary>
         /// <param name="writer">The writer that receives output.</param>
         /// <param name="lines">The lines to emit.</param>
@@ -58,11 +57,11 @@ namespace cs2.ts {
                 return;
             }
 
-            writer.WriteLines(lines, "        ");
+            writer.WriteLines(lines, string.Empty);
         }
 
         /// <summary>
-        /// Writes already-rendered lines to the output stream with indentation preservation.
+        /// Writes already-rendered lines to the output stream.
         /// </summary>
         /// <param name="writer">The writer that receives output.</param>
         /// <param name="lines">The lines to emit.</param>

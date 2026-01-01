@@ -195,9 +195,9 @@ namespace cs2.ts {
             if (cl.EnumMembers != null) {
                 for (int j = 0; j < cl.EnumMembers.Count; j++) {
                     if (j == cl.EnumMembers.Count - 1) {
-                        writer.WriteLine($"    {cl.EnumMembers[j]}");
+                        writer.WriteLine(cl.EnumMembers[j].ToString());
                     } else {
-                        writer.WriteLine($"    {cl.EnumMembers[j]},");
+                        writer.WriteLine($"{cl.EnumMembers[j]},");
                     }
                 }
             }
@@ -258,17 +258,17 @@ namespace cs2.ts {
             string assignment = "";
             if (cl.DeclarationType == MemberDeclarationType.Interface) {
                 if (var.IsGet && var.IsSet) {
-                    writer.WriteLine($"    {access} get {var.Name}(): {type};");
-                    writer.WriteLine($"    {access} set {var.Name}(val: {type});");
+                    writer.WriteLine($"{access} get {var.Name}(): {type};".TrimStart());
+                    writer.WriteLine($"{access} set {var.Name}(val: {type});".TrimStart());
                 } else {
                     if (var.IsGet) {
-                        writer.WriteLine($"    {access}{accessType} get {var.Name}(): {type};");
+                        writer.WriteLine($"{access}{accessType} get {var.Name}(): {type};".TrimStart());
                     }
                     if (var.IsSet) {
-                        writer.WriteLine($"    {access}{accessType} set {var.Name}(value: {type});");
+                        writer.WriteLine($"{access}{accessType} set {var.Name}(value: {type});".TrimStart());
                     }
                     if (!var.IsGet && !var.IsSet) {
-                        writer.WriteLine($"    {access} {var.Name}: {type};");
+                        writer.WriteLine($"{access} {var.Name}: {type};".TrimStart());
                     }
                 }
             } else {
@@ -282,37 +282,35 @@ namespace cs2.ts {
 
                 if (var.DeclarationType == MemberDeclarationType.Abstract) {
                     if (var.IsGet && var.IsSet) {
-                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
-                        writer.WriteLine($"    {access}{isStatic} abstract set {var.Name}(value: {type});");
+                        writer.WriteLine($"{access}{isStatic} abstract get {var.Name}(): {type};".TrimStart());
+                        writer.WriteLine($"{access}{isStatic} abstract set {var.Name}(value: {type});".TrimStart());
                         return true;
                     } else if (var.IsGet) {
-                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
+                        writer.WriteLine($"{access}{isStatic} abstract get {var.Name}(): {type};".TrimStart());
                         return true;
                     }
                 }
                 if (var.IsGet && var.IsSet) {
-                    writer.WriteLine($"    private{isStatic} _{var.Name}{definiteAssignment}: {type}{assignment};");
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-                    writer.WriteLine($"        return this._{var.Name};");
-                    writer.WriteLine("    }");
-                    writer.WriteLine($"    {access}{isStatic} set {var.Name}(value: {type}) {{");
-                    writer.WriteLine($"        this._{var.Name} = value;");
-                    writer.WriteLine("    }");
+                    writer.WriteLine($"private{isStatic} _{var.Name}{definiteAssignment}: {type}{assignment};".TrimStart());
+                    writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
+                    writer.WriteLine($"return this._{var.Name};");
+                    writer.WriteLine("}");
+                    writer.WriteLine($"{access}{isStatic} set {var.Name}(value: {type}) {{".TrimStart());
+                    writer.WriteLine($"this._{var.Name} = value;");
+                    writer.WriteLine("}");
                     return true;
                 } else if (var.IsGet) {
-                    writer.WriteLine($"    private _{var.Name}{definiteAssignment}: {type}{assignment};");
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-                    writer.WriteLine($"        return this._{var.Name};");
-                    writer.WriteLine("    }");
-                    writer.WriteLine($"    private{isStatic} set {var.Name}(value: {type}) {{");
-                    writer.WriteLine($"        this._{var.Name} = value;");
-                    writer.WriteLine("    }");
+                    writer.WriteLine($"private _{var.Name}{definiteAssignment}: {type}{assignment};".TrimStart());
+                    writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
+                    writer.WriteLine($"return this._{var.Name};");
+                    writer.WriteLine("}");
+                    writer.WriteLine($"private{isStatic} set {var.Name}(value: {type}) {{".TrimStart());
+                    writer.WriteLine($"this._{var.Name} = value;");
+                    writer.WriteLine("}");
                     return true;
                 } else if (var.ArrowExpression != null) {
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
+                    writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
 
-                    writer.Write("    ");
-                    writer.Write("    ");
                     writer.Write("return ");
 
                     List<string> lines = new List<string>();
@@ -329,7 +327,7 @@ namespace cs2.ts {
                     }
                     writer.Write(";\n");
 
-                    writer.WriteLine("    }");
+                    writer.WriteLine("}");
                     return true;
                 } else if (var.GetBlock != null || var.SetBlock != null) {
                     if (var.GetBlock != null) {
@@ -338,11 +336,11 @@ namespace cs2.ts {
 
                         fn.RawBlock = var.GetBlock;
 
-                        writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
+                        writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
                         List<string> lines = fn.WriteLines(Conversion, Program, cl);
                         TypeScriptFunction.PrintLines(writer, lines);
                         writer.WriteLine();
-                        writer.WriteLine("    }");
+                        writer.WriteLine("}");
                     }
 
                     if (var.SetBlock != null) {
@@ -355,14 +353,14 @@ namespace cs2.ts {
 
                         fn.RawBlock = var.SetBlock;
 
-                        writer.WriteLine($"    {access}{isStatic} set {var.Name}(value: {type}) {{");
+                        writer.WriteLine($"{access}{isStatic} set {var.Name}(value: {type}) {{".TrimStart());
                         List<string> lines = fn.WriteLines(Conversion, Program, cl);
                         TypeScriptFunction.PrintLines(writer, lines);
                         writer.WriteLine();
-                        writer.WriteLine("    }");
+                        writer.WriteLine("}");
                     }
                 } else {
-                    writer.WriteLine($"    {access}{accessType}{isStatic} {var.Name}{definiteAssignment}: {type}{assignment};");
+                    writer.WriteLine($"{access}{accessType}{isStatic} {var.Name}{definiteAssignment}: {type}{assignment};".TrimStart());
                 }
             }
 
@@ -381,12 +379,12 @@ namespace cs2.ts {
             }
 
             ConversionFunction fn = constructors[0];
-            writer.WriteLine("    static {");
+            writer.WriteLine("static {");
 
             List<string> lines = fn.WriteLines(Conversion, Program, cl);
             TypeScriptFunction.PrintLines(writer, lines);
 
-            writer.WriteLine("    }");
+            writer.WriteLine("}");
             writer.WriteLine();
         }
 
@@ -408,7 +406,7 @@ namespace cs2.ts {
 
             if (constructors.Count == 1) {
                 ConversionFunction fn = constructors[0];
-                writer.Write("    constructor(");
+                writer.Write("constructor(");
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
@@ -428,20 +426,20 @@ namespace cs2.ts {
                 writer.WriteLine(") {");
 
                 if (classOverrides > 0) {
-                    writer.WriteLine("        super();");
+                    writer.WriteLine("super();");
                 }
 
                 List<string> lines = fn.WriteLines(Conversion, Program, cl);
                 TypeScriptFunction.PrintLines(writer, lines);
 
-                writer.WriteLine("    }");
+                writer.WriteLine("}");
                 writer.WriteLine();
             } else {
                 string generic = cl.GetGenericArguments();
 
                 for (int i = 0; i < constructors.Count; i++) {
                     ConversionFunction fn = constructors[i];
-                    writer.Write($"    static {fn.Name}{generic}(");
+                    writer.Write($"static {fn.Name}{generic}(");
 
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
@@ -480,19 +478,15 @@ namespace cs2.ts {
                     context.PopClass(start);
                     context.PopFunction(startFn);
 
-                    writer.Write("        ");
                     for (int k = 0; k < lines.Count; k++) {
                         string str = lines[k];
                         str = str.Replace("this.", "__obj.");
 
                         writer.Write(str);
-                        if (str.IndexOf("\n", StringComparison.Ordinal) != -1 && k != lines.Count - 1) {
-                            writer.Write("        ");
-                        }
                     }
 
                     writer.WriteLine("return __obj;");
-                    writer.WriteLine("    }");
+                    writer.WriteLine("}");
                     writer.WriteLine();
                 }
             }
@@ -531,9 +525,9 @@ namespace cs2.ts {
                 }
 
                 if (fn.IsStatic) {
-                    writer.Write($"    {access}static {async}{fn.Remap}{generic}(");
+                    writer.Write($"{access}static {async}{fn.Remap}{generic}(");
                 } else {
-                    writer.Write($"    {access}{clType}{async}{fn.Remap}{generic}(");
+                    writer.Write($"{access}{clType}{async}{fn.Remap}{generic}(");
                 }
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
@@ -574,7 +568,7 @@ namespace cs2.ts {
                     writer.WriteLine($"): {returnParameter} {{");
 
                     TypeScriptFunction.PrintLines(writer, lines);
-                    writer.WriteLine("    }");
+                    writer.WriteLine("}");
                 }
             }
         }

@@ -25,9 +25,9 @@ namespace cs2.ts.util {
         public TextWriter Writer { get; }
 
         /// <summary>
-        /// Gets the indent string used when writing indented output.
+        /// Gets the indent string used when writing indented output (empty for raw output).
         /// </summary>
-        public string IndentString { get; } = "    ";
+        public string IndentString { get; } = string.Empty;
 
         /// <summary>
         /// Gets the current indent level.

@@ -104,7 +104,7 @@ namespace cs2.ts.util {
             w.Write("export namespace ");
             w.Write(tsEnumIdentifier);
             w.WriteLine(" {");
-            w.Write("    const ");
+            w.Write("const ");
             w.Write(fieldName);
             w.Write(" = ");
             w.Write(options.RegisterEnumIdent);
@@ -131,7 +131,7 @@ namespace cs2.ts.util {
             w.Write("export namespace ");
             w.Write(tsIdentifier);
             w.WriteLine(" {");
-            w.Write("    const ");
+            w.Write("const ");
             w.Write(fieldName);
             w.Write(" = ");
             w.Write(options.RegisterMetadataIdent);
