@@ -187,15 +187,15 @@ namespace cs2.ts.tests {
         }
 
         [Fact]
-        public void ArrowExpressionClause_EmitsEquals() {
+        public void ArrowExpressionClause_EmitsReturn() {
             var code = "class C { int P => 1; }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var arrow = root.DescendantNodes().OfType<ArrowExpressionClauseSyntax>().First();
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
-            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            TsProcessorTestHarness.PushClassAndFunction(ctx, returnType: new cs2.core.VariableType(cs2.core.VariableDataType.Int32));
             var lines = new System.Collections.Generic.List<string>();
             proc.ProcessArrowExpressionClause(model, ctx, arrow, lines);
-            Assert.Contains(" = ", string.Concat(lines));
+            Assert.Contains("return ", string.Concat(lines));
         }
     }
 }

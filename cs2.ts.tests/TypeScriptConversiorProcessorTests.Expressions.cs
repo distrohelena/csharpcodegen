@@ -120,6 +120,24 @@ namespace cs2.ts.tests {
             Assert.Contains(" + ", TsProcessorTestHarness.JoinLines(lines));
         }
 
+        /// <summary>
+        /// Ensures switch expressions are emitted as IIFE-based expressions.
+        /// </summary>
+        [Fact]
+        public void SwitchExpression_EmitsIife() {
+            var code = "enum LoggingEventType { Log, Warning } class C { string M(LoggingEventType type){ return type switch { LoggingEventType.Log => \"LOG\", _ => \"WARN\" }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var expr = root.DescendantNodes().OfType<SwitchExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx, returnType: new VariableType(VariableDataType.String));
+            var lines = TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr);
+            var output = TsProcessorTestHarness.JoinLines(lines);
+
+            Assert.Contains("const __switch", output);
+            Assert.Contains("return ", output);
+        }
+
         [Fact]
         public void ImplicitArrayCreation_EmitsBrackets() {
             var code = "class C { void M(){ var x = new[] {1,2,3}; } }";

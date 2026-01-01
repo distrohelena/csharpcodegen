@@ -147,6 +147,10 @@ namespace cs2.ts {
             ExpressionSyntax expression,
             List<string> lines,
             List<ExpressionResult> refTypes = null) {
+            if (expression is SwitchExpressionSyntax switchExpression) {
+                return ProcessSwitchExpression(semantic, context, switchExpression, lines);
+            }
+
             if (expression is CollectionExpressionSyntax collectionExpression) {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
             }
@@ -914,6 +918,114 @@ namespace cs2.ts {
 
             lines.AddRange(right);
             return result;
+        }
+
+        /// <summary>
+        /// Processes switch expressions into IIFE-based TypeScript expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="switchExpression">The switch expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the switch expression.</returns>
+        ExpressionResult ProcessSwitchExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchExpressionSyntax switchExpression,
+            List<string> lines) {
+            lines.Add("(() => {");
+            lines.Add("const __switch = ");
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, switchExpression.GoverningExpression, lines);
+            context.PopClass(startDepth);
+            lines.Add(";");
+
+            foreach (var arm in switchExpression.Arms) {
+                lines.Add("if (");
+
+                if (!TryAppendSwitchPatternCondition(semantic, context, arm.Pattern, lines, out string declaredVariable)) {
+                    throw new NotSupportedException($"Unsupported switch expression pattern: {arm.Pattern}");
+                }
+
+                if (arm.WhenClause != null) {
+                    lines.Add(" && (");
+                    int whenDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, arm.WhenClause.Condition, lines);
+                    context.PopClass(whenDepth);
+                    lines.Add(")");
+                }
+
+                lines.Add(") {");
+
+                if (!string.IsNullOrEmpty(declaredVariable)) {
+                    lines.Add("const ");
+                    lines.Add(declaredVariable);
+                    lines.Add(" = __switch;");
+                }
+
+                lines.Add("return ");
+                int armDepth = context.DepthClass;
+                ProcessExpression(semantic, context, arm.Expression, lines);
+                context.PopClass(armDepth);
+                lines.Add(";");
+                lines.Add("}");
+            }
+
+            lines.Add("throw new Error(\"Non-exhaustive switch expression.\");");
+            lines.Add("})()");
+            return new ExpressionResult(true);
+        }
+
+        /// <summary>
+        /// Appends a TypeScript condition for the given switch pattern.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="pattern">The pattern to convert.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="declaredVariable">Outputs a declared variable name for var patterns.</param>
+        /// <returns>True when the pattern was converted.</returns>
+        bool TryAppendSwitchPatternCondition(
+            SemanticModel semantic,
+            LayerContext context,
+            PatternSyntax pattern,
+            List<string> lines,
+            out string declaredVariable) {
+            declaredVariable = string.Empty;
+
+            if (pattern is ConstantPatternSyntax constantPattern) {
+                lines.Add("__switch === ");
+                int constantDepth = context.DepthClass;
+                ProcessExpression(semantic, context, constantPattern.Expression, lines);
+                context.PopClass(constantDepth);
+                return true;
+            }
+
+            if (pattern is DiscardPatternSyntax) {
+                lines.Add("true");
+                return true;
+            }
+
+            if (pattern is DeclarationPatternSyntax declarationPattern) {
+                if (declarationPattern.Type is IdentifierNameSyntax identifier &&
+                    identifier.Identifier.Text == "var") {
+                    if (declarationPattern.Designation is SingleVariableDesignationSyntax singleDesignation) {
+                        declaredVariable = singleDesignation.Identifier.Text;
+                    }
+                    lines.Add("true");
+                    return true;
+                }
+            }
+
+            if (pattern is VarPatternSyntax varPattern) {
+                if (varPattern.Designation is SingleVariableDesignationSyntax varDesignation) {
+                    declaredVariable = varDesignation.Identifier.Text;
+                }
+                lines.Add("true");
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -2145,8 +2257,17 @@ namespace cs2.ts {
         /// <param name="arrowExpression">The arrow expression clause.</param>
         /// <param name="lines">The output lines to append to.</param>
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {
-            lines.Add(" = ");
+            FunctionStack functionStack = context.GetCurrentFunction();
+            bool returnsValue = functionStack != null &&
+                functionStack.Function.ReturnType != null &&
+                functionStack.Function.ReturnType.Type != VariableDataType.Void;
+
+            if (returnsValue) {
+                lines.Add("return ");
+            }
+
             ProcessExpression(semantic, context, arrowExpression.Expression, lines);
+            lines.Add(";");
         }
 
         /// <summary>
