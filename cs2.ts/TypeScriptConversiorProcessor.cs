@@ -133,6 +133,28 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Processes expressions, handling TypeScript-specific syntax extensions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="expression">The expression being processed.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="refTypes">Optional reference type tracking list.</param>
+        /// <returns>The expression result describing the expression.</returns>
+        public override ExpressionResult ProcessExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines,
+            List<ExpressionResult> refTypes = null) {
+            if (expression is CollectionExpressionSyntax collectionExpression) {
+                return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            }
+
+            return base.ProcessExpression(semantic, context, expression, lines, refTypes);
+        }
+
+        /// <summary>
         /// Resolves the ConversionClass for a given VariableType within the TypeScript program.
         /// </summary>
         /// <param name="program">The TypeScript program that owns the classes.</param>
@@ -866,6 +888,25 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         /// <returns>The expression result describing the binary expression.</returns>
         protected override ExpressionResult ProcessBinaryExpressionSyntax(SemanticModel semantic, LayerContext context, BinaryExpressionSyntax binary, List<string> lines) {
+            if (binary.IsKind(SyntaxKind.CoalesceExpression) && binary.Right is ThrowExpressionSyntax throwExpression) {
+                List<string> throwLeft = new List<string>();
+                int startLeft = context.DepthClass;
+                ExpressionResult throwResult = ProcessExpression(semantic, context, binary.Left, throwLeft);
+                context.PopClass(startLeft);
+
+                List<string> thrown = new List<string>();
+                int startRight = context.DepthClass;
+                ProcessExpression(semantic, context, throwExpression.Expression, thrown);
+                context.PopClass(startRight);
+
+                lines.AddRange(throwLeft);
+                lines.Add(" ?? ");
+                lines.Add("(() => { throw ");
+                lines.AddRange(thrown);
+                lines.Add("; })()");
+                return throwResult;
+            }
+
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
             lines.AddRange(left);
 
@@ -873,6 +914,46 @@ namespace cs2.ts {
 
             lines.AddRange(right);
             return result;
+        }
+
+        /// <summary>
+        /// Processes collection expressions into TypeScript array literals.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="collectionExpression">The collection expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the collection.</returns>
+        ExpressionResult ProcessCollectionExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            CollectionExpressionSyntax collectionExpression,
+            List<string> lines) {
+            lines.Add("[");
+
+            var elements = collectionExpression.Elements;
+            for (int i = 0; i < elements.Count; i++) {
+                CollectionElementSyntax element = elements[i];
+                int startDepth = context.DepthClass;
+
+                if (element is ExpressionElementSyntax expressionElement) {
+                    ProcessExpression(semantic, context, expressionElement.Expression, lines);
+                } else if (element is SpreadElementSyntax spreadElement) {
+                    lines.Add("...");
+                    ProcessExpression(semantic, context, spreadElement.Expression, lines);
+                } else {
+                    lines.Add(element.ToString());
+                }
+
+                context.PopClass(startDepth);
+
+                if (i != elements.Count - 1) {
+                    lines.Add(", ");
+                }
+            }
+
+            lines.Add("]");
+            return new ExpressionResult(true);
         }
 
         /// <summary>
@@ -2112,4 +2193,3 @@ namespace cs2.ts {
         }
     }
 }
-

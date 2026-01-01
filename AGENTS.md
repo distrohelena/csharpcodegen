@@ -16,3 +16,4 @@
 - Avoid using `??` for exception handling; validate inputs before assignment so error causes stay clear.
 - Prefer `else if` for sequential conditional checks that are mutually exclusive; avoid stacked `if` statements when only one branch should be evaluated.
 - Nullable reference types are disabled; do not use nullable annotations or nullable patterns in code.
+- For every change you do, make sure the projects associated still build.
