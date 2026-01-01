@@ -151,6 +151,10 @@ namespace cs2.ts {
                 return ProcessSwitchExpression(semantic, context, switchExpression, lines);
             }
 
+            if (expression is IsPatternExpressionSyntax patternExpression) {
+                return ProcessIsPatternExpression(semantic, context, patternExpression, lines);
+            }
+
             if (expression is CollectionExpressionSyntax collectionExpression) {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
             }
@@ -921,6 +925,245 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Processes pattern matching expressions into TypeScript checks.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="patternExpression">The pattern expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the pattern match.</returns>
+        ExpressionResult ProcessIsPatternExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            IsPatternExpressionSyntax patternExpression,
+            List<string> lines) {
+            lines.Add("(() => { const __pattern = ");
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, patternExpression.Expression, lines);
+            context.PopClass(startDepth);
+            lines.Add("; return ");
+
+            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, "__pattern", lines, out _)) {
+                throw new NotSupportedException($"Unsupported pattern expression: {patternExpression.Pattern}");
+            }
+
+            lines.Add("; })()");
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+        }
+
+        /// <summary>
+        /// Appends a TypeScript condition for a pattern match against a target identifier.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="pattern">The pattern to convert.</param>
+        /// <param name="targetIdentifier">The identifier to test.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="declaredVariable">Outputs the declared variable name, if any.</param>
+        /// <returns>True when the pattern was converted.</returns>
+        bool TryAppendPatternCondition(
+            SemanticModel semantic,
+            LayerContext context,
+            PatternSyntax pattern,
+            string targetIdentifier,
+            List<string> lines,
+            out string declaredVariable) {
+            declaredVariable = string.Empty;
+
+            if (pattern is ParenthesizedPatternSyntax parenthesizedPattern) {
+                return TryAppendPatternCondition(semantic, context, parenthesizedPattern.Pattern, targetIdentifier, lines, out declaredVariable);
+            }
+
+            if (pattern is ConstantPatternSyntax constantPattern) {
+                lines.Add(targetIdentifier);
+                lines.Add(" === ");
+                int constantDepth = context.DepthClass;
+                ProcessExpression(semantic, context, constantPattern.Expression, lines);
+                context.PopClass(constantDepth);
+                return true;
+            }
+
+            if (pattern is DiscardPatternSyntax) {
+                lines.Add("true");
+                return true;
+            }
+
+            if (pattern is VarPatternSyntax varPattern) {
+                if (varPattern.Designation is SingleVariableDesignationSyntax varDesignation) {
+                    declaredVariable = varDesignation.Identifier.Text;
+                }
+                lines.Add("true");
+                return true;
+            }
+
+            if (pattern is DeclarationPatternSyntax declarationPattern) {
+                if (declarationPattern.Designation is SingleVariableDesignationSyntax designation) {
+                    declaredVariable = designation.Identifier.Text;
+                }
+
+                string typeName = declarationPattern.Type.ToString();
+                if (string.Equals(NormalizePatternTypeName(typeName), "var", StringComparison.OrdinalIgnoreCase)) {
+                    lines.Add("true");
+                    return true;
+                }
+                AppendPatternTypeCheck(typeName, targetIdentifier, lines);
+                return true;
+            }
+
+            if (pattern is TypePatternSyntax typePattern) {
+                AppendPatternTypeCheck(typePattern.Type.ToString(), targetIdentifier, lines);
+                return true;
+            }
+
+            if (pattern is UnaryPatternSyntax unaryPattern &&
+                unaryPattern.IsKind(SyntaxKind.NotPattern)) {
+                lines.Add("!(");
+                if (!TryAppendPatternCondition(semantic, context, unaryPattern.Pattern, targetIdentifier, lines, out _)) {
+                    return false;
+                }
+                lines.Add(")");
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Appends a runtime check for a type pattern.
+        /// </summary>
+        /// <param name="typeName">The type name from the pattern.</param>
+        /// <param name="targetIdentifier">The identifier to test.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        void AppendPatternTypeCheck(string typeName, string targetIdentifier, List<string> lines) {
+            string normalizedTypeName = NormalizePatternTypeName(typeName);
+            if (string.Equals(normalizedTypeName, "bool", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedTypeName, "Boolean", StringComparison.OrdinalIgnoreCase)) {
+                lines.Add("typeof ");
+                lines.Add(targetIdentifier);
+                lines.Add(" === \"boolean\"");
+                return;
+            }
+
+            if (string.Equals(normalizedTypeName, "string", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedTypeName, "String", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedTypeName, "char", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedTypeName, "Char", StringComparison.OrdinalIgnoreCase)) {
+                lines.Add("typeof ");
+                lines.Add(targetIdentifier);
+                lines.Add(" === \"string\"");
+                return;
+            }
+
+            if (IsNumericPatternType(normalizedTypeName)) {
+                lines.Add("typeof ");
+                lines.Add(targetIdentifier);
+                lines.Add(" === \"number\"");
+                return;
+            }
+
+            if (string.Equals(normalizedTypeName, "object", StringComparison.OrdinalIgnoreCase)) {
+                lines.Add(targetIdentifier);
+                lines.Add(" != null");
+                return;
+            }
+
+            if (string.Equals(normalizedTypeName, "IEnumerable", StringComparison.OrdinalIgnoreCase)) {
+                lines.Add(targetIdentifier);
+                lines.Add(" != null && typeof ");
+                lines.Add(targetIdentifier);
+                lines.Add(".GetEnumerator === \"function\"");
+                return;
+            }
+
+            if (string.Equals(normalizedTypeName, "IDisposable", StringComparison.OrdinalIgnoreCase)) {
+                lines.Add(targetIdentifier);
+                lines.Add(" != null && typeof ");
+                lines.Add(targetIdentifier);
+                lines.Add(".dispose === \"function\"");
+                return;
+            }
+
+            lines.Add(targetIdentifier);
+            lines.Add(" instanceof ");
+            lines.Add(normalizedTypeName);
+        }
+
+        /// <summary>
+        /// Normalizes a pattern type name by stripping generic arguments and namespaces.
+        /// </summary>
+        /// <param name="typeName">The raw type name from syntax.</param>
+        /// <returns>The simplified type name.</returns>
+        string NormalizePatternTypeName(string typeName) {
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return string.Empty;
+            }
+
+            string trimmed = typeName.Trim();
+            int genericIndex = trimmed.IndexOf('<');
+            if (genericIndex >= 0) {
+                trimmed = trimmed.Substring(0, genericIndex);
+            }
+
+            int namespaceIndex = trimmed.LastIndexOf('.');
+            if (namespaceIndex >= 0 && namespaceIndex < trimmed.Length - 1) {
+                trimmed = trimmed.Substring(namespaceIndex + 1);
+            }
+
+            return trimmed;
+        }
+
+        /// <summary>
+        /// Determines whether the pattern type name maps to a numeric TypeScript value.
+        /// </summary>
+        /// <param name="typeName">The type name to inspect.</param>
+        /// <returns>True when the type should be checked as a number.</returns>
+        bool IsNumericPatternType(string typeName) {
+            return string.Equals(typeName, "sbyte", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "byte", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "short", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "ushort", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "int", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "uint", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "long", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "ulong", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "float", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "double", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "decimal", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "Int16", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "UInt16", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "Int32", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "UInt32", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "Int64", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "UInt64", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "Single", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(typeName, "Double", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Attempts to get a declared variable name from a pattern designation.
+        /// </summary>
+        /// <param name="pattern">The pattern to inspect.</param>
+        /// <param name="declaredVariable">Outputs the declared variable name if present.</param>
+        /// <returns>True when a designation exists on the pattern.</returns>
+        bool TryGetPatternDesignation(PatternSyntax pattern, out string declaredVariable) {
+            declaredVariable = string.Empty;
+
+            if (pattern is DeclarationPatternSyntax declarationPattern &&
+                declarationPattern.Designation is SingleVariableDesignationSyntax designation) {
+                declaredVariable = designation.Identifier.Text;
+                return true;
+            }
+
+            if (pattern is VarPatternSyntax varPattern &&
+                varPattern.Designation is SingleVariableDesignationSyntax varDesignation) {
+                declaredVariable = varDesignation.Identifier.Text;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Processes switch expressions into IIFE-based TypeScript expressions.
         /// </summary>
         /// <param name="semantic">The semantic model for the current document.</param>
@@ -999,41 +1242,7 @@ namespace cs2.ts {
             PatternSyntax pattern,
             List<string> lines,
             out string declaredVariable) {
-            declaredVariable = string.Empty;
-
-            if (pattern is ConstantPatternSyntax constantPattern) {
-                lines.Add("__switch === ");
-                int constantDepth = context.DepthClass;
-                ProcessExpression(semantic, context, constantPattern.Expression, lines);
-                context.PopClass(constantDepth);
-                return true;
-            }
-
-            if (pattern is DiscardPatternSyntax) {
-                lines.Add("true");
-                return true;
-            }
-
-            if (pattern is DeclarationPatternSyntax declarationPattern) {
-                if (declarationPattern.Type is IdentifierNameSyntax identifier &&
-                    identifier.Identifier.Text == "var") {
-                    if (declarationPattern.Designation is SingleVariableDesignationSyntax singleDesignation) {
-                        declaredVariable = singleDesignation.Identifier.Text;
-                    }
-                    lines.Add("true");
-                    return true;
-                }
-            }
-
-            if (pattern is VarPatternSyntax varPattern) {
-                if (varPattern.Designation is SingleVariableDesignationSyntax varDesignation) {
-                    declaredVariable = varDesignation.Identifier.Text;
-                }
-                lines.Add("true");
-                return true;
-            }
-
-            return false;
+            return TryAppendPatternCondition(semantic, context, pattern, "__switch", lines, out declaredVariable);
         }
 
         /// <summary>
@@ -2220,6 +2429,13 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         /// <returns>The expression result describing the condition.</returns>
         protected override ExpressionResult ProcessIfStatement(SemanticModel semantic, LayerContext context, IfStatementSyntax ifStatement, List<string> lines) {
+            if (ifStatement.Condition is IsPatternExpressionSyntax patternExpression) {
+                ExpressionResult patternResult = TryProcessPatternIfStatement(semantic, context, ifStatement, patternExpression, lines);
+                if (patternResult.Processed) {
+                    return patternResult;
+                }
+            }
+
             lines.Add("if (");
 
             int start = context.DepthClass;
@@ -2248,6 +2464,62 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Processes if statements with pattern matching conditions that declare variables.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="ifStatement">The if statement being processed.</param>
+        /// <param name="patternExpression">The pattern expression condition.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the condition.</returns>
+        ExpressionResult TryProcessPatternIfStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            IfStatementSyntax ifStatement,
+            IsPatternExpressionSyntax patternExpression,
+            List<string> lines) {
+            if (!TryGetPatternDesignation(patternExpression.Pattern, out string declaredVariable)) {
+                return new ExpressionResult(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(declaredVariable)) {
+                return new ExpressionResult(false);
+            }
+
+            lines.Add("const __patternTarget = ");
+            int targetDepth = context.DepthClass;
+            ProcessExpression(semantic, context, patternExpression.Expression, lines);
+            context.PopClass(targetDepth);
+            lines.Add(";\n");
+
+            lines.Add("if (");
+            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, "__patternTarget", lines, out _)) {
+                throw new NotSupportedException($"Unsupported pattern expression: {patternExpression.Pattern}");
+            }
+            lines.Add(") {\n");
+
+            lines.Add("const ");
+            lines.Add(declaredVariable);
+            lines.Add(" = __patternTarget;\n");
+
+            ProcessStatement(semantic, context, ifStatement.Statement, lines);
+            lines.Add("\n}\n");
+
+            if (ifStatement.Else != null) {
+                lines.Add("else ");
+                if (ifStatement.Else.Statement is IfStatementSyntax elseIfStatement) {
+                    ProcessIfStatement(semantic, context, elseIfStatement, lines);
+                } else {
+                    lines.Add("{\n");
+                    ProcessStatement(semantic, context, ifStatement.Else.Statement, lines);
+                    lines.Add("}\n");
+                }
+            }
+
+            return new ExpressionResult(true);
+        }
+
+        /// <summary>
         /// Processes throw statements.
         /// </summary>
         /// <param name="semantic">The semantic model for the current document.</param>
@@ -2272,6 +2544,11 @@ namespace cs2.ts {
         /// <param name="switchStatement">The switch statement.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessSwitchStatement(SemanticModel semantic, LayerContext context, SwitchStatementSyntax switchStatement, List<string> lines) {
+            if (SwitchHasPatternLabels(switchStatement)) {
+                ProcessPatternSwitchStatement(semantic, context, switchStatement, lines);
+                return;
+            }
+
             lines.Add("switch (");
             int depth = context.DepthClass;
             ProcessExpression(semantic, context, switchStatement.Expression, lines);
@@ -2303,6 +2580,116 @@ namespace cs2.ts {
             }
 
             lines.Add("}\n\n");
+        }
+
+        /// <summary>
+        /// Determines whether a switch statement includes pattern labels.
+        /// </summary>
+        /// <param name="switchStatement">The switch statement to inspect.</param>
+        /// <returns>True when pattern labels are present.</returns>
+        bool SwitchHasPatternLabels(SwitchStatementSyntax switchStatement) {
+            foreach (var section in switchStatement.Sections) {
+                foreach (var label in section.Labels) {
+                    if (label is CasePatternSwitchLabelSyntax) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Processes switch statements with pattern labels using if/else chains.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="switchStatement">The switch statement to emit.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        void ProcessPatternSwitchStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchStatementSyntax switchStatement,
+            List<string> lines) {
+            lines.Add("{\n");
+            lines.Add("const __switch = ");
+            int depth = context.DepthClass;
+            ProcessExpression(semantic, context, switchStatement.Expression, lines);
+            context.PopClass(depth);
+            lines.Add(";\n");
+
+            bool firstBranch = true;
+            foreach (var section in switchStatement.Sections) {
+                foreach (var label in section.Labels) {
+                    if (label is DefaultSwitchLabelSyntax) {
+                        lines.Add(firstBranch ? "if (true) {\n" : "else {\n");
+                        EmitPatternSwitchSectionBody(semantic, context, section, lines, declaredVariable: string.Empty);
+                        lines.Add("}\n");
+                        firstBranch = false;
+                        continue;
+                    }
+
+                    lines.Add(firstBranch ? "if (" : "else if (");
+
+                    string declaredVariable = string.Empty;
+                    if (label is CasePatternSwitchLabelSyntax patternLabel) {
+                        if (!TryAppendPatternCondition(semantic, context, patternLabel.Pattern, "__switch", lines, out declaredVariable)) {
+                            throw new NotSupportedException($"Unsupported switch pattern: {patternLabel.Pattern}");
+                        }
+
+                        if (patternLabel.WhenClause != null) {
+                            lines.Add(" && (");
+                            int whenDepth = context.DepthClass;
+                            ProcessExpression(semantic, context, patternLabel.WhenClause.Condition, lines);
+                            context.PopClass(whenDepth);
+                            lines.Add(")");
+                        }
+                    } else if (label is CaseSwitchLabelSyntax caseLabel) {
+                        lines.Add("__switch === ");
+                        int caseDepth = context.DepthClass;
+                        ProcessExpression(semantic, context, caseLabel.Value, lines);
+                        context.PopClass(caseDepth);
+                    } else {
+                        throw new NotSupportedException($"Unsupported switch label: {label}");
+                    }
+
+                    lines.Add(") {\n");
+                    EmitPatternSwitchSectionBody(semantic, context, section, lines, declaredVariable);
+                    lines.Add("}\n");
+                    firstBranch = false;
+                }
+            }
+
+            lines.Add("}\n");
+        }
+
+        /// <summary>
+        /// Emits the body for a pattern switch section, including variable bindings.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="section">The switch section to emit.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="declaredVariable">The variable name to bind, if any.</param>
+        void EmitPatternSwitchSectionBody(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchSectionSyntax section,
+            List<string> lines,
+            string declaredVariable) {
+            if (!string.IsNullOrWhiteSpace(declaredVariable)) {
+                lines.Add("const ");
+                lines.Add(declaredVariable);
+                lines.Add(" = __switch;\n");
+            }
+
+            foreach (var stmt in section.Statements) {
+                if (stmt is BreakStatementSyntax) {
+                    continue;
+                }
+
+                ProcessStatement(semantic, context, stmt, lines);
+            }
         }
 
         /// <summary>
