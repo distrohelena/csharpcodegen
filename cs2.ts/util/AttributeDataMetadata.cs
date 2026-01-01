@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Represents reflected attribute metadata for a type or member.
     /// </summary>
-    public sealed class AttributeDataMetadata
-    {
+    public sealed class AttributeDataMetadata {
         /// <summary>
         /// Gets or sets the attribute type name.
         /// </summary>

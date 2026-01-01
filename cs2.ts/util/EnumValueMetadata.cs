@@ -1,10 +1,8 @@
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes a reflected enum value entry.
     /// </summary>
-    public sealed class EnumValueMetadata
-    {
+    public sealed class EnumValueMetadata {
         /// <summary>
         /// Gets or sets the enum member name.
         /// </summary>

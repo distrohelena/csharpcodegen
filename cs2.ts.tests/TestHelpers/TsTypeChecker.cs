@@ -14,8 +14,7 @@ namespace cs2.ts.tests.TestHelpers {
         private static string TsRuntimeRoot => Path.Combine(RepoRoot, "cs2.ts", ".net.ts");
         private static string ToolsDir => Path.Combine(RepoRoot, "cs2.ts.tests", "tools");
 
-        private static void EnsureTypeScriptInstalled()
-        {
+        private static void EnsureTypeScriptInstalled() {
             if (_installed) return;
 
             // Verify node and npm are available
@@ -36,8 +35,7 @@ namespace cs2.ts.tests.TestHelpers {
             _installed = true;
         }
 
-        private static string BuildPrelude(bool asyncNeeded)
-        {
+        private static string BuildPrelude(bool asyncNeeded) {
             var sb = new StringBuilder();
             sb.AppendLine("// minimal ambient types for converter output");
             sb.AppendLine("type Int16 = number; type UInt16 = number; type Int32 = number; type UInt32 = number; type Single = number; type Int64 = number; type UInt64 = number; type Boolean = boolean;");
@@ -48,8 +46,7 @@ namespace cs2.ts.tests.TestHelpers {
             return sb.ToString();
         }
 
-        private static string BuildWrapper(string body)
-        {
+        private static string BuildWrapper(string body) {
             var asyncNeeded = body.Contains("await ");
             var prelude = BuildPrelude(asyncNeeded);
             var suffix = "}\n}\n";
@@ -57,8 +54,7 @@ namespace cs2.ts.tests.TestHelpers {
             return code;
         }
 
-        public static void AssertValidTypeScript(System.Collections.Generic.IEnumerable<string> lines)
-        {
+        public static void AssertValidTypeScript(System.Collections.Generic.IEnumerable<string> lines) {
             EnsureTypeScriptInstalled();
 
             var code = string.Concat(lines);
@@ -87,8 +83,7 @@ namespace cs2.ts.tests.TestHelpers {
             }
         }
 
-        private static void Run(string fileName, string arguments, string workingDirectory)
-        {
+        private static void Run(string fileName, string arguments, string workingDirectory) {
             var psi = new ProcessStartInfo {
                 FileName = fileName,
                 Arguments = arguments,

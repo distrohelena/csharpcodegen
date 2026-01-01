@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes a reflected method entry.
     /// </summary>
-    public sealed class MethodMetadata
-    {
+    public sealed class MethodMetadata {
         /// <summary>
         /// Gets or sets the method name.
         /// </summary>

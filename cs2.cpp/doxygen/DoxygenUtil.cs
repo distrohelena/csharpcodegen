@@ -143,7 +143,7 @@ EXCLUDE_PATTERNS = *.*pp_* *.bak";
                 .Select(p => new Parameter {
                     Name = p.Element("declname")?.Value,
                     Type = p.Element("type")?.Value?.Trim()
-                })
+            })
                 .Where(p => !string.IsNullOrEmpty(p.Name))
                 .ToList(),
             ReturnType = memberDef.Element("type")?.Value?.Trim() ?? "void"
@@ -170,7 +170,7 @@ EXCLUDE_PATTERNS = *.*pp_* *.bak";
                 .Select(p => new Parameter {
                     Name = p.Element("declname")?.Value,
                     Type = p.Element("type")?.Value?.Trim()
-                })
+            })
                 .Where(p => !string.IsNullOrEmpty(p.Name))
                 .ToList(),
             ReturnType = memberDef.Element("type")?.Value?.Trim() ?? "void"

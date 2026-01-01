@@ -286,7 +286,7 @@ namespace cs2.core {
                     literalValue = Regex.Replace(literalValue, @"(?<!\\)\\(?!\\)", @"\\");
                     literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                         return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                    });
+                });
                     break;
                 case SyntaxKind.NullLiteralExpression:
                     literalValue = "null";

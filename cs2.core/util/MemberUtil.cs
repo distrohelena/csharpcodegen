@@ -23,35 +23,35 @@ namespace cs2.core {
                 switch (value) {
                     case "static": {
                             isStatic = true;
-                        }
+                    }
                         break;
                     case "private": {
                             access = MemberAccessType.Private;
-                        }
+                    }
                         break;
                     case "public": {
                             access = MemberAccessType.Public;
-                        }
+                    }
                         break;
                     case "protected": {
                             access = MemberAccessType.Protected;
-                        }
+                    }
                         break;
                     case "override": {
                             isOverride = true;
-                        }
+                    }
                         break;
                     case "abstract": {
                             type = MemberDeclarationType.Abstract;
-                        }
+                    }
                         break;
                     case "virtual": {
                             type = MemberDeclarationType.Virtual;
-                        }
+                    }
                         break;
                     case "const": {
                             isStatic = true;
-                        }
+                    }
                         break;
                 }
             }

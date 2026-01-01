@@ -1,10 +1,8 @@
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Configures reflection metadata emission for the TypeScript backend.
     /// </summary>
-    public sealed class ReflectionOptions
-    {
+    public sealed class ReflectionOptions {
         /// <summary>
         /// Provides a shared default reflection options instance.
         /// </summary>

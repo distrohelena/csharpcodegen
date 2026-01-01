@@ -204,10 +204,10 @@ namespace cs2.ts {
                     source = Utils.ReplacePlaceholders(source, replacements);
 
                     writer.Write(source);
-                },
+            },
                 (file) => {
                     return !file.FullName.EndsWith(".json") && !file.FullName.EndsWith("extractor.js");
-                });
+            });
 
             string outputFile = Path.Combine(outputFolder, fileName);
             string outputDir = Path.GetDirectoryName(outputFile);

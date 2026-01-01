@@ -3,13 +3,11 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Emits TypeScript metadata registration for the reflection runtime in .net.ts.
     /// </summary>
-    public static class TypeScriptReflectionEmitter
-    {
+    public static class TypeScriptReflectionEmitter {
         /// <summary>
         /// Symbol display format used to render fully-qualified type names.
         /// </summary>
@@ -32,8 +30,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="options">The caller-provided options.</param>
         /// <returns>The resolved options to use for emission.</returns>
-        static ReflectionOptions ResolveOptions(ReflectionOptions options)
-        {
+        static ReflectionOptions ResolveOptions(ReflectionOptions options) {
             if (options != null) {
                 return options;
             }
@@ -51,8 +48,7 @@ namespace cs2.ts.util
         /// <param name="needEnum">Whether enum registration is needed.</param>
         /// <param name="needMetadata">Whether metadata-only registration is needed.</param>
         /// <param name="options">Optional reflection overrides to apply.</param>
-        public static void EmitRuntimeImport(TextWriter w, bool needType, bool needEnum, bool needMetadata, ReflectionOptions options = null)
-        {
+        public static void EmitRuntimeImport(TextWriter w, bool needType, bool needEnum, bool needMetadata, ReflectionOptions options = null) {
             options = ResolveOptions(options);
             if (!options.EnableReflection) return;
             var idents = new List<string>();
@@ -61,8 +57,7 @@ namespace cs2.ts.util
             if (needMetadata) idents.Add(options.RegisterMetadataIdent);
             if (idents.Count == 0) return;
             w.Write("import { ");
-            for (int i = 0; i < idents.Count; i++)
-            {
+            for (int i = 0; i < idents.Count; i++) {
                 if (i > 0) w.Write(", ");
                 w.Write(idents[i]);
             }
@@ -78,8 +73,7 @@ namespace cs2.ts.util
         /// <param name="type">The Roslyn symbol for the type being emitted.</param>
         /// <param name="tsClassIdentifier">The TypeScript class identifier.</param>
         /// <param name="options">Optional reflection overrides to apply.</param>
-        public static void EmitPrivateStaticReflectionField(TextWriter w, ITypeSymbol type, string tsClassIdentifier, ReflectionOptions options = null)
-        {
+        public static void EmitPrivateStaticReflectionField(TextWriter w, ITypeSymbol type, string tsClassIdentifier, ReflectionOptions options = null) {
             options = ResolveOptions(options);
             if (!options.EnableReflection) return;
             var fieldName = options.PrivateStaticFieldName;
@@ -102,8 +96,7 @@ namespace cs2.ts.util
         /// <param name="enumType">The Roslyn symbol for the enum.</param>
         /// <param name="tsEnumIdentifier">The TypeScript enum identifier.</param>
         /// <param name="options">Optional reflection overrides to apply.</param>
-        public static void EmitEnumNamespaceReflection(TextWriter w, INamedTypeSymbol enumType, string tsEnumIdentifier, ReflectionOptions options = null)
-        {
+        public static void EmitEnumNamespaceReflection(TextWriter w, INamedTypeSymbol enumType, string tsEnumIdentifier, ReflectionOptions options = null) {
             options = ResolveOptions(options);
             if (!options.EnableReflection) return;
             var fieldName = options.PrivateStaticFieldName;
@@ -130,8 +123,7 @@ namespace cs2.ts.util
         /// <param name="type">The Roslyn symbol for the interface.</param>
         /// <param name="tsIdentifier">The TypeScript interface identifier.</param>
         /// <param name="options">Optional reflection overrides to apply.</param>
-        public static void EmitInterfaceNamespaceReflection(TextWriter w, INamedTypeSymbol type, string tsIdentifier, ReflectionOptions options = null)
-        {
+        public static void EmitInterfaceNamespaceReflection(TextWriter w, INamedTypeSymbol type, string tsIdentifier, ReflectionOptions options = null) {
             options = ResolveOptions(options);
             if (!options.EnableReflection) return;
             var fieldName = options.PrivateStaticFieldName;
@@ -156,8 +148,7 @@ namespace cs2.ts.util
         /// <param name="type">The Roslyn symbol for the type.</param>
         /// <param name="tsQualifiedName">The fully-qualified TypeScript identifier.</param>
         /// <param name="importIdent">The runtime import identifier to call.</param>
-        public static void EmitRegisterForType(TextWriter w, ITypeSymbol type, string tsQualifiedName, string importIdent = "registerType")
-        {
+        public static void EmitRegisterForType(TextWriter w, ITypeSymbol type, string tsQualifiedName, string importIdent = "registerType") {
             if (w == null) throw new ArgumentNullException(nameof(w));
             if (type == null) throw new ArgumentNullException(nameof(type));
             if (string.IsNullOrWhiteSpace(tsQualifiedName)) throw new ArgumentException("TS identifier required", nameof(tsQualifiedName));
@@ -177,8 +168,7 @@ namespace cs2.ts.util
         /// <param name="enumType">The Roslyn symbol for the enum.</param>
         /// <param name="tsQualifiedName">The fully-qualified TypeScript identifier.</param>
         /// <param name="importIdent">The runtime import identifier to call.</param>
-        public static void EmitRegisterForEnum(TextWriter w, INamedTypeSymbol enumType, string tsQualifiedName, string importIdent = "registerEnum")
-        {
+        public static void EmitRegisterForEnum(TextWriter w, INamedTypeSymbol enumType, string tsQualifiedName, string importIdent = "registerEnum") {
             if (w == null) throw new ArgumentNullException(nameof(w));
             if (enumType == null) throw new ArgumentNullException(nameof(enumType));
             if (string.IsNullOrWhiteSpace(tsQualifiedName)) throw new ArgumentException("TS identifier required", nameof(tsQualifiedName));
@@ -197,8 +187,7 @@ namespace cs2.ts.util
         /// <param name="type">The Roslyn symbol for the type.</param>
         /// <param name="forEnum">Whether to force enum metadata output.</param>
         /// <returns>The populated metadata descriptor.</returns>
-        public static TypeMetadata BuildTypeMetadata(ITypeSymbol type, bool forEnum = false)
-        {
+        public static TypeMetadata BuildTypeMetadata(ITypeSymbol type, bool forEnum = false) {
             var name = type.Name;
             string ns = string.Empty;
             var containingNamespace = type.ContainingNamespace;
@@ -215,8 +204,7 @@ namespace cs2.ts.util
                 genericArity = namedTypeSymbol.Arity;
             }
 
-            var meta = new TypeMetadata
-            {
+            var meta = new TypeMetadata {
                 Name = name,
                 FullName = string.IsNullOrEmpty(ns) ? name : ns + "." + name,
                 Namespace = string.IsNullOrEmpty(ns) ? null : ns,
@@ -229,16 +217,14 @@ namespace cs2.ts.util
                 GenericArity = genericArity,
             };
 
-            if (meta.IsEnum == true || forEnum)
-            {
+            if (meta.IsEnum == true || forEnum) {
                 meta.IsEnum = true;
                 meta.EnumValues = BuildEnumValues(namedType);
                 return meta;
             }
 
             var baseType = type.BaseType;
-            if (baseType != null && baseType.SpecialType != SpecialType.System_Object)
-            {
+            if (baseType != null && baseType.SpecialType != SpecialType.System_Object) {
                 meta.BaseType = GetFullName(baseType);
             }
 
@@ -265,18 +251,15 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="type">The enum symbol.</param>
         /// <returns>The enum value metadata array.</returns>
-        static EnumValueMetadata[] BuildEnumValues(INamedTypeSymbol type)
-        {
+        static EnumValueMetadata[] BuildEnumValues(INamedTypeSymbol type) {
             if (type == null) return null;
             var underlying = type.EnumUnderlyingType;
             var values = new List<EnumValueMetadata>();
-            foreach (var field in type.GetMembers().OfType<IFieldSymbol>())
-            {
+            foreach (var field in type.GetMembers().OfType<IFieldSymbol>()) {
                 if (!field.HasConstantValue || field.ConstantValue == null) continue;
                 if (field.Name == "value__") continue;
                 object val = field.ConstantValue;
-                if (underlying != null && underlying.SpecialType != SpecialType.None)
-                {
+                if (underlying != null && underlying.SpecialType != SpecialType.None) {
                     val = Convert.ToInt64(field.ConstantValue, CultureInfo.InvariantCulture);
                 }
                 values.Add(new EnumValueMetadata { Name = field.Name, Value = val });
@@ -289,8 +272,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="f">The field symbol.</param>
         /// <returns>The field metadata.</returns>
-        static FieldMetadata BuildField(IFieldSymbol f) => new()
-        {
+        static FieldMetadata BuildField(IFieldSymbol f) => new() {
             Name = f.Name,
             Type = GetFullName(f.Type),
             IsPublic = f.DeclaredAccessibility == Accessibility.Public,
@@ -304,8 +286,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="p">The property symbol.</param>
         /// <returns>The property metadata.</returns>
-        static PropertyMetadata BuildProperty(IPropertySymbol p)
-        {
+        static PropertyMetadata BuildProperty(IPropertySymbol p) {
             bool isPublic = false;
             if (p.GetMethod != null && p.GetMethod.DeclaredAccessibility == Accessibility.Public) {
                 isPublic = true;
@@ -313,8 +294,7 @@ namespace cs2.ts.util
             if (p.SetMethod != null && p.SetMethod.DeclaredAccessibility == Accessibility.Public) {
                 isPublic = true;
             }
-            return new PropertyMetadata
-            {
+            return new PropertyMetadata {
                 Name = p.Name,
                 Type = GetFullName(p.Type),
                 IsPublic = isPublic,
@@ -330,10 +310,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="m">The method symbol.</param>
         /// <returns>The method metadata.</returns>
-        static MethodMetadata BuildMethod(IMethodSymbol m)
-        {
-            return new MethodMetadata
-            {
+        static MethodMetadata BuildMethod(IMethodSymbol m) {
+            return new MethodMetadata {
                 Name = m.MethodKind == MethodKind.Constructor ? ".ctor" : m.Name,
                 IsPublic = m.DeclaredAccessibility == Accessibility.Public,
                 IsStatic = m.IsStatic,
@@ -351,10 +329,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="p">The parameter symbol.</param>
         /// <returns>The parameter metadata.</returns>
-        static ParameterMetadata BuildParam(IParameterSymbol p)
-        {
-            var meta = new ParameterMetadata
-            {
+        static ParameterMetadata BuildParam(IParameterSymbol p) {
+            var meta = new ParameterMetadata {
                 Name = p.Name,
                 Type = GetFullName(p.Type),
                 HasDefault = p.HasExplicitDefaultValue,
@@ -369,13 +345,11 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="m">The method symbol.</param>
         /// <returns>The signature string.</returns>
-        static string SignatureOf(IMethodSymbol m)
-        {
+        static string SignatureOf(IMethodSymbol m) {
             var sb = new StringBuilder();
             sb.Append(m.Name);
             sb.Append("(");
-            for (int i = 0; i < m.Parameters.Length; i++)
-            {
+            for (int i = 0; i < m.Parameters.Length; i++) {
                 if (i > 0) sb.Append(",");
                 sb.Append(GetFullName(m.Parameters[i].Type));
             }
@@ -388,26 +362,21 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="attrs">The attribute data collection.</param>
         /// <returns>The attribute metadata list.</returns>
-        static List<AttributeDataMetadata> BuildAttributes(ImmutableArray<AttributeData> attrs)
-        {
+        static List<AttributeDataMetadata> BuildAttributes(ImmutableArray<AttributeData> attrs) {
             if (attrs.Length == 0) return null;
             var list = new List<AttributeDataMetadata>();
-            foreach (var a in attrs)
-            {
+            foreach (var a in attrs) {
                 if (a.AttributeClass == null) {
                     continue;
                 }
 
-                var item = new AttributeDataMetadata
-                {
+                var item = new AttributeDataMetadata {
                     Type = GetFullName(a.AttributeClass),
                 };
-                if (a.ConstructorArguments.Length > 0)
-                {
+                if (a.ConstructorArguments.Length > 0) {
                     item.CtorArgs = a.ConstructorArguments.Select(ToRuntimeTypedConstant).ToList();
                 }
-                if (a.NamedArguments.Length > 0)
-                {
+                if (a.NamedArguments.Length > 0) {
                     item.NamedArgs = a.NamedArguments.ToDictionary(k => k.Key, v => ToRuntimeTypedConstant(v.Value));
                 }
                 list.Add(item);
@@ -420,11 +389,9 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="c">The typed constant.</param>
         /// <returns>The runtime value representation.</returns>
-        static object ToRuntimeTypedConstant(TypedConstant c)
-        {
+        static object ToRuntimeTypedConstant(TypedConstant c) {
             if (c.IsNull) return null;
-            if (c.Kind == TypedConstantKind.Array)
-            {
+            if (c.Kind == TypedConstantKind.Array) {
                 return c.Values.Select(ToRuntimeTypedConstant).ToArray();
             }
             return ToRuntimeValue(c.Value);
@@ -435,10 +402,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="v">The raw value.</param>
         /// <returns>The normalized value.</returns>
-        static object ToRuntimeValue(object v)
-        {
-            return v switch
-            {
+        static object ToRuntimeValue(object v) {
+            return v switch {
                 null => null,
                 bool b => b,
                 string s => s,
@@ -463,10 +428,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="t">The type symbol.</param>
         /// <returns>The fully-qualified type name.</returns>
-        static string GetFullName(ITypeSymbol t)
-        {
-            if (t is IArrayTypeSymbol at)
-            {
+        static string GetFullName(ITypeSymbol t) {
+            if (t is IArrayTypeSymbol at) {
                 return GetFullName(at.ElementType) + "[]";
             }
             var s = t.ToDisplayString(FullNameFormat);
@@ -478,8 +441,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the literal.</param>
         /// <param name="meta">The metadata to serialize.</param>
-        static void EmitMetadataLiteral(TextWriter w, TypeMetadata meta)
-        {
+        static void EmitMetadataLiteral(TextWriter w, TypeMetadata meta) {
             w.Write("{");
             var first = true;
             WriteStringProperty(w, ref first, "name", meta.Name);
@@ -514,11 +476,9 @@ namespace cs2.ts.util
         /// <param name="w">The writer receiving the array.</param>
         /// <param name="items">The items to emit.</param>
         /// <param name="emit">The per-item emitter.</param>
-        static void EmitArray<T>(TextWriter w, IReadOnlyList<T> items, Action<TextWriter, T> emit)
-        {
+        static void EmitArray<T>(TextWriter w, IReadOnlyList<T> items, Action<TextWriter, T> emit) {
             w.Write('[');
-            for (int i = 0; i < items.Count; i++)
-            {
+            for (int i = 0; i < items.Count; i++) {
                 if (i > 0) w.Write(',');
                 emit(w, items[i]);
             }
@@ -530,13 +490,10 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the string.</param>
         /// <param name="s">The string value to escape.</param>
-        static void WriteString(TextWriter w, string s)
-        {
+        static void WriteString(TextWriter w, string s) {
             w.Write('"');
-            foreach (var ch in s)
-            {
-                switch (ch)
-                {
+            foreach (var ch in s) {
+                switch (ch) {
                     case '"': w.Write("\\\""); break;
                     case '\\': w.Write("\\\\"); break;
                     case '\n': w.Write("\\n"); break;
@@ -553,18 +510,15 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the attribute data.</param>
         /// <param name="a">The attribute metadata.</param>
-        static void EmitAttribute(TextWriter w, AttributeDataMetadata a)
-        {
+        static void EmitAttribute(TextWriter w, AttributeDataMetadata a) {
             w.Write('{');
             var first = true;
             WriteSeparator(w, ref first); w.Write("\"type\":"); WriteString(w, a.Type);
             if (a.CtorArgs != null && a.CtorArgs.Count > 0)
             { WriteSeparator(w, ref first); w.Write("\"ctorArgs\":"); EmitArray(w, a.CtorArgs, EmitValue); }
-            if (a.NamedArgs != null && a.NamedArgs.Count > 0)
-            {
+            if (a.NamedArgs != null && a.NamedArgs.Count > 0) {
                 WriteSeparator(w, ref first); w.Write("\"namedArgs\":{");
-                var i = 0; foreach (var kv in a.NamedArgs)
-                {
+                var i = 0; foreach (var kv in a.NamedArgs) {
                     if (i++ > 0) w.Write(',');
                     WriteString(w, kv.Key); w.Write(':'); EmitValue(w, kv.Value);
                 }
@@ -578,8 +532,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the enum value.</param>
         /// <param name="v">The enum value metadata.</param>
-        static void EmitEnumValue(TextWriter w, EnumValueMetadata v)
-        {
+        static void EmitEnumValue(TextWriter w, EnumValueMetadata v) {
             w.Write('{');
             w.Write("\"name\":"); WriteString(w, v.Name);
             w.Write(','); w.Write("\"value\":"); EmitValue(w, v.Value);
@@ -591,8 +544,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the field data.</param>
         /// <param name="f">The field metadata.</param>
-        static void EmitField(TextWriter w, FieldMetadata f)
-        {
+        static void EmitField(TextWriter w, FieldMetadata f) {
             w.Write('{');
             w.Write("\"name\":"); WriteString(w, f.Name);
             w.Write(','); w.Write("\"type\":"); WriteString(w, f.Type);
@@ -608,8 +560,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the property data.</param>
         /// <param name="p">The property metadata.</param>
-        static void EmitProperty(TextWriter w, PropertyMetadata p)
-        {
+        static void EmitProperty(TextWriter w, PropertyMetadata p) {
             w.Write('{');
             w.Write("\"name\":"); WriteString(w, p.Name);
             w.Write(','); w.Write("\"type\":"); WriteString(w, p.Type);
@@ -626,8 +577,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the method data.</param>
         /// <param name="m">The method metadata.</param>
-        static void EmitMethod(TextWriter w, MethodMetadata m)
-        {
+        static void EmitMethod(TextWriter w, MethodMetadata m) {
             w.Write('{');
             w.Write("\"name\":"); WriteString(w, m.Name);
             if (m.IsPublic != null) { w.Write(','); w.Write("\"isPublic\":"); w.Write(m.IsPublic.Value ? "true" : "false"); }
@@ -646,8 +596,7 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the parameter data.</param>
         /// <param name="p">The parameter metadata.</param>
-        static void EmitParameter(TextWriter w, ParameterMetadata p)
-        {
+        static void EmitParameter(TextWriter w, ParameterMetadata p) {
             w.Write('{');
             w.Write("\"name\":"); WriteString(w, p.Name);
             w.Write(','); w.Write("\"type\":"); WriteString(w, p.Type);
@@ -662,10 +611,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the value.</param>
         /// <param name="v">The value to emit.</param>
-        static void EmitValue(TextWriter w, object v)
-        {
-            switch (v)
-            {
+        static void EmitValue(TextWriter w, object v) {
+            switch (v) {
                 case null:
                     w.Write("null");
                     break;
@@ -684,18 +631,17 @@ namespace cs2.ts.util
                 case IEnumerable<object> arr:
                     var list = arr.ToList();
                     w.Write('[');
-                    for (int i = 0; i < list.Count; i++)
-                    {
+                    for (int i = 0; i < list.Count; i++) {
                         if (i > 0) w.Write(',');
                         EmitValue(w, list[i]);
-                    }
+                }
                     w.Write(']');
                     break;
                 default:
                     string value = v.ToString();
                     if (value == null) {
                         value = string.Empty;
-                    }
+                }
                     WriteString(w, value);
                     break;
             }
@@ -706,10 +652,8 @@ namespace cs2.ts.util
         /// </summary>
         /// <param name="w">The writer receiving the separator.</param>
         /// <param name="first">Tracks whether a value has been written.</param>
-        static void WriteSeparator(TextWriter w, ref bool first)
-        {
-            if (!first)
-            {
+        static void WriteSeparator(TextWriter w, ref bool first) {
+            if (!first) {
                 w.Write(',');
             }
             first = false;
@@ -722,10 +666,8 @@ namespace cs2.ts.util
         /// <param name="first">Tracks whether a value has been written.</param>
         /// <param name="key">The property name.</param>
         /// <param name="value">The property value.</param>
-        static void WriteStringProperty(TextWriter w, ref bool first, string key, string value)
-        {
-            if (value == null)
-            {
+        static void WriteStringProperty(TextWriter w, ref bool first, string key, string value) {
+            if (value == null) {
                 return;
             }
 
@@ -744,10 +686,8 @@ namespace cs2.ts.util
         /// <param name="first">Tracks whether a value has been written.</param>
         /// <param name="key">The property name.</param>
         /// <param name="value">The property value.</param>
-        static void WriteBoolProperty(TextWriter w, ref bool first, string key, bool? value)
-        {
-            if (value == null)
-            {
+        static void WriteBoolProperty(TextWriter w, ref bool first, string key, bool? value) {
+            if (value == null) {
                 return;
             }
 
@@ -766,10 +706,8 @@ namespace cs2.ts.util
         /// <param name="first">Tracks whether a value has been written.</param>
         /// <param name="key">The property name.</param>
         /// <param name="value">The property value.</param>
-        static void WriteIntProperty(TextWriter w, ref bool first, string key, int? value)
-        {
-            if (value == null)
-            {
+        static void WriteIntProperty(TextWriter w, ref bool first, string key, int? value) {
+            if (value == null) {
                 return;
             }
 

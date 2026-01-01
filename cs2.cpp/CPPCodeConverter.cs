@@ -53,10 +53,10 @@ namespace cs2.cpp {
                     source = Utils.ReplacePlaceholders(source, replacements);
 
                     writer.Write(source);
-                },
+            },
                 (file) => {
                     return !file.FullName.EndsWith(".json");
-                });
+            });
 
 
             if (Directory.Exists(outputFolder)) {

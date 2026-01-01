@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes a reflected property entry.
     /// </summary>
-    public sealed class PropertyMetadata
-    {
+    public sealed class PropertyMetadata {
         /// <summary>
         /// Gets or sets the property name.
         /// </summary>

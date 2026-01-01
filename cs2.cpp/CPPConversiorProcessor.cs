@@ -291,8 +291,8 @@ namespace cs2.cpp {
 
                             if (result.Variable != null) {
                                 int xx = -1;
-                            }
                         }
+                    }
                         break;
                 }
             }
@@ -944,48 +944,48 @@ namespace cs2.cpp {
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "float");
-                    }
+                }
                 case VariableDataType.Double: {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "double");
-                    }
+                }
                 case VariableDataType.UInt32: {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "uint32_t");
-                    }
+                }
                 case VariableDataType.Int32: {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "int32_t");
-                    }
+                }
                 case VariableDataType.UInt64: {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "uint64_t");
-                    }
+                }
                 case VariableDataType.Int64: {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "int64_t");
-                    }
+                }
 
                 case VariableDataType.String:
 
                     if (codeConverter.CPPRules.UseStdString) {
                         throw new NotImplementedException();
-                    } else {
+                } else {
                         typeData.IsArray = true;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "char");
-                    }
+                }
                 default:
                     typeData.IsArray = false;
                     typeData.IsNativeType = false;
@@ -1083,20 +1083,20 @@ namespace cs2.cpp {
                         literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
                         literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                             return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                        });
+                    });
                         literalValue = $"\"{literalValue}\"";
                         break;
-                    }
+                }
                 case SyntaxKind.StringLiteralExpression: {
                         type = "string";
                         string value = literalExpression.Token.ValueText;
                         literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
                         literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                             return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                        });
+                    });
                         literalValue = $"\"{literalValue}\"";
                         break;
-                    }
+                }
                 case SyntaxKind.NullLiteralExpression:
                     type = "null";
                     literalValue = "null";

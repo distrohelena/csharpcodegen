@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes metadata for a reflected type in the TypeScript runtime.
     /// </summary>
-    public sealed class TypeMetadata
-    {
+    public sealed class TypeMetadata {
         /// <summary>
         /// Gets or sets the simple type name.
         /// </summary>

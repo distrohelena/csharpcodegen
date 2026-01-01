@@ -2027,11 +2027,11 @@ namespace cs2.ts {
                     string valueToken = literalExpression.Token.ToString().ToLowerInvariant();
                     if (valueToken.Contains("f")) {
                         type = "float";
-                    } else if (valueToken.Contains("l")) {
+                } else if (valueToken.Contains("l")) {
                         type = "int64";
-                    } else {
+                } else {
                         type = "int32";
-                    }
+                }
                     literalValue = literalExpression.Token.ValueText;
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
@@ -2040,20 +2040,20 @@ namespace cs2.ts {
                         literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
                         literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                             return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                        });
+                    });
                         literalValue = $"\"{literalValue}\"";
                         break;
-                    }
+                }
                 case SyntaxKind.StringLiteralExpression: {
                         type = "string";
                         string value = literalExpression.Token.ValueText;
                         literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
                         literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                             return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                        });
+                    });
                         literalValue = $"\"{literalValue}\"";
                         break;
-                    }
+                }
                 case SyntaxKind.NullLiteralExpression:
                     type = "null";
                     literalValue = "null";

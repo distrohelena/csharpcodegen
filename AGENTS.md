@@ -7,7 +7,7 @@
 - Order members using standard C# layout (constants/fields, constructors, properties, methods) to keep files predictable.
 - Do not add redundant `private` modifiers; members without an access modifier are assumed private in C#.
 - All fields should be PascalCase.
-- C# code should follow TypeScript indentation rules for end and close brackets.
+- C# code should follow TypeScript indentation rules for end and close brackets, and opening braces should be on the same line as declarations or control statements.
 - Do not use tuples.
 - Follow MVC: keep logic in separate classes (controllers/services/managers) and keep UI classes focused only on presentation and input wiring.
 - Avoid half-measures that patch broken state; ensure systems are correctly initialized or fix the underlying cause instead of bolting on runtime fixes.

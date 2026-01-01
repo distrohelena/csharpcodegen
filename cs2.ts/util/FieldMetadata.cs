@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes a reflected field entry.
     /// </summary>
-    public sealed class FieldMetadata
-    {
+    public sealed class FieldMetadata {
         /// <summary>
         /// Gets or sets the field name.
         /// </summary>

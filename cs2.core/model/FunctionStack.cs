@@ -1,6 +1,5 @@
 namespace cs2.core {
-    public class FunctionStack
-    {
+    public class FunctionStack {
         public ConversionFunction Function { get; set; }
         public List<ConversionVariable> Stack { get; set; }
 

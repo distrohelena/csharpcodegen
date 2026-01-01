@@ -1,12 +1,10 @@
 using System.Collections.Generic;
 
-namespace cs2.ts.util
-{
+namespace cs2.ts.util {
     /// <summary>
     /// Describes a reflected parameter entry.
     /// </summary>
-    public sealed class ParameterMetadata
-    {
+    public sealed class ParameterMetadata {
         /// <summary>
         /// Gets or sets the parameter name.
         /// </summary>
