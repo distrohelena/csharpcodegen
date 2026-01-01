@@ -963,11 +963,19 @@ namespace cs2.ts {
                     lines.Add(" = __switch;");
                 }
 
-                lines.Add("return ");
-                int armDepth = context.DepthClass;
-                ProcessExpression(semantic, context, arm.Expression, lines);
-                context.PopClass(armDepth);
-                lines.Add(";");
+                if (arm.Expression is ThrowExpressionSyntax throwExpression) {
+                    lines.Add("throw ");
+                    int throwDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, throwExpression.Expression, lines);
+                    context.PopClass(throwDepth);
+                    lines.Add(";");
+                } else {
+                    lines.Add("return ");
+                    int armDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, arm.Expression, lines);
+                    context.PopClass(armDepth);
+                    lines.Add(";");
+                }
                 lines.Add("}");
             }
 
@@ -1863,11 +1871,31 @@ namespace cs2.ts {
             lines.Add(" ? ");
 
             // Process the true branch (after the ? and before the :)
-            ProcessExpression(semantic, context, conditional.WhenTrue, lines);
+            AppendConditionalBranch(semantic, context, conditional.WhenTrue, lines);
             lines.Add(" : ");
 
             // Process the false branch (after the :)
-            ProcessExpression(semantic, context, conditional.WhenFalse, lines);
+            AppendConditionalBranch(semantic, context, conditional.WhenFalse, lines);
+        }
+
+        /// <summary>
+        /// Appends a conditional branch, handling throw expressions via an IIFE wrapper.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="branchExpression">The branch expression to emit.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        void AppendConditionalBranch(SemanticModel semantic, LayerContext context, ExpressionSyntax branchExpression, List<string> lines) {
+            if (branchExpression is ThrowExpressionSyntax throwExpression) {
+                lines.Add("(() => { throw ");
+                int startDepth = context.DepthClass;
+                ProcessExpression(semantic, context, throwExpression.Expression, lines);
+                context.PopClass(startDepth);
+                lines.Add("; })()");
+                return;
+            }
+
+            ProcessExpression(semantic, context, branchExpression, lines);
         }
 
         /// <summary>

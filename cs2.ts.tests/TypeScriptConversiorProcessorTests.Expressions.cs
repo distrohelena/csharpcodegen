@@ -121,6 +121,24 @@ namespace cs2.ts.tests {
         }
 
         /// <summary>
+        /// Ensures conditional expressions with throw branches emit IIFE-wrapped throws.
+        /// </summary>
+        [Fact]
+        public void ConditionalExpression_WithThrow_EmitsIifeThrow() {
+            var code = "class C { string M(string value){ return value != null ? value : throw new System.Exception(); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var expr = root.DescendantNodes().OfType<ConditionalExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx, returnType: new VariableType(VariableDataType.String));
+            var lines = TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr);
+            var output = TsProcessorTestHarness.JoinLines(lines);
+
+            Assert.Contains(" ? ", output);
+            Assert.Contains("(() => { throw", output);
+        }
+
+        /// <summary>
         /// Ensures switch expressions are emitted as IIFE-based expressions.
         /// </summary>
         [Fact]
