@@ -812,6 +812,7 @@ namespace cs2.ts {
             List<ExpressionResult> types = new List<ExpressionResult>();
 
             Dictionary<string, string> outs = new Dictionary<string, string>();
+            HashSet<string> outDeclarations = new HashSet<string>();
 
             List<string> beforeLines = new List<string>();
             List<string> addLines = new List<string>();
@@ -820,8 +821,10 @@ namespace cs2.ts {
                 string refKeyword = arg.RefKindKeyword.ToString();
                 string strName = string.Empty;
                 bool isOut = false;
+                bool isOutDeclaration = false;
                 if (refKeyword == "out") {
                     isOut = true;
+                    isOutDeclaration = arg.Expression is DeclarationExpressionSyntax;
                     beforeLines.Add("let ");
                     strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
                     strName = StringUtil.Replace(strName, "-", "");
@@ -837,7 +840,10 @@ namespace cs2.ts {
 
                 if (isOut) {
                     string outName = argLines[argLinesIndex];
-                    if (res.Variable != null && res.Variable.Modifier == ParameterModifier.Out) {
+                    if (isOutDeclaration) {
+                        outs.Add(outName, strName);
+                        outDeclarations.Add(outName);
+                    } else if (res.Variable != null && res.Variable.Modifier == ParameterModifier.Out) {
                         outs.Add(outName + ".value", strName);
                     } else {
                         outs.Add(outName, strName);
@@ -867,7 +873,11 @@ namespace cs2.ts {
             lines.AddRange(argLines);
 
             foreach (var pair in outs) {
-                addLines.Add($"{pair.Key} = {pair.Value}.value;\n");
+                if (outDeclarations.Contains(pair.Key)) {
+                    addLines.Add($"let {pair.Key} = {pair.Value}.value;\n");
+                } else {
+                    addLines.Add($"{pair.Key} = {pair.Value}.value;\n");
+                }
             }
 
             result.BeforeLines = beforeLines;
@@ -2461,6 +2471,24 @@ namespace cs2.ts {
             }
 
             return condResult;
+        }
+
+        /// <summary>
+        /// Processes a statement while preventing duplicated before/after lines from bubbling up.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="statement">The statement to process.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="depth">The current indentation depth.</param>
+        /// <returns>The expression result describing the statement.</returns>
+        protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
+            ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
+            if (statement is ExpressionStatementSyntax) {
+                result.BeforeLines = null;
+                result.AfterLines = null;
+            }
+            return result;
         }
 
         /// <summary>
