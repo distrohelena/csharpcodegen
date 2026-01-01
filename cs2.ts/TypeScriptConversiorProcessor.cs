@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Nucleus;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using cs2.ts.util;
 
 namespace cs2.ts {
     /// <summary>
@@ -139,11 +140,11 @@ namespace cs2.ts {
         /// <returns>The resolved conversion class.</returns>
         public static ConversionClass GetClass(TypeScriptProgram program, VariableType varType) {
             string name = varType.GetTypeScriptType(program);
-            ConversionClass found = program.Classes.FirstOrDefault(c => c.Name == name);
+            ConversionClass found = program.GetClassByName(name);
 
             if (found == null) {
                 name = varType.GetTypeScriptTypeNoGeneric(program);
-                found = program.Classes.FirstOrDefault(c => c.Name == name);
+                found = program.GetClassByName(name);
             }
 
             return found;
@@ -203,7 +204,8 @@ namespace cs2.ts {
             int layer = context.GetClassLayer();
 
             // abstract class
-            ConversionClass staticClass = context.Program.Classes.Find(c => c.Name == name);
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+            ConversionClass staticClass = tsProgram.GetClassByName(name);
 
             ConversionClass currentClass = context.GetCurrentClass();
 
@@ -231,7 +233,7 @@ namespace cs2.ts {
                 // look at base classes
                 for (int i = 0; i < currentClass.Extensions.Count; i++) {
                     string extension = currentClass.Extensions[i];
-                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == extension);
+                    ConversionClass cl = tsProgram.GetClassByName(extension);
                     ConversionVariable foundVar = null;
                     if (cl != null) {
                         foundVar = cl.Variables.Find(c => c.Name == name);
@@ -261,7 +263,7 @@ namespace cs2.ts {
                 // look at base classes
                 for (int i = 0; i < currentClass.Extensions.Count; i++) {
                     string extension = currentClass.Extensions[i];
-                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == extension);
+                    ConversionClass cl = tsProgram.GetClassByName(extension);
                     ConversionFunction foundFn = null;
                     if (cl != null) {
                         foundFn = cl.Functions.Find(c => c.Name == name);
@@ -1014,6 +1016,7 @@ namespace cs2.ts {
         /// <param name="simpleLambda">The simple lambda expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
             TypeInfo type = semantic.GetTypeInfo(simpleLambda);
             int start;
             if (type.ConvertedType is INamedTypeSymbol namedFuncType) {
@@ -1023,7 +1026,7 @@ namespace cs2.ts {
                 }
 
                 ITypeSymbol returnType = invoke.ReturnType;
-                start = context.AddClass(context.Program.Classes.Find(c => c.Name == returnType.Name));
+                start = context.AddClass(tsProgram.GetClassByName(returnType.Name));
             } else {
                 throw new NotImplementedException();
             }
@@ -1199,38 +1202,20 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessPredefinedType(SemanticModel semantic, LayerContext context, PredefinedTypeSyntax predefinedType, List<string> lines) {
             var type = predefinedType.Keyword.ValueText;
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
 
-            string name = type;
-            switch (type) {
-                case "uint":
-                case "int":
-                case "long":
-                case "float":
-                case "double":
-                case "decimal":
-                case "short":
-                case "byte":
-                    name = "Number";
-                    break;
-                case "bool":
-                    name = "Boolean";
-                    break;
-                case "string":
-                    name = "String";
-                    break;
-                case "char":
-                    name = "String";
-                    break;
-                case "object":
-                    name = "any";
-                    break;
-                case "void":
-                    name = "void";
-                    break;
+            string name;
+            if (type == "void") {
+                name = "void";
+            } else {
+                bool useBoxed = predefinedType.Parent is MemberAccessExpressionSyntax;
+                name = useBoxed
+                    ? TypeScriptTypeMap.GetTypeScriptBoxedTypeName(type)
+                    : TypeScriptTypeMap.GetTypeScriptTypeName(type);
             }
 
             lines.Add(name);
-            context.AddClass(context.Program.Classes.Find(c => c.Name == name));
+            context.AddClass(tsProgram.GetClassByName(name));
         }
 
         /// <summary>
@@ -2127,7 +2112,4 @@ namespace cs2.ts {
         }
     }
 }
-
-
-
 

@@ -19,7 +19,8 @@ namespace cs2.ts {
                 }
             }
 
-            TypeScriptKnownClass known = program.Requirements.Find(c => c.Name == typeName);
+            TypeScriptKnownClass known;
+            program.TryGetRequirement(typeName, out known);
             if (known != null) {
                 if (known is TypeScriptGenericKnownClass generic) {
                     if (generic.VoidReturn) {
@@ -87,7 +88,8 @@ namespace cs2.ts {
                 }
             }
 
-            TypeScriptKnownClass known = program.Requirements.Find(c => c.Name == typeName);
+            TypeScriptKnownClass known;
+            program.TryGetRequirement(typeName, out known);
             if (known != null) {
                 if (known is TypeScriptGenericKnownClass generic) {
                     if (generic.VoidReturn) {

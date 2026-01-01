@@ -23,11 +23,13 @@ namespace cs2.ts {
             for (int i = 0; i < cl.Extensions.Count; i++) {
                 string ext = cl.Extensions[i];
 
-                var extCl = program.Classes.FirstOrDefault(c => c.Name == ext);
-                if (extCl == null) {
-                    var knownClass = ((TypeScriptProgram)program).Requirements.FirstOrDefault(c => c.Name == ext);
-
-                    // If not found here, it may be provided externally by the TS runtime.
+                ConversionClass extCl = null;
+                TypeScriptKnownClass knownClass = null;
+                if (program is TypeScriptProgram tsProgram) {
+                    extCl = tsProgram.GetClassByName(ext);
+                    if (extCl == null) {
+                        tsProgram.TryGetRequirement(ext, out knownClass);
+                    }
                 }
 
                 bool isInterface = cl.DeclarationType == MemberDeclarationType.Interface;

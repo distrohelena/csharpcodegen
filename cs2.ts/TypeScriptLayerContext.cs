@@ -18,7 +18,8 @@ namespace cs2.ts {
         /// </summary>
         /// <param name="varType">The variable type to resolve and push onto the context.</param>
         public override void AddType(VariableType varType) {
-            ConversionClass cl = Program.Classes.Find(c => c.Name == varType.GetTypeScriptType((TypeScriptProgram)Program));
+            TypeScriptProgram tsProgram = (TypeScriptProgram)Program;
+            ConversionClass cl = tsProgram.GetClassByName(varType.GetTypeScriptType(tsProgram));
             AddClass(cl);
         }
     }

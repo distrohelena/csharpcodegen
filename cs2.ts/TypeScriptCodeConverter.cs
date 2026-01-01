@@ -8,11 +8,9 @@ using Microsoft.CodeAnalysis.MSBuild;
 using Nucleus;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Xml.Linq;
 
 namespace cs2.ts {
     /// <summary>
@@ -54,17 +52,13 @@ namespace cs2.ts {
         /// </summary>
         readonly bool includeProjectPreprocessorSymbols;
         /// <summary>
-        /// Tracks whether a type registration import is required.
+        /// Tracks reflection runtime import requirements.
         /// </summary>
-        bool needsReflectionTypeImport;
+        TypeScriptReflectionImportTracker ReflectionImportTracker;
         /// <summary>
-        /// Tracks whether an enum registration import is required.
+        /// Emits TypeScript classes, interfaces, and enums.
         /// </summary>
-        bool needsReflectionEnumImport;
-        /// <summary>
-        /// Tracks whether a metadata registration import is required.
-        /// </summary>
-        bool needsReflectionMetadataImport;
+        TypeScriptClassEmitter ClassEmitter;
 
         /// <summary>
         /// Creates a new converter for the given environment and options.
@@ -108,6 +102,8 @@ namespace cs2.ts {
             context = new ConversionContext(program);
 
             conversion = new TypeScriptConversiorProcessor();
+            ReflectionImportTracker = new TypeScriptReflectionImportTracker();
+            ClassEmitter = new TypeScriptClassEmitter(conversion, program, tsProgram, conversionOptions, ReflectionImportTracker, SortVariables);
 
             assemblyName = "";
             version = "";
@@ -220,12 +216,12 @@ namespace cs2.ts {
                 File.Delete(outputFile);
             }
 
-            Stream stream = File.OpenWrite(outputFile);
-            StreamWriter writer = new StreamWriter(stream);
+            using StringWriter stringWriter = new StringWriter();
+            TypeScriptOutputWriter output = new TypeScriptOutputWriter(stringWriter);
 
             ComputeReflectionImports();
-            writer.WriteLine("// @ts-nocheck");
-            writer.WriteLine();
+            output.WriteLine("// @ts-nocheck");
+            output.WriteLine();
 
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
@@ -241,25 +237,29 @@ namespace cs2.ts {
                         }
                     }
 
-                    writer.WriteLine($"import type {{ {imports} }} from \"{pair.Path}\";");
+                    output.WriteLine($"import type {{ {imports} }} from \"{pair.Path}\";");
                 } else {
                     if (string.IsNullOrEmpty(pair.Replacement)) {
-                        writer.WriteLine($"import {{ {pair.Name} }} from \"{pair.Path}\";");
+                        output.WriteLine($"import {{ {pair.Name} }} from \"{pair.Path}\";");
                     } else {
-                        writer.WriteLine($"import {{ {pair.Name} as {pair.Replacement} }} from \"{pair.Path}\";");
+                        output.WriteLine($"import {{ {pair.Name} as {pair.Replacement} }} from \"{pair.Path}\";");
                     }
                 }
             }
 
-            TypeScriptReflectionEmitter.EmitRuntimeImport(writer, needsReflectionTypeImport, needsReflectionEnumImport, needsReflectionMetadataImport, conversionOptions.Reflection);
-            writer.WriteLine();
+            TypeScriptReflectionEmitter.EmitRuntimeImport(output.Writer,
+                ReflectionImportTracker.NeedsTypeImport,
+                ReflectionImportTracker.NeedsEnumImport,
+                ReflectionImportTracker.NeedsMetadataImport,
+                conversionOptions.Reflection);
+            output.WriteLine();
 
-            writeOutput(writer);
+            writeOutput(output);
 
-            writer.WriteLine();
+            output.WriteLine();
 
-            writer.Flush();
-            stream.Dispose();
+            string formatted = TypeScriptCodeFormatter.Format(stringWriter.ToString(), rootPath, Console.WriteLine);
+            File.WriteAllText(outputFile, formatted);
 
             WriteStrictTsConfig(outputFolder);
         }
@@ -289,278 +289,6 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Emits static initializer block for classes with static constructors.
-        /// </summary>
-        /// <param name="cl">The class being emitted.</param>
-        /// <param name="writer">The writer receiving the output.</param>
-        void writeStaticConstructor(ConversionClass cl, StreamWriter writer) {
-            var constructors = cl.Functions.Where(c => c.IsConstructor && c.IsStatic).ToList();
-            if (constructors.Count == 0) {
-                return;
-            }
-
-            ConversionFunction fn = constructors[0];
-            writer.WriteLine("    static {");
-
-            fn.WriteLines(conversion, program, cl, writer);
-
-            writer.WriteLine("    }");
-            writer.WriteLine($"");
-        }
-
-        /// <summary>
-        /// Emits constructor overloads and factory methods for TypeScript.
-        /// </summary>
-        /// <param name="cl">The class being emitted.</param>
-        /// <param name="writer">The writer receiving the output.</param>
-        void writeConstructors(ConversionClass cl, StreamWriter writer) {
-            var constructors = cl.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
-            var classOverrides = cl.Extensions.Count(over => {
-                var extCl = program.Classes.FirstOrDefault(c => c.Name == over);
-                if (extCl != null) {
-                    return extCl.DeclarationType != MemberDeclarationType.Interface;
-                }
-
-                return false;
-            });
-
-            if (constructors.Count == 1) {
-                ConversionFunction fn = constructors[0];
-                writer.Write($"    constructor(");
-
-                for (int k = 0; k < fn.InParameters.Count; k++) {
-                    var param = fn.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string def = param.DefaultValue;
-                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                        def = "";
-                    }
-
-                    writer.Write($"{param.Name}: {type}{def}");
-
-                    if (k != fn.InParameters.Count - 1) {
-                        writer.Write($", ");
-                    }
-                }
-
-                writer.WriteLine($") {{");
-
-                if (classOverrides > 0) {
-                    writer.WriteLine($"        super();");
-                }
-
-                fn.WriteLines(conversion, program, cl, writer);
-
-                writer.WriteLine($"    }}");
-                writer.WriteLine($"");
-            } else {
-                string generic = cl.GetGenericArguments();
-
-                for (int i = 0; i < constructors.Count; i++) {
-                    ConversionFunction fn = constructors[i];
-                    writer.Write($"    static {fn.Name}{generic}(");
-
-                    for (int k = 0; k < fn.InParameters.Count; k++) {
-                        var param = fn.InParameters[k];
-                        string type = param.VarType.ToTypeScriptString(tsProgram);
-                        string def = param.DefaultValue;
-                        if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                            def = "";
-                        }
-
-                        writer.Write($"{param.Name}: {type}{def}");
-
-                        if (k != fn.InParameters.Count - 1) {
-                            writer.Write($", ");
-                        }
-                    }
-
-                    if (cl.Name == "ClientSettings" && fn.Name == "New2") {
-                        //Debugger.Break();
-                    }
-
-                    writer.WriteLine($"): {cl.Name}{generic} {{");
-
-                    writer.WriteLine($"const __obj = new {cl.Name}();");
-
-                    List<string> lines = new List<string>();
-                    LayerContext context = new TypeScriptLayerContext((TypeScriptProgram)program);
-
-                    int start = context.DepthClass;
-                    int startFn = context.DepthFunction;
-
-                    context.AddClass(cl);
-                    context.AddFunction(new FunctionStack(fn));
-
-                    if (fn.ArrowExpression != null) {
-                        conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, lines);
-                    } else if (fn.RawBlock != null) {
-                        conversion.ProcessBlock(cl.Semantic, context, fn.RawBlock, lines);
-                    }
-
-                    context.PopClass(start);
-                    context.PopFunction(startFn);
-
-
-                    writer.Write("        ");
-                    for (int k = 0; k < lines.Count; k++) {
-                        string str = lines[k];
-                        str = str.Replace("this.", "__obj.");
-
-                        writer.Write(str);
-                        if (str.IndexOf("\n") != -1 && k != lines.Count - 1) {
-                            writer.Write("        ");
-                        }
-                    }
-
-                    writer.WriteLine($"return __obj;");
-                    writer.WriteLine($"    }}");
-                    writer.WriteLine($"");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Writes a TypeScript field or property for the given conversion variable.
-        /// </summary>
-        /// <param name="cl">The owning class.</param>
-        /// <param name="var">The variable to emit.</param>
-        /// <param name="writer">The writer receiving the output.</param>
-        /// <returns>True when output was emitted for the variable.</returns>
-        bool writeVariable(ConversionClass cl, ConversionVariable var, StreamWriter writer) {
-            string access = var.AccessType.ToString().ToLowerInvariant();
-            if (cl.DeclarationType == MemberDeclarationType.Interface) {
-                access = "";
-            }
-
-            string type = var.VarType.ToTypeScriptString(tsProgram);
-
-            string accessType = "";
-            // TODO: implement none
-            if (var.DeclarationType != MemberDeclarationType.Class) {
-                accessType += " ";
-                accessType += var.DeclarationType.ToString().ToLowerInvariant();
-            }
-
-            string isStatic = "";
-            if (var.IsStatic) {
-                isStatic = " static";
-            }
-
-            string assignment = "";
-            if (cl.DeclarationType == MemberDeclarationType.Interface) {
-                if (var.IsGet && var.IsSet) {
-                    writer.WriteLine($"    {access} get {var.Name}(): {type};");
-                    writer.WriteLine($"    {access} set {var.Name}(val: {type});");
-                } else {
-                    if (var.IsGet) {
-                        writer.WriteLine($"    {access}{accessType} get {var.Name}(): {type};");
-                    }
-                    if (var.IsSet) {
-                        writer.WriteLine($"    {access}{accessType} set {var.Name}(value: {type});");
-                    }
-                    if (!var.IsGet && !var.IsSet) {
-                        writer.WriteLine($"    {access} {var.Name}: {type};");
-                    }
-                }
-            } else {
-                if (!string.IsNullOrEmpty(var.Assignment)) {
-                    string ass = var.Assignment;
-                    ass = ass.Replace("=>", "").Trim();
-                    assignment = $" = {ass}";
-                }
-
-                string definiteAssignment = string.IsNullOrEmpty(assignment) ? "!" : string.Empty;
-
-                // check for property
-                if (var.DeclarationType == MemberDeclarationType.Abstract) {
-                    if (var.IsGet && var.IsSet) {
-                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
-                        writer.WriteLine($"    {access}{isStatic} abstract set {var.Name}(value: {type});");
-                        return true;
-                    } else if (var.IsGet) {
-                        writer.WriteLine($"    {access}{isStatic} abstract get {var.Name}(): {type};");
-                        return true;
-                    }
-                }
-                if (var.IsGet && var.IsSet) {
-                    writer.WriteLine($"    private{isStatic} _{var.Name}{definiteAssignment}: {type}{assignment};");
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-                    writer.WriteLine($"        return this._{var.Name};");
-                    writer.WriteLine($"    }}");
-                    writer.WriteLine($"    {access}{isStatic} set {var.Name}(value: {type}) {{");
-                    writer.WriteLine($"        this._{var.Name} = value;");
-                    writer.WriteLine($"    }}");
-                    return true;
-                } else if (var.IsGet) {
-                    writer.WriteLine($"    private _{var.Name}{definiteAssignment}: {type}{assignment};");
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-                    writer.WriteLine($"        return this._{var.Name};");
-                    writer.WriteLine($"    }}");
-                    writer.WriteLine($"    private{isStatic} set {var.Name}(value: {type}) {{");
-                    writer.WriteLine($"        this._{var.Name} = value;");
-                    writer.WriteLine($"    }}");
-                    return true;
-                } else if (var.ArrowExpression != null) {
-                    writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-
-                    writer.Write("    ");
-                    writer.Write("    ");
-                    writer.Write("return ");
-
-                    List<string> lines = new List<string>();
-                    TypeScriptLayerContext context = new TypeScriptLayerContext(tsProgram);
-
-                    int start = context.DepthClass;
-                    context.AddClass(cl);
-                    conversion.ProcessExpression(cl.Semantic, context, var.ArrowExpression, lines);
-                    context.PopClass(start);
-
-                    for (int k = 0; k < lines.Count; k++) {
-                        string str = lines[k];
-                        writer.Write(str);
-                    }
-                    writer.Write(";\n");
-
-                    writer.WriteLine($"    }}");
-                    return true;
-                } else if (var.GetBlock != null || var.SetBlock != null) {
-                    if (var.GetBlock != null) {
-                        ConversionFunction fn = new ConversionFunction();
-                        fn.Name = $"get_{var.Name}";
-
-                        fn.RawBlock = var.GetBlock;
-
-                        writer.WriteLine($"    {access}{isStatic} get {var.Name}(): {type} {{");
-                        fn.WriteLines(conversion, program, cl, writer);
-                        writer.WriteLine();
-                        writer.WriteLine($"    }}");
-                    }
-
-                    if (var.SetBlock != null) {
-                        ConversionFunction fn = new ConversionFunction();
-                        ConversionVariable value = new ConversionVariable();
-                        value.VarType = var.VarType;
-                        value.Name = "value";
-                        fn.InParameters.Add(value);
-                        fn.Name = $"set_{var.Name}";
-
-                        fn.RawBlock = var.SetBlock;
-
-                        writer.WriteLine($"    {access}{isStatic} set {var.Name}(value: {type}) {{");
-                        fn.WriteLines(conversion, program, cl, writer);
-                        writer.WriteLine();
-                        writer.WriteLine($"    }}");
-                    }
-                } else {
-                    writer.WriteLine($"    {access}{accessType}{isStatic} {var.Name}{definiteAssignment}: {type}{assignment};");
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
         /// Preprocesses class members to apply name remaps and line caching.
         /// </summary>
         /// <param name="cl">The class to preprocess.</param>
@@ -577,241 +305,15 @@ namespace cs2.ts {
                     fn.Remap = "dispose";
                 }
 
-                if (cl.Name == "ApplicationManager" && fn.Name == "BootApplication") {
-                    //Debugger.Break();
-                }
-
                 fn.WriteLines(conversion, program, cl);
             }
-        }
-
-        /// <summary>
-        /// Emits TypeScript declarations for a conversion class.
-        /// </summary>
-        /// <param name="cl">The class to emit.</param>
-        /// <param name="writer">The writer receiving the output.</param>
-        void writeClass(ConversionClass cl, StreamWriter writer) {
-            if (cl.IsNative) {
-                return;
-            }
-
-            INamedTypeSymbol typeSymbol = null;
-            if (cl.TypeSymbol is INamedTypeSymbol namedTypeSymbol) {
-                typeSymbol = namedTypeSymbol;
-            }
-
-            bool emitReflection = conversionOptions.Reflection.EnableReflection && typeSymbol != null;
-            bool emitStaticReflection = emitReflection && conversionOptions.Reflection.UseStaticReflectionCache;
-            bool emitTrailingReflection = emitReflection && !conversionOptions.Reflection.UseStaticReflectionCache;
-
-            string implements;
-            string extends;
-            TypeScriptUtils.GetInheritance(program, cl, out implements, out extends);
-
-            if (cl.DeclarationType == MemberDeclarationType.Interface) {
-                writer.WriteLine($"export interface {cl.Name}{extends} {{");
-            } else if (cl.DeclarationType == MemberDeclarationType.Abstract) {
-                writer.WriteLine($"export abstract class {cl.Name}{extends} {{");
-            } else if (cl.DeclarationType == MemberDeclarationType.Delegate) {
-                ConversionFunction del = cl.Functions[0];
-
-                string generic = del.GetGenericArguments();
-
-                writer.Write($"export type {del.Remap}{generic} = (");
-
-                for (int k = 0; k < del.InParameters.Count; k++) {
-                    var param = del.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string def = param.DefaultValue;
-                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                        def = "";
-                    }
-
-                    writer.Write($"{param.Name}: {type}{def}");
-
-                    if (k != del.InParameters.Count - 1) {
-                        writer.Write($", ");
-                    }
-                }
-
-                writer.Write(") => ");
-
-                if (del.ReturnType == null) {
-                    writer.Write("void");
-                } else {
-                    writer.Write(del.ReturnType.ToTypeScriptString(tsProgram));
-                }
-
-                writer.WriteLine(";");
-                if (emitReflection && typeSymbol != null) {
-                    writer.WriteLine();
-                    TypeScriptReflectionEmitter.EmitInterfaceNamespaceReflection(writer, typeSymbol, del.Remap, conversionOptions.Reflection);
-                    needsReflectionMetadataImport = true;
-                }
-                writer.WriteLine();
-
-                return;
-            } else if (cl.DeclarationType == MemberDeclarationType.Enum) {
-                writer.WriteLine($"export enum {cl.Name} {{");
-                if (cl.EnumMembers != null) {
-                    for (int j = 0; j < cl.EnumMembers.Count; j++) {
-                        if (j == cl.EnumMembers.Count - 1) {
-                            writer.WriteLine($"    {cl.EnumMembers[j]}");
-                        } else {
-                            writer.WriteLine($"    {cl.EnumMembers[j]},");
-                        }
-                    }
-                }
-                writer.WriteLine($"}}");
-                if (emitReflection && typeSymbol != null) {
-                    TypeScriptReflectionEmitter.EmitEnumNamespaceReflection(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
-                    needsReflectionEnumImport = true;
-                }
-                writer.WriteLine();
-
-                return;
-            } else {
-                if (cl.GenericArgs != null && cl.GenericArgs.Count > 0) {
-                    string generics = "";
-                    for (int j = 0; j < cl.GenericArgs.Count; j++) {
-                        generics += cl.GenericArgs[j];
-                        if (j != cl.GenericArgs.Count - 1) {
-                            generics += ", ";
-                        }
-                    }
-
-                    writer.WriteLine($"export class {cl.Name}<{generics}>{extends}{implements} {{");
-                } else {
-                    writer.WriteLine($"export class {cl.Name}{extends}{implements} {{");
-                }
-            }
-
-            SortVariables(cl);
-
-            for (int j = 0; j < cl.Variables.Count; j++) {
-                ConversionVariable var = cl.Variables[j];
-                if (writeVariable(cl, var, writer)) {
-                    if (j != cl.Variables.Count - 1) {
-                        writer.WriteLine();
-                    }
-                }
-            }
-
-            if (cl.Variables.Count > 0) {
-                writer.WriteLine();
-            }
-
-            if (emitStaticReflection && cl.DeclarationType != MemberDeclarationType.Interface && cl.DeclarationType != MemberDeclarationType.Delegate && cl.DeclarationType != MemberDeclarationType.Enum) {
-                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
-                Console.WriteLine($"-- reflection cache field emitted for {cl.Name} ({cl.DeclarationType})");
-                needsReflectionTypeImport = true;
-                writer.WriteLine();
-            }
-
-            writeStaticConstructor(cl, writer);
-
-            writeConstructors(cl, writer);
-
-            var functions = cl.Functions.Where(c => !c.IsConstructor).ToList();
-
-            for (int j = 0; j < functions.Count; j++) {
-                ConversionFunction fn = functions[j];
-                string name = fn.Name;
-
-                string access = fn.AccessType.ToString().ToLowerInvariant();
-                if (cl.DeclarationType == MemberDeclarationType.Class) {
-                    access += " ";
-                } else {
-                    access = "";
-                }
-
-                if (j != 0) {
-                    writer.WriteLine();
-                }
-
-                if (cl.Name == "WebSocketClientMessageHandler" && name == "CreateWs") {
-                    //Debugger.Break();
-                }
-
-                List<string> lines = fn.WriteLines(conversion, program, cl);
-
-                string generic = fn.GetGenericArguments();
-                string clType = fn.GetClassType();
-                string async = fn.GetAsync();
-
-                if (cl.DeclarationType == MemberDeclarationType.Interface) {
-                    async = "";
-                }
-
-                if (fn.IsStatic) {
-                    writer.Write($"    {access}static {async}{fn.Remap}{generic}(");
-                } else {
-                    writer.Write($"    {access}{clType}{async}{fn.Remap}{generic}(");
-                }
-
-                for (int k = 0; k < fn.InParameters.Count; k++) {
-                    var param = fn.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string def = param.DefaultValue;
-                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                        def = "";
-                    }
-
-                    if (param.Modifier == core.ParameterModifier.Out) {
-                        writer.Write($"{param.Name}: {{ value: {type}{def} }}");
-                    } else {
-                        writer.Write($"{param.Name}: {type}{def}");
-                    }
-
-                    if (k != fn.InParameters.Count - 1) {
-                        writer.Write($", ");
-                    }
-                }
-
-                string returnParameter = null;
-                if (fn.ReturnType != null) {
-                    returnParameter = fn.ReturnType.ToTypeScriptString(tsProgram);
-                }
-                if (string.IsNullOrWhiteSpace(returnParameter)) {
-                    returnParameter = "void";
-                }
-                if (fn.IsAsync) {
-                    returnParameter = returnParameter == "void"
-                        ? "Promise<void>"
-                        : $"Promise<{returnParameter}>";
-                }
-
-                if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
-                    writer.WriteLine($"): {returnParameter};");
-                } else {
-                    writer.WriteLine($"): {returnParameter} {{");
-
-                    TypeScriptFunction.PrintLines(writer, lines);
-                    writer.WriteLine("    }");
-                }
-
-            }
-
-            writer.WriteLine($"}}");
-            if (cl.DeclarationType == MemberDeclarationType.Interface) {
-                if (emitReflection && typeSymbol != null) {
-                    TypeScriptReflectionEmitter.EmitInterfaceNamespaceReflection(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
-                    needsReflectionMetadataImport = true;
-                }
-            } else if (emitTrailingReflection && typeSymbol != null) {
-                TypeScriptReflectionEmitter.EmitRegisterForType(writer, typeSymbol, cl.Name, conversionOptions.Reflection.RegisterTypeIdent);
-                needsReflectionTypeImport = true;
-            }
-            writer.WriteLine();
         }
 
         /// <summary>
         /// Computes which reflection runtime imports are required for the output file.
         /// </summary>
         void ComputeReflectionImports() {
-            needsReflectionTypeImport = false;
-            needsReflectionEnumImport = false;
-            needsReflectionMetadataImport = false;
+            ReflectionImportTracker.Reset();
 
             if (!conversionOptions.Reflection.EnableReflection) {
                 return;
@@ -828,20 +330,22 @@ namespace cs2.ts {
 
                 switch (cl.DeclarationType) {
                     case MemberDeclarationType.Enum:
-                        needsReflectionEnumImport = true;
+                        ReflectionImportTracker.NeedsEnumImport = true;
                         break;
                     case MemberDeclarationType.Interface:
-                        needsReflectionMetadataImport = true;
+                        ReflectionImportTracker.NeedsMetadataImport = true;
                         break;
                     case MemberDeclarationType.Delegate:
-                        needsReflectionMetadataImport = true;
+                        ReflectionImportTracker.NeedsMetadataImport = true;
                         break;
                     default:
-                        needsReflectionTypeImport = true;
+                        ReflectionImportTracker.NeedsTypeImport = true;
                         break;
                 }
 
-                if (needsReflectionTypeImport && needsReflectionEnumImport && needsReflectionMetadataImport) {
+                if (ReflectionImportTracker.NeedsTypeImport &&
+                    ReflectionImportTracker.NeedsEnumImport &&
+                    ReflectionImportTracker.NeedsMetadataImport) {
                     break;
                 }
             }
@@ -1076,7 +580,7 @@ namespace cs2.ts {
         /// Writes the full TypeScript output for the current program.
         /// </summary>
         /// <param name="writer">The writer receiving the output.</param>
-        void writeOutput(StreamWriter writer) {
+        void writeOutput(TypeScriptOutputWriter writer) {
             SortProgram();
 
             // pre-process
@@ -1090,7 +594,7 @@ namespace cs2.ts {
             PropagateAsyncOverrides();
 
             for (int i = 0; i < program.Classes.Count; i++) {
-                writeClass(program.Classes[i], writer);
+                ClassEmitter.EmitClass(program.Classes[i], writer);
             }
         }
 
@@ -1120,72 +624,16 @@ namespace cs2.ts {
                     return;
                 }
 
-                string extractor = Path.Combine(runtimeDir, "extractor.js");
-                if (!File.Exists(extractor)) {
-                    Console.WriteLine("Warning: extractor.js not found; metadata may be stale.");
-                    return;
-                }
-
-                string typesDir = Path.Combine(runtimeDir, "node_modules", "typescript");
-                if (!Directory.Exists(typesDir)) {
-                    string packageJson = Path.Combine(runtimeDir, "package.json");
-                    if (!File.Exists(packageJson)) {
-                        Console.WriteLine("Metadata not regenerated: package.json not found in .net.ts.");
-                        return;
-                    }
-
-                    Console.WriteLine("-- npm install");
-                    var npmInstall = OperatingSystem.IsWindows()
-                        ? new ProcessStartInfo("cmd.exe", "/c npm install")
-                        : new ProcessStartInfo("npm", "install");
-                    npmInstall.WorkingDirectory = runtimeDir;
-                    npmInstall.UseShellExecute = false;
-                    npmInstall.CreateNoWindow = true;
-                    npmInstall.RedirectStandardOutput = true;
-                    npmInstall.RedirectStandardError = true;
-
-                    using (var npmProcess = Process.Start(npmInstall)) {
-                        if (npmProcess == null) {
-                            Console.WriteLine("Warning: failed to launch npm install (npm not found?).");
-                            return;
-                        }
-
-                        npmProcess.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
-                        npmProcess.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) Console.WriteLine(e.Data); };
-                        npmProcess.BeginOutputReadLine();
-                        npmProcess.BeginErrorReadLine();
-
-                        if (!npmProcess.WaitForExit((int)TimeSpan.FromMinutes(3).TotalMilliseconds)) {
-                            Console.WriteLine("Warning: npm install timed out after 3 minutes.");
-                            try { npmProcess.Kill(); } catch { }
-                            return;
-                        }
-
-                        npmProcess.WaitForExit();
-                        if (npmProcess.ExitCode != 0) {
-                            Console.WriteLine($"Warning: npm install exited with code {npmProcess.ExitCode}.");
-                            return;
-                        }
-                    }
-                }
-
-                var psi = new ProcessStartInfo {
-                    FileName = "node",
-                    Arguments = $"\"{extractor}\" \"{runtimeDir}\"",
-                    WorkingDirectory = runtimeDir,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
+                var request = new TypeScriptRuntimeMetadataRequest {
+                    RuntimeDirectory = runtimeDir,
+                    EnsureDependencies = true,
+                    ThrowOnError = false,
+                    ForwardOutput = true,
+                    InstallTimeoutMinutes = 3,
+                    Logger = Console.WriteLine
                 };
 
-                using var process = Process.Start(psi);
-                if (process == null) {
-                    Console.WriteLine("Warning: failed to launch metadata extractor (node not found?).");
-                    return;
-                }
-                process.WaitForExit();
-                if (process.ExitCode != 0) {
-                    Console.WriteLine($"Warning: metadata extractor exited with code {process.ExitCode}.");
-                }
+                TypeScriptRuntimeMetadata.EnsureRuntimeMetadata(request);
             } catch (Exception ex) {
                 Console.WriteLine($"Warning: unable to regenerate runtime metadata: {ex.Message}");
             }
