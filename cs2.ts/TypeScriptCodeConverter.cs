@@ -848,6 +848,231 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Propagates async flags across related and derived class methods.
+        /// </summary>
+        void PropagateAsyncOverrides() {
+            if (program.Classes == null || program.Classes.Count == 0) {
+                return;
+            }
+
+            Dictionary<string, List<ConversionClass>> classIndex = BuildClassNameIndex(program.Classes);
+            Dictionary<string, List<ConversionClass>> derivedMap = BuildDerivedClassMap(program.Classes);
+            Dictionary<string, List<ConversionClass>> relatedMap = BuildRelatedClassMap(program.Classes, classIndex, derivedMap);
+
+            PropagateAsyncInRelatedClasses(program.Classes, relatedMap);
+            PropagateAsyncInDerivedClasses(program.Classes, derivedMap);
+        }
+
+        /// <summary>
+        /// Builds a lookup of class names to conversion classes that share that name.
+        /// </summary>
+        /// <param name="classes">The classes to index by name.</param>
+        /// <returns>The lookup mapping names to class lists.</returns>
+        Dictionary<string, List<ConversionClass>> BuildClassNameIndex(IReadOnlyList<ConversionClass> classes) {
+            Dictionary<string, List<ConversionClass>> index = new Dictionary<string, List<ConversionClass>>(StringComparer.Ordinal);
+            if (classes == null) {
+                return index;
+            }
+
+            for (int i = 0; i < classes.Count; i++) {
+                ConversionClass cl = classes[i];
+                if (cl == null || string.IsNullOrWhiteSpace(cl.Name)) {
+                    continue;
+                }
+
+                AddClassToMap(index, cl.Name, cl);
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        /// Builds a lookup of base class names to direct derived classes.
+        /// </summary>
+        /// <param name="classes">The conversion classes to analyze.</param>
+        /// <returns>The lookup mapping base names to derived class lists.</returns>
+        Dictionary<string, List<ConversionClass>> BuildDerivedClassMap(IReadOnlyList<ConversionClass> classes) {
+            Dictionary<string, List<ConversionClass>> derivedMap = new Dictionary<string, List<ConversionClass>>(StringComparer.Ordinal);
+            if (classes == null) {
+                return derivedMap;
+            }
+
+            for (int i = 0; i < classes.Count; i++) {
+                ConversionClass cl = classes[i];
+                if (cl == null || cl.Extensions == null) {
+                    continue;
+                }
+
+                for (int j = 0; j < cl.Extensions.Count; j++) {
+                    string extension = cl.Extensions[j];
+                    if (string.IsNullOrWhiteSpace(extension)) {
+                        continue;
+                    }
+
+                    AddClassToMap(derivedMap, extension, cl);
+                }
+            }
+
+            return derivedMap;
+        }
+
+        /// <summary>
+        /// Builds a lookup of class names to directly related classes (base and derived).
+        /// </summary>
+        /// <param name="classes">The conversion classes to analyze.</param>
+        /// <param name="classIndex">Lookup of class names to class lists.</param>
+        /// <param name="derivedMap">Lookup of base names to derived classes.</param>
+        /// <returns>The lookup mapping class names to related class lists.</returns>
+        Dictionary<string, List<ConversionClass>> BuildRelatedClassMap(
+            IReadOnlyList<ConversionClass> classes,
+            Dictionary<string, List<ConversionClass>> classIndex,
+            Dictionary<string, List<ConversionClass>> derivedMap) {
+            Dictionary<string, List<ConversionClass>> relatedMap = new Dictionary<string, List<ConversionClass>>(StringComparer.Ordinal);
+            if (classes == null) {
+                return relatedMap;
+            }
+
+            for (int i = 0; i < classes.Count; i++) {
+                ConversionClass cl = classes[i];
+                if (cl == null || string.IsNullOrWhiteSpace(cl.Name)) {
+                    continue;
+                }
+
+                if (derivedMap.TryGetValue(cl.Name, out List<ConversionClass> derivedClasses)) {
+                    for (int j = 0; j < derivedClasses.Count; j++) {
+                        AddClassToMap(relatedMap, cl.Name, derivedClasses[j]);
+                    }
+                }
+
+                if (cl.Extensions == null) {
+                    continue;
+                }
+
+                for (int j = 0; j < cl.Extensions.Count; j++) {
+                    string extension = cl.Extensions[j];
+                    if (string.IsNullOrWhiteSpace(extension)) {
+                        continue;
+                    }
+
+                    if (!classIndex.TryGetValue(extension, out List<ConversionClass> baseClasses)) {
+                        continue;
+                    }
+
+                    for (int k = 0; k < baseClasses.Count; k++) {
+                        AddClassToMap(relatedMap, cl.Name, baseClasses[k]);
+                    }
+                }
+            }
+
+            return relatedMap;
+        }
+
+        /// <summary>
+        /// Propagates async flags to matching methods in related classes.
+        /// </summary>
+        /// <param name="classes">The classes to scan for async methods.</param>
+        /// <param name="relatedMap">Lookup of class names to related classes.</param>
+        void PropagateAsyncInRelatedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> relatedMap) {
+            if (classes == null || relatedMap == null) {
+                return;
+            }
+
+            for (int j = 0; j < classes.Count; j++) {
+                ConversionClass cl = classes[j];
+                if (cl == null) {
+                    continue;
+                }
+
+                for (int i = 0; i < cl.Functions.Count; i++) {
+                    ConversionFunction fn = cl.Functions[i];
+                    if (!fn.IsAsync) {
+                        continue;
+                    }
+
+                    if (!relatedMap.TryGetValue(cl.Name, out List<ConversionClass> relatedClasses)) {
+                        continue;
+                    }
+
+                    string functionName = fn.Name;
+                    for (int k = 0; k < relatedClasses.Count; k++) {
+                        ConversionClass relatedClass = relatedClasses[k];
+                        if (relatedClass == null || relatedClass == cl) {
+                            continue;
+                        }
+
+                        ConversionFunction relatedFn = relatedClass.Functions.FirstOrDefault(f => f.Name == functionName);
+                        if (relatedFn != null) {
+                            relatedFn.IsAsync = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Propagates async flags to matching methods in derived classes.
+        /// </summary>
+        /// <param name="classes">The classes to scan for async methods.</param>
+        /// <param name="derivedMap">Lookup of base names to derived classes.</param>
+        void PropagateAsyncInDerivedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> derivedMap) {
+            if (classes == null || derivedMap == null) {
+                return;
+            }
+
+            for (int j = 0; j < classes.Count; j++) {
+                ConversionClass cl = classes[j];
+                if (cl == null) {
+                    continue;
+                }
+
+                for (int i = 0; i < cl.Functions.Count; i++) {
+                    ConversionFunction fn = cl.Functions[i];
+                    if (!fn.IsAsync) {
+                        continue;
+                    }
+
+                    if (!derivedMap.TryGetValue(cl.Name, out List<ConversionClass> derivedClasses)) {
+                        continue;
+                    }
+
+                    string functionName = fn.Name;
+                    for (int k = 0; k < derivedClasses.Count; k++) {
+                        ConversionClass derivedClass = derivedClasses[k];
+                        if (derivedClass == null || derivedClass == cl) {
+                            continue;
+                        }
+
+                        ConversionFunction derivedFn = derivedClass.Functions.FirstOrDefault(f => f.Name == functionName);
+                        if (derivedFn != null) {
+                            derivedFn.IsAsync = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds a class to a map keyed by class name, avoiding duplicates.
+        /// </summary>
+        /// <param name="map">The map to update.</param>
+        /// <param name="key">The class name key.</param>
+        /// <param name="value">The class to add.</param>
+        static void AddClassToMap(Dictionary<string, List<ConversionClass>> map, string key, ConversionClass value) {
+            if (map == null || string.IsNullOrWhiteSpace(key) || value == null) {
+                return;
+            }
+
+            if (!map.TryGetValue(key, out List<ConversionClass> list)) {
+                list = new List<ConversionClass>();
+                map.Add(key, list);
+            }
+
+            if (!list.Contains(value)) {
+                list.Add(value);
+            }
+        }
+
+        /// <summary>
         /// Writes the full TypeScript output for the current program.
         /// </summary>
         /// <param name="writer">The writer receiving the output.</param>
@@ -862,70 +1087,7 @@ namespace cs2.ts {
                 }
             }
 
-            // check for async functions in inheritance hierarchy
-            for (int j = 0; j < program.Classes.Count; j++) {
-                ConversionClass cl = program.Classes[j];
-                for (int i = 0; i < cl.Functions.Count; i++) {
-                    ConversionFunction fn = cl.Functions[i];
-
-                    if (fn.IsAsync) {
-                        // check parent and child classes for the same function name
-                        // and make them async too
-                        string functionName = fn.Name;
-
-                        // Check all classes that might have this function (parent or child)
-                        for (int k = 0; k < program.Classes.Count; k++) {
-                            ConversionClass otherClass = program.Classes[k];
-
-                            // Skip the current class
-                            if (otherClass == cl) continue;
-
-                            // Check if this class extends the current class or vice versa
-                            bool isRelated = cl.Extensions.Contains(otherClass.Name) ||
-                                           otherClass.Extensions.Contains(cl.Name);
-
-                            if (isRelated) {
-                                // Find the same function in the related class
-                                ConversionFunction relatedFn = otherClass.Functions.FirstOrDefault(f => f.Name == functionName);
-                                if (relatedFn != null) {
-                                    // Make the related function async too
-                                    relatedFn.IsAsync = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Also check for base class async functions that need to propagate to derived classes
-            for (int j = 0; j < program.Classes.Count; j++) {
-                ConversionClass cl = program.Classes[j];
-                for (int i = 0; i < cl.Functions.Count; i++) {
-                    ConversionFunction fn = cl.Functions[i];
-
-                    if (fn.IsAsync) {
-                        string functionName = fn.Name;
-
-                        // Find all classes that extend this class (derived classes)
-                        for (int k = 0; k < program.Classes.Count; k++) {
-                            ConversionClass derivedClass = program.Classes[k];
-
-                            // Skip the current class
-                            if (derivedClass == cl) continue;
-
-                            // Check if derived class extends this class
-                            if (derivedClass.Extensions.Contains(cl.Name)) {
-                                // Find the same function in the derived class
-                                ConversionFunction derivedFn = derivedClass.Functions.FirstOrDefault(f => f.Name == functionName);
-                                if (derivedFn != null) {
-                                    // Make the derived function async too
-                                    derivedFn.IsAsync = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            PropagateAsyncOverrides();
 
             for (int i = 0; i < program.Classes.Count; i++) {
                 writeClass(program.Classes[i], writer);
