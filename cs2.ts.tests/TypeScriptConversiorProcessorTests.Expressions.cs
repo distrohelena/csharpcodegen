@@ -138,6 +138,23 @@ namespace cs2.ts.tests {
             Assert.Contains("return ", output);
         }
 
+        /// <summary>
+        /// Ensures range element access uses slice syntax.
+        /// </summary>
+        [Fact]
+        public void RangeElementAccess_EmitsSlice() {
+            var code = "class C { string M(string s){ return s[..3]; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var expr = root.DescendantNodes().OfType<ElementAccessExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx, returnType: new VariableType(VariableDataType.String));
+            var lines = TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr);
+            var output = TsProcessorTestHarness.JoinLines(lines);
+
+            Assert.Contains(".slice(", output);
+        }
+
         [Fact]
         public void ImplicitArrayCreation_EmitsBrackets() {
             var code = "class C { void M(){ var x = new[] {1,2,3}; } }";

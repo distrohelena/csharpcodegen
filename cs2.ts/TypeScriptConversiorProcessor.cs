@@ -1560,6 +1560,16 @@ namespace cs2.ts {
                 return;
             }
 
+            if (TryProcessRangeElementAccess(semantic, context, elementAccess, targetLines, lines)) {
+                context.LoadClass(saved);
+                return;
+            }
+
+            if (TryProcessIndexFromEndAccess(semantic, context, elementAccess, targetLines, lines)) {
+                context.LoadClass(saved);
+                return;
+            }
+
             lines.AddRange(targetLines);
             lines.Add("[");
 
@@ -1572,6 +1582,179 @@ namespace cs2.ts {
             lines.Add("]");
 
             context.LoadClass(saved);
+        }
+
+        /// <summary>
+        /// Processes range element access into a slice expression when applicable.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="elementAccess">The element access expression.</param>
+        /// <param name="targetLines">The rendered target expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>True when a range access was handled.</returns>
+        bool TryProcessRangeElementAccess(
+            SemanticModel semantic,
+            LayerContext context,
+            ElementAccessExpressionSyntax elementAccess,
+            List<string> targetLines,
+            List<string> lines) {
+            if (elementAccess.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            if (elementAccess.ArgumentList.Arguments[0].Expression is not RangeExpressionSyntax rangeExpression) {
+                return false;
+            }
+
+            bool usesFromEnd = RangeUsesFromEnd(rangeExpression);
+            if (usesFromEnd) {
+                lines.Add("(() => { const __rangeTarget = ");
+                lines.AddRange(targetLines);
+                lines.Add("; return __rangeTarget.slice(");
+                AppendRangeBoundExpression(semantic, context, rangeExpression.LeftOperand, "__rangeTarget", targetLines, lines, isStart: true);
+
+                if (rangeExpression.RightOperand != null) {
+                    lines.Add(", ");
+                    AppendRangeBoundExpression(semantic, context, rangeExpression.RightOperand, "__rangeTarget", targetLines, lines, isStart: false);
+                }
+
+                lines.Add("); })()");
+            } else {
+                lines.AddRange(targetLines);
+                lines.Add(".slice(");
+                AppendRangeBoundExpression(semantic, context, rangeExpression.LeftOperand, null, targetLines, lines, isStart: true);
+
+                if (rangeExpression.RightOperand != null) {
+                    lines.Add(", ");
+                    AppendRangeBoundExpression(semantic, context, rangeExpression.RightOperand, null, targetLines, lines, isStart: false);
+                }
+
+                lines.Add(")");
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Processes index-from-end element access when applicable.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="elementAccess">The element access expression.</param>
+        /// <param name="targetLines">The rendered target expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>True when an index-from-end access was handled.</returns>
+        bool TryProcessIndexFromEndAccess(
+            SemanticModel semantic,
+            LayerContext context,
+            ElementAccessExpressionSyntax elementAccess,
+            List<string> targetLines,
+            List<string> lines) {
+            if (elementAccess.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            ExpressionSyntax indexExpression = elementAccess.ArgumentList.Arguments[0].Expression;
+            if (!TryGetFromEndOperand(indexExpression, out ExpressionSyntax operand)) {
+                return false;
+            }
+
+            lines.Add("(() => { const __indexTarget = ");
+            lines.AddRange(targetLines);
+            lines.Add("; return __indexTarget[__indexTarget.length - ");
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, operand, lines);
+            context.PopClass(startDepth);
+            lines.Add("]; })()");
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether a range expression uses from-end bounds.
+        /// </summary>
+        /// <param name="rangeExpression">The range expression to inspect.</param>
+        /// <returns>True when either bound is a from-end index.</returns>
+        bool RangeUsesFromEnd(RangeExpressionSyntax rangeExpression) {
+            if (rangeExpression == null) {
+                return false;
+            }
+
+            return IsFromEndIndex(rangeExpression.LeftOperand) || IsFromEndIndex(rangeExpression.RightOperand);
+        }
+
+        /// <summary>
+        /// Checks whether the provided expression represents a from-end index.
+        /// </summary>
+        /// <param name="expression">The bound expression to inspect.</param>
+        /// <returns>True when the bound is a from-end index.</returns>
+        bool IsFromEndIndex(ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            return TryGetFromEndOperand(expression, out _);
+        }
+
+        /// <summary>
+        /// Attempts to extract the operand for a from-end index expression.
+        /// </summary>
+        /// <param name="expression">The expression to inspect.</param>
+        /// <param name="operand">Outputs the operand expression when found.</param>
+        /// <returns>True when the expression represents a from-end index.</returns>
+        bool TryGetFromEndOperand(ExpressionSyntax expression, out ExpressionSyntax operand) {
+            operand = null;
+
+            if (expression is PrefixUnaryExpressionSyntax prefix &&
+                prefix.OperatorToken.IsKind(SyntaxKind.CaretToken)) {
+                operand = prefix.Operand;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Appends a range bound expression, handling omitted bounds and from-end indices.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="bound">The bound expression.</param>
+        /// <param name="targetIdentifier">Optional target identifier to use for length expressions.</param>
+        /// <param name="targetLines">Rendered target expression lines for inline length expressions.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="isStart">True when emitting the start bound.</param>
+        void AppendRangeBoundExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax bound,
+            string targetIdentifier,
+            List<string> targetLines,
+            List<string> lines,
+            bool isStart) {
+            if (bound == null) {
+                if (isStart) {
+                    lines.Add("0");
+                }
+                return;
+            }
+
+            if (TryGetFromEndOperand(bound, out ExpressionSyntax operand)) {
+                if (!string.IsNullOrEmpty(targetIdentifier)) {
+                    lines.Add(targetIdentifier);
+                } else {
+                    lines.AddRange(targetLines);
+                }
+                lines.Add(".length - ");
+                int startDepth = context.DepthClass;
+                ProcessExpression(semantic, context, operand, lines);
+                context.PopClass(startDepth);
+                return;
+            }
+
+            int depth = context.DepthClass;
+            ProcessExpression(semantic, context, bound, lines);
+            context.PopClass(depth);
         }
 
         /// <summary>
