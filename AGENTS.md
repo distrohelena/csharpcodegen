@@ -1,39 +1,18 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `cs2.core/`: Roslyn-based core (models, processors, utilities) shared by backends.
-- `cs2.ts/`: TypeScript backend and TS runtime under `.net.ts/` (helpers copied on build).
-- `cs2.cpp/`: C++ backend and C++ runtime under `.net.cpp/`.
-- `cs2.cpp.symbols/`: C++ helper project for symbol extraction; requires Doxygen in `PATH`.
-- Samples/Tests: `codegen.sample/` (usage example), `codegen.testproj/` (smoke tests).
-- Solution: `codegen.sln` aggregates all projects.
-
-## Build, Test, and Development Commands
-- `dotnet build codegen.sln -c Debug` — build all projects (requires .NET 9 SDK).
-- `dotnet run --project codegen.testproj` — run smoke tests (binary IO, memory stream).
-- `dotnet run --project codegen.sample` — run the sample app.
-- TypeScript helpers: `cd cs2.ts/.net.ts && npm install && npx tsc` — validate TS runtime.
-- C++ backend: ensure `doxygen` is installed and on `PATH` before using `cs2.cpp`.
-
-## Coding Style & Naming Conventions
-- C#: 4-space indent, braces on same line, nullable by project settings.
-- Naming: PascalCase for types/methods; camelCase for locals/parameters.
-- Namespaces: `cs2.core`, `cs2.ts`, `cs2.cpp` to scope code by module.
-- File/module organization: place new types under `model/`, utilities under `util/`.
-- Backend class prefixes: mirror target (e.g., `TypeScript*`, `CPP*`).
-
-## Testing Guidelines
-- Use `codegen.testproj` for smoke tests; add files as `*Test.cs` and invoke from `Program.cs`.
-- Prefer deterministic console output to validate behavior (e.g., BinaryReader/Writer roundtrips).
-- Aim to cover new rules, type mappings, and edge cases you introduce.
-
-## Commit & Pull Request Guidelines
-- Commits: imperative, concise (e.g., "Fix constructors", "Add IDisposable").
-- One logical change per commit; do not commit `bin/`, `obj/`, or generated artifacts.
-- PRs: include a clear description, affected backend(s), reproduction/verification steps
-  (e.g., `dotnet run --project codegen.testproj`), and sample output where helpful. Link issues.
-
-## Security & Configuration Tips
-- Prereqs: .NET 9 SDK; Node.js (for TS runtime/tools); Doxygen (for C++ symbols).
-- Do not commit large test data or generated files. Keep paths portable across OSes.
-
+- One class per file.
+- Add XML comments to every class, function and or property. Make sure the code is as easy as possible to be read by humans.
+- XML comments must be substantive (avoid placeholder text) and explain the role/behavior. All members (fields, properties, methods, constructors) should have XML comments.
+- All projects use the default Global Usings; no need to keep adding back imports.
+- Order members using standard C# layout (constants/fields, constructors, properties, methods) to keep files predictable.
+- Do not add redundant `private` modifiers; members without an access modifier are assumed private in C#.
+- All fields should be PascalCase.
+- C# code should follow TypeScript indentation rules for end and close brackets.
+- Do not use tuples.
+- Follow MVC: keep logic in separate classes (controllers/services/managers) and keep UI classes focused only on presentation and input wiring.
+- Avoid half-measures that patch broken state; ensure systems are correctly initialized or fix the underlying cause instead of bolting on runtime fixes.
+- Do not create local helper functions; if a helper is needed, add it to the appropriate Utils class or to a related type.
+- Do not create default values when a valid value is required; throw exceptions instead of silently constructing default.
+- Avoid using `??` for exception handling; validate inputs before assignment so error causes stay clear.
+- Prefer `else if` for sequential conditional checks that are mutually exclusive; avoid stacked `if` statements when only one branch should be evaluated.
+- Nullable reference types are disabled; do not use nullable annotations or nullable patterns in code.

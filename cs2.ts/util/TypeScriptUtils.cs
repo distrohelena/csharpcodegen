@@ -8,11 +8,14 @@ namespace cs2.ts {
     public static class TypeScriptUtils {
         /// <summary>
         /// Computes implements/extends clauses for a given class based on its extensions and declaration type.
-        /// Returns a tuple of formatted strings: (implements, extends).
         /// </summary>
-        public static (string, string) GetInheritance(ConversionProgram program, ConversionClass cl) {
-            string implements = "";
-            string extends = "";
+        /// <param name="program">The program containing known classes and requirements.</param>
+        /// <param name="cl">The class whose inheritance metadata is inspected.</param>
+        /// <param name="implements">Outputs the formatted implements clause, if any.</param>
+        /// <param name="extends">Outputs the formatted extends clause, if any.</param>
+        public static void GetInheritance(ConversionProgram program, ConversionClass cl, out string implements, out string extends) {
+            implements = "";
+            extends = "";
 
             List<string> exts = new List<string>();
             List<string> impls = new List<string>();
@@ -27,8 +30,11 @@ namespace cs2.ts {
                     // If not found here, it may be provided externally by the TS runtime.
                 }
 
-                if (extCl?.DeclarationType == MemberDeclarationType.Interface ||
-                    cl.DeclarationType == MemberDeclarationType.Interface) {
+                bool isInterface = cl.DeclarationType == MemberDeclarationType.Interface;
+                if (!isInterface && extCl != null) {
+                    isInterface = extCl.DeclarationType == MemberDeclarationType.Interface;
+                }
+                if (isInterface) {
                     impls.Add(ext);
                 } else {
                     exts.Add(ext);
@@ -57,7 +63,6 @@ namespace cs2.ts {
                 }
             }
 
-            return (implements, extends);
         }
     }
 }

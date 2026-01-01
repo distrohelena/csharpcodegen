@@ -8,6 +8,9 @@ namespace cs2.ts {
         /// <summary>
         /// Returns the TS type name, including generic arity adjustments for known classes.
         /// </summary>
+        /// <param name="varType">The source variable type to map.</param>
+        /// <param name="program">The TypeScript program containing type mappings.</param>
+        /// <returns>The TypeScript type name for the variable.</returns>
         public static string GetTypeScriptType(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
@@ -34,6 +37,9 @@ namespace cs2.ts {
         /// <summary>
         /// Returns the TS type name without generic arguments (e.g., Dictionary&lt;,&gt; -> Dictionary).
         /// </summary>
+        /// <param name="varType">The source variable type to map.</param>
+        /// <param name="program">The TypeScript program containing type mappings.</param>
+        /// <returns>The TypeScript type name without generic arguments.</returns>
         public static string GetTypeScriptTypeNoGeneric(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {
@@ -53,6 +59,9 @@ namespace cs2.ts {
         /// <summary>
         /// Returns TS type string with Promise&lt;T&gt; unwrapped when present.
         /// </summary>
+        /// <param name="varType">The source variable type to map.</param>
+        /// <param name="program">The TypeScript program containing type mappings.</param>
+        /// <returns>The TypeScript type name without a Promise wrapper.</returns>
         public static string ToTypeScriptStringNoAsync(this VariableType varType, TypeScriptProgram program) {
             string value = ToTypeScriptString(varType, program);
 
@@ -67,6 +76,9 @@ namespace cs2.ts {
         /// <summary>
         /// Returns full TS type string, handling arrays, tuples, and generics.
         /// </summary>
+        /// <param name="varType">The source variable type to map.</param>
+        /// <param name="program">The TypeScript program containing type mappings.</param>
+        /// <returns>The full TypeScript type name, including generics.</returns>
         public static string ToTypeScriptString(this VariableType varType, TypeScriptProgram program) {
             string typeName = varType.TypeName;
             if (varType.GenericArgs.Count == 0) {

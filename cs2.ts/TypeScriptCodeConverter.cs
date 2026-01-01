@@ -20,28 +20,75 @@ namespace cs2.ts {
     /// Writes TS output and copies required runtime helpers from .net.ts.
     /// </summary>
     public class TypeScriptCodeConverter : CodeConverter {
+        /// <summary>
+        /// Stores the resolved assembly name for placeholder replacement.
+        /// </summary>
         string assemblyName;
+        /// <summary>
+        /// Stores the resolved assembly version for placeholder replacement.
+        /// </summary>
         string version;
+        /// <summary>
+        /// Stores the resolved target framework for placeholder replacement.
+        /// </summary>
         string targetFramework;
 
+        /// <summary>
+        /// Handles TypeScript-specific conversion of syntax nodes.
+        /// </summary>
         TypeScriptConversiorProcessor conversion;
+        /// <summary>
+        /// Holds the TypeScript conversion program metadata.
+        /// </summary>
         TypeScriptProgram tsProgram;
+        /// <summary>
+        /// Stores the resolved conversion options used during conversion.
+        /// </summary>
         readonly TypeScriptConversionOptions conversionOptions;
+        /// <summary>
+        /// Stores the preprocessor symbols used for conversion.
+        /// </summary>
         readonly string[] preprocessorSymbols;
+        /// <summary>
+        /// Indicates whether project-defined preprocessor symbols are retained.
+        /// </summary>
         readonly bool includeProjectPreprocessorSymbols;
+        /// <summary>
+        /// Tracks whether a type registration import is required.
+        /// </summary>
         bool needsReflectionTypeImport;
+        /// <summary>
+        /// Tracks whether an enum registration import is required.
+        /// </summary>
         bool needsReflectionEnumImport;
+        /// <summary>
+        /// Tracks whether a metadata registration import is required.
+        /// </summary>
         bool needsReflectionMetadataImport;
 
-        protected override string[] PreProcessorSymbols => preprocessorSymbols;
-
-        public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions? options = null)
+        /// <summary>
+        /// Creates a new converter for the given environment and options.
+        /// </summary>
+        /// <param name="rules">The conversion rules shared across backends.</param>
+        /// <param name="env">The TypeScript runtime environment.</param>
+        /// <param name="options">Optional conversion options.</param>
+        public TypeScriptCodeConverter(ConversionRules rules, TypeScriptEnvironment env, TypeScriptConversionOptions options = null)
             : base(rules) {
-            Directory.SetCurrentDirectory(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+            string assemblyLocation = Assembly.GetExecutingAssembly().Location;
+            string baseDirectory = Path.GetDirectoryName(assemblyLocation);
+            if (string.IsNullOrWhiteSpace(baseDirectory)) {
+                throw new InvalidOperationException("Unable to resolve converter base directory.");
+            }
+
+            Directory.SetCurrentDirectory(baseDirectory);
             this.rules = rules;
 
-            var resolvedOptions = options?.Clone() ?? TypeScriptConversionOptions.Default.Clone();
-            resolvedOptions.Reflection.EnableReflection = resolvedOptions.EnableReflection;
+            TypeScriptConversionOptions resolvedOptions;
+            if (options == null) {
+                resolvedOptions = TypeScriptConversionOptions.Default.Clone();
+            } else {
+                resolvedOptions = options.Clone();
+            }
             conversionOptions = resolvedOptions;
             TypeScriptReflectionEmitter.GlobalOptions = resolvedOptions.Reflection.Clone();
 
@@ -67,7 +114,25 @@ namespace cs2.ts {
             targetFramework = "";
         }
 
-        private static string[] BuildPreprocessorSymbols(TypeScriptConversionOptions options) {
+        /// <summary>
+        /// Gets the preprocessor symbols applied during conversion.
+        /// </summary>
+        protected override string[] PreProcessorSymbols => preprocessorSymbols;
+        /// <summary>
+        /// Gets whether project-defined preprocessor symbols are preserved.
+        /// </summary>
+        internal bool IncludeProjectPreprocessorSymbols => includeProjectPreprocessorSymbols;
+        /// <summary>
+        /// Gets the internal preprocessor symbol list for pipeline stages.
+        /// </summary>
+        internal string[] PreprocessorSymbols => preprocessorSymbols;
+
+        /// <summary>
+        /// Builds the full set of preprocessor symbols used during conversion.
+        /// </summary>
+        /// <param name="options">The conversion options that may add symbols.</param>
+        /// <returns>The resolved preprocessor symbol list.</returns>
+        static string[] BuildPreprocessorSymbols(TypeScriptConversionOptions options) {
             HashSet<string> symbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TYPESCRIPT", "CSHARP" };
 
             if (options.AdditionalPreprocessorSymbols != null) {
@@ -83,6 +148,10 @@ namespace cs2.ts {
             return symbols.ToArray();
         }
 
+        /// <summary>
+        /// Configures the conversion pipeline with TypeScript-specific stages.
+        /// </summary>
+        /// <param name="builder">The pipeline builder used to register stages.</param>
         protected override void ConfigurePipeline(ConversionPipelineBuilder builder) {
             base.ConfigurePipeline(builder);
 
@@ -109,6 +178,8 @@ namespace cs2.ts {
         /// <summary>
         /// Writes the generated TypeScript file and copies runtime helpers into <paramref name="outputFolder"/>.
         /// </summary>
+        /// <param name="outputFolder">The folder that receives generated output.</param>
+        /// <param name="fileName">The TypeScript file name to write.</param>
         public void WriteFile(string outputFolder, string fileName) {
             var replacements = new Dictionary<string, string>() {
                 { "ASSEMBLY_NAME", assemblyName },
@@ -116,7 +187,17 @@ namespace cs2.ts {
                 { "ASSEMBLY_DESCRIPTION", targetFramework }
             };
 
-            string rootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, ".net.ts");
+            Assembly entryAssembly = Assembly.GetEntryAssembly();
+            if (entryAssembly == null) {
+                throw new InvalidOperationException("Unable to resolve entry assembly for runtime metadata.");
+            }
+
+            string entryDirectory = Path.GetDirectoryName(entryAssembly.Location);
+            if (string.IsNullOrWhiteSpace(entryDirectory)) {
+                throw new InvalidOperationException("Unable to resolve entry assembly directory.");
+            }
+
+            string rootPath = Path.Combine(entryDirectory, ".net.ts");
             DirectoryUtil.RecursiveCopy(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder),
                 (file, reader, writer) => {
                     string source = reader.ReadToEnd();
@@ -129,7 +210,10 @@ namespace cs2.ts {
                 });
 
             string outputFile = Path.Combine(outputFolder, fileName);
-            string outputDir = Path.GetDirectoryName(outputFile)!;
+            string outputDir = Path.GetDirectoryName(outputFile);
+            if (string.IsNullOrWhiteSpace(outputDir)) {
+                throw new InvalidOperationException("Unable to resolve output directory.");
+            }
             Directory.CreateDirectory(outputDir);
 
             if (File.Exists(outputFile)) {
@@ -180,16 +264,36 @@ namespace cs2.ts {
             WriteStrictTsConfig(outputFolder);
         }
 
-        private void SetAssemblyMetadata(string assembly, string resolvedVersion, string framework) {
-            assemblyName = assembly ?? string.Empty;
-            version = resolvedVersion ?? string.Empty;
-            targetFramework = framework ?? string.Empty;
+        /// <summary>
+        /// Stores assembly metadata for placeholder replacement in emitted assets.
+        /// </summary>
+        /// <param name="assembly">The resolved assembly name.</param>
+        /// <param name="resolvedVersion">The resolved assembly version.</param>
+        /// <param name="framework">The resolved target framework.</param>
+        internal void SetAssemblyMetadata(string assembly, string resolvedVersion, string framework) {
+            if (assembly == null) {
+                assemblyName = string.Empty;
+            } else {
+                assemblyName = assembly;
+            }
+            if (resolvedVersion == null) {
+                version = string.Empty;
+            } else {
+                version = resolvedVersion;
+            }
+            if (framework == null) {
+                targetFramework = string.Empty;
+            } else {
+                targetFramework = framework;
+            }
         }
 
         /// <summary>
         /// Emits static initializer block for classes with static constructors.
         /// </summary>
-        private void writeStaticConstructor(ConversionClass cl, StreamWriter writer) {
+        /// <param name="cl">The class being emitted.</param>
+        /// <param name="writer">The writer receiving the output.</param>
+        void writeStaticConstructor(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && c.IsStatic).ToList();
             if (constructors.Count == 0) {
                 return;
@@ -207,7 +311,9 @@ namespace cs2.ts {
         /// <summary>
         /// Emits constructor overloads and factory methods for TypeScript.
         /// </summary>
-        private void writeConstructors(ConversionClass cl, StreamWriter writer) {
+        /// <param name="cl">The class being emitted.</param>
+        /// <param name="writer">The writer receiving the output.</param>
+        void writeConstructors(ConversionClass cl, StreamWriter writer) {
             var constructors = cl.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
             var classOverrides = cl.Extensions.Count(over => {
                 var extCl = program.Classes.FirstOrDefault(c => c.Name == over);
@@ -225,7 +331,7 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string? def = param.DefaultValue;
+                    string def = param.DefaultValue;
                     if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                         def = "";
                     }
@@ -257,7 +363,7 @@ namespace cs2.ts {
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
                         string type = param.VarType.ToTypeScriptString(tsProgram);
-                        string? def = param.DefaultValue;
+                        string def = param.DefaultValue;
                         if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                             def = "";
                         }
@@ -314,7 +420,14 @@ namespace cs2.ts {
             }
         }
 
-        private bool writeVariable(ConversionClass cl, ConversionVariable var, StreamWriter writer) {
+        /// <summary>
+        /// Writes a TypeScript field or property for the given conversion variable.
+        /// </summary>
+        /// <param name="cl">The owning class.</param>
+        /// <param name="var">The variable to emit.</param>
+        /// <param name="writer">The writer receiving the output.</param>
+        /// <returns>True when output was emitted for the variable.</returns>
+        bool writeVariable(ConversionClass cl, ConversionVariable var, StreamWriter writer) {
             string access = var.AccessType.ToString().ToLowerInvariant();
             if (cl.DeclarationType == MemberDeclarationType.Interface) {
                 access = "";
@@ -447,7 +560,11 @@ namespace cs2.ts {
             return false;
         }
 
-        private void preprocessClass(ConversionClass cl) {
+        /// <summary>
+        /// Preprocesses class members to apply name remaps and line caching.
+        /// </summary>
+        /// <param name="cl">The class to preprocess.</param>
+        void preprocessClass(ConversionClass cl) {
             if (cl.IsNative) {
                 return;
             }
@@ -468,17 +585,28 @@ namespace cs2.ts {
             }
         }
 
-        private void writeClass(ConversionClass cl, StreamWriter writer) {
+        /// <summary>
+        /// Emits TypeScript declarations for a conversion class.
+        /// </summary>
+        /// <param name="cl">The class to emit.</param>
+        /// <param name="writer">The writer receiving the output.</param>
+        void writeClass(ConversionClass cl, StreamWriter writer) {
             if (cl.IsNative) {
                 return;
             }
 
-            var typeSymbol = cl.TypeSymbol as INamedTypeSymbol;
-            bool emitReflection = conversionOptions.EnableReflection && typeSymbol != null;
-            bool emitStaticReflection = emitReflection && conversionOptions.UseStaticReflectionCache;
-            bool emitTrailingReflection = emitReflection && !conversionOptions.UseStaticReflectionCache;
+            INamedTypeSymbol typeSymbol = null;
+            if (cl.TypeSymbol is INamedTypeSymbol namedTypeSymbol) {
+                typeSymbol = namedTypeSymbol;
+            }
 
-            var (implements, extends) = TypeScriptUtils.GetInheritance(program, cl);
+            bool emitReflection = conversionOptions.Reflection.EnableReflection && typeSymbol != null;
+            bool emitStaticReflection = emitReflection && conversionOptions.Reflection.UseStaticReflectionCache;
+            bool emitTrailingReflection = emitReflection && !conversionOptions.Reflection.UseStaticReflectionCache;
+
+            string implements;
+            string extends;
+            TypeScriptUtils.GetInheritance(program, cl, out implements, out extends);
 
             if (cl.DeclarationType == MemberDeclarationType.Interface) {
                 writer.WriteLine($"export interface {cl.Name}{extends} {{");
@@ -494,7 +622,7 @@ namespace cs2.ts {
                 for (int k = 0; k < del.InParameters.Count; k++) {
                     var param = del.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string? def = param.DefaultValue;
+                    string def = param.DefaultValue;
                     if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                         def = "";
                     }
@@ -543,7 +671,7 @@ namespace cs2.ts {
 
                 return;
             } else {
-                if (cl.GenericArgs?.Count > 0) {
+                if (cl.GenericArgs != null && cl.GenericArgs.Count > 0) {
                     string generics = "";
                     for (int j = 0; j < cl.GenericArgs.Count; j++) {
                         generics += cl.GenericArgs[j];
@@ -574,7 +702,7 @@ namespace cs2.ts {
             }
 
             if (emitStaticReflection && cl.DeclarationType != MemberDeclarationType.Interface && cl.DeclarationType != MemberDeclarationType.Delegate && cl.DeclarationType != MemberDeclarationType.Enum) {
-                                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol!, cl.Name, conversionOptions.Reflection);
+                TypeScriptReflectionEmitter.EmitPrivateStaticReflectionField(writer, typeSymbol, cl.Name, conversionOptions.Reflection);
                 Console.WriteLine($"-- reflection cache field emitted for {cl.Name} ({cl.DeclarationType})");
                 needsReflectionTypeImport = true;
                 writer.WriteLine();
@@ -624,7 +752,7 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(tsProgram);
-                    string? def = param.DefaultValue;
+                    string def = param.DefaultValue;
                     if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                         def = "";
                     }
@@ -640,7 +768,10 @@ namespace cs2.ts {
                     }
                 }
 
-                string returnParameter = fn.ReturnType?.ToTypeScriptString(tsProgram);
+                string returnParameter = null;
+                if (fn.ReturnType != null) {
+                    returnParameter = fn.ReturnType.ToTypeScriptString(tsProgram);
+                }
                 if (string.IsNullOrWhiteSpace(returnParameter)) {
                     returnParameter = "void";
                 }
@@ -674,12 +805,15 @@ namespace cs2.ts {
             writer.WriteLine();
         }
 
-        private void ComputeReflectionImports() {
+        /// <summary>
+        /// Computes which reflection runtime imports are required for the output file.
+        /// </summary>
+        void ComputeReflectionImports() {
             needsReflectionTypeImport = false;
             needsReflectionEnumImport = false;
             needsReflectionMetadataImport = false;
 
-            if (!conversionOptions.EnableReflection) {
+            if (!conversionOptions.Reflection.EnableReflection) {
                 return;
             }
 
@@ -713,7 +847,11 @@ namespace cs2.ts {
             }
         }
 
-        private void writeOutput(StreamWriter writer) {
+        /// <summary>
+        /// Writes the full TypeScript output for the current program.
+        /// </summary>
+        /// <param name="writer">The writer receiving the output.</param>
+        void writeOutput(StreamWriter writer) {
             SortProgram();
 
             // pre-process
@@ -794,9 +932,18 @@ namespace cs2.ts {
             }
         }
 
+        /// <summary>
+        /// Ensures runtime metadata JSON files exist for the bundled TypeScript runtime.
+        /// </summary>
         static void EnsureRuntimeMetadata() {
             try {
-                string baseDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+                string assemblyLocation = Assembly.GetExecutingAssembly().Location;
+                string baseDir = Path.GetDirectoryName(assemblyLocation);
+                if (string.IsNullOrWhiteSpace(baseDir)) {
+                    Console.WriteLine("Warning: unable to resolve runtime metadata directory.");
+                    return;
+                }
+
                 string runtimeDir = Path.Combine(baseDir, ".net.ts");
                 if (!Directory.Exists(runtimeDir)) {
                     return;
@@ -881,110 +1028,60 @@ namespace cs2.ts {
                 Console.WriteLine($"Warning: unable to regenerate runtime metadata: {ex.Message}");
             }
         }
+        /// <summary>
+        /// Preprocesses expressions before conversion to cache analysis results.
+        /// </summary>
+        /// <param name="model">The semantic model for the document.</param>
+        /// <param name="member">The member being processed.</param>
+        /// <param name="context">The active conversion context.</param>
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {
             ConversionPreProcessor.PreProcessExpression(model, context, member);
         }
 
+        /// <summary>
+        /// Applies TypeScript-specific class processing after base conversion.
+        /// </summary>
+        /// <param name="cl">The class being processed.</param>
+        /// <param name="program">The conversion program containing the class.</param>
         protected override void ProcessClass(ConversionClass cl, ConversionProgram program) {
             conversion.ProcessClass(cl, program);
         }
 
-        private void WriteStrictTsConfig(string outputFolder) {
+        /// <summary>
+        /// Writes a strict tsconfig configuration alongside generated output.
+        /// </summary>
+        /// <param name="outputFolder">The output folder that receives the config.</param>
+        void WriteStrictTsConfig(string outputFolder) {
             string configPath = Path.Combine(outputFolder, "tsconfig.strict.json");
             string configContent = @"{
-  ""compilerOptions"": {
-    ""target"": ""ES2020"",
-    ""module"": ""es2020"",
-    ""moduleResolution"": ""node"",
-    ""strict"": true,
-    ""noImplicitAny"": true,
-    ""esModuleInterop"": true,
-    ""skipLibCheck"": true,
-    ""forceConsistentCasingInFileNames"": true,
-    ""resolveJsonModule"": true,
-    ""lib"": [
-      ""ES2020"",
-      ""DOM"",
-      ""DOM.Iterable""
+    ""compilerOptions"": {
+        ""target"": ""ES2020"",
+        ""module"": ""es2020"",
+        ""moduleResolution"": ""node"",
+        ""strict"": true,
+        ""noImplicitAny"": true,
+        ""esModuleInterop"": true,
+        ""skipLibCheck"": true,
+        ""forceConsistentCasingInFileNames"": true,
+        ""resolveJsonModule"": true,
+        ""lib"": [
+            ""ES2020"",
+            ""DOM"",
+            ""DOM.Iterable""
+        ],
+        ""noEmit"": true
+    },
+    ""include"": [
+        ""./**/*.ts"",
+        ""./**/*.d.ts""
     ],
-    ""noEmit"": true
-  },
-  ""include"": [
-    ""./**/*.ts"",
-    ""./**/*.d.ts""
-  ],
-  ""exclude"": [
-    ""node_modules""
-  ]
+    ""exclude"": [
+        ""node_modules""
+    ]
 }";
 
             Directory.CreateDirectory(outputFolder);
             File.WriteAllText(configPath, configContent);
-        }
-
-        private sealed class TypeScriptPreprocessorFilterStage : IConversionStage {
-            private readonly TypeScriptCodeConverter owner;
-
-            public TypeScriptPreprocessorFilterStage(TypeScriptCodeConverter owner) {
-                this.owner = owner;
-            }
-
-            public void Execute(ConversionSession session) {
-                if (owner.includeProjectPreprocessorSymbols) {
-                    return;
-                }
-
-                if (session.Project.ParseOptions is not CSharpParseOptions parseOptions) {
-                    return;
-                }
-
-                CSharpParseOptions updated = parseOptions.WithPreprocessorSymbols(owner.preprocessorSymbols);
-                session.Project = session.Project.WithParseOptions(updated);
-            }
-        }
-
-        private sealed class TypeScriptAssemblyMetadataStage : IConversionStage {
-            private readonly TypeScriptCodeConverter owner;
-
-            public TypeScriptAssemblyMetadataStage(TypeScriptCodeConverter owner) {
-                this.owner = owner;
-            }
-
-            public void Execute(ConversionSession session) {
-                string assembly = session.Project.AssemblyName ?? string.Empty;
-                string version = string.Empty;
-                string framework = string.Empty;
-
-                string? projectFile = session.Project.FilePath;
-                if (!string.IsNullOrEmpty(projectFile) && File.Exists(projectFile)) {
-                    try {
-                        XDocument document = XDocument.Load(projectFile);
-                        assembly = ReadProperty(document, "AssemblyName") ?? assembly;
-                        version = ReadProperty(document, "Version")
-                                  ?? ReadProperty(document, "AssemblyVersion")
-                                  ?? ReadProperty(document, "FileVersion")
-                                  ?? version;
-                        framework = ReadProperty(document, "TargetFramework")
-                                    ?? ReadProperty(document, "TargetFrameworks")
-                                    ?? framework;
-                    } catch (Exception ex) {
-                        Console.WriteLine($"Warning: unable to read assembly metadata: {ex.Message}");
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(framework) && framework.Contains(';')) {
-                    framework = framework.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? framework;
-                }
-
-                owner.SetAssemblyMetadata(assembly, version, framework);
-            }
-
-            private static string? ReadProperty(XDocument document, string propertyName) {
-                return document.Root?
-                    .Descendants()
-                    .FirstOrDefault(node => node.Name.LocalName.Equals(propertyName, StringComparison.OrdinalIgnoreCase))?
-                    .Value;
-            }
         }
 
     }

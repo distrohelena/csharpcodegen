@@ -12,24 +12,35 @@ namespace cs2.ts {
     /// Responsible for wiring the TS runtime symbols and native remaps used by the converter.
     /// </summary>
     public class TypeScriptProgram : ConversionProgram {
-        public List<TypeScriptKnownClass> Requirements { get; private set; }
-        private void AddRequirement(TypeScriptKnownClass requirement) {
-            if (!Requirements.Any(r => r.Name == requirement.Name && r.Path == requirement.Path)) {
-                Requirements.Add(requirement);
-            }
-        }
-
-
-
+        /// <summary>
+        /// Initializes a new TypeScript program instance.
+        /// </summary>
+        /// <param name="rules">The conversion rules used to configure the program.</param>
         public TypeScriptProgram(ConversionRules rules)
             : base(rules) {
             Requirements = new List<TypeScriptKnownClass>();
         }
 
         /// <summary>
+        /// Gets the runtime symbol requirements gathered for the program.
+        /// </summary>
+        public List<TypeScriptKnownClass> Requirements { get; private set; }
+
+        /// <summary>
+        /// Adds a runtime requirement if it has not already been included.
+        /// </summary>
+        /// <param name="requirement">The runtime class requirement to add.</param>
+        void AddRequirement(TypeScriptKnownClass requirement) {
+            if (!Requirements.Any(r => r.Name == requirement.Name && r.Path == requirement.Path)) {
+                Requirements.Add(requirement);
+            }
+        }
+
+        /// <summary>
         /// Configures the TypeScript program with .NET-like runtime symbols and mappings for the given environment.
         /// Loads symbol JSON from .net.ts, sets up native remaps, and populates <see cref="Classes"/>.
         /// </summary>
+        /// <param name="env">The target TypeScript runtime environment.</param>
         public void AddDotNet(TypeScriptEnvironment env) {
             this.buildTypeMap();
 
@@ -229,27 +240,29 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// NodeJS-specific environment shims.
+        /// Adds Node.js-specific runtime requirements.
         /// </summary>
-        private void addNode() {
+        void addNode() {
             AddRequirement(new TypeScriptKnownClass("NodeDirectory", "./system/io/node-directory", "Directory"));
             AddRequirement(new TypeScriptKnownClass("File", "./system/io/node-file"));
             AddRequirement(new TypeScriptKnownClass("FileStream", "./system/io/node-file-stream"));
         }
 
         /// <summary>
-        /// Web-specific environment shims.
+        /// Adds web-specific runtime requirements.
         /// </summary>
-        private void addWeb() {
+        void addWeb() {
             AddRequirement(new TypeScriptKnownClass("WebDirectory", "./system/io/web-directory", "Directory"));
             AddRequirement(new TypeScriptKnownClass("File", "./system/io/file"));
             AddRequirement(new TypeScriptKnownClass("FileStream", "./system/io/file-stream"));
         }
 
         /// <summary>
-        /// Creates a native (non-generated) class placeholder with common members.
+        /// Creates a native conversion class for a runtime type name.
         /// </summary>
-        private ConversionClass makeClass(string name) {
+        /// <param name="name">The runtime type name.</param>
+        /// <returns>The created conversion class.</returns>
+        ConversionClass makeClass(string name) {
             ConversionClass cl = new ConversionClass();
             cl.Name = name;
             cl.IsNative = true;
@@ -260,9 +273,14 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Adds a remapped function to a native class placeholder.
+        /// Adds a remapped function member to a native conversion class.
         /// </summary>
-        private void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "", string remapCl = "") {
+        /// <param name="name">The original member name.</param>
+        /// <param name="remap">The TypeScript name override.</param>
+        /// <param name="cl">The class receiving the member.</param>
+        /// <param name="type">The optional return type override.</param>
+        /// <param name="remapCl">Optional class name to remap the call target.</param>
+        void makeTypeScriptFunction(string name, string remap, ConversionClass cl, string type = "", string remapCl = "") {
             ConversionFunction fnToString = new ConversionFunction();
             fnToString.Name = name;
             fnToString.Remap = remap;
@@ -274,9 +292,13 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Adds a remapped variable to a native class placeholder.
+        /// Adds a remapped variable member to a native conversion class.
         /// </summary>
-        private void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type) {
+        /// <param name="name">The original member name.</param>
+        /// <param name="remap">The TypeScript name override.</param>
+        /// <param name="cl">The class receiving the member.</param>
+        /// <param name="type">The variable type name.</param>
+        void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type) {
             ConversionVariable fnToString = new ConversionVariable();
             fnToString.Name = name;
             fnToString.Remap = remap;
@@ -285,9 +307,9 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Registers native TS prototypes/methods that emulate .NET members (e.g., Array, string, Math).
+        /// Builds native remaps for core runtime classes and helpers.
         /// </summary>
-        private void buildNativeRemap() {
+        void buildNativeRemap() {
             ConversionClass clArray = makeClass("Array");
             Classes.Add(clArray);
             makeTypeScriptVariable("Length", "length", clArray, "int");
@@ -336,9 +358,13 @@ namespace cs2.ts {
         /// Ensures .net.ts dependencies are installed, then runs the symbol extractor to generate JSON
         /// that describes available TS classes/interfaces/enums. This JSON is consumed to populate Requirements.
         /// </summary>
-        private void buildDotNetData() {
+        void buildDotNetData() {
             string startFolder = AssemblyUtil.GetStartFolder();
-            string assemblyFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+            string assemblyLocation = Assembly.GetExecutingAssembly().Location;
+            string assemblyFolder = Path.GetDirectoryName(assemblyLocation);
+            if (string.IsNullOrWhiteSpace(assemblyFolder)) {
+                throw new InvalidOperationException("Unable to resolve assembly directory.");
+            }
             string dotNetFolder = Path.Combine(startFolder, ".net.ts");
             if (!Directory.Exists(dotNetFolder)) {
                 dotNetFolder = Path.Combine(assemblyFolder, ".net.ts");
@@ -427,9 +453,9 @@ namespace cs2.ts {
             }
         }
         /// <summary>
-        /// Maps common .NET primitive types to TypeScript equivalents.
+        /// Builds the C# to TypeScript type name map for the runtime.
         /// </summary>
-        private void buildTypeMap() {
+        void buildTypeMap() {
             TypeMap.Add("object", "any");
 
             TypeMap.Add("Byte", "number");

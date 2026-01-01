@@ -33,7 +33,7 @@ namespace cs2.ts.tests {
             var symbol = GetClassSymbol("namespace Demo { public class Foo { } }");
             var conversionClass = new ConversionClass { Name = symbol.Name, TypeSymbol = symbol };
 
-            var options = new TypeScriptConversionOptions { EnableReflection = false };
+            var options = new TypeScriptConversionOptions { Reflection = new ReflectionOptions { EnableReflection = false } };
             string output = RenderClass(options, conversionClass);
 
             Assert.DoesNotContain("registerType", output);
@@ -45,7 +45,7 @@ namespace cs2.ts.tests {
             var symbol = GetClassSymbol("namespace Demo { public class Foo { } }");
             var conversionClass = new ConversionClass { Name = symbol.Name, TypeSymbol = symbol };
 
-            var options = new TypeScriptConversionOptions { UseStaticReflectionCache = false };
+            var options = new TypeScriptConversionOptions { Reflection = new ReflectionOptions { UseStaticReflectionCache = false } };
             string output = RenderClass(options, conversionClass);
 
             Assert.DoesNotContain("private static readonly __type", output);

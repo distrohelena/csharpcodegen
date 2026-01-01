@@ -11,23 +11,36 @@ namespace cs2.ts {
     /// Processes Roslyn syntax nodes into TypeScript code lines following project rules and mappings.
     /// </summary>
     public class TypeScriptConversiorProcessor : ConversionProcessor {
-        private static bool IsInsideObjectInitializer(AssignmentExpressionSyntax assignment) {
+        /// <summary>
+        /// Determines whether the assignment occurs within an object initializer.
+        /// </summary>
+        /// <param name="assignment">The assignment expression to inspect.</param>
+        /// <returns>True when the assignment belongs to an object initializer.</returns>
+        static bool IsInsideObjectInitializer(AssignmentExpressionSyntax assignment) {
             // Walk up until we find the nearest InitializerExpression
-            var initializer = assignment.Parent?.AncestorsAndSelf()
-                .OfType<InitializerExpressionSyntax>()
-                .FirstOrDefault();
+            InitializerExpressionSyntax initializer = null;
+            var parent = assignment.Parent;
+            if (parent != null) {
+                initializer = parent.AncestorsAndSelf()
+                    .OfType<InitializerExpressionSyntax>()
+                    .FirstOrDefault();
+            }
 
-            if (initializer == null)
+            if (initializer == null) {
                 return false;
+            }
 
             // Then check if that initializer belongs to an ObjectCreationExpression
-            var objectCreation = initializer.Parent as ObjectCreationExpressionSyntax;
-            return objectCreation != null;
+            return initializer.Parent is ObjectCreationExpressionSyntax;
         }
 
         /// <summary>
         /// Handles assignment expressions, including event-like callbacks (+=/-=) and object initializers.
         /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="assignment">The assignment expression being processed.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
             if (assignment.Left is ElementAccessExpressionSyntax elementAccess &&
                 IsDictionaryLike(semantic.GetTypeInfo(elementAccess.Expression).Type) &&
@@ -62,7 +75,7 @@ namespace cs2.ts {
                 ExpressionResult valueResult = ProcessExpression(semantic, context, assignment.Right, valueLines);
                 context.PopClass(dictStartDepth);
 
-                FunctionStack? functionStack = context.GetCurrentFunction();
+                FunctionStack functionStack = context.GetCurrentFunction();
                 if (functionStack != null &&
                     valueResult.Type != null &&
                     valueResult.Type.TypeName.StartsWith("Promise<")) {
@@ -87,7 +100,7 @@ namespace cs2.ts {
 
             string operatorVal = assignment.OperatorToken.ToString();
 
-            if (assignResult.Type?.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
+            if (assignResult.Type != null && assignResult.Type.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
                 lines.Add($" = ");
             } else {
                 bool isInsideObject = IsInsideObjectInitializer(assignment);
@@ -100,7 +113,7 @@ namespace cs2.ts {
             ExpressionResult result = ProcessExpression(semantic, context, assignment.Right, initLines);
             context.PopClass(startDepth);
 
-            FunctionStack? fn = context.GetCurrentFunction();
+            FunctionStack fn = context.GetCurrentFunction();
             if (result.Type != null &&
                 result.Type.TypeName.StartsWith("Promise<")) {
                 //lines.Add("await ");
@@ -121,6 +134,9 @@ namespace cs2.ts {
         /// <summary>
         /// Resolves the ConversionClass for a given VariableType within the TypeScript program.
         /// </summary>
+        /// <param name="program">The TypeScript program that owns the classes.</param>
+        /// <param name="varType">The variable type to resolve.</param>
+        /// <returns>The resolved conversion class.</returns>
         public static ConversionClass GetClass(TypeScriptProgram program, VariableType varType) {
             string name = varType.GetTypeScriptType(program);
             ConversionClass found = program.Classes.FirstOrDefault(c => c.Name == name);
@@ -133,7 +149,12 @@ namespace cs2.ts {
             return found;
         }
 
-        private static bool IsDictionaryLike(ITypeSymbol? type) {
+        /// <summary>
+        /// Checks whether a symbol represents a dictionary-like type.
+        /// </summary>
+        /// <param name="type">The type symbol to inspect.</param>
+        /// <returns>True when the type behaves like a dictionary.</returns>
+        static bool IsDictionaryLike(ITypeSymbol type) {
             if (type == null) {
                 return false;
             }
@@ -160,11 +181,17 @@ namespace cs2.ts {
         /// <summary>
         /// Emits identifier references, supporting dynamic resolution of overloaded members based on argument types.
         /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="identifier">The identifier being processed.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="refTypes">Resolved argument types for overload matching.</param>
+        /// <returns>The expression result describing the identifier.</returns>
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             string name = identifier.ToString();
             bool isMethod = false;
 
-            ISymbol? nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            ISymbol nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
             if (nsSymbol is INamespaceSymbol namespaceSymbol) {
                 if (namespaceSymbol.IsNamespace) {
                     return new ExpressionResult(false);
@@ -176,60 +203,90 @@ namespace cs2.ts {
             int layer = context.GetClassLayer();
 
             // abstract class
-            ConversionClass? staticClass = context.Program.Classes.Find(c => c.Name == name);
+            ConversionClass staticClass = context.Program.Classes.Find(c => c.Name == name);
 
-            ConversionClass? currentClass = context.GetCurrentClass();
+            ConversionClass currentClass = context.GetCurrentClass();
 
             var classVars = new List<ConversionVariable>();
-            context.Class.ForEach(fn => {
-                var result = fn?.Variables.Where(var => var.Name == name);
-                if (result != null) {
-                    classVars.AddRange(result);
+            for (int i = 0; i < context.Class.Count; i++) {
+                ConversionClass stackClass = context.Class[i];
+                if (stackClass == null) {
+                    continue;
                 }
-            });
+
+                var variables = stackClass.Variables;
+                if (variables == null) {
+                    continue;
+                }
+
+                classVars.AddRange(variables.Where(var => var.Name == name));
+            }
 
             // variable from the current class
-            ConversionVariable? classVar = currentClass?.Variables.Find(c => c.Name == name);
-            if (classVar == null) {
+            ConversionVariable classVar = null;
+            if (currentClass != null) {
+                classVar = currentClass.Variables.Find(c => c.Name == name);
+            }
+            if (classVar == null && currentClass != null) {
                 // look at base classes
-                currentClass?.Extensions.ForEach(c => {
-                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == c);
-                    ConversionVariable? foundVar = cl?.Variables.Find(c => c.Name == name);
+                for (int i = 0; i < currentClass.Extensions.Count; i++) {
+                    string extension = currentClass.Extensions[i];
+                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == extension);
+                    ConversionVariable foundVar = null;
+                    if (cl != null) {
+                        foundVar = cl.Variables.Find(c => c.Name == name);
+                    }
                     if (foundVar != null) {
                         classVar = foundVar;
                     }
-                });
+                }
             }
 
             if (classVar == null && staticClass == null) {
                 string camelCame = StringUtil.ToCamelCase(name);
-                classVar = currentClass?.Variables.Find(c => c.Name == camelCame);
+                if (currentClass != null) {
+                    classVar = currentClass.Variables.Find(c => c.Name == camelCame);
+                }
                 if (classVar != null) {
                     name = camelCame;
                 }
             }
 
             // function from the current class
-            ConversionFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
-            if (classFn == null) {
+            ConversionFunction classFn = null;
+            if (currentClass != null) {
+                classFn = currentClass.Functions.Find(c => c.Name == name);
+            }
+            if (classFn == null && currentClass != null) {
                 // look at base classes
-                currentClass?.Extensions.ForEach(c => {
-                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == c);
-                    ConversionFunction? foundFn = cl?.Functions.Find(c => c.Name == name);
+                for (int i = 0; i < currentClass.Extensions.Count; i++) {
+                    string extension = currentClass.Extensions[i];
+                    ConversionClass cl = context.Program.Classes.FirstOrDefault(k => k.Name == extension);
+                    ConversionFunction foundFn = null;
+                    if (cl != null) {
+                        foundFn = cl.Functions.Find(c => c.Name == name);
+                    }
                     if (foundFn != null) {
                         classFn = foundFn;
                     }
-                });
+                }
             }
 
-            bool paramsMatch = classFn?.InParameters?.Count == refTypes?.Count;
+            bool paramsMatch = false;
+            if (classFn != null && classFn.InParameters != null && refTypes != null) {
+                paramsMatch = classFn.InParameters.Count == refTypes.Count;
+            }
 
             // here: dynamic system for typed functions. Like BinaryWriter writeByte, writeInt
             if (currentClass != null && classFn == null && isMethod) {
                 // search for closest version
                 string lowercase = name.ToLowerInvariant();
                 string searchName = lowercase;
-                for (int i = 0; i < refTypes?.Count; i++) {
+                int refCount = 0;
+                if (refTypes != null) {
+                    refCount = refTypes.Count;
+                }
+                for (int i = 0; i < refCount; i++) {
                     ExpressionResult result = refTypes[i];
                     if (result.Type == null) {
                         continue;
@@ -297,20 +354,28 @@ namespace cs2.ts {
             }
 
             // current function
-            FunctionStack? currentFn = context.GetCurrentFunction();
+            FunctionStack currentFn = context.GetCurrentFunction();
             // in-parameter for the current function
-            ConversionVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
+            ConversionVariable functionInVar = null;
+            if (currentFn != null && currentFn.Function.InParameters != null) {
+                functionInVar = currentFn.Function.InParameters.Find(c => c.Name == name);
+            }
 
             // current stack
-            ConversionVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
+            ConversionVariable stackVar = null;
+            if (currentFn != null && currentFn.Stack != null) {
+                stackVar = currentFn.Stack.Find(c => c.Name == name);
+            }
 
             var matchingVars = new List<ConversionVariable>();
-            context.Function.ForEach(fn => {
-                var result = fn?.Stack.Where(var => var.Name == name);
-                if (result != null) {
-                    matchingVars.AddRange(result);
+            for (int i = 0; i < context.Function.Count; i++) {
+                FunctionStack fn = context.Function[i];
+                if (fn == null || fn.Stack == null) {
+                    continue;
                 }
-            });
+
+                matchingVars.AddRange(fn.Stack.Where(var => var.Name == name));
+            }
 
             if (name == "Dispose") {
                 name = "dispose";
@@ -330,7 +395,7 @@ namespace cs2.ts {
 
                     if (isClassVar) {
                         // semantic
-                        ISymbol? symbol = semantic.GetSymbolInfo(identifier).Symbol;
+                        ISymbol symbol = semantic.GetSymbolInfo(identifier).Symbol;
 
                         if (lines.Count > 1) {
                             string b2 = lines[lines.Count - 2];
@@ -362,7 +427,7 @@ namespace cs2.ts {
                 }
 
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
-                    ConversionVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
+                    ConversionVariable varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
                     if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(name);
                     } else {
@@ -413,7 +478,7 @@ namespace cs2.ts {
                     cloned.TypeName = $"Promise<{cloned.TypeName}>";
                     return new ExpressionResult(true, VariablePath.Unknown, cloned);
                 }
-            } else if (currentClass?.DeclarationType == MemberDeclarationType.Enum) {
+            } else if (currentClass != null && currentClass.DeclarationType == MemberDeclarationType.Enum) {
 
             } else {
                 //Debugger.Break();
@@ -422,6 +487,14 @@ namespace cs2.ts {
             return new ExpressionResult(true);
         }
 
+        /// <summary>
+        /// Processes object creation expressions, including dictionary initializer shortcuts.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="objectCreation">The object creation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the creation.</returns>
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
             if (objectCreation.Initializer is InitializerExpressionSyntax initializer) {
                 if (TryProcessDictionaryCreation(semantic, context, objectCreation, initializer, lines, out var dictResult)) {
@@ -514,8 +587,17 @@ namespace cs2.ts {
             return result;
         }
 
-        
-        private bool TryProcessDictionaryCreation(
+        /// <summary>
+        /// Attempts to emit a dictionary creation expression from an initializer.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="objectCreation">The object creation expression.</param>
+        /// <param name="initializer">The initializer expression for the dictionary.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="result">Outputs the expression result for the creation.</param>
+        /// <returns>True when the dictionary creation was handled.</returns>
+        bool TryProcessDictionaryCreation(
             SemanticModel semantic,
             LayerContext context,
             ObjectCreationExpressionSyntax objectCreation,
@@ -575,18 +657,38 @@ namespace cs2.ts {
             return true;
         }
 
-        private static bool IsDictionaryType(ITypeSymbol? typeSymbol) {
+        /// <summary>
+        /// Determines whether the type symbol represents a generic Dictionary type.
+        /// </summary>
+        /// <param name="typeSymbol">The type symbol to inspect.</param>
+        /// <returns>True when the symbol is a Dictionary type.</returns>
+        static bool IsDictionaryType(ITypeSymbol typeSymbol) {
             if (typeSymbol is INamedTypeSymbol named) {
-                var constructedFrom = named.ConstructedFrom ?? named;
+                var constructedFrom = named.ConstructedFrom;
+                if (constructedFrom == null) {
+                    constructedFrom = named;
+                }
                 if (constructedFrom.Name == "Dictionary") {
-                    string ns = constructedFrom.ContainingNamespace?.ToDisplayString();
+                    string ns = string.Empty;
+                    var containingNamespace = constructedFrom.ContainingNamespace;
+                    if (containingNamespace != null) {
+                        ns = containingNamespace.ToDisplayString();
+                    }
                     return ns == "System.Collections.Generic";
                 }
             }
             return false;
         }
 
-        private string BuildExpressionString(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> beforeLines) {
+        /// <summary>
+        /// Builds a string representation of an expression, collecting any prerequisite lines.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="expression">The expression to render.</param>
+        /// <param name="beforeLines">Lines that must appear before the expression.</param>
+        /// <returns>The expression string.</returns>
+        string BuildExpressionString(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> beforeLines) {
             List<string> parts = new List<string>();
             int startDepth = context.DepthClass;
             ExpressionResult res = ProcessExpression(semantic, context, expression, parts);
@@ -603,13 +705,30 @@ namespace cs2.ts {
             return string.Concat(parts);
         }
 
-protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+        /// <summary>
+        /// Processes member access expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="memberAccess">The member access expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="refTypes">Resolved argument types for overload matching.</param>
+        /// <returns>The expression result describing the access.</returns>
+        protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
             if (ProcessExpression(semantic, context, memberAccess.Expression, lines).Processed) {
                 lines.Add(".");
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
         }
 
+        /// <summary>
+        /// Processes invocation expressions, including runtime-specific remaps.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="invocationExpression">The invocation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the invocation.</returns>
         protected override ExpressionResult ProcessInvocationExpressionSyntax(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocationExpression, List<string> lines) {
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Name.Identifier.Text == "AsSpan") {
@@ -724,11 +843,26 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return result;
         }
 
+        /// <summary>
+        /// Emits a reference to the current instance.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="thisExpression">The this expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessThisExpressionSyntax(SemanticModel semantic, LayerContext context, ThisExpressionSyntax thisExpression, List<string> lines) {
             lines.Add("this");
             context.AddClass(context.Class[0]);
         }
 
+        /// <summary>
+        /// Processes binary expressions, emitting operands and operators.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="binary">The binary expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the binary expression.</returns>
         protected override ExpressionResult ProcessBinaryExpressionSyntax(SemanticModel semantic, LayerContext context, BinaryExpressionSyntax binary, List<string> lines) {
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
             lines.AddRange(left);
@@ -739,6 +873,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return result;
         }
 
+        /// <summary>
+        /// Emits a generic type name with type arguments.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="generic">The generic name syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessGenericNameSyntax(SemanticModel semantic, LayerContext context, GenericNameSyntax generic, List<string> lines) {
             lines.Add(generic.Identifier.ToString());
 
@@ -759,6 +900,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add(">");
         }
 
+        /// <summary>
+        /// Emits an implicit array creation expression as a literal array.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="implicitArray">The implicit array creation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessImplicitArrayCreationExpression(SemanticModel semantic, LayerContext context, ImplicitArrayCreationExpressionSyntax implicitArray, List<string> lines) {
             // Start the array literal
             lines.Add("[");
@@ -777,12 +925,27 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("]");
         }
 
+        /// <summary>
+        /// Emits an await expression.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="awaitExpression">The await expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessAwait(SemanticModel semantic, LayerContext context, AwaitExpressionSyntax awaitExpression, List<string> lines) {
             lines.Add("await ");
 
             ProcessExpression(semantic, context, awaitExpression.Expression, lines);
         }
 
+        /// <summary>
+        /// Processes qualified names by emitting their left and right parts.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="qualifiedName">The qualified name syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the name.</returns>
         protected override ExpressionResult ProcessQualifiedName(SemanticModel semantic, LayerContext context, QualifiedNameSyntax qualifiedName, List<string> lines) {
             // Process the left part of the qualified name (e.g., "System" in "System.Console")
             if (ProcessExpression(semantic, context, qualifiedName.Left, lines).Processed) {
@@ -794,6 +957,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return ProcessExpression(semantic, context, qualifiedName.Right, lines);
         }
 
+        /// <summary>
+        /// Emits a typeof expression, normalizing known primitives.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="typeOfExpression">The typeof expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessTypeOfExpression(SemanticModel semantic, LayerContext context, TypeOfExpressionSyntax typeOfExpression, List<string> lines) {
             var tsProgram = (TypeScriptProgram)context.Program;
             VariableType variableType = VariableUtil.GetVarType(typeOfExpression.Type, semantic);
@@ -804,7 +974,12 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add(target);
         }
 
-        private static string NormalizeTypeForTypeof(string tsType) {
+        /// <summary>
+        /// Normalizes a TypeScript type name for typeof emission.
+        /// </summary>
+        /// <param name="tsType">The TypeScript type name.</param>
+        /// <returns>The normalized typeof target.</returns>
+        static string NormalizeTypeForTypeof(string tsType) {
             if (string.IsNullOrWhiteSpace(tsType)) {
                 return "Object";
             }
@@ -831,6 +1006,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             };
         }
 
+        /// <summary>
+        /// Processes simple lambda expressions with a single parameter.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="simpleLambda">The simple lambda expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
             TypeInfo type = semantic.GetTypeInfo(simpleLambda);
             int start;
@@ -888,6 +1070,14 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             context.PopClass(start);
         }
 
+        /// <summary>
+        /// Processes explicit array creation expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="arrayCreation">The array creation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the array.</returns>
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
             // Check if there's an initializer (e.g., new int[] { 1, 2, 3 })
             if (arrayCreation.Initializer != null) {
@@ -921,12 +1111,26 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
         }
 
+        /// <summary>
+        /// Processes parenthesized expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="parenthesizedExpression">The parenthesized expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
             lines.Add("(");
             ProcessExpression(semantic, context, parenthesizedExpression.Expression, lines);
             lines.Add(")");
         }
 
+        /// <summary>
+        /// Emits a base expression as a TypeScript super reference.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="baseExpression">The base expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines) {
             lines.Add("super");
 
@@ -934,6 +1138,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
 
         }
 
+        /// <summary>
+        /// Processes collection and object initializer expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="initializerExpression">The initializer expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessInitializerExpression(SemanticModel semantic, LayerContext context, InitializerExpressionSyntax initializerExpression, List<string> lines) {
             bool isArray = false;
             if (initializerExpression.Kind().ToString() == "ArrayInitializerExpression") {
@@ -958,6 +1169,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             }
         }
 
+        /// <summary>
+        /// Processes tuple expressions into array literals.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="tupleExpression">The tuple expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessTupleExpression(SemanticModel semantic, LayerContext context, TupleExpressionSyntax tupleExpression, List<string> lines) {
             lines.Add("[");
 
@@ -972,6 +1190,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("]");
         }
 
+        /// <summary>
+        /// Processes predefined type keywords into TypeScript type names.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="predefinedType">The predefined type syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessPredefinedType(SemanticModel semantic, LayerContext context, PredefinedTypeSyntax predefinedType, List<string> lines) {
             var type = predefinedType.Keyword.ValueText;
 
@@ -1008,6 +1233,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             context.AddClass(context.Program.Classes.Find(c => c.Name == name));
         }
 
+        /// <summary>
+        /// Processes return statements, handling async return shaping.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="ret">The return statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessReturnStatement(SemanticModel semantic, LayerContext context, ReturnStatementSyntax ret, List<string> lines) {
             if (ret.Expression == null) {
                 lines.Add("return;");
@@ -1057,6 +1289,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             }
         }
 
+        /// <summary>
+        /// Processes default(T) expressions into TypeScript literals.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="defaultExpression">The default expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessDefaultExpression(SemanticModel semantic, LayerContext context, DefaultExpressionSyntax defaultExpression, List<string> lines) {
             var type = defaultExpression.Type.ToString();
 
@@ -1072,6 +1311,14 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             }
         }
 
+        /// <summary>
+        /// Processes interpolated strings into template literals.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="interpolatedString">The interpolated string expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the string.</returns>
         protected override ExpressionResult ProcessInterpolatedStringExpression(SemanticModel semantic, LayerContext context, InterpolatedStringExpressionSyntax interpolatedString, List<string> lines) {
             // Add the backtick to start the template literal
             lines.Add("`");
@@ -1099,13 +1346,20 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
         }
 
+        /// <summary>
+        /// Processes element access expressions, translating dictionary access when applicable.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="elementAccess">The element access expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
             int startClass = context.DepthClass;
             List<string> targetLines = new List<string>();
             ProcessExpression(semantic, context, elementAccess.Expression, targetLines);
             List<ConversionClass> saved = context.SavePopClass(startClass);
 
-            ITypeSymbol? expressionType = semantic.GetTypeInfo(elementAccess.Expression).Type;
+            ITypeSymbol expressionType = semantic.GetTypeInfo(elementAccess.Expression).Type;
             if (IsDictionaryLike(expressionType)) {
                 lines.AddRange(targetLines);
                 lines.Add(".get(");
@@ -1142,6 +1396,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             context.LoadClass(saved);
         }
 
+        /// <summary>
+        /// Processes postfix unary expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="postfixUnary">The postfix unary expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessPostfixUnaryExpression(SemanticModel semantic, LayerContext context, PostfixUnaryExpressionSyntax postfixUnary, List<string> lines) {
             // Process the operand first
             int start = context.DepthClass;
@@ -1152,6 +1413,14 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add(postfixUnary.OperatorToken.ToString());
         }
 
+        /// <summary>
+        /// Processes prefix unary expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="prefixUnary">The prefix unary expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the unary expression.</returns>
         protected override ExpressionResult ProcessPrefixUnaryExpression(SemanticModel semantic, LayerContext context, PrefixUnaryExpressionSyntax prefixUnary, List<string> lines) {
             // Map the operator to the corresponding TypeScript operator
             string operatorSymbol = prefixUnary.OperatorToken.ToString();
@@ -1165,6 +1434,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return result;
         }
 
+        /// <summary>
+        /// Processes member binding expressions within conditional access chains.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="memberBinding">The member binding expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessMemberBindingExpression(SemanticModel semantic, LayerContext context, MemberBindingExpressionSyntax memberBinding, List<string> lines) {
             // Access the member (property, method, etc.)
             string name = memberBinding.Name.ToString();
@@ -1176,6 +1452,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add(name);
         }
 
+        /// <summary>
+        /// Processes conditional access expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="conditionalAccess">The conditional access expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessConditionalAccessExpression(SemanticModel semantic, LayerContext context, ConditionalAccessExpressionSyntax conditionalAccess, List<string> lines) {
             // Process the expression being accessed conditionally
             ProcessExpression(semantic, context, conditionalAccess.Expression, lines);
@@ -1185,6 +1468,14 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             ProcessExpression(semantic, context, (ExpressionSyntax)conditionalAccess.WhenNotNull, lines);
         }
 
+        /// <summary>
+        /// Processes cast expressions into TypeScript type assertions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="castExpr">The cast expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the cast.</returns>
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
             VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
 
@@ -1198,6 +1489,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return new ExpressionResult(true, VariablePath.Unknown, varType);
         }
 
+        /// <summary>
+        /// Processes conditional (ternary) expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="conditional">The conditional expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
             // Process the condition (before the ?)
             ProcessExpression(semantic, context, conditional.Condition, lines);
@@ -1211,6 +1509,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             ProcessExpression(semantic, context, conditional.WhenFalse, lines);
         }
 
+        /// <summary>
+        /// Processes parenthesized lambda expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="lambda">The lambda expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessLambdaExpression(SemanticModel semantic, LayerContext context, ParenthesizedLambdaExpressionSyntax lambda, List<string> lines) {
             int startIndex = lines.Count;
 
@@ -1264,10 +1569,24 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
         }
 
 
+        /// <summary>
+        /// Processes empty statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="emptyStatement">The empty statement syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessEmptyStatement(SemanticModel semantic, LayerContext context, EmptyStatementSyntax emptyStatement, List<string> lines) {
             lines.Add(";\n");
         }
 
+        /// <summary>
+        /// Processes do-while statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="doStatement">The do statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessDoStatement(SemanticModel semantic, LayerContext context, DoStatementSyntax doStatement, List<string> lines) {
             // Start the `do` block
             lines.Add("do {\n");
@@ -1289,6 +1608,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add(");\n");
         }
 
+        /// <summary>
+        /// Processes using statements into try/finally disposal patterns.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="usingStatement">The using statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessUsingStatement(SemanticModel semantic, LayerContext context, UsingStatementSyntax usingStatement, List<string> lines) {
             lines.Add("let ");
 
@@ -1349,6 +1675,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.AddRange(declLines);
         }
 
+        /// <summary>
+        /// Processes lock statements, emitting a placeholder in TypeScript.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="lockStatement">The lock statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
             // You can implement custom locking logic here if needed, otherwise omit the lock
             lines.Add("// Lock omitted in TypeScript\n");
@@ -1357,6 +1690,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             ProcessStatement(semantic, context, lockStatement.Statement, lines);
         }
 
+        /// <summary>
+        /// Processes try/catch/finally statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="tryStatement">The try statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessTryStatement(SemanticModel semantic, LayerContext context, TryStatementSyntax tryStatement, List<string> lines) {
             // Process the 'try' block
             lines.Add("try {\n");
@@ -1369,7 +1709,7 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
                 if (catchClause.Declaration != null) {
                     lines.Add(catchClause.Declaration.Identifier.Text);
 
-                    FunctionStack? fn = context.GetCurrentFunction();
+                    FunctionStack fn = context.GetCurrentFunction();
                     ConversionVariable var = new ConversionVariable();
                     var.Name = catchClause.Declaration.Identifier.Text;
                     var.VarType = VariableUtil.GetVarType(catchClause.Declaration.Type, semantic);
@@ -1390,6 +1730,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             }
         }
 
+        /// <summary>
+        /// Processes foreach statements into for-of loops.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="forEachStatement">The foreach statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessForEachStatement(SemanticModel semantic, LayerContext context, ForEachStatementSyntax forEachStatement, List<string> lines) {
             lines.Add("for (let ");
             lines.Add(forEachStatement.Identifier.Text);
@@ -1403,10 +1750,24 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("}\n");
         }
 
+        /// <summary>
+        /// Processes continue statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="continueStatement">The continue statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessContinueStatement(SemanticModel semantic, LayerContext context, ContinueStatementSyntax continueStatement, List<string> lines) {
             lines.Add("continue;\n");
         }
 
+        /// <summary>
+        /// Processes while statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="whileStatement">The while statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessWhileStatement(SemanticModel semantic, LayerContext context, WhileStatementSyntax whileStatement, List<string> lines) {
             lines.Add("while (");
             ProcessExpression(semantic, context, whileStatement.Condition, lines);
@@ -1418,6 +1779,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("}\n");
         }
 
+        /// <summary>
+        /// Processes for statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="forStatement">The for statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessForStatement(SemanticModel semantic, LayerContext context, ForStatementSyntax forStatement, List<string> lines) {
             lines.Add("for (");
 
@@ -1454,6 +1822,14 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("}\n");
         }
 
+        /// <summary>
+        /// Processes if/else statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="ifStatement">The if statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the condition.</returns>
         protected override ExpressionResult ProcessIfStatement(SemanticModel semantic, LayerContext context, IfStatementSyntax ifStatement, List<string> lines) {
             lines.Add("if (");
 
@@ -1482,6 +1858,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return condResult;
         }
 
+        /// <summary>
+        /// Processes throw statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="throwStatement">The throw statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessThrowStatement(SemanticModel semantic, LayerContext context, ThrowStatementSyntax throwStatement, List<string> lines) {
             if (throwStatement.Expression == null) {
                 lines.Add("throw new Error('Throw empty. TODO: Throw exception');\n");
@@ -1492,6 +1875,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             }
         }
 
+        /// <summary>
+        /// Processes switch statements.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="switchStatement">The switch statement.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessSwitchStatement(SemanticModel semantic, LayerContext context, SwitchStatementSyntax switchStatement, List<string> lines) {
             lines.Add("switch (");
             int depth = context.DepthClass;
@@ -1526,6 +1916,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             lines.Add("}\n\n");
         }
 
+        /// <summary>
+        /// Processes variable declarations.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="declaration">The variable declaration syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessDeclaration(
             SemanticModel semantic,
             LayerContext context,
@@ -1536,6 +1933,15 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
         }
 
 
+        /// <summary>
+        /// Processes variable declarations with optional suppression of the let keyword.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="declaration">The variable declaration syntax.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="skipLet">True to omit the let keyword.</param>
+        /// <returns>The expression result describing the initializer.</returns>
         protected ExpressionResult ProcessDeclaration(
             SemanticModel semantic,
             LayerContext context,
@@ -1547,7 +1953,7 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
                 lines.Add("let ");
             }
 
-            FunctionStack? fn = context.GetCurrentFunction();
+            FunctionStack fn = context.GetCurrentFunction();
 
             int start = context.DepthClass;
 
@@ -1597,6 +2003,13 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return initResult;
         }
 
+        /// <summary>
+        /// Processes literal expressions into TypeScript literals.
+        /// </summary>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="literalExpression">The literal expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the literal.</returns>
         protected override ExpressionResult ProcessLiteralExpression(LayerContext context, LiteralExpressionSyntax literalExpression, List<string> lines) {
             string literalValue;
             string type;
@@ -1658,11 +2071,26 @@ protected override ExpressionResult ProcessMemberAccessExpressionSyntax(Semantic
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(type));
         }
 
+        /// <summary>
+        /// Processes arrow expression clauses into assignment expressions.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="arrowExpression">The arrow expression clause.</param>
+        /// <param name="lines">The output lines to append to.</param>
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {
             lines.Add(" = ");
             ProcessExpression(semantic, context, arrowExpression.Expression, lines);
         }
 
+        /// <summary>
+        /// Processes declaration expressions, including out variable declarations.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="declaration">The declaration expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the declaration.</returns>
         protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
             if (declaration.Designation is SingleVariableDesignationSyntax single) {
                 string identifier = single.Identifier.Text;
