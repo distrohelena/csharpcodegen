@@ -413,8 +413,11 @@ namespace cs2.ts {
                 name = "dispose";
             }
 
+            bool isOutParameter = functionInVar != null && functionInVar.Modifier.HasFlag(ParameterModifier.Out);
+            string variableIdentifier = isOutParameter ? $"{name}.value" : name;
+
             if (currentClass == null) {
-                lines.Add(name);
+                lines.Add(variableIdentifier);
             } else {
                 if (layer == 1) {
                     bool isClassVar = (classVar != null &&
@@ -461,7 +464,7 @@ namespace cs2.ts {
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
                     ConversionVariable varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
                     if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
-                        lines.Add(name);
+                        lines.Add(variableIdentifier);
                     } else {
                         lines.Add(varOnClass.Remap);
                     }
@@ -493,6 +496,8 @@ namespace cs2.ts {
                 result.Class = staticClass;
                 return result;
             } else if (classFn != null) {
+                EnsureFunctionAsyncState(semantic, context, currentClass, classFn);
+
                 if (classFn.ReturnType != null) {
                     // invoked function
                     if (classFn.ReturnType.Type != VariableDataType.Void) {
@@ -607,6 +612,16 @@ namespace cs2.ts {
 
                 if (fn == null) {
                     throw new Exception("Constructor not found");
+                }
+
+                EnsureFunctionAsyncState(semantic, context, result.Class, fn);
+
+                if (fn.IsAsync) {
+                    FunctionStack functionStack = context.GetCurrentFunction();
+                    if (functionStack != null) {
+                        newLines.Add("await ");
+                        functionStack.Function.IsAsync = true;
+                    }
                 }
 
                 int index = constructors.IndexOf(fn);
@@ -738,6 +753,66 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Ensures function async usage is analyzed before invocation.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="ownerClass">The class that owns the function.</param>
+        /// <param name="functionFn">The function to analyze.</param>
+        void EnsureFunctionAsyncState(
+            SemanticModel semantic,
+            LayerContext context,
+            ConversionClass ownerClass,
+            ConversionFunction functionFn) {
+            if (functionFn == null || functionFn.IsAsync || functionFn.AsyncAnalyzed) {
+                return;
+            }
+
+            functionFn.AsyncAnalyzed = true;
+
+            if (functionFn.RawBlock == null && functionFn.ArrowExpression == null && functionFn.ConstructorInitializer == null) {
+                return;
+            }
+
+            ConversionClass resolvedOwner = ownerClass;
+            if (resolvedOwner == null || !resolvedOwner.Functions.Contains(functionFn)) {
+                TypeScriptProgram program = (TypeScriptProgram)context.Program;
+                resolvedOwner = program.Classes.FirstOrDefault(c => c.Functions.Contains(functionFn));
+            }
+
+            if (resolvedOwner == null) {
+                return;
+            }
+
+            SemanticModel resolvedSemantic = resolvedOwner.Semantic ?? semantic;
+            LayerContext tempContext = new TypeScriptLayerContext((TypeScriptProgram)context.Program);
+            int start = tempContext.DepthClass;
+            int startFn = tempContext.DepthFunction;
+
+            tempContext.AddClass(resolvedOwner);
+            tempContext.AddFunction(new FunctionStack(functionFn));
+
+            if (functionFn.IsConstructor && functionFn.ConstructorInitializer?.ArgumentList != null) {
+                var arguments = functionFn.ConstructorInitializer.ArgumentList.Arguments;
+                for (int i = 0; i < arguments.Count; i++) {
+                    int startArg = tempContext.DepthClass;
+                    ProcessExpression(resolvedSemantic, tempContext, arguments[i].Expression, new List<string>());
+                    tempContext.PopClass(startArg);
+                }
+            }
+
+            if (functionFn.ArrowExpression != null) {
+                ProcessArrowExpressionClause(resolvedSemantic, tempContext, functionFn.ArrowExpression, new List<string>());
+            } else if (functionFn.RawBlock != null) {
+                ProcessBlock(resolvedSemantic, tempContext, functionFn.RawBlock, new List<string>());
+            }
+
+            tempContext.PopClass(start);
+            tempContext.PopFunction(startFn);
+            functionFn.AsyncAnalyzed = true;
+        }
+
+        /// <summary>
         /// Processes member access expressions.
         /// </summary>
         /// <param name="semantic">The semantic model for the current document.</param>
@@ -762,6 +837,12 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         /// <returns>The expression result describing the invocation.</returns>
         protected override ExpressionResult ProcessInvocationExpressionSyntax(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocationExpression, List<string> lines) {
+            if (invocationExpression.Expression is IdentifierNameSyntax identifierName &&
+                identifierName.Identifier.Text == "nameof") {
+                lines.Add($"\"{GetNameofValue(semantic, invocationExpression)}\"");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+            }
+
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Name.Identifier.Text == "AsSpan") {
                 int targetStart = context.DepthClass;
@@ -840,10 +921,14 @@ namespace cs2.ts {
 
                 if (isOut) {
                     string outName = argLines[argLinesIndex];
+                    if (!isOutDeclaration && res.Variable != null && res.Variable.Modifier.HasFlag(ParameterModifier.Out)) {
+                        outName = res.Variable.Name;
+                    }
+
                     if (isOutDeclaration) {
                         outs.Add(outName, strName);
                         outDeclarations.Add(outName);
-                    } else if (res.Variable != null && res.Variable.Modifier == ParameterModifier.Out) {
+                    } else if (res.Variable != null && res.Variable.Modifier.HasFlag(ParameterModifier.Out)) {
                         outs.Add(outName + ".value", strName);
                     } else {
                         outs.Add(outName, strName);
@@ -883,6 +968,43 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        /// <summary>
+        /// Resolves the string literal to emit for a nameof invocation.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="invocationExpression">The nameof invocation expression.</param>
+        /// <returns>The resolved name for the nameof argument.</returns>
+        string GetNameofValue(SemanticModel semantic, InvocationExpressionSyntax invocationExpression) {
+            if (invocationExpression.ArgumentList == null ||
+                invocationExpression.ArgumentList.Arguments.Count == 0) {
+                throw new InvalidOperationException("nameof requires a single argument.");
+            }
+
+            ExpressionSyntax expression = invocationExpression.ArgumentList.Arguments[0].Expression;
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol != null && !string.IsNullOrWhiteSpace(symbol.Name)) {
+                return symbol.Name;
+            }
+
+            if (expression is IdentifierNameSyntax identifier) {
+                return identifier.Identifier.Text;
+            }
+
+            if (expression is MemberAccessExpressionSyntax memberAccess) {
+                return memberAccess.Name.Identifier.Text;
+            }
+
+            if (expression is QualifiedNameSyntax qualified) {
+                return qualified.Right.Identifier.Text;
+            }
+
+            if (expression is GenericNameSyntax genericName) {
+                return genericName.Identifier.Text;
+            }
+
+            return expression.ToString();
         }
 
         /// <summary>

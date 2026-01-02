@@ -30,6 +30,8 @@ namespace cs2.core {
 
         public BlockSyntax? RawBlock { get; set; }
         public ArrowExpressionClauseSyntax? ArrowExpression { get; set; }
+        public ConstructorInitializerSyntax? ConstructorInitializer { get; set; }
+        public bool AsyncAnalyzed { get; set; }
 
         public bool HasBody {
             get {

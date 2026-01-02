@@ -132,6 +132,8 @@ namespace cs2.core {
             if (block != null) {
                 func.RawBlock = block;
             }
+
+            func.ConstructorInitializer = constructor.Initializer;
         }
 
         private static void ProcessMethodDeclaration(SemanticModel semantic, MethodDeclarationSyntax method, ConversionContext context) {

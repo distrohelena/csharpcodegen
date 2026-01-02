@@ -1,6 +1,8 @@
 using cs2.core;
 using cs2.ts.util;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -426,7 +428,7 @@ namespace cs2.ts {
                 writer.WriteLine(") {");
 
                 if (classOverrides > 0) {
-                    writer.WriteLine("super();");
+                    EmitBaseConstructorCall(cl, fn, writer);
                 }
 
                 List<string> lines = fn.WriteLines(Conversion, Program, cl);
@@ -437,28 +439,18 @@ namespace cs2.ts {
             } else {
                 string generic = cl.GetGenericArguments();
 
+                if (constructors.Count > 1 && classOverrides > 0) {
+                    writer.WriteLine("constructor(...__baseArgs: any[]) {");
+                    writer.WriteLine("super(...__baseArgs);");
+                    writer.WriteLine("}");
+                    writer.WriteLine();
+                }
+
                 for (int i = 0; i < constructors.Count; i++) {
                     ConversionFunction fn = constructors[i];
-                    writer.Write($"static {fn.Name}{generic}(");
 
-                    for (int k = 0; k < fn.InParameters.Count; k++) {
-                        var param = fn.InParameters[k];
-                        string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
-                        string def = param.DefaultValue;
-                        if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                            def = "";
-                        }
-
-                        writer.Write($"{param.Name}: {type}{def}");
-
-                        if (k != fn.InParameters.Count - 1) {
-                            writer.Write(", ");
-                        }
-                    }
-
-                    writer.WriteLine($"): {cl.Name}{generic} {{");
-
-                    writer.WriteLine($"const __obj = new {cl.Name}();");
+                    List<string> bodyLines = new List<string>();
+                    AppendConstructorFactoryInitializer(cl, fn, constructors, bodyLines);
 
                     List<string> lines = new List<string>();
                     LayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
@@ -478,16 +470,276 @@ namespace cs2.ts {
                     context.PopClass(start);
                     context.PopFunction(startFn);
 
-                    for (int k = 0; k < lines.Count; k++) {
-                        string str = lines[k];
-                        str = str.Replace("this.", "__obj.");
+                    RewriteConstructorFactoryTokens(lines, "__obj");
+                    bodyLines.AddRange(lines);
 
-                        writer.Write(str);
+                    string returnType = fn.IsAsync ? $"Promise<{cl.Name}{generic}>" : $"{cl.Name}{generic}";
+                    writer.Write($"static {fn.GetAsync()}{fn.Name}{generic}(");
+
+                    for (int k = 0; k < fn.InParameters.Count; k++) {
+                        var param = fn.InParameters[k];
+                        string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
+                        string def = param.DefaultValue;
+                        if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
+                            def = "";
+                        }
+
+                        writer.Write($"{param.Name}: {type}{def}");
+
+                        if (k != fn.InParameters.Count - 1) {
+                            writer.Write(", ");
+                        }
                     }
 
+                    writer.WriteLine($"): {returnType} {{");
+                    TypeScriptFunction.PrintLines(writer, bodyLines);
                     writer.WriteLine("return __obj;");
                     writer.WriteLine("}");
                     writer.WriteLine();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Emits the appropriate base constructor call for a single constructor.
+        /// </summary>
+        /// <param name="cl">The class being emitted.</param>
+        /// <param name="fn">The constructor function.</param>
+        /// <param name="writer">The output writer.</param>
+        void EmitBaseConstructorCall(ConversionClass cl, ConversionFunction fn, TypeScriptOutputWriter writer) {
+            ConstructorInitializerSyntax initializer = fn.ConstructorInitializer;
+            if (initializer == null || initializer.IsKind(SyntaxKind.ThisConstructorInitializer)) {
+                writer.WriteLine("super();");
+                return;
+            }
+
+            List<string> beforeLines = new List<string>();
+            List<string> afterLines = new List<string>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
+            var arguments = initializer.ArgumentList != null ? initializer.ArgumentList.Arguments : default;
+            List<string> argLines = BuildConstructorInitializerArguments(cl, fn, arguments, beforeLines, afterLines, argumentResults);
+
+            TypeScriptFunction.PrintLines(writer, beforeLines);
+            writer.Write("super(");
+            writer.WriteLines(argLines, string.Empty);
+            writer.WriteLine(");");
+            TypeScriptFunction.PrintLines(writer, afterLines);
+        }
+
+        /// <summary>
+        /// Appends the instance creation statement for a constructor factory method.
+        /// </summary>
+        /// <param name="cl">The class being emitted.</param>
+        /// <param name="fn">The constructor function.</param>
+        /// <param name="constructors">All constructor overloads for the class.</param>
+        /// <param name="bodyLines">The body lines to append to.</param>
+        void AppendConstructorFactoryInitializer(
+            ConversionClass cl,
+            ConversionFunction fn,
+            List<ConversionFunction> constructors,
+            List<string> bodyLines) {
+            ConstructorInitializerSyntax initializer = fn.ConstructorInitializer;
+            bool isThisInitializer = initializer != null && initializer.IsKind(SyntaxKind.ThisConstructorInitializer);
+            bool isBaseInitializer = initializer != null && initializer.IsKind(SyntaxKind.BaseConstructorInitializer);
+
+            List<string> beforeLines = new List<string>();
+            List<string> afterLines = new List<string>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
+            var arguments = initializer?.ArgumentList != null ? initializer.ArgumentList.Arguments : default;
+            List<string> argLines = BuildConstructorInitializerArguments(cl, fn, arguments, beforeLines, afterLines, argumentResults);
+
+            bodyLines.AddRange(beforeLines);
+            if (isThisInitializer) {
+                ConversionFunction target = ResolveConstructorInitializerTarget(constructors, fn, argumentResults);
+                if (target == null) {
+                    throw new InvalidOperationException($"Constructor initializer not found for {cl.Name}.");
+                }
+
+                if (target.IsAsync) {
+                    fn.IsAsync = true;
+                }
+
+                bodyLines.Add("const __obj = ");
+                if (target.IsAsync) {
+                    bodyLines.Add("await ");
+                }
+                bodyLines.Add(cl.Name);
+                bodyLines.Add(".");
+                bodyLines.Add(target.Name);
+                bodyLines.Add("(");
+                bodyLines.AddRange(argLines);
+                bodyLines.Add(");\n");
+            } else {
+                bodyLines.Add("const __obj = new ");
+                bodyLines.Add(cl.Name);
+                bodyLines.Add("(");
+                if (isBaseInitializer) {
+                    bodyLines.AddRange(argLines);
+                }
+                bodyLines.Add(");\n");
+            }
+            bodyLines.AddRange(afterLines);
+        }
+
+        /// <summary>
+        /// Builds argument tokens for a constructor initializer invocation.
+        /// </summary>
+        /// <param name="cl">The class being emitted.</param>
+        /// <param name="fn">The constructor function.</param>
+        /// <param name="arguments">The constructor initializer arguments.</param>
+        /// <param name="beforeLines">Lines that must appear before the invocation.</param>
+        /// <param name="afterLines">Lines that must appear after the invocation.</param>
+        /// <param name="argumentResults">Optional expression results for argument matching.</param>
+        /// <returns>The tokens for the argument list.</returns>
+        List<string> BuildConstructorInitializerArguments(
+            ConversionClass cl,
+            ConversionFunction fn,
+            SeparatedSyntaxList<ArgumentSyntax> arguments,
+            List<string> beforeLines,
+            List<string> afterLines,
+            List<ExpressionResult> argumentResults) {
+            List<string> argLines = new List<string>();
+            if (arguments.Count == 0) {
+                return argLines;
+            }
+
+            LayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
+            int start = context.DepthClass;
+            int startFn = context.DepthFunction;
+
+            context.AddClass(cl);
+            context.AddFunction(new FunctionStack(fn));
+
+            for (int i = 0; i < arguments.Count; i++) {
+                List<string> exprLines = new List<string>();
+                int startArg = context.DepthClass;
+                ExpressionResult result = Conversion.ProcessExpression(cl.Semantic, context, arguments[i].Expression, exprLines);
+                context.PopClass(startArg);
+
+                if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(result.BeforeLines);
+                }
+
+                argLines.AddRange(exprLines);
+
+                if (result.AfterLines != null && result.AfterLines.Count > 0) {
+                    afterLines.AddRange(result.AfterLines);
+                }
+
+                argumentResults?.Add(result);
+
+                if (i != arguments.Count - 1) {
+                    argLines.Add(", ");
+                }
+            }
+
+            context.PopClass(start);
+            context.PopFunction(startFn);
+
+            return argLines;
+        }
+
+        /// <summary>
+        /// Resolves the target constructor for a this-initializer.
+        /// </summary>
+        /// <param name="constructors">All constructor overloads for the class.</param>
+        /// <param name="current">The constructor containing the initializer.</param>
+        /// <param name="argumentResults">Expression results for initializer arguments.</param>
+        /// <returns>The matching constructor overload.</returns>
+        ConversionFunction ResolveConstructorInitializerTarget(
+            List<ConversionFunction> constructors,
+            ConversionFunction current,
+            List<ExpressionResult> argumentResults) {
+            if (constructors == null) {
+                return null;
+            }
+
+            int argumentCount = argumentResults?.Count ?? 0;
+            List<ConversionFunction> candidates = constructors
+                .Where(c => c != current && c.InParameters.Count == argumentCount)
+                .ToList();
+
+            if (candidates.Count == 1) {
+                return candidates[0];
+            }
+
+            if (candidates.Count == 0) {
+                return null;
+            }
+
+            if (argumentResults != null && argumentResults.Count > 0) {
+                for (int i = 0; i < candidates.Count; i++) {
+                    ConversionFunction candidate = candidates[i];
+                    bool match = true;
+                    for (int argIndex = 0; argIndex < argumentResults.Count; argIndex++) {
+                        ExpressionResult argResult = argumentResults[argIndex];
+                        if (argResult.Type == null ||
+                            candidate.InParameters[argIndex].VarType.TypeName != argResult.Type.TypeName) {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match) {
+                        return candidate;
+                    }
+                }
+            }
+
+            return candidates[0];
+        }
+
+        /// <summary>
+        /// Rewrites constructor factory tokens to target the generated instance and return it on bare returns.
+        /// </summary>
+        /// <param name="lines">The tokens to rewrite.</param>
+        /// <param name="instanceName">The instance variable name.</param>
+        static void RewriteConstructorFactoryTokens(List<string> lines, string instanceName) {
+            if (lines == null || lines.Count == 0) {
+                return;
+            }
+
+            for (int i = 0; i < lines.Count; i++) {
+                string value = lines[i];
+                if (string.IsNullOrEmpty(value)) {
+                    continue;
+                }
+
+                if (value.Contains("this.", StringComparison.Ordinal)) {
+                    value = value.Replace("this.", instanceName + ".", StringComparison.Ordinal);
+                    lines[i] = value;
+                }
+
+                if (value == "this") {
+                    lines[i] = instanceName;
+                    continue;
+                }
+
+                if (value.StartsWith("this", StringComparison.Ordinal) && value.Length > 4) {
+                    char nextChar = value[4];
+                    if (!char.IsLetterOrDigit(nextChar) && nextChar != '_') {
+                        lines[i] = instanceName + value.Substring(4);
+                        continue;
+                    }
+                }
+
+                if (value == "return") {
+                    int nextIndex = i + 1;
+                    while (nextIndex < lines.Count && string.IsNullOrWhiteSpace(lines[nextIndex])) {
+                        nextIndex++;
+                    }
+
+                    if (nextIndex < lines.Count && lines[nextIndex].StartsWith(";", StringComparison.Ordinal)) {
+                        lines[i] = $"return {instanceName}";
+                    }
+                    continue;
+                }
+
+                if (value.StartsWith("return", StringComparison.Ordinal) && value.Length > 6) {
+                    string remainder = value.Substring(6);
+                    if (remainder.TrimStart().StartsWith(";", StringComparison.Ordinal)) {
+                        lines[i] = $"return {instanceName}{remainder}";
+                    }
                 }
             }
         }
@@ -538,7 +790,7 @@ namespace cs2.ts {
                         def = "";
                     }
 
-                    if (param.Modifier == core.ParameterModifier.Out) {
+                    if (param.Modifier.HasFlag(core.ParameterModifier.Out)) {
                         writer.Write($"{param.Name}: {{ value: {type}{def} }}");
                     } else {
                         writer.Write($"{param.Name}: {type}{def}");

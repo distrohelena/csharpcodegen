@@ -220,9 +220,6 @@ namespace cs2.ts {
             TypeScriptOutputWriter output = new TypeScriptOutputWriter(stringWriter);
 
             ComputeReflectionImports();
-            output.WriteLine("// @ts-nocheck");
-            output.WriteLine();
-
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
                     string imports = "";
