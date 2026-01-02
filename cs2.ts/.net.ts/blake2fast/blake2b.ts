@@ -16,4 +16,5 @@ export class Blake2b {
         const digest = blake2b(buffer, { dkLen: hashSize });
         return new Uint8Array(digest);
     }
+
 }

@@ -82,6 +82,9 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("TcpListener", "./system/net/sockets/tcp-listener"),
 
             // system.reflection
+            new TypeScriptRuntimeRequirementDefinition("Type", "./src/reflection"),
+            new TypeScriptRuntimeRequirementDefinition("BindingFlags", "./src/reflection"),
+            new TypeScriptRuntimeRequirementDefinition("PropertyInfo", "./src/reflection"),
             new TypeScriptRuntimeRequirementDefinition("Assembly", "./system/reflection/assembly"),
             new TypeScriptRuntimeRequirementDefinition("AssemblyName", "./system/reflection/assembly-name"),
 

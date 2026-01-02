@@ -59,6 +59,28 @@ namespace cs2.ts {
         /// Emits TypeScript classes, interfaces, and enums.
         /// </summary>
         TypeScriptClassEmitter ClassEmitter;
+        /// <summary>
+        /// Type names that require the reflection runtime.
+        /// </summary>
+        static readonly HashSet<string> ReflectionTypeNames = new HashSet<string>(StringComparer.Ordinal) {
+            "Type",
+            "BindingFlags",
+            "PropertyInfo",
+            "MethodInfo",
+            "FieldInfo",
+            "ConstructorInfo",
+            "MemberInfo",
+            "ParameterInfo",
+            "Assembly",
+            "AssemblyName",
+            "TypeInfo"
+        };
+        /// <summary>
+        /// Separators used to split composite type names when scanning for reflection usage.
+        /// </summary>
+        static readonly char[] ReflectionTypeTokenSeparators = new[] {
+            '<', '>', ',', '[', ']', '(', ')', '?', '&', '*', ' ', '\t', '\r', '\n'
+        };
 
         /// <summary>
         /// Creates a new converter for the given environment and options.
@@ -219,6 +241,7 @@ namespace cs2.ts {
             using StringWriter stringWriter = new StringWriter();
             TypeScriptOutputWriter output = new TypeScriptOutputWriter(stringWriter);
 
+            ValidateReflectionUsage();
             ComputeReflectionImports();
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
@@ -346,6 +369,123 @@ namespace cs2.ts {
                     break;
                 }
             }
+        }
+        /// <summary>
+        /// Ensures reflection types are not referenced when reflection output is disabled.
+        /// </summary>
+        void ValidateReflectionUsage() {
+            if (conversionOptions.Reflection.EnableReflection) {
+                return;
+            }
+
+            HashSet<string> found = new HashSet<string>(StringComparer.Ordinal);
+
+            if (program?.Classes == null) {
+                return;
+            }
+
+            foreach (var cl in program.Classes) {
+                if (cl == null || cl.IsNative) {
+                    continue;
+                }
+
+                ScanForReflectionTypes(cl, found);
+            }
+
+            if (found.Count > 0) {
+                throw new InvalidOperationException($"Reflection is disabled, but reflection types were referenced: {string.Join(", ", found)}");
+            }
+        }
+
+        void ScanForReflectionTypes(ConversionClass cl, HashSet<string> found) {
+            if (cl == null) {
+                return;
+            }
+
+            if (cl.Variables != null) {
+                foreach (var variable in cl.Variables) {
+                    ScanForReflectionTypes(variable?.VarType, found);
+                }
+            }
+
+            if (cl.Functions != null) {
+                foreach (var function in cl.Functions) {
+                    if (function == null) {
+                        continue;
+                    }
+
+                    if (function.InParameters != null) {
+                        foreach (var parameter in function.InParameters) {
+                            ScanForReflectionTypes(parameter?.VarType, found);
+                        }
+                    }
+
+                    if (function.ReturnType != null) {
+                        ScanForReflectionTypes(function.ReturnType, found);
+                    }
+                }
+            }
+
+            if (cl.ReferencedClasses != null) {
+                foreach (var reference in cl.ReferencedClasses) {
+                    AddReflectionTypeHit(reference, found);
+                }
+            }
+        }
+
+        void ScanForReflectionTypes(VariableType type, HashSet<string> found) {
+            if (type == null) {
+                return;
+            }
+
+            AddReflectionTypeHit(type.TypeName, found);
+
+            if (type.Args != null) {
+                foreach (var arg in type.Args) {
+                    ScanForReflectionTypes(arg, found);
+                }
+            }
+
+            if (type.GenericArgs != null) {
+                foreach (var arg in type.GenericArgs) {
+                    ScanForReflectionTypes(arg, found);
+                }
+            }
+        }
+
+        static void AddReflectionTypeHit(string typeName, HashSet<string> found) {
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return;
+            }
+
+            string reflectionName = FindReflectionTypeName(typeName);
+            if (!string.IsNullOrWhiteSpace(reflectionName)) {
+                found.Add(reflectionName);
+            }
+        }
+
+        static string FindReflectionTypeName(string typeName) {
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return null;
+            }
+
+            string[] tokens = typeName.Split(ReflectionTypeTokenSeparators, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < tokens.Length; i++) {
+                string token = tokens[i];
+                if (ReflectionTypeNames.Contains(token)) {
+                    return token;
+                }
+            }
+
+            foreach (string name in ReflectionTypeNames) {
+                for (int i = 0; i < tokens.Length; i++) {
+                    if (tokens[i].EndsWith("." + name, StringComparison.Ordinal)) {
+                        return name;
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

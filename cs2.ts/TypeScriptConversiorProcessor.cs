@@ -3,7 +3,9 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Nucleus;
+using System.Globalization;
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using cs2.ts.util;
 
@@ -220,7 +222,9 @@ namespace cs2.ts {
         /// <returns>The expression result describing the identifier.</returns>
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             string name = identifier.ToString();
-            bool isMethod = false;
+            bool isMethod = identifier.Parent is InvocationExpressionSyntax ||
+                (identifier.Parent is MemberAccessExpressionSyntax memberAccessSyntax &&
+                memberAccessSyntax.Parent is InvocationExpressionSyntax);
 
             ISymbol nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
             if (nsSymbol is INamespaceSymbol namespaceSymbol) {
@@ -992,6 +996,8 @@ namespace cs2.ts {
                     argLines.Add(", ");
                 }
             }
+
+            AppendOptionalArguments(semantic, invocationExpression, argLines, ref count);
             argLines.Add(")");
 
             List<string> invoLines = new List<string>();
@@ -1018,6 +1024,117 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        static void AppendOptionalArguments(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> argLines,
+            ref int count) {
+            IMethodSymbol methodSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (methodSymbol == null || invocationExpression.ArgumentList == null) {
+                return;
+            }
+
+            if (invocationExpression.ArgumentList.Arguments.Any(a => a.NameColon != null)) {
+                return;
+            }
+
+            var parameters = methodSymbol.Parameters;
+            if (count >= parameters.Length) {
+                return;
+            }
+
+            for (int i = count; i < parameters.Length; i++) {
+                IParameterSymbol parameter = parameters[i];
+                string defaultValue = GetOptionalDefaultValue(parameter);
+                if (string.IsNullOrWhiteSpace(defaultValue)) {
+                    break;
+                }
+
+                if (count > 0) {
+                    argLines.Add(", ");
+                }
+                argLines.Add(defaultValue);
+                count++;
+            }
+        }
+
+        static IMethodSymbol GetInvocationMethodSymbol(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression) {
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(invocationExpression);
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
+                return methodSymbol;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                return symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            }
+
+            return null;
+        }
+
+        static string GetOptionalDefaultValue(IParameterSymbol parameter) {
+            if (parameter == null) {
+                return null;
+            }
+
+            if (parameter.IsParams) {
+                return "[]";
+            }
+
+            if (!parameter.HasExplicitDefaultValue) {
+                return null;
+            }
+
+            return FormatDefaultValue(parameter.ExplicitDefaultValue);
+        }
+
+        static string FormatDefaultValue(object value) {
+            switch (value) {
+                case null:
+                    return "null";
+                case bool b:
+                    return b ? "true" : "false";
+                case string s:
+                    return QuoteString(s);
+                case char ch:
+                    return QuoteString(ch.ToString());
+                case sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal:
+                    return Convert.ToString(value, CultureInfo.InvariantCulture);
+                default:
+                    return QuoteString(value.ToString() ?? string.Empty);
+            }
+        }
+
+        static string QuoteString(string value) {
+            StringBuilder builder = new StringBuilder(value.Length + 2);
+            builder.Append('"');
+            foreach (char ch in value) {
+                switch (ch) {
+                    case '"':
+                        builder.Append("\\\"");
+                        break;
+                    case '\\':
+                        builder.Append("\\\\");
+                        break;
+                    case '\n':
+                        builder.Append("\\n");
+                        break;
+                    case '\r':
+                        builder.Append("\\r");
+                        break;
+                    case '\t':
+                        builder.Append("\\t");
+                        break;
+                    default:
+                        builder.Append(ch);
+                        break;
+                }
+            }
+            builder.Append('"');
+            return builder.ToString();
         }
 
         /// <summary>

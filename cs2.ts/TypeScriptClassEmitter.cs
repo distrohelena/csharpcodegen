@@ -156,12 +156,10 @@ namespace cs2.ts {
             for (int k = 0; k < del.InParameters.Count; k++) {
                 var param = del.InParameters[k];
                 string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
-                string def = param.DefaultValue;
-                if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                    def = "";
-                }
+                string def = GetParameterDefaultSuffix(cl, param);
+                string paramName = GetParameterName(cl, param);
 
-                writer.Write($"{param.Name}: {type}{def}");
+                writer.Write($"{paramName}: {type}{def}");
 
                 if (k != del.InParameters.Count - 1) {
                     writer.Write(", ");
@@ -413,12 +411,10 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
-                    string def = param.DefaultValue;
-                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                        def = "";
-                    }
+                    string def = GetParameterDefaultSuffix(cl, param);
+                    string paramName = GetParameterName(cl, param);
 
-                    writer.Write($"{param.Name}: {type}{def}");
+                    writer.Write($"{paramName}: {type}{def}");
 
                     if (k != fn.InParameters.Count - 1) {
                         writer.Write(", ");
@@ -479,12 +475,10 @@ namespace cs2.ts {
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
                         string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
-                        string def = param.DefaultValue;
-                        if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                            def = "";
-                        }
+                        string def = GetParameterDefaultSuffix(cl, param);
+                        string paramName = GetParameterName(cl, param);
 
-                        writer.Write($"{param.Name}: {type}{def}");
+                        writer.Write($"{paramName}: {type}{def}");
 
                         if (k != fn.InParameters.Count - 1) {
                             writer.Write(", ");
@@ -785,15 +779,13 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
-                    string def = param.DefaultValue;
-                    if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
-                        def = "";
-                    }
+                    string def = GetParameterDefaultSuffix(cl, param);
+                    string paramName = GetParameterName(cl, param);
 
                     if (param.Modifier.HasFlag(core.ParameterModifier.Out)) {
-                        writer.Write($"{param.Name}: {{ value: {type}{def} }}");
+                        writer.Write($"{paramName}: {{ value: {type}{def} }}");
                     } else {
-                        writer.Write($"{param.Name}: {type}{def}");
+                        writer.Write($"{paramName}: {type}{def}");
                     }
 
                     if (k != fn.InParameters.Count - 1) {
@@ -823,6 +815,33 @@ namespace cs2.ts {
                     writer.WriteLine("}");
                 }
             }
+        }
+
+        static string GetParameterDefaultSuffix(ConversionClass cl, ConversionVariable param) {
+            string def = param.DefaultValue;
+            if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
+                return "";
+            }
+            return def;
+        }
+
+        static string GetParameterName(ConversionClass cl, ConversionVariable param) {
+            if (cl.DeclarationType == MemberDeclarationType.Class) {
+                return param.Name;
+            }
+
+            if (HasDefaultValue(param.DefaultValue)) {
+                return $"{param.Name}?";
+            }
+
+            return param.Name;
+        }
+
+        static bool HasDefaultValue(string defaultValue) {
+            if (string.IsNullOrWhiteSpace(defaultValue)) {
+                return false;
+            }
+            return true;
         }
     }
 }
