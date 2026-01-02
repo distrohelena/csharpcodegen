@@ -33,6 +33,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("Convert", "./system/convert"),
             new TypeScriptRuntimeRequirementDefinition("Environment", "./system/environment"),
             new TypeScriptRuntimeRequirementDefinition("AppDomain", "./system/app-domain"),
+            new TypeScriptRuntimeRequirementDefinition("StringComparer", "./system/string-comparer"),
 
             // system.collection.concurrent
             new TypeScriptRuntimeRequirementDefinition("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"),
@@ -41,6 +42,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("IDictionary", "./system/collections/generic/dictionary.interface"),
             new TypeScriptRuntimeRequirementDefinition("Dictionary", "./system/collections/generic/dictionary"),
             new TypeScriptRuntimeRequirementDefinition("ICollection", "./system/collections/generic/icollection"),
+            new TypeScriptRuntimeRequirementDefinition("IEqualityComparer", "./system/collections/generic/iequalitycomparer"),
             new TypeScriptRuntimeRequirementDefinition("IEnumerable", "./system/collections/generic/ienumerable"),
             new TypeScriptRuntimeRequirementDefinition("IReadOnlyDictionary", "./system/collections/generic/ireadonlydictionary"),
             new TypeScriptRuntimeRequirementDefinition("IReadOnlyList", "./system/collections/generic/ireadonlylist"),

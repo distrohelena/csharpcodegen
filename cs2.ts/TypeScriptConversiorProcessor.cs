@@ -227,11 +227,12 @@ namespace cs2.ts {
                 memberAccessSyntax.Parent is InvocationExpressionSyntax);
 
             ISymbol nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            IMethodSymbol invokedMethod = nsSymbol as IMethodSymbol;
             if (nsSymbol is INamespaceSymbol namespaceSymbol) {
                 if (namespaceSymbol.IsNamespace) {
                     return new ExpressionResult(false);
                 }
-            } else if (nsSymbol is IMethodSymbol methodSymbol) {
+            } else if (invokedMethod != null) {
                 isMethod = true;
             }
 
@@ -242,6 +243,17 @@ namespace cs2.ts {
             ConversionClass staticClass = tsProgram.GetClassByName(name);
 
             ConversionClass currentClass = context.GetCurrentClass();
+            bool forcedStaticPrefix = false;
+            if (identifier.Parent is InvocationExpressionSyntax &&
+                invokedMethod != null &&
+                invokedMethod.IsStatic &&
+                currentClass != null &&
+                invokedMethod.ContainingType != null &&
+                invokedMethod.ContainingType.Name == currentClass.Name) {
+                lines.Add(currentClass.Name);
+                lines.Add(".");
+                forcedStaticPrefix = true;
+            }
 
             var classVars = new List<ConversionVariable>();
             for (int i = 0; i < context.Class.Count; i++) {
@@ -389,6 +401,16 @@ namespace cs2.ts {
                 }
             }
 
+            if (!forcedStaticPrefix &&
+                identifier.Parent is InvocationExpressionSyntax &&
+                classFn != null &&
+                classFn.IsStatic &&
+                currentClass != null) {
+                lines.Add(currentClass.Name);
+                lines.Add(".");
+                forcedStaticPrefix = true;
+            }
+
             // current function
             FunctionStack currentFn = context.GetCurrentFunction();
             // in-parameter for the current function
@@ -423,7 +445,7 @@ namespace cs2.ts {
             if (currentClass == null) {
                 lines.Add(variableIdentifier);
             } else {
-                if (layer == 1) {
+                if (layer == 1 && !forcedStaticPrefix) {
                     bool isClassVar = (classVar != null &&
                         functionInVar == null &&
                         matchingVars.Count == 0) ||
@@ -2771,13 +2793,45 @@ namespace cs2.ts {
                 }
             }
 
-            lines.Add("if (");
-
             int start = context.DepthClass;
-            ExpressionResult condResult = ProcessExpression(semantic, context, ifStatement.Condition, lines);
+            List<string> conditionLines = new List<string>();
+            ExpressionResult condResult = ProcessExpression(semantic, context, ifStatement.Condition, conditionLines);
             context.PopClass(start);
 
-            lines.Add(") {\n");
+            bool hasBeforeLines = condResult.BeforeLines != null && condResult.BeforeLines.Count > 0;
+            bool hasAfterLines = condResult.AfterLines != null && condResult.AfterLines.Count > 0;
+            bool needsPrelude = hasBeforeLines || hasAfterLines;
+            bool wrapElseBlock = false;
+
+            if (needsPrelude && lines.Count > 0 && lines[^1] == "else ") {
+                lines.RemoveAt(lines.Count - 1);
+                lines.Add("else {\n");
+                wrapElseBlock = true;
+            }
+
+            if (hasBeforeLines) {
+                lines.AddRange(condResult.BeforeLines);
+            }
+
+            if (hasAfterLines) {
+                string condVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                lines.Add("let ");
+                lines.Add(condVar);
+                lines.Add(" = ");
+                lines.AddRange(conditionLines);
+                lines.Add(";\n");
+                lines.AddRange(condResult.AfterLines);
+                lines.Add("if (");
+                lines.Add(condVar);
+                lines.Add(") {\n");
+            } else {
+                lines.Add("if (");
+                lines.AddRange(conditionLines);
+                lines.Add(") {\n");
+            }
+
+            condResult.BeforeLines = null;
+            condResult.AfterLines = null;
 
             // Process the 'then' statements
             ExpressionResult result = ProcessStatement(semantic, context, ifStatement.Statement, lines);
@@ -2793,6 +2847,10 @@ namespace cs2.ts {
                     ProcessStatement(semantic, context, ifStatement.Else.Statement, lines);
                     lines.Add("}\n");
                 }
+            }
+
+            if (wrapElseBlock) {
+                lines.Add("}\n");
             }
 
             return condResult;
