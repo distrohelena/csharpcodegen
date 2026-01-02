@@ -280,7 +280,7 @@ namespace cs2.ts {
                     assignment = $" = {ass}";
                 }
 
-                string definiteAssignment = string.IsNullOrEmpty(assignment) ? "!" : string.Empty;
+                string definiteAssignment = string.IsNullOrEmpty(assignment) && !var.IsStatic ? "!" : string.Empty;
 
                 if (var.DeclarationType == MemberDeclarationType.Abstract) {
                     if (var.IsGet && var.IsSet) {

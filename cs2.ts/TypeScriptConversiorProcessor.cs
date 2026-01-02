@@ -541,9 +541,52 @@ namespace cs2.ts {
                     return dictResult;
                 }
 
+                if (IsObjectInitializer(initializer)) {
+                    List<string> creationLines = new List<string>();
+                    ExpressionResult creationResult = BuildObjectCreationExpression(semantic, context, objectCreation, creationLines);
+                    List<string> initLines = new List<string>();
+                    ProcessExpression(semantic, context, initializer, initLines);
+
+                    lines.Add("Object.assign(");
+                    lines.AddRange(creationLines);
+                    lines.Add(", ");
+                    lines.AddRange(initLines);
+                    lines.Add(")");
+                    return creationResult;
+                }
+
                 return ProcessExpression(semantic, context, objectCreation.Initializer, lines);
             }
 
+            return BuildObjectCreationExpression(semantic, context, objectCreation, lines);
+        }
+
+        /// <summary>
+        /// Determines whether an initializer represents an object initializer with assignments.
+        /// </summary>
+        /// <param name="initializer">The initializer expression to inspect.</param>
+        /// <returns>True when the initializer includes assignment expressions.</returns>
+        static bool IsObjectInitializer(InitializerExpressionSyntax initializer) {
+            if (initializer == null) {
+                return false;
+            }
+
+            return initializer.Expressions.Any(expression => expression is AssignmentExpressionSyntax);
+        }
+
+        /// <summary>
+        /// Builds the TypeScript expression for object creation, including constructor overload resolution.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="objectCreation">The object creation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the creation.</returns>
+        ExpressionResult BuildObjectCreationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            List<string> lines) {
             List<string> newLines = new List<string>();
             List<string> afterLines = new List<string>();
 
