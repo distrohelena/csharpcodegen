@@ -219,10 +219,12 @@ namespace cs2.ts {
         /// <param name="remap">The TypeScript name override.</param>
         /// <param name="cl">The class receiving the member.</param>
         /// <param name="type">The variable type name.</param>
-        void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type) {
+        /// <param name="remapCl">Optional class name to remap the access target.</param>
+        void makeTypeScriptVariable(string name, string remap, ConversionClass cl, string type, string remapCl = "") {
             ConversionVariable fnToString = new ConversionVariable();
             fnToString.Name = name;
             fnToString.Remap = remap;
+            fnToString.RemapClass = remapCl;
             fnToString.VarType = VariableUtil.GetVarType(type);
             cl.Variables.Add(fnToString);
         }
@@ -257,10 +259,12 @@ namespace cs2.ts {
             makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clString, "string");
+            makeTypeScriptVariable("Empty", "Empty", clString, "string", "NativeStringUtil");
             RegisterClass(clString);
 
             ConversionClass clStringUpper = makeClass("String");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clStringUpper, "string", "NativeStringUtil");
+            makeTypeScriptVariable("Empty", "Empty", clStringUpper, "string", "NativeStringUtil");
             RegisterClass(clStringUpper);
 
             ConversionClass clBool = makeClass("boolean");

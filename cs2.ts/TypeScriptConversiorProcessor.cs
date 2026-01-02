@@ -463,6 +463,9 @@ namespace cs2.ts {
 
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
                     ConversionVariable varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
+                    if (varOnClass != null && !string.IsNullOrEmpty(varOnClass.RemapClass) && lines.Count > 1) {
+                        lines[lines.Count - 2] = varOnClass.RemapClass;
+                    }
                     if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(variableIdentifier);
                     } else {

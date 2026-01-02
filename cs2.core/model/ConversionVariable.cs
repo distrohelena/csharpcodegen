@@ -4,6 +4,10 @@ namespace cs2.core {
     public class ConversionVariable {
         public string Name { get; set; }
         public string Remap { get; set; }
+        /// <summary>
+        /// Gets or sets the class name to emit when remapping static member access.
+        /// </summary>
+        public string RemapClass { get; set; }
 
         public VariableType VarType {
             get { return varType; }
