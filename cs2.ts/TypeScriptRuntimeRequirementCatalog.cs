@@ -84,6 +84,7 @@ namespace cs2.ts {
             // system.reflection
             new TypeScriptRuntimeRequirementDefinition("Type", "./src/reflection"),
             new TypeScriptRuntimeRequirementDefinition("BindingFlags", "./src/reflection"),
+            new TypeScriptRuntimeRequirementDefinition("Activator", "./system/reflection/activator"),
             new TypeScriptRuntimeRequirementDefinition("PropertyInfo", "./src/reflection"),
             new TypeScriptRuntimeRequirementDefinition("Assembly", "./system/reflection/assembly"),
             new TypeScriptRuntimeRequirementDefinition("AssemblyName", "./system/reflection/assembly-name"),

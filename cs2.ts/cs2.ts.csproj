@@ -278,6 +278,9 @@
     <None Include=".net.ts\system\reflection\assembly.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\reflection\activator.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\reflection\assembly-name.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
