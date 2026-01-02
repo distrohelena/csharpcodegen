@@ -843,6 +843,10 @@ namespace cs2.ts {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
             }
 
+            if (TryProcessArrayEmpty(semantic, invocationExpression, lines, out ExpressionResult emptyResult)) {
+                return emptyResult;
+            }
+
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Name.Identifier.Text == "AsSpan") {
                 int targetStart = context.DepthClass;
@@ -968,6 +972,48 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        /// <summary>
+        /// Handles System.Array.Empty&lt;T&gt; invocations with runtime-friendly TypeScript output.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="invocationExpression">The invocation expression to inspect.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="result">Outputs the expression result when the invocation is handled.</param>
+        /// <returns>True when the invocation was handled.</returns>
+        bool TryProcessArrayEmpty(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(invocationExpression);
+            IMethodSymbol methodSymbol = symbolInfo.Symbol as IMethodSymbol;
+            if (methodSymbol == null && symbolInfo.CandidateSymbols.Length > 0) {
+                methodSymbol = symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            }
+
+            if (methodSymbol == null ||
+                !string.Equals(methodSymbol.Name, "Empty", StringComparison.Ordinal) ||
+                methodSymbol.ContainingType == null ||
+                methodSymbol.ContainingType.Name != "Array" ||
+                methodSymbol.ContainingType.ContainingNamespace == null ||
+                methodSymbol.ContainingType.ContainingNamespace.ToDisplayString() != "System") {
+                return false;
+            }
+
+            ITypeSymbol typeArgument = methodSymbol.TypeArguments.Length > 0 ? methodSymbol.TypeArguments[0] : null;
+            if (typeArgument != null && typeArgument.SpecialType == SpecialType.System_Byte) {
+                lines.Add("new Uint8Array(0)");
+            } else {
+                lines.Add("[]");
+            }
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(methodSymbol.ReturnType));
+            return true;
         }
 
         /// <summary>

@@ -193,6 +193,114 @@ namespace cs2.core {
             return new VariableType(VariableDataType.Object);
         }
 
+        /// <summary>
+        /// Resolves a VariableType from a Roslyn type symbol.
+        /// </summary>
+        /// <param name="typeSymbol">The Roslyn type symbol to convert.</param>
+        /// <returns>The resolved VariableType.</returns>
+        public static VariableType GetVarType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return new VariableType(VariableDataType.Object);
+            }
+
+            if (typeSymbol is IArrayTypeSymbol arraySymbol) {
+                VariableType elementType = GetVarType(arraySymbol.ElementType);
+
+                for (int i = 0; i < arraySymbol.Rank; i++) {
+                    VariableType arrayWrapper = new VariableType(VariableDataType.Array, "Array");
+                    arrayWrapper.GenericArgs.Add(elementType);
+                    elementType = arrayWrapper;
+                }
+
+                return elementType;
+            }
+
+            if (typeSymbol is ITypeParameterSymbol parameterSymbol) {
+                return new VariableType(VariableDataType.Object, parameterSymbol.Name);
+            }
+
+            if (typeSymbol is INamedTypeSymbol namedTypeSymbol) {
+                string typeName = namedTypeSymbol.Name;
+                VariableDataType dataType = GetVarDataType(typeName);
+
+                if (namedTypeSymbol.SpecialType != SpecialType.None) {
+                    switch (namedTypeSymbol.SpecialType) {
+                        case SpecialType.System_Int16:
+                            dataType = VariableDataType.Int16;
+                            typeName = "Int16";
+                            break;
+                        case SpecialType.System_UInt16:
+                            dataType = VariableDataType.UInt16;
+                            typeName = "UInt16";
+                            break;
+                        case SpecialType.System_Int32:
+                            dataType = VariableDataType.Int32;
+                            typeName = "Int32";
+                            break;
+                        case SpecialType.System_UInt32:
+                            dataType = VariableDataType.UInt32;
+                            typeName = "UInt32";
+                            break;
+                        case SpecialType.System_Int64:
+                            dataType = VariableDataType.Int64;
+                            typeName = "Int64";
+                            break;
+                        case SpecialType.System_UInt64:
+                            dataType = VariableDataType.UInt64;
+                            typeName = "UInt64";
+                            break;
+                        case SpecialType.System_Single:
+                            dataType = VariableDataType.Single;
+                            typeName = "Single";
+                            break;
+                        case SpecialType.System_Double:
+                            dataType = VariableDataType.Double;
+                            typeName = "double";
+                            break;
+                        case SpecialType.System_SByte:
+                            dataType = VariableDataType.Int8;
+                            typeName = "sbyte";
+                            break;
+                        case SpecialType.System_Byte:
+                            dataType = VariableDataType.UInt8;
+                            typeName = "byte";
+                            break;
+                        case SpecialType.System_Boolean:
+                            dataType = VariableDataType.Boolean;
+                            typeName = "Boolean";
+                            break;
+                        case SpecialType.System_Char:
+                            dataType = VariableDataType.Char;
+                            typeName = "char";
+                            break;
+                        case SpecialType.System_String:
+                            dataType = VariableDataType.String;
+                            typeName = "string";
+                            break;
+                        case SpecialType.System_Object:
+                            dataType = VariableDataType.Object;
+                            typeName = "object";
+                            break;
+                        case SpecialType.System_Void:
+                            dataType = VariableDataType.Void;
+                            typeName = "void";
+                            break;
+                    }
+                }
+
+                VariableType baseType = new VariableType(dataType, typeName);
+                if (namedTypeSymbol.IsGenericType) {
+                    foreach (var typeArgument in namedTypeSymbol.TypeArguments) {
+                        baseType.GenericArgs.Add(GetVarType(typeArgument));
+                    }
+                }
+
+                return baseType;
+            }
+
+            return new VariableType(VariableDataType.Object, typeSymbol.Name);
+        }
+
         static string GetClrTypeName(SpecialType specialType) {
             return specialType switch {
                 SpecialType.System_Int16 => "Int16",
