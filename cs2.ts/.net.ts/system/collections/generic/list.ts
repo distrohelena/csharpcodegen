@@ -91,3 +91,15 @@ export class List<T> extends Array<T> {
     }
 
 }
+
+declare global {
+    interface Array<T> {
+        toList(): List<T>;
+    }
+}
+
+if (!(Array.prototype as any).toList) {
+    (Array.prototype as any).toList = function () {
+        return new List(...this);
+    };
+}

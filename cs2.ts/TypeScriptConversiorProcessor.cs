@@ -243,6 +243,7 @@ namespace cs2.ts {
             ConversionClass staticClass = tsProgram.GetClassByName(name);
 
             ConversionClass currentClass = context.GetCurrentClass();
+            FunctionStack currentFn = context.GetCurrentFunction();
             bool forcedStaticPrefix = false;
             if (identifier.Parent is InvocationExpressionSyntax &&
                 invokedMethod != null &&
@@ -253,6 +254,22 @@ namespace cs2.ts {
                 lines.Add(currentClass.Name);
                 lines.Add(".");
                 forcedStaticPrefix = true;
+            }
+            if (!forcedStaticPrefix &&
+                identifier.Parent is InvocationExpressionSyntax &&
+                currentFn != null &&
+                currentFn.Function != null &&
+                currentFn.Function.IsStatic &&
+                currentFn.Function.Name == name) {
+                ConversionClass ownerClass = currentClass;
+                if (ownerClass == null || !ownerClass.Functions.Contains(currentFn.Function)) {
+                    ownerClass = tsProgram.Classes.FirstOrDefault(c => c.Functions.Contains(currentFn.Function));
+                }
+                if (ownerClass != null) {
+                    lines.Add(ownerClass.Name);
+                    lines.Add(".");
+                    forcedStaticPrefix = true;
+                }
             }
 
             var classVars = new List<ConversionVariable>();
@@ -412,7 +429,6 @@ namespace cs2.ts {
             }
 
             // current function
-            FunctionStack currentFn = context.GetCurrentFunction();
             // in-parameter for the current function
             ConversionVariable functionInVar = null;
             if (currentFn != null && currentFn.Function.InParameters != null) {
@@ -894,7 +910,38 @@ namespace cs2.ts {
         /// <param name="refTypes">Resolved argument types for overload matching.</param>
         /// <returns>The expression result describing the access.</returns>
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
-            if (ProcessExpression(semantic, context, memberAccess.Expression, lines).Processed) {
+            List<string> leftLines = new List<string>();
+            ExpressionResult leftResult = ProcessExpression(semantic, context, memberAccess.Expression, leftLines);
+            if (leftResult.Processed) {
+                if (leftResult.Type != null &&
+                    leftResult.Type.IsNullable &&
+                    memberAccess.Name is IdentifierNameSyntax nullableMember) {
+                    string memberName = nullableMember.Identifier.Text;
+                    if (memberName == "HasValue") {
+                        lines.AddRange(leftLines);
+                        lines.Add(" != null");
+                        return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+                    }
+                    if (memberName == "Value") {
+                        lines.AddRange(leftLines);
+                        VariableType valueType = new VariableType(leftResult.Type) { IsNullable = false };
+                        return new ExpressionResult(true, leftResult.VarPath, valueType);
+                    }
+                }
+
+                if (memberAccess.Name is IdentifierNameSyntax linqMember &&
+                    linqMember.Identifier.Text == "ToList") {
+                    IMethodSymbol linqSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol as IMethodSymbol;
+                    if (linqSymbol != null &&
+                        linqSymbol.ContainingType?.Name == "Enumerable" &&
+                        linqSymbol.ContainingNamespace?.ToDisplayString() == "System.Linq") {
+                        lines.AddRange(leftLines);
+                        lines.Add(".toList");
+                        return new ExpressionResult(true, leftResult.VarPath, VariableUtil.GetVarType(linqSymbol.ReturnType));
+                    }
+                }
+
+                lines.AddRange(leftLines);
                 lines.Add(".");
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);

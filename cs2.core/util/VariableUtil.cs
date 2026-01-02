@@ -220,6 +220,14 @@ namespace cs2.core {
             }
 
             if (typeSymbol is INamedTypeSymbol namedTypeSymbol) {
+                if (namedTypeSymbol.Name == "Nullable" &&
+                    namedTypeSymbol.ContainingNamespace?.ToDisplayString() == "System" &&
+                    namedTypeSymbol.TypeArguments.Length == 1) {
+                    VariableType nullableBaseType = GetVarType(namedTypeSymbol.TypeArguments[0]);
+                    nullableBaseType.IsNullable = true;
+                    return nullableBaseType;
+                }
+
                 string typeName = namedTypeSymbol.Name;
                 VariableDataType dataType = GetVarDataType(typeName);
 
