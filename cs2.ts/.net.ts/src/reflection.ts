@@ -95,6 +95,45 @@ export enum BindingFlags {
 const kTypeTag = Symbol.for("cs2.ts.reflection.type");
 const kMemberTag = Symbol.for("cs2.ts.reflection.member");
 
+const primitiveValueTypes = new Set<string>([
+    "bool",
+    "byte",
+    "sbyte",
+    "short",
+    "ushort",
+    "int",
+    "uint",
+    "long",
+    "ulong",
+    "float",
+    "double",
+    "decimal",
+    "char",
+    "System.Boolean",
+    "System.Byte",
+    "System.SByte",
+    "System.Int16",
+    "System.UInt16",
+    "System.Int32",
+    "System.UInt32",
+    "System.Int64",
+    "System.UInt64",
+    "System.Single",
+    "System.Double",
+    "System.Decimal",
+    "System.Char",
+    "System.Guid",
+    "System.DateTime",
+    "System.TimeSpan"
+]);
+
+function isPrimitiveValueTypeName(fullName: string | undefined): boolean {
+    if (!fullName) {
+        return false;
+    }
+    return primitiveValueTypes.has(fullName);
+}
+
 interface ReflectionTypeHandle {
     readonly meta: TypeMetadata;
     fullName: string;
@@ -390,6 +429,7 @@ export class Type {
     get IsEnum(): boolean { return !!this.meta.isEnum; }
     get IsArray(): boolean { return !!this.meta.isArray; }
     get IsGenericType(): boolean { return !!this.meta.isGeneric; }
+    get IsValueType(): boolean { return !!this.meta.isStruct || !!this.meta.isEnum || isPrimitiveValueTypeName(this.meta.fullName); }
     get BaseType(): Type | null {
         if (this.baseTypeResolved !== undefined) return this.baseTypeResolved;
         this.baseTypeResolved = this.meta.baseType ? (Type.get(this.meta.baseType) ?? null) : null;

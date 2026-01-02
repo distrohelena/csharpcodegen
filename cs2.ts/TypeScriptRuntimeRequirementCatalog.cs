@@ -109,6 +109,20 @@ namespace cs2.ts {
 
             // system.text
             new TypeScriptRuntimeRequirementDefinition("Encoding", "./system/text/encoding"),
+            new TypeScriptRuntimeRequirementDefinition("JsonSerializer", "./system/text/json/json-serializer"),
+            new TypeScriptRuntimeRequirementDefinition("JsonSerializerOptions", "./system/text/json/json-serializer-options"),
+            new TypeScriptRuntimeRequirementDefinition("JsonDocument", "./system/text/json/json-document"),
+            new TypeScriptRuntimeRequirementDefinition("JsonDocumentOptions", "./system/text/json/json-document-options"),
+            new TypeScriptRuntimeRequirementDefinition("JsonElement", "./system/text/json/json-element"),
+            new TypeScriptRuntimeRequirementDefinition("JsonProperty", "./system/text/json/json-property"),
+            new TypeScriptRuntimeRequirementDefinition("JsonValueKind", "./system/text/json/json-value-kind"),
+            new TypeScriptRuntimeRequirementDefinition("Utf8JsonReader", "./system/text/json/utf8-json-reader"),
+            new TypeScriptRuntimeRequirementDefinition("Utf8JsonWriter", "./system/text/json/utf8-json-writer"),
+            new TypeScriptRuntimeRequirementDefinition("JsonWriterOptions", "./system/text/json/json-writer-options"),
+            new TypeScriptRuntimeRequirementDefinition("JsonNumberHandling", "./system/text/json/json-number-handling"),
+            new TypeScriptRuntimeRequirementDefinition("JsonIgnoreCondition", "./system/text/json/json-ignore-condition"),
+            new TypeScriptRuntimeRequirementDefinition("JsonConverter", "./system/text/json/serialization/json-converter"),
+            new TypeScriptRuntimeRequirementDefinition("JsonStringEnumConverter", "./system/text/json/serialization/json-string-enum-converter"),
 
             // system.threading
             new TypeScriptRuntimeRequirementDefinition("Thread", "./system/threading/thread"),
