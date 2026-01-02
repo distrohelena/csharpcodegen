@@ -176,7 +176,16 @@
     <None Include=".net.ts\system\collections\generic\dictionary.interface.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\collections\generic\ienumerable.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\collections\generic\icollection.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\collections\generic\ireadonlydictionary.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\collections\generic\ireadonlylist.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\collections\generic\list.ts">
