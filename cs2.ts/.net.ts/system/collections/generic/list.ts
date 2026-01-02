@@ -95,11 +95,21 @@ export class List<T> extends Array<T> {
 declare global {
     interface Array<T> {
         toList(): List<T>;
+        Any(predicate?: (item: T) => boolean): boolean;
     }
 }
 
 if (!(Array.prototype as any).toList) {
     (Array.prototype as any).toList = function () {
         return new List(...this);
+    };
+}
+
+if (!(Array.prototype as any).Any) {
+    (Array.prototype as any).Any = function (predicate?: (item: any) => boolean) {
+        if (predicate) {
+            return this.some((item: any) => predicate(item));
+        }
+        return this.length > 0;
     };
 }
