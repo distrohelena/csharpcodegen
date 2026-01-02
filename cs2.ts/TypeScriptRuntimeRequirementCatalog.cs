@@ -34,6 +34,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("Environment", "./system/environment"),
             new TypeScriptRuntimeRequirementDefinition("AppDomain", "./system/app-domain"),
             new TypeScriptRuntimeRequirementDefinition("StringComparer", "./system/string-comparer"),
+            new TypeScriptRuntimeRequirementDefinition("StringComparison", "./system/string-comparison"),
 
             // system.collection.concurrent
             new TypeScriptRuntimeRequirementDefinition("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"),
