@@ -2244,14 +2244,8 @@ namespace cs2.ts {
         /// <param name="memberBinding">The member binding expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessMemberBindingExpression(SemanticModel semantic, LayerContext context, MemberBindingExpressionSyntax memberBinding, List<string> lines) {
-            // Access the member (property, method, etc.)
-            string name = memberBinding.Name.ToString();
-
-            if (name == "Dispose") {
-                name = "dispose";
-            }
-
-            lines.Add(name);
+            // Reuse identifier processing to apply remaps (ex: Length -> length).
+            ProcessExpression(semantic, context, memberBinding.Name, lines);
         }
 
         /// <summary>
