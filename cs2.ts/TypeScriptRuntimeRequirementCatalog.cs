@@ -112,6 +112,8 @@ namespace cs2.ts {
 
             // system.text
             new TypeScriptRuntimeRequirementDefinition("Encoding", "./system/text/encoding"),
+            new TypeScriptRuntimeRequirementDefinition("Regex", "./system/text/regular-expressions/regex"),
+            new TypeScriptRuntimeRequirementDefinition("RegexOptions", "./system/text/regular-expressions/regex-options"),
             new TypeScriptRuntimeRequirementDefinition("JsonSerializer", "./system/text/json/json-serializer"),
             new TypeScriptRuntimeRequirementDefinition("JsonSerializerOptions", "./system/text/json/json-serializer-options"),
             new TypeScriptRuntimeRequirementDefinition("JsonDocument", "./system/text/json/json-document"),

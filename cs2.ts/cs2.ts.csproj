@@ -293,6 +293,12 @@
     <None Include=".net.ts\system\text\encoding.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\text\regular-expressions\regex-options.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\text\regular-expressions\regex.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\text\json\json-document-options.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

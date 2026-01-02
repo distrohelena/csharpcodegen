@@ -125,7 +125,18 @@ export class DateTime {
         return new TimeSpan(0, 0, 0, 0, this._date.getTime() - other._date.getTime());
     }
 
-    public ToString(): string {
+    public ToString(format?: string): string {
+        if (format === "o" || format === "O") {
+            const year = this._date.getUTCFullYear().toString().padStart(4, "0");
+            const month = (this._date.getUTCMonth() + 1).toString().padStart(2, "0");
+            const day = this._date.getUTCDate().toString().padStart(2, "0");
+            const hours = this._date.getUTCHours().toString().padStart(2, "0");
+            const minutes = this._date.getUTCMinutes().toString().padStart(2, "0");
+            const seconds = this._date.getUTCSeconds().toString().padStart(2, "0");
+            const millis = this._date.getUTCMilliseconds().toString().padStart(3, "0");
+            const fractional = `${millis}0000`;
+            return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${fractional}Z`;
+        }
         return this._date.toISOString();
     }
 
