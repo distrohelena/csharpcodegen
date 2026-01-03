@@ -20,6 +20,8 @@ namespace cs2.ts {
             List<string> exts = new List<string>();
             List<string> impls = new List<string>();
 
+            bool isInterfaceDeclaration = cl.DeclarationType == MemberDeclarationType.Interface;
+
             for (int i = 0; i < cl.Extensions.Count; i++) {
                 string ext = cl.Extensions[i];
 
@@ -32,11 +34,21 @@ namespace cs2.ts {
                     }
                 }
 
-                bool isInterface = cl.DeclarationType == MemberDeclarationType.Interface;
-                if (!isInterface && extCl != null) {
-                    isInterface = extCl.DeclarationType == MemberDeclarationType.Interface;
+                bool isInterfaceType = false;
+                if (extCl != null) {
+                    isInterfaceType = extCl.DeclarationType == MemberDeclarationType.Interface;
+                } else if (knownClass != null && knownClass.Symbols != null) {
+                    for (int j = 0; j < knownClass.Symbols.Count; j++) {
+                        if (knownClass.Symbols[j] != null && knownClass.Symbols[j].Type == "interface") {
+                            isInterfaceType = true;
+                            break;
+                        }
+                    }
                 }
-                if (isInterface) {
+
+                if (isInterfaceDeclaration) {
+                    exts.Add(ext);
+                } else if (isInterfaceType) {
                     impls.Add(ext);
                 } else {
                     exts.Add(ext);

@@ -224,8 +224,11 @@ namespace cs2.ts {
                     writer.Write(source);
             },
                 (file) => {
-                    return !file.FullName.EndsWith(".json") && !file.FullName.EndsWith("extractor.js");
-            });
+                    return !file.FullName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                        && !file.FullName.EndsWith("extractor.js", StringComparison.OrdinalIgnoreCase)
+                        && !file.FullName.EndsWith("tsconfig.strict.json", StringComparison.OrdinalIgnoreCase);
+            },
+                (dir) => !dir.Name.Equals("node_modules", StringComparison.OrdinalIgnoreCase));
 
             string outputFile = Path.Combine(outputFolder, fileName);
             string outputDir = Path.GetDirectoryName(outputFile);

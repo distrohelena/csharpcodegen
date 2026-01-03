@@ -46,11 +46,16 @@
 declare global {
     interface Uint8Array {
         AsSpan(start?: number, length?: number): Uint8Array;
+        Clone(): Uint8Array;
     }
 }
 
 Uint8Array.prototype.AsSpan = function(start: number = 0, length?: number): Uint8Array {
     const end = length === undefined ? undefined : start + length;
     return this.subarray(start, end);
+};
+
+Uint8Array.prototype.Clone = function(): Uint8Array {
+    return new Uint8Array(this);
 };
 

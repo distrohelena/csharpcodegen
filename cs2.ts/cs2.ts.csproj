@@ -402,6 +402,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\submodules\nucleusdotnet\nucleus-dotnet\nucleus-dotnet\NucleusDotNet.csproj" />
     <ProjectReference Include="..\cs2.core\cs2.core.csproj" />
   </ItemGroup>
 

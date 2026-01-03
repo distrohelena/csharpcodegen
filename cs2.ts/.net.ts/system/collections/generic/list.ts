@@ -1,5 +1,32 @@
 // @ts-nocheck
 export class List<T> extends Array<T> {
+    // Initialize a new list, optionally with items or a capacity placeholder
+    constructor();
+    constructor(capacity: number);
+    constructor(items: Iterable<T>);
+    constructor(...items: T[]);
+    constructor(arg1?: number | Iterable<T> | T, ...rest: T[]) {
+        super();
+
+        if (typeof arg1 === "number" && rest.length === 0) {
+            // capacity is ignored in JS implementation
+            return;
+        }
+
+        if (rest.length > 0) {
+            this.push(arg1 as T, ...rest);
+            return;
+        }
+
+        if (arg1 && typeof (arg1 as any)[Symbol.iterator] === "function") {
+            for (const item of arg1 as Iterable<T>) {
+                this.push(item);
+            }
+        } else if (arg1 !== undefined) {
+            this.push(arg1 as T);
+        }
+    }
+
     // Add an item to the list
     public add(item: T): void {
         this.push(item);
@@ -107,6 +134,8 @@ declare global {
     interface Array<T> {
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
+        Where(predicate: (item: T, index: number) => boolean): T[];
+        ToArray(): T[];
     }
 }
 
@@ -122,5 +151,20 @@ if (!(Array.prototype as any).Any) {
             return this.some((item: any) => predicate(item));
         }
         return this.length > 0;
+    };
+}
+
+if (!(Array.prototype as any).Where) {
+    (Array.prototype as any).Where = function (predicate: (item: any, index: number) => boolean) {
+        if (!predicate) {
+            throw new Error("Predicate cannot be null.");
+        }
+        return this.filter((item: any, index: number) => predicate(item, index));
+    };
+}
+
+if (!(Array.prototype as any).ToArray) {
+    (Array.prototype as any).ToArray = function () {
+        return [...this];
     };
 }
