@@ -258,6 +258,8 @@ namespace cs2.ts {
             makeTypeScriptFunction("StartsWith", "startsWith", clString, "string");
             makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
+            makeTypeScriptFunction("Trim", "trim", clString, "string");
+            makeTypeScriptFunction("ToLowerInvariant", "toLowerCase", clString, "string");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clString, "string");
             makeTypeScriptFunction("IsNullOrWhiteSpace", "isNullOrWhiteSpace", clString, "string");
             makeTypeScriptVariable("Empty", "Empty", clString, "string", "NativeStringUtil");
@@ -266,6 +268,7 @@ namespace cs2.ts {
             ConversionClass clStringUpper = makeClass("String");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsNullOrWhiteSpace", "isNullOrWhiteSpace", clStringUpper, "string", "NativeStringUtil");
+            makeTypeScriptFunction("IsLetter", "isLetter", clStringUpper, "bool", "NativeStringUtil");
             makeTypeScriptVariable("Empty", "Empty", clStringUpper, "string", "NativeStringUtil");
             RegisterClass(clStringUpper);
 

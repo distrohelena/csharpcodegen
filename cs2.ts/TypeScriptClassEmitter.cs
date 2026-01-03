@@ -436,7 +436,25 @@ namespace cs2.ts {
                 string generic = cl.GetGenericArguments();
 
                 if (constructors.Count > 1 && classOverrides > 0) {
-                    writer.WriteLine("constructor(...__baseArgs: any[]) {");
+                    string baseClassName = null;
+                    for (int i = 0; i < cl.Extensions.Count; i++) {
+                        string extension = cl.Extensions[i];
+                        var extCl = TypeScriptProgram.GetClassByName(extension);
+                        if (extCl != null && extCl.DeclarationType != MemberDeclarationType.Interface) {
+                            baseClassName = extCl.Name;
+                            break;
+                        }
+                    }
+                    if (string.IsNullOrEmpty(baseClassName) && cl.Extensions.Count > 0) {
+                        baseClassName = cl.Extensions[0];
+                    }
+
+                    string baseArgsType = "any[]";
+                    if (!string.IsNullOrEmpty(baseClassName)) {
+                        baseArgsType = $"ConstructorParameters<typeof {baseClassName}>";
+                    }
+
+                    writer.WriteLine($"constructor(...__baseArgs: {baseArgsType}) {{");
                     writer.WriteLine("super(...__baseArgs);");
                     writer.WriteLine("}");
                     writer.WriteLine();

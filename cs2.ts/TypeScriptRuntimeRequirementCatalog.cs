@@ -116,6 +116,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("CryptographicException", "./system/security/cryptography/cryptographic-exception"),
 
             // system.text
+            new TypeScriptRuntimeRequirementDefinition("StringBuilder", "./system/text/string-builder"),
             new TypeScriptRuntimeRequirementDefinition("Encoding", "./system/text/encoding"),
             new TypeScriptRuntimeRequirementDefinition("Regex", "./system/text/regular-expressions/regex"),
             new TypeScriptRuntimeRequirementDefinition("RegexOptions", "./system/text/regular-expressions/regex-options"),

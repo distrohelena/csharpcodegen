@@ -1038,6 +1038,13 @@ namespace cs2.ts {
                 return spanResult;
             }
 
+            List<ConversionClass> conditionalClasses = null;
+            if (invocationExpression.Expression is MemberBindingExpressionSyntax &&
+                context.DepthClass > 1) {
+                // Avoid leaking the conditional-access target type into argument resolution.
+                conditionalClasses = context.SavePopClass(context.DepthClass - 1);
+            }
+
             List<string> argLines = ["("];
             int count = 0;
             List<ExpressionResult> types = new List<ExpressionResult>();
@@ -1097,6 +1104,9 @@ namespace cs2.ts {
             argLines.Add(")");
 
             List<string> invoLines = new List<string>();
+            if (conditionalClasses != null) {
+                context.LoadClass(conditionalClasses);
+            }
             ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, invoLines, types);
 
             if (result.Type != null &&
@@ -2875,6 +2885,25 @@ namespace cs2.ts {
             lines.Add(" of ");
             ExpressionResult result = ProcessExpression(semantic, context, forEachStatement.Expression, lines);
             lines.Add(") {\n");
+
+            FunctionStack fn = context.GetCurrentFunction();
+            if (fn != null) {
+                VariableType elementType = null;
+                ForEachStatementInfo forEachInfo = semantic.GetForEachStatementInfo(forEachStatement);
+                if (forEachInfo.ElementType != null) {
+                    elementType = VariableUtil.GetVarType(forEachInfo.ElementType);
+                } else if (forEachStatement.Type != null) {
+                    elementType = VariableUtil.GetVarType(forEachStatement.Type, semantic);
+                }
+
+                if (elementType != null) {
+                    ConversionVariable var = new ConversionVariable {
+                        Name = forEachStatement.Identifier.Text,
+                        VarType = elementType
+                    };
+                    fn.Stack.Add(var);
+                }
+            }
 
             // Process the body of the forEach loop
             ProcessStatement(semantic, context, forEachStatement.Statement, lines);

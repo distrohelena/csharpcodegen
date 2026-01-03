@@ -305,6 +305,9 @@
     <None Include=".net.ts\system\reflection\assembly-name.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\text\string-builder.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\text\encoding.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

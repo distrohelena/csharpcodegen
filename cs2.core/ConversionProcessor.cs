@@ -108,6 +108,10 @@ namespace cs2.core {
                 ProcessPostfixUnaryExpression(semantic, context, postfixUnary, lines);
             } else if (expression is ElementAccessExpressionSyntax elementAccess) {
                 ProcessElementAccessExpression(semantic, context, elementAccess, lines);
+                var elementType = semantic.GetTypeInfo(elementAccess).Type;
+                if (elementType != null) {
+                    return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(elementType));
+                }
             } else if (expression is InterpolatedStringExpressionSyntax interpolatedString) {
                 return ProcessInterpolatedStringExpression(semantic, context, interpolatedString, lines);
             } else if (expression is DefaultExpressionSyntax defaultExpr) {

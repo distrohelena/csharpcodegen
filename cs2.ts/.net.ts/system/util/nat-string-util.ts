@@ -9,6 +9,14 @@ export class NativeStringUtil {
         return value == null || value.trim().length === 0;
     }
 
+    static isLetter(value?: string | null): boolean {
+        if (!value || value.length === 0) {
+            return false;
+        }
+        const code = value.charCodeAt(0);
+        return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    }
+
     static toCamelCase(value?: string | null): string {
         if (!value || value.length === 0) {
             return value ?? "";

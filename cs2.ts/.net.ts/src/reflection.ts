@@ -228,8 +228,30 @@ export abstract class MemberInfo {
         this.attributes = attributes;
     }
 
+    get Name(): string { return this.name; }
+    get DeclaringType(): Type { return this.declaringType; }
+    get IsStatic(): boolean { return this.isStatic; }
+    get IsPublic(): boolean { return this.isPublic; }
+
     GetCustomAttributes(): any[] {
         return (this.attributes ?? []).slice();
+    }
+
+    GetCustomAttribute<T>(attributeType?: any, inherit?: boolean): T | null {
+        if (typeof attributeType === "boolean" && inherit === undefined) {
+            attributeType = undefined;
+        }
+
+        const attrs = this.attributes ?? [];
+        if (attrs.length === 0) return null;
+        if (!attributeType) return (attrs[0] ?? null) as T | null;
+
+        const typeName = resolveAttributeTypeName(attributeType);
+        if (!typeName) return null;
+
+        const shortName = typeName.includes(".") ? typeName.substring(typeName.lastIndexOf(".") + 1) : typeName;
+        const match = attrs.find(a => a.type === typeName || a.type === shortName || a.type.endsWith("." + shortName));
+        return (match ?? null) as T | null;
     }
 }
 
@@ -285,6 +307,10 @@ export class PropertyInfo extends MemberInfo {
         this.canRead = meta.canRead ?? true;
         this.canWrite = meta.canWrite ?? true;
     }
+
+    get PropertyType(): Type { return this.propertyType; }
+    get CanRead(): boolean { return this.canRead; }
+    get CanWrite(): boolean { return this.canWrite; }
 
     GetValue(target: any): any {
         const owner = this.isStatic ? this.declaringType._ctor : target;
@@ -484,7 +510,7 @@ export class Type {
     }
 
     GetCustomAttributes(): any[] { return (this.meta.attributes ?? []).slice(); }
-    GetCustomAttribute(attributeType?: any, inherit?: boolean): any | null {
+    GetCustomAttribute<T>(attributeType?: any, inherit?: boolean): T | null {
         if (typeof attributeType === "boolean" && inherit === undefined) {
             inherit = attributeType;
             attributeType = undefined;
@@ -492,23 +518,13 @@ export class Type {
 
         const attrs = this._collectAttributes(!!inherit);
         if (attrs.length === 0) return null;
-        if (!attributeType) return attrs[0] ?? null;
+        if (!attributeType) return (attrs[0] ?? null) as T | null;
 
-        let typeName: string | null = null;
-        if (typeof attributeType === "string") {
-            typeName = attributeType;
-        } else if (attributeType && attributeType[kTypeTag] === true) {
-            typeName = attributeType.fullName ?? attributeType.FullName;
-        } else if (typeof attributeType === "function") {
-            const resolved = Type.get(attributeType);
-            typeName = resolved ? resolved.FullName : attributeType.name;
-        } else if (attributeType && typeof attributeType.fullName === "string") {
-            typeName = attributeType.fullName;
-        }
+        const typeName = resolveAttributeTypeName(attributeType);
 
         if (!typeName) return null;
         const shortName = typeName.includes(".") ? typeName.substring(typeName.lastIndexOf(".") + 1) : typeName;
-        return attrs.find(a => a.type === typeName || a.type === shortName || a.type.endsWith("." + shortName)) ?? null;
+        return (attrs.find(a => a.type === typeName || a.type === shortName || a.type.endsWith("." + shortName)) ?? null) as T | null;
     }
 
     IsSubclassOf(t: Type | null): boolean {
@@ -630,6 +646,23 @@ export function isMember(x: any): x is MemberInfo { return !!x && (x as any)[kMe
 
 export function constructAttributes(attrs?: AttributeData[]): any[] {
     return (attrs ?? []).map(a => ({ ...a }));
+}
+
+function resolveAttributeTypeName(attributeType: any): string | null {
+    if (typeof attributeType === "string") {
+        return attributeType;
+    }
+    if (attributeType && attributeType[kTypeTag] === true) {
+        return attributeType.fullName ?? attributeType.FullName ?? null;
+    }
+    if (typeof attributeType === "function") {
+        const resolved = Type.get(attributeType);
+        return resolved ? resolved.FullName : attributeType.name;
+    }
+    if (attributeType && typeof attributeType.fullName === "string") {
+        return attributeType.fullName;
+    }
+    return null;
 }
 
 export function registerEnum(ctor: any, metadata: TypeMetadata): Type {
