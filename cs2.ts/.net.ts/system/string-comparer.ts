@@ -34,6 +34,27 @@ export class StringComparer implements IEqualityComparer<string> {
         return hash;
     }
 
+    public Compare(x: string, y: string): number {
+        if (x === y) {
+            return 0;
+        }
+        if (x == null) {
+            return -1;
+        }
+        if (y == null) {
+            return 1;
+        }
+        const left = this.ignoreCase ? x.toLowerCase() : x;
+        const right = this.ignoreCase ? y.toLowerCase() : y;
+        if (left < right) {
+            return -1;
+        }
+        if (left > right) {
+            return 1;
+        }
+        return 0;
+    }
+
     public static readonly Ordinal: StringComparer = new StringComparer(false);
     public static readonly OrdinalIgnoreCase: StringComparer = new StringComparer(true);
 }

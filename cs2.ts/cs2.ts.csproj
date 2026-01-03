@@ -26,6 +26,9 @@
     <None Include=".net.ts\system\argument-null.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\argument-out-of-range.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\invalid-operation.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

@@ -64,6 +64,17 @@ export class List<T> extends Array<T> {
         return [...this];
     }
 
+    // Sorts the list in place
+    public Sort(comparer?: ((a: T, b: T) => number) | { Compare?: (a: T, b: T) => number }): void {
+        if (typeof comparer === "function") {
+            Array.prototype.sort.call(this, comparer);
+        } else if (comparer && typeof (comparer as any).Compare === "function") {
+            Array.prototype.sort.call(this, (a: T, b: T) => (comparer as any).Compare(a, b));
+        } else {
+            Array.prototype.sort.call(this);
+        }
+    }
+
     // Insert an item at a specific index
     public insert(index: number, item: T): void {
         if (index >= 0 && index <= this.length) {

@@ -81,6 +81,21 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         this._count++;
     }
 
+    // Try to add a key-value pair without throwing if it already exists
+    public TryAdd(key: TKey, value: TValue): boolean {
+        const hash = this.getHash(key);
+        const bucket = this.buckets[hash] ?? [];
+        for (let i = 0; i < bucket.length; i++) {
+            if (this.keysEqual(bucket[i].key, key)) {
+                return false;
+            }
+        }
+        bucket.push({ key, value });
+        this.buckets[hash] = bucket;
+        this._count++;
+        return true;
+    }
+
     // Try to get the value by key, returning a boolean for success/failure
     public tryGetValue(key: TKey, outValue: { value?: TValue }): boolean {
         const hash = this.getHash(key);

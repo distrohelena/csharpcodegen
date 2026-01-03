@@ -11,6 +11,7 @@ export enum StringComparison {
 declare global {
     interface StringConstructor {
         Equals(a: string, b: string, comparison?: StringComparison): boolean;
+        CompareOrdinal(a: string, b: string): number;
     }
 }
 
@@ -28,5 +29,26 @@ if (!(String as any).Equals) {
             default:
                 return a === b;
         }
+    };
+}
+
+if (!(String as any).CompareOrdinal) {
+    (String as any).CompareOrdinal = function (a: string, b: string) {
+        if (a === b) {
+            return 0;
+        }
+        if (a == null) {
+            return -1;
+        }
+        if (b == null) {
+            return 1;
+        }
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+        return 0;
     };
 }

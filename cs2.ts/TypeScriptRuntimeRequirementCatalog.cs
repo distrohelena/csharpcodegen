@@ -15,6 +15,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("NotImplementedException", "./system/not-implemented.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentException", "./system/argument.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentNullException", "./system/argument-null.exception"),
+            new TypeScriptRuntimeRequirementDefinition("ArgumentOutOfRangeException", "./system/argument-out-of-range.exception"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 0, false, "Action", "./system/action"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 1, false, "Func", "./system/func"),
             new TypeScriptRuntimeRequirementDefinition("ConsoleColor", "./system/console-color"),

@@ -7,6 +7,7 @@ export interface IDictionary<TKey, TValue> {
 
     // Methods
     add(key: TKey, value: TValue): void;
+    TryAdd(key: TKey, value: TValue): boolean;
     containsKey(key: TKey): boolean;
     remove(key: TKey): boolean;
     tryGetValue(key: TKey, outValue: { value?: TValue }): boolean;
