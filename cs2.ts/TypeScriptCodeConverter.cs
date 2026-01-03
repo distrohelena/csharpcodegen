@@ -501,9 +501,10 @@ namespace cs2.ts {
         /// <summary>
         /// Propagates async flags across related and derived class methods.
         /// </summary>
-        void PropagateAsyncOverrides() {
+        /// <returns>True when any async flags were updated.</returns>
+        bool PropagateAsyncOverrides() {
             if (program.Classes == null || program.Classes.Count == 0) {
-                return;
+                return false;
             }
 
             Dictionary<string, List<ConversionClass>> classIndex = BuildClassNameIndex(program.Classes);
@@ -511,13 +512,19 @@ namespace cs2.ts {
             Dictionary<string, List<ConversionClass>> relatedMap = BuildRelatedClassMap(program.Classes, classIndex, derivedMap);
 
             bool changed;
+            bool changedEver = false;
             int guard = 0;
             do {
                 changed = false;
                 changed |= PropagateAsyncInRelatedClasses(program.Classes, relatedMap);
                 changed |= PropagateAsyncInDerivedClasses(program.Classes, derivedMap);
+                if (changed) {
+                    changedEver = true;
+                }
                 guard++;
             } while (changed && guard < program.Classes.Count);
+
+            return changedEver;
         }
 
         /// <summary>
@@ -789,10 +796,9 @@ namespace cs2.ts {
                 for (int j = 0; j < program.Classes.Count; j++) {
                     changed |= preprocessClass(program.Classes[j]);
                 }
+                changed |= PropagateAsyncOverrides();
                 guard++;
             } while (changed && guard < program.Classes.Count);
-
-            PropagateAsyncOverrides();
 
             for (int i = 0; i < program.Classes.Count; i++) {
                 ClassEmitter.EmitClass(program.Classes[i], writer);
