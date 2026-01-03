@@ -206,6 +206,9 @@
     <None Include=".net.ts\system\collections\generic\list.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\collections\generic\hash-set.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\collections\generic\sorted-list.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

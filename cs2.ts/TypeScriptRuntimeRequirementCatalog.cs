@@ -49,6 +49,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("IReadOnlyDictionary", "./system/collections/generic/ireadonlydictionary"),
             new TypeScriptRuntimeRequirementDefinition("IReadOnlyList", "./system/collections/generic/ireadonlylist"),
             new TypeScriptRuntimeRequirementDefinition("List", "./system/collections/generic/list"),
+            new TypeScriptRuntimeRequirementDefinition("HashSet", "./system/collections/generic/hash-set"),
             new TypeScriptRuntimeRequirementDefinition("KeyValuePair", "./system/collections/generic/key-value-pair"),
             new TypeScriptRuntimeRequirementDefinition("SortedList", "./system/collections/generic/sorted-list"),
             new TypeScriptRuntimeRequirementDefinition("Queue", "./system/collections/generic/queue"),
