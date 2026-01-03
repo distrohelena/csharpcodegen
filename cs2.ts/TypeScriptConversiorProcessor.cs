@@ -941,6 +941,29 @@ namespace cs2.ts {
                     }
                 }
 
+                if (leftResult.Type != null &&
+                    leftResult.Type.TypeName == "KeyValuePair" &&
+                    leftResult.Type.GenericArgs != null &&
+                    leftResult.Type.GenericArgs.Count >= 2 &&
+                    memberAccess.Name is IdentifierNameSyntax kvpMember) {
+                    string memberName = kvpMember.Identifier.Text;
+                    if (memberName == "Key" || memberName == "Value") {
+                        VariableType memberType = memberName == "Key"
+                            ? leftResult.Type.GenericArgs[0]
+                            : leftResult.Type.GenericArgs[1];
+                        if (memberType == null) {
+                            memberType = new VariableType(VariableDataType.Object);
+                        }
+
+                        lines.AddRange(leftLines);
+                        lines.Add(".");
+                        lines.Add(memberName);
+
+                        context.AddClass(GetClass((TypeScriptProgram)context.Program, memberType));
+                        return new ExpressionResult(true, leftResult.VarPath, memberType);
+                    }
+                }
+
                 lines.AddRange(leftLines);
                 lines.Add(".");
             }
@@ -964,6 +987,10 @@ namespace cs2.ts {
 
             if (TryProcessArrayEmpty(semantic, invocationExpression, lines, out ExpressionResult emptyResult)) {
                 return emptyResult;
+            }
+
+            if (TryProcessEnumToString(semantic, context, invocationExpression, lines, out ExpressionResult enumResult)) {
+                return enumResult;
             }
 
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
@@ -2149,6 +2176,109 @@ namespace cs2.ts {
             lines.Add("`");
 
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+        }
+
+        bool TryProcessEnumToString(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            if (invocationExpression.ArgumentList?.Arguments.Count > 0) {
+                return false;
+            }
+
+            if (memberAccess.Name is not IdentifierNameSyntax memberName) {
+                return false;
+            }
+
+            if (memberName.Identifier.Text == "ToLowerInvariant") {
+                if (memberAccess.Expression is not InvocationExpressionSyntax innerInvocation) {
+                    return false;
+                }
+
+                if (innerInvocation.ArgumentList?.Arguments.Count > 0) {
+                    return false;
+                }
+
+                if (innerInvocation.Expression is not MemberAccessExpressionSyntax innerMemberAccess) {
+                    return false;
+                }
+
+                if (innerMemberAccess.Name is not IdentifierNameSyntax innerName ||
+                    innerName.Identifier.Text != "ToString") {
+                    return false;
+                }
+
+                INamedTypeSymbol enumType = ResolveEnumType(semantic.GetTypeInfo(innerMemberAccess.Expression).Type);
+                if (enumType == null) {
+                    return false;
+                }
+
+                int depth = context.DepthClass;
+                List<string> targetLines = new List<string>();
+                ProcessExpression(semantic, context, innerMemberAccess.Expression, targetLines);
+                context.PopClass(depth);
+
+                lines.Add("NativeStringUtil.toCamelCase(");
+                lines.Add(enumType.Name);
+                lines.Add("[");
+                lines.AddRange(targetLines);
+                lines.Add("])");
+
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+                return true;
+            }
+
+            if (memberName.Identifier.Text == "ToString") {
+                INamedTypeSymbol enumType = ResolveEnumType(semantic.GetTypeInfo(memberAccess.Expression).Type);
+                if (enumType == null) {
+                    return false;
+                }
+
+                int depth = context.DepthClass;
+                List<string> targetLines = new List<string>();
+                ProcessExpression(semantic, context, memberAccess.Expression, targetLines);
+                context.PopClass(depth);
+
+                lines.Add(enumType.Name);
+                lines.Add("[");
+                lines.AddRange(targetLines);
+                lines.Add("]");
+
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+                return true;
+            }
+
+            return false;
+        }
+
+        static INamedTypeSymbol ResolveEnumType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return null;
+            }
+
+            if (typeSymbol is INamedTypeSymbol namedTypeSymbol) {
+                if (namedTypeSymbol.TypeKind == TypeKind.Enum) {
+                    return namedTypeSymbol;
+                }
+
+                if (namedTypeSymbol.IsGenericType &&
+                    namedTypeSymbol.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T &&
+                    namedTypeSymbol.TypeArguments.Length == 1 &&
+                    namedTypeSymbol.TypeArguments[0] is INamedTypeSymbol innerNamed &&
+                    innerNamed.TypeKind == TypeKind.Enum) {
+                    return innerNamed;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

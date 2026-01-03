@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { IDictionary } from "../generic/dictionary.interface";
 import { KeyValuePair } from "../generic/key-value-pair";
 import { List } from "../generic/list";
@@ -61,6 +60,21 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
     public containsKey(key: TKey): boolean {
         const stringKey = this.keyToString(key);
         return this.items.hasOwnProperty(stringKey);
+    }
+
+    public GetOrAdd(key: TKey, valueFactory: ((key: TKey) => TValue) | TValue): TValue {
+        const stringKey = this.keyToString(key);
+        if (this.items.hasOwnProperty(stringKey)) {
+            return this.items[stringKey];
+        }
+
+        const value = typeof valueFactory === "function"
+            ? (valueFactory as (key: TKey) => TValue)(key)
+            : valueFactory;
+
+        this.items[stringKey] = value;
+        this._count++;
+        return value;
     }
 
     // Get the count of elements in the dictionary

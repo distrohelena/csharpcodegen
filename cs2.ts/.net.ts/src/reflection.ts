@@ -484,6 +484,32 @@ export class Type {
     }
 
     GetCustomAttributes(): any[] { return (this.meta.attributes ?? []).slice(); }
+    GetCustomAttribute(attributeType?: any, inherit?: boolean): any | null {
+        if (typeof attributeType === "boolean" && inherit === undefined) {
+            inherit = attributeType;
+            attributeType = undefined;
+        }
+
+        const attrs = this._collectAttributes(!!inherit);
+        if (attrs.length === 0) return null;
+        if (!attributeType) return attrs[0] ?? null;
+
+        let typeName: string | null = null;
+        if (typeof attributeType === "string") {
+            typeName = attributeType;
+        } else if (attributeType && attributeType[kTypeTag] === true) {
+            typeName = attributeType.fullName ?? attributeType.FullName;
+        } else if (typeof attributeType === "function") {
+            const resolved = Type.get(attributeType);
+            typeName = resolved ? resolved.FullName : attributeType.name;
+        } else if (attributeType && typeof attributeType.fullName === "string") {
+            typeName = attributeType.fullName;
+        }
+
+        if (!typeName) return null;
+        const shortName = typeName.includes(".") ? typeName.substring(typeName.lastIndexOf(".") + 1) : typeName;
+        return attrs.find(a => a.type === typeName || a.type === shortName || a.type.endsWith("." + shortName)) ?? null;
+    }
 
     IsSubclassOf(t: Type | null): boolean {
         if (!t) return false;
@@ -547,6 +573,21 @@ export class Type {
             this.ctorsCache = (this.meta.constructors ?? [{ isPublic: true, name: ".ctor", parameters: [] }]).map(c => new ConstructorInfo(this, c));
         }
         return this.ctorsCache;
+    }
+
+    private _collectAttributes(inherit: boolean): AttributeData[] {
+        if (!inherit) {
+            return this.meta.attributes ?? [];
+        }
+        const attrs: AttributeData[] = [];
+        let current: Type | null = this;
+        while (current) {
+            if (current.meta.attributes && current.meta.attributes.length > 0) {
+                attrs.push(...current.meta.attributes);
+            }
+            current = current.BaseType;
+        }
+        return attrs;
     }
 }
 
