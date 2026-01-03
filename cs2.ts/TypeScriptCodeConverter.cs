@@ -315,21 +315,28 @@ namespace cs2.ts {
         /// Preprocesses class members to apply name remaps and line caching.
         /// </summary>
         /// <param name="cl">The class to preprocess.</param>
-        void preprocessClass(ConversionClass cl) {
+        bool preprocessClass(ConversionClass cl) {
             if (cl.IsNative) {
-                return;
+                return false;
             }
 
             var functions = cl.Functions.Where(c => !c.IsConstructor).ToList();
+            bool changed = false;
             for (int j = 0; j < functions.Count; j++) {
                 ConversionFunction fn = functions[j];
+                bool wasAsync = fn.IsAsync;
 
                 if (fn.Name == "Dispose") {
                     fn.Remap = "dispose";
                 }
 
                 fn.WriteLines(conversion, program, cl);
+                if (!wasAsync && fn.IsAsync) {
+                    changed = true;
+                }
             }
+
+            return changed;
         }
 
         /// <summary>
@@ -503,8 +510,14 @@ namespace cs2.ts {
             Dictionary<string, List<ConversionClass>> derivedMap = BuildDerivedClassMap(program.Classes);
             Dictionary<string, List<ConversionClass>> relatedMap = BuildRelatedClassMap(program.Classes, classIndex, derivedMap);
 
-            PropagateAsyncInRelatedClasses(program.Classes, relatedMap);
-            PropagateAsyncInDerivedClasses(program.Classes, derivedMap);
+            bool changed;
+            int guard = 0;
+            do {
+                changed = false;
+                changed |= PropagateAsyncInRelatedClasses(program.Classes, relatedMap);
+                changed |= PropagateAsyncInDerivedClasses(program.Classes, derivedMap);
+                guard++;
+            } while (changed && guard < program.Classes.Count);
         }
 
         /// <summary>
@@ -592,12 +605,12 @@ namespace cs2.ts {
                     continue;
                 }
 
+                HashSet<string> allExtensions = new HashSet<string>(StringComparer.Ordinal);
                 for (int j = 0; j < cl.Extensions.Count; j++) {
-                    string extension = cl.Extensions[j];
-                    if (string.IsNullOrWhiteSpace(extension)) {
-                        continue;
-                    }
+                    CollectAllExtensions(cl.Extensions[j], classIndex, allExtensions);
+                }
 
+                foreach (string extension in allExtensions) {
                     if (!classIndex.TryGetValue(extension, out List<ConversionClass> baseClasses)) {
                         continue;
                     }
@@ -611,16 +624,45 @@ namespace cs2.ts {
             return relatedMap;
         }
 
+        static void CollectAllExtensions(
+            string extension,
+            Dictionary<string, List<ConversionClass>> classIndex,
+            HashSet<string> collected) {
+            if (string.IsNullOrWhiteSpace(extension) || collected == null) {
+                return;
+            }
+
+            if (!collected.Add(extension)) {
+                return;
+            }
+
+            if (classIndex == null || !classIndex.TryGetValue(extension, out List<ConversionClass> baseClasses)) {
+                return;
+            }
+
+            for (int i = 0; i < baseClasses.Count; i++) {
+                ConversionClass baseClass = baseClasses[i];
+                if (baseClass?.Extensions == null) {
+                    continue;
+                }
+
+                for (int j = 0; j < baseClass.Extensions.Count; j++) {
+                    CollectAllExtensions(baseClass.Extensions[j], classIndex, collected);
+                }
+            }
+        }
+
         /// <summary>
         /// Propagates async flags to matching methods in related classes.
         /// </summary>
         /// <param name="classes">The classes to scan for async methods.</param>
         /// <param name="relatedMap">Lookup of class names to related classes.</param>
-        void PropagateAsyncInRelatedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> relatedMap) {
+        bool PropagateAsyncInRelatedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> relatedMap) {
             if (classes == null || relatedMap == null) {
-                return;
+                return false;
             }
 
+            bool changed = false;
             for (int j = 0; j < classes.Count; j++) {
                 ConversionClass cl = classes[j];
                 if (cl == null) {
@@ -645,12 +687,15 @@ namespace cs2.ts {
                         }
 
                         ConversionFunction relatedFn = relatedClass.Functions.FirstOrDefault(f => f.Name == functionName);
-                        if (relatedFn != null) {
+                        if (relatedFn != null && !relatedFn.IsAsync) {
                             relatedFn.IsAsync = true;
+                            changed = true;
                         }
                     }
                 }
             }
+
+            return changed;
         }
 
         /// <summary>
@@ -658,11 +703,12 @@ namespace cs2.ts {
         /// </summary>
         /// <param name="classes">The classes to scan for async methods.</param>
         /// <param name="derivedMap">Lookup of base names to derived classes.</param>
-        void PropagateAsyncInDerivedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> derivedMap) {
+        bool PropagateAsyncInDerivedClasses(IReadOnlyList<ConversionClass> classes, Dictionary<string, List<ConversionClass>> derivedMap) {
             if (classes == null || derivedMap == null) {
-                return;
+                return false;
             }
 
+            bool changed = false;
             for (int j = 0; j < classes.Count; j++) {
                 ConversionClass cl = classes[j];
                 if (cl == null) {
@@ -687,12 +733,15 @@ namespace cs2.ts {
                         }
 
                         ConversionFunction derivedFn = derivedClass.Functions.FirstOrDefault(f => f.Name == functionName);
-                        if (derivedFn != null) {
+                        if (derivedFn != null && !derivedFn.IsAsync) {
                             derivedFn.IsAsync = true;
+                            changed = true;
                         }
                     }
                 }
             }
+
+            return changed;
         }
 
         /// <summary>
@@ -724,12 +773,24 @@ namespace cs2.ts {
             SortProgram();
 
             // pre-process
-            int steps = 3;
-            for (int i = 0; i < steps; i++) {
+            bool changed;
+            int guard = 0;
+            do {
+                changed = false;
                 for (int j = 0; j < program.Classes.Count; j++) {
-                    preprocessClass(program.Classes[j]);
+                    ConversionClass cl = program.Classes[j];
+                    if (cl?.Functions == null) {
+                        continue;
+                    }
+                    for (int k = 0; k < cl.Functions.Count; k++) {
+                        cl.Functions[k].AsyncAnalyzed = false;
+                    }
                 }
-            }
+                for (int j = 0; j < program.Classes.Count; j++) {
+                    changed |= preprocessClass(program.Classes[j]);
+                }
+                guard++;
+            } while (changed && guard < program.Classes.Count);
 
             PropagateAsyncOverrides();
 

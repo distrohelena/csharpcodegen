@@ -68,7 +68,18 @@ namespace cs2.ts {
                         } else if (member.Type == "method") {
                             ConversionFunction fn = new ConversionFunction();
                             fn.Name = member.Name;
-                            fn.ReturnType = VariableUtil.GetVarType(member.ReturnType);
+                            if (!string.IsNullOrWhiteSpace(member.ReturnType)) {
+                                string returnType = member.ReturnType.Trim();
+                                if (returnType.StartsWith("Promise<", StringComparison.Ordinal) && returnType.EndsWith(">", StringComparison.Ordinal)) {
+                                    fn.IsAsync = true;
+                                    string innerType = returnType.Substring("Promise<".Length, returnType.Length - "Promise<".Length - 1).Trim();
+                                    if (!string.Equals(innerType, "void", StringComparison.OrdinalIgnoreCase)) {
+                                        fn.ReturnType = VariableUtil.GetVarType(innerType);
+                                    }
+                                } else {
+                                    fn.ReturnType = VariableUtil.GetVarType(returnType);
+                                }
+                            }
                             cl.Functions.Add(fn);
 
                             for (int l = 0; l < member.Parameters.Count; l++) {

@@ -2094,6 +2094,14 @@ namespace cs2.ts {
                 if (res.Type != null &&
                     res.Type.TypeName.StartsWith("Promise<")) {
                     //lines.Add("await ");
+                    FunctionStack currentFn = context.GetCurrentFunction();
+                    if (currentFn != null && !currentFn.Function.IsAsync) {
+                        currentFn.Function.IsAsync = true;
+                        if (currentFn.Function.ReturnType != null) {
+                            currentFn.Function.ReturnType = new VariableType(currentFn.Function.ReturnType);
+                            currentFn.Function.ReturnType.TypeName = $"Promise<{currentFn.Function.ReturnType.TypeName}>";
+                        }
+                    }
                 }
 
                 if (res.BeforeLines != null) {

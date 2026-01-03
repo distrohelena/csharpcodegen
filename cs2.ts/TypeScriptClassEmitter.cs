@@ -784,7 +784,7 @@ namespace cs2.ts {
                 string clType = fn.GetClassType();
                 string async = fn.GetAsync();
 
-                if (cl.DeclarationType == MemberDeclarationType.Interface) {
+                if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
                     async = "";
                 }
 
