@@ -179,6 +179,9 @@
     <None Include=".net.ts\system\date-time.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\date-time-offset.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\collections\concurrent\concurrent-dictionary.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

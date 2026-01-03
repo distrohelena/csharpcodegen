@@ -2913,7 +2913,9 @@ namespace cs2.ts {
         /// <param name="depth">The current indentation depth.</param>
         /// <returns>The expression result describing the statement.</returns>
         protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
+            int startDepth = context.DepthClass;
             ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
+            context.PopClass(startDepth);
             if (statement is ExpressionStatementSyntax) {
                 result.BeforeLines = null;
                 result.AfterLines = null;
@@ -3258,14 +3260,20 @@ namespace cs2.ts {
                     type = "bool";
                     break;
                 case SyntaxKind.NumericLiteralExpression:
-                    string valueToken = literalExpression.Token.ToString().ToLowerInvariant();
+                    string tokenText = literalExpression.Token.Text;
+                    string valueToken = tokenText.ToLowerInvariant();
+                    bool isUnsignedLong = valueToken.EndsWith("ul") || valueToken.EndsWith("lu");
                     if (valueToken.Contains("f")) {
                         type = "float";
-                } else if (valueToken.Contains("l")) {
+                    } else if (isUnsignedLong) {
+                        type = "ulong";
+                        literalValue = Regex.Replace(tokenText, "(?i)(ul|lu)$", "") + "n";
+                        break;
+                    } else if (valueToken.Contains("l")) {
                         type = "int64";
-                } else {
+                    } else {
                         type = "int32";
-                }
+                    }
                     literalValue = literalExpression.Token.ValueText;
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {

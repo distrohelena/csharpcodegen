@@ -75,3 +75,15 @@ export type Action16<T1, T2, T3, T4,
         in10: T10, in11: T11, in12: T12, in13: T13, in14: T14,
         in15: T15, in16: T16) => void;
 
+declare global {
+    interface Function {
+        Invoke(...args: any[]): any;
+    }
+}
+
+if (!(Function.prototype as any).Invoke) {
+    (Function.prototype as any).Invoke = function (...args: any[]) {
+        return this(...args);
+    };
+}
+

@@ -20,6 +20,7 @@ namespace cs2.ts {
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 1, false, "Func", "./system/func"),
             new TypeScriptRuntimeRequirementDefinition("ConsoleColor", "./system/console-color"),
             new TypeScriptRuntimeRequirementDefinition("DateTime", "./system/date-time"),
+            new TypeScriptRuntimeRequirementDefinition("DateTimeOffset", "./system/date-time-offset"),
             new TypeScriptRuntimeRequirementDefinition("TimeSpan", "./system/time-span"),
             new TypeScriptRuntimeRequirementDefinition("Exception", "./system/exception"),
             new TypeScriptRuntimeRequirementDefinition("Random", "./system/random"),
