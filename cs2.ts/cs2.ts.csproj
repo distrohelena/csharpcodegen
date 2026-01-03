@@ -89,6 +89,9 @@
     <None Include=".net.ts\system\collections\generic\queue.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\collections\objectmodel\read-only-collection.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\console.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

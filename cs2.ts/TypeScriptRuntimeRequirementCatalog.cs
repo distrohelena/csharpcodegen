@@ -52,6 +52,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("KeyValuePair", "./system/collections/generic/key-value-pair"),
             new TypeScriptRuntimeRequirementDefinition("SortedList", "./system/collections/generic/sorted-list"),
             new TypeScriptRuntimeRequirementDefinition("Queue", "./system/collections/generic/queue"),
+            new TypeScriptRuntimeRequirementDefinition("ReadOnlyCollection", "./system/collections/objectmodel/read-only-collection"),
 
             // system.drawing
             new TypeScriptRuntimeRequirementDefinition("Point", "./system/drawing/point"),

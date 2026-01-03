@@ -33,6 +33,10 @@ namespace cs2.core {
                             access = MemberAccessType.Public;
                     }
                         break;
+                    case "internal": {
+                            access = MemberAccessType.Public;
+                    }
+                        break;
                     case "protected": {
                             access = MemberAccessType.Protected;
                     }
