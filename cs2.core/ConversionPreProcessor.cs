@@ -6,6 +6,32 @@ using System.Text.RegularExpressions;
 
 namespace cs2.core {
     public class ConversionPreProcessor {
+        /// <summary>
+        /// Determines whether a symbol is annotated to force async emission in TypeScript.
+        /// </summary>
+        /// <param name="symbol">Symbol to inspect for attributes.</param>
+        /// <returns>True when the TypeScript async attribute is present.</returns>
+        static bool HasTypeScriptAsyncAttribute(ISymbol symbol) {
+            if (symbol == null) {
+                return false;
+            }
+
+            foreach (AttributeData attribute in symbol.GetAttributes()) {
+                INamedTypeSymbol attributeType = attribute.AttributeClass;
+                if (attributeType == null) {
+                    continue;
+                }
+
+                string name = attributeType.Name;
+                if (string.Equals(name, "TypeScriptAsyncAttribute", StringComparison.Ordinal) ||
+                    string.Equals(name, "TypeScriptAsync", StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static void ProcessClassDeclaration(SemanticModel semantic, ClassDeclarationSyntax classDecl, ConversionContext context) {
             // declare class
             var cl = context.StartClass();
@@ -158,6 +184,11 @@ namespace cs2.core {
             func.Remap = mappedName;
             func.DeclarationType = type;
             func.IsAsync = MemberUtil.IsAsync(method.Modifiers);
+            IMethodSymbol methodSymbol = semantic.GetDeclaredSymbol(method) as IMethodSymbol;
+            if (HasTypeScriptAsyncAttribute(methodSymbol) ||
+                HasTypeScriptAsyncAttribute(methodSymbol?.ContainingType)) {
+                func.IsAsync = true;
+            }
 
             if (method.ReturnType != null) {
                 func.ReturnType = VariableUtil.GetVarType(method.ReturnType, semantic);
