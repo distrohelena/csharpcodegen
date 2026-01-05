@@ -170,6 +170,9 @@
     <None Include=".net.ts\system\action.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\event.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\collections\generic\key-value-pair.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

@@ -18,6 +18,8 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("ArgumentOutOfRangeException", "./system/argument-out-of-range.exception"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 0, false, "Action", "./system/action"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 1, false, "Func", "./system/func"),
+            new TypeScriptRuntimeRequirementDefinition("Event", "./system/event"),
+            new TypeScriptRuntimeRequirementDefinition("EventHandler", "./system/event", "", false, true),
             new TypeScriptRuntimeRequirementDefinition("ConsoleColor", "./system/console-color"),
             new TypeScriptRuntimeRequirementDefinition("DateTime", "./system/date-time"),
             new TypeScriptRuntimeRequirementDefinition("DateTimeOffset", "./system/date-time-offset"),

@@ -262,10 +262,11 @@ namespace cs2.ts {
 
                     output.WriteLine($"import type {{ {imports} }} from \"{pair.Path}\";");
                 } else {
+                    string importPrefix = pair.IsType ? "import type" : "import";
                     if (string.IsNullOrEmpty(pair.Replacement)) {
-                        output.WriteLine($"import {{ {pair.Name} }} from \"{pair.Path}\";");
+                        output.WriteLine($"{importPrefix} {{ {pair.Name} }} from \"{pair.Path}\";");
                     } else {
-                        output.WriteLine($"import {{ {pair.Name} as {pair.Replacement} }} from \"{pair.Path}\";");
+                        output.WriteLine($"{importPrefix} {{ {pair.Name} as {pair.Replacement} }} from \"{pair.Path}\";");
                     }
                 }
             }

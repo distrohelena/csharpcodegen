@@ -414,7 +414,10 @@ namespace cs2.core {
                 variable.Name = variableDeclarator.Identifier.Text; // Correctly access the identifier
                 variable.IsStatic = isStatic;
                 variable.AccessType = accessType;
-                variable.VarType = VariableUtil.GetVarType(eventDecl.Declaration.Type, semantic); // Access the type from the declaration
+                variable.VarType = new VariableType(VariableDataType.Object, "Event");
+                if (string.IsNullOrEmpty(variable.Assignment)) {
+                    variable.Assignment = "new Event()";
+                }
                 variable.IsOverride = isOverride;
                 variable.DeclarationType = declarationType;
             }

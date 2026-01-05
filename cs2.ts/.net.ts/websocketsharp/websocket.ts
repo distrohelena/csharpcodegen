@@ -1,14 +1,15 @@
 // @ts-nocheck
 import { WebSocketState } from "./websocket-state";
+import { Event } from "../system/event";
 
 export class WebSocketWS {
     private webSocket: WebSocket;
     private _address: string;
 
-    public OnOpen: (sender, e) => void;
-    public OnClose: (sender, e) => void;
-    public OnMessage: (sender, message) => void;
-    public OnError: (sender, message) => void;
+    public OnOpen: Event = new Event()
+    public OnClose: Event = new Event()
+    public OnMessage: Event = new Event()
+    public OnError: Event = new Event();
 
     private state: WebSocketState;
     get readyState(): WebSocketState {
@@ -44,7 +45,7 @@ export class WebSocketWS {
             this.state = WebSocketState.Open;
 
             if (this.OnOpen) {
-                this.OnOpen(event, null);
+                this.OnOpen.Invoke(event, null);
             }
         }
 
@@ -52,7 +53,7 @@ export class WebSocketWS {
             this.state = WebSocketState.Closed;
 
             if (this.OnClose) {
-                this.OnClose(event, {
+                this.OnClose.Invoke(event, {
                     Reason: event.reason
                 });
             }
@@ -64,7 +65,7 @@ export class WebSocketWS {
         this.webSocket.onmessage = (event) => {
             const arrBuffer = event.data as ArrayBuffer; // Directly get the ArrayBuffer
             const uint8Array = new Uint8Array(arrBuffer); // Convert to Uint8Array if needed
-            this.OnMessage(null, {
+            this.OnMessage.Invoke(null, {
                 rawData: uint8Array
             });
         }

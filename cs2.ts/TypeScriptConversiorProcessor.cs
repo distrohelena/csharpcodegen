@@ -103,6 +103,25 @@ namespace cs2.ts {
 
             string operatorVal = assignment.OperatorToken.ToString();
 
+            IEventSymbol eventSymbol = GetEventSymbol(semantic, assignment.Left);
+            bool isEventAssignment = (eventSymbol != null ||
+                (assignResult.Type != null && string.Equals(assignResult.Type.TypeName, "Event", StringComparison.Ordinal))) &&
+                (operatorVal == "+=" || operatorVal == "-=");
+            if (isEventAssignment) {
+                lines.Add(operatorVal == "+=" ? ".Add(" : ".Remove(");
+
+                startDepth = context.Class.Count;
+                List<string> eventLines = new List<string>();
+                ProcessExpression(semantic, context, assignment.Right, eventLines);
+                context.PopClass(startDepth);
+                AppendMethodGroupBind(semantic, context, assignment.Right, eventLines);
+
+                lines.AddRange(eventLines);
+                lines.Add(")");
+
+                return;
+            }
+
             if (assignResult.Type != null && assignResult.Type.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
                 lines.Add($" = ");
             } else {
@@ -222,18 +241,45 @@ namespace cs2.ts {
         /// <returns>The expression result describing the identifier.</returns>
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             string name = identifier.ToString();
-            bool isMethod = identifier.Parent is InvocationExpressionSyntax ||
+            bool isInvocation = identifier.Parent is InvocationExpressionSyntax ||
                 (identifier.Parent is MemberAccessExpressionSyntax memberAccessSyntax &&
                 memberAccessSyntax.Parent is InvocationExpressionSyntax);
+            bool isMethod = isInvocation;
 
-            ISymbol nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(identifier);
+            ISymbol nsSymbol = symbolInfo.Symbol;
             IMethodSymbol invokedMethod = nsSymbol as IMethodSymbol;
+            if (invokedMethod == null && symbolInfo.CandidateSymbols.Length > 0) {
+                invokedMethod = symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            }
             if (nsSymbol is INamespaceSymbol namespaceSymbol) {
                 if (namespaceSymbol.IsNamespace) {
                     return new ExpressionResult(false);
                 }
             } else if (invokedMethod != null) {
                 isMethod = true;
+            }
+            TypeInfo identifierType = semantic.GetTypeInfo(identifier);
+            AssignmentExpressionSyntax assignment = identifier.Parent as AssignmentExpressionSyntax;
+            bool isMethodGroup = invokedMethod != null &&
+                !isInvocation &&
+                IsDelegateType(identifierType.ConvertedType ?? identifierType.Type);
+            if (!isMethodGroup &&
+                !isInvocation &&
+                assignment != null &&
+                (assignment.OperatorToken.ValueText == "+=" || assignment.OperatorToken.ValueText == "-=")) {
+                ITypeSymbol targetType = null;
+                IEventSymbol eventSymbol = GetEventSymbol(semantic, assignment.Left);
+                if (eventSymbol != null) {
+                    targetType = eventSymbol.Type;
+                } else {
+                    TypeInfo leftTypeInfo = semantic.GetTypeInfo(assignment.Left);
+                    targetType = leftTypeInfo.ConvertedType ?? leftTypeInfo.Type;
+                }
+
+                if (IsDelegateType(targetType)) {
+                    isMethodGroup = true;
+                }
             }
 
             int layer = context.GetClassLayer();
@@ -334,6 +380,25 @@ namespace cs2.ts {
                     if (foundFn != null) {
                         classFn = foundFn;
                     }
+                }
+            }
+
+            if (!isMethodGroup &&
+                !isInvocation &&
+                classFn != null &&
+                assignment != null &&
+                assignment.Right == identifier) {
+                ITypeSymbol targetType = null;
+                SymbolInfo leftSymbolInfo = semantic.GetSymbolInfo(assignment.Left);
+                if (leftSymbolInfo.Symbol is IEventSymbol eventSymbol) {
+                    targetType = eventSymbol.Type;
+                } else {
+                    TypeInfo leftTypeInfo = semantic.GetTypeInfo(assignment.Left);
+                    targetType = leftTypeInfo.ConvertedType ?? leftTypeInfo.Type;
+                }
+
+                if (IsDelegateType(targetType)) {
+                    isMethodGroup = true;
                 }
             }
 
@@ -543,27 +608,41 @@ namespace cs2.ts {
             } else if (classFn != null) {
                 EnsureFunctionAsyncState(semantic, context, currentClass, classFn);
 
-                if (classFn.ReturnType != null) {
-                    // invoked function
-                    if (classFn.ReturnType.Type != VariableDataType.Void) {
-                        context.AddClass(GetClass((TypeScriptProgram)context.Program, classFn.ReturnType));
+                if (!isMethodGroup) {
+                    if (classFn.ReturnType != null) {
+                        // invoked function
+                        if (classFn.ReturnType.Type != VariableDataType.Void) {
+                            context.AddClass(GetClass((TypeScriptProgram)context.Program, classFn.ReturnType));
 
-                        if (classFn.IsAsync) {
-                            VariableType cloned = new VariableType(classFn.ReturnType);
-                            cloned.TypeName = $"Promise<{cloned.TypeName}>";
-                            return new ExpressionResult(true, VariablePath.Unknown, cloned);
+                            if (classFn.IsAsync) {
+                                VariableType cloned = new VariableType(classFn.ReturnType);
+                                cloned.TypeName = $"Promise<{cloned.TypeName}>";
+                                return new ExpressionResult(true, VariablePath.Unknown, cloned);
+                            }
+                            return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
                         }
-                        return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
+                    } else if (classFn.IsAsync) {
+                        VariableType cloned = new VariableType(VariableDataType.Void);
+                        cloned.TypeName = $"Promise<{cloned.TypeName}>";
+                        return new ExpressionResult(true, VariablePath.Unknown, cloned);
                     }
-                } else if (classFn.IsAsync) {
-                    VariableType cloned = new VariableType(VariableDataType.Void);
-                    cloned.TypeName = $"Promise<{cloned.TypeName}>";
-                    return new ExpressionResult(true, VariablePath.Unknown, cloned);
                 }
             } else if (currentClass != null && currentClass.DeclarationType == MemberDeclarationType.Enum) {
 
             } else {
                 //Debugger.Break();
+            }
+
+            if (isMethodGroup && invokedMethod != null && !invokedMethod.IsStatic) {
+                lines.Add(".bind(");
+                lines.Add("this");
+                lines.Add(")");
+            }
+
+            if (isMethodGroup) {
+                VariableType delegateType = VariableUtil.GetVarType(identifierType.ConvertedType);
+                context.AddClass(GetClass((TypeScriptProgram)context.Program, delegateType));
+                return new ExpressionResult(true, VariablePath.Unknown, delegateType);
             }
 
             return new ExpressionResult(true);
@@ -640,7 +719,10 @@ namespace cs2.ts {
             List<ConversionFunction> constructors = null;
             if (result.Class != null) {
                 constructors = result.Class.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
-                if (constructors.Count > 1) {
+                if (constructors.Count == 1) {
+                    EnsureFunctionAsyncState(semantic, context, result.Class, constructors[0]);
+                }
+                if (constructors.Count > 1 || constructors.Any(c => c.IsAsync)) {
                     foundMultiple = true;
                 }
             }
@@ -964,10 +1046,59 @@ namespace cs2.ts {
                     }
                 }
 
+                SymbolInfo memberSymbolInfo = semantic.GetSymbolInfo(memberAccess);
+                IMethodSymbol methodSymbol = memberSymbolInfo.Symbol as IMethodSymbol;
+                if (methodSymbol == null && memberSymbolInfo.CandidateSymbols.Length > 0) {
+                    methodSymbol = memberSymbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+                }
+                if (memberAccess.Parent is not InvocationExpressionSyntax &&
+                    methodSymbol != null) {
+                    TypeInfo memberTypeInfo = semantic.GetTypeInfo(memberAccess);
+                    if (IsDelegateType(memberTypeInfo.ConvertedType)) {
+                        lines.AddRange(leftLines);
+                        lines.Add(".");
+
+                        List<string> nameLines = new List<string>();
+                        ProcessExpression(semantic, context, memberAccess.Name, nameLines, refTypes);
+                        lines.AddRange(nameLines);
+
+                        if (!methodSymbol.IsStatic) {
+                            lines.Add(".bind(");
+                            lines.AddRange(leftLines);
+                            lines.Add(")");
+                        }
+
+                        VariableType delegateType = VariableUtil.GetVarType(memberTypeInfo.ConvertedType);
+                        context.AddClass(GetClass((TypeScriptProgram)context.Program, delegateType));
+                        return new ExpressionResult(true, leftResult.VarPath, delegateType);
+                    }
+                }
+
                 lines.AddRange(leftLines);
                 lines.Add(".");
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
+        }
+
+        /// <summary>
+        /// Determines whether a type symbol represents a delegate type.
+        /// </summary>
+        /// <param name="type">The type symbol to inspect.</param>
+        /// <returns>True when the type is a delegate.</returns>
+        static bool IsDelegateType(ITypeSymbol type) {
+            if (type == null) {
+                return false;
+            }
+
+            if (type.TypeKind == TypeKind.Delegate) {
+                return true;
+            }
+
+            if (type is INamedTypeSymbol namedType && namedType.DelegateInvokeMethod != null) {
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1108,9 +1239,25 @@ namespace cs2.ts {
                 context.LoadClass(conditionalClasses);
             }
             ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, invoLines, types);
+            IEventSymbol invokedEvent = GetEventSymbol(semantic, invocationExpression.Expression);
+            if (invokedEvent != null) {
+                lines.AddRange(invoLines);
+                lines.Add(".Invoke");
+                lines.AddRange(argLines);
 
-            if (result.Type != null &&
-                result.Type.TypeName.StartsWith("Promise<")) {
+                VariableType returnType = GetDelegateReturnType(invokedEvent);
+                ExpressionResult eventResult = new ExpressionResult(true, VariablePath.Unknown, returnType);
+                eventResult.BeforeLines = beforeLines;
+                eventResult.AfterLines = addLines;
+                return eventResult;
+            }
+
+            IMethodSymbol invocationSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool forceAsync = HasTypeScriptAsyncAttribute(invocationSymbol) ||
+                HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType);
+            bool shouldAwait = forceAsync ||
+                (result.Type != null && result.Type.TypeName.StartsWith("Promise<"));
+            if (shouldAwait) {
                 lines.Add("await ");
                 context.GetCurrentFunction().Function.IsAsync = true;
             }
@@ -1241,6 +1388,141 @@ namespace cs2.ts {
             }
             builder.Append('"');
             return builder.ToString();
+        }
+
+        static IEventSymbol GetEventSymbol(SemanticModel semantic, ExpressionSyntax expression) {
+            if (semantic == null || expression == null) {
+                return null;
+            }
+
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(expression);
+            if (symbolInfo.Symbol is IEventSymbol eventSymbol) {
+                return eventSymbol;
+            }
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol &&
+                (methodSymbol.MethodKind == MethodKind.EventAdd || methodSymbol.MethodKind == MethodKind.EventRemove)) {
+                return methodSymbol.AssociatedSymbol as IEventSymbol;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                IEventSymbol candidateEvent = symbolInfo.CandidateSymbols.OfType<IEventSymbol>().FirstOrDefault();
+                if (candidateEvent != null) {
+                    return candidateEvent;
+                }
+
+                IMethodSymbol candidateMethod = symbolInfo.CandidateSymbols
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(m => m.MethodKind == MethodKind.EventAdd || m.MethodKind == MethodKind.EventRemove);
+                if (candidateMethod != null) {
+                    return candidateMethod.AssociatedSymbol as IEventSymbol;
+                }
+            }
+
+            if (expression is MemberAccessExpressionSyntax memberAccess) {
+                SymbolInfo memberSymbolInfo = semantic.GetSymbolInfo(memberAccess.Name);
+                if (memberSymbolInfo.Symbol is IEventSymbol memberEvent) {
+                    return memberEvent;
+                }
+                if (memberSymbolInfo.Symbol is IMethodSymbol memberMethod &&
+                    (memberMethod.MethodKind == MethodKind.EventAdd || memberMethod.MethodKind == MethodKind.EventRemove)) {
+                    return memberMethod.AssociatedSymbol as IEventSymbol;
+                }
+            }
+
+            return null;
+        }
+
+        static VariableType GetDelegateReturnType(IEventSymbol eventSymbol) {
+            if (eventSymbol?.Type is INamedTypeSymbol namedType &&
+                namedType.DelegateInvokeMethod != null) {
+                return VariableUtil.GetVarType(namedType.DelegateInvokeMethod.ReturnType);
+            }
+
+            return new VariableType(VariableDataType.Void);
+        }
+
+        void AppendMethodGroupBind(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines) {
+            if (semantic == null || context == null || expression == null || lines == null) {
+                return;
+            }
+
+            if (lines.Any(l => l.Contains(".bind("))) {
+                return;
+            }
+
+            IMethodSymbol methodSymbol = GetMethodSymbol(semantic, expression);
+            if (methodSymbol == null || methodSymbol.IsStatic) {
+                return;
+            }
+
+            if (expression is MemberAccessExpressionSyntax memberAccess) {
+                int startDepth = context.Class.Count;
+                List<string> targetLines = new List<string>();
+                ProcessExpression(semantic, context, memberAccess.Expression, targetLines);
+                context.PopClass(startDepth);
+
+                if (targetLines.Count == 0) {
+                    return;
+                }
+
+                lines.Add(".bind(");
+                lines.AddRange(targetLines);
+                lines.Add(")");
+                return;
+            }
+
+            if (expression is IdentifierNameSyntax) {
+                lines.Add(".bind(");
+                lines.Add("this");
+                lines.Add(")");
+            }
+        }
+
+        static IMethodSymbol GetMethodSymbol(SemanticModel semantic, ExpressionSyntax expression) {
+            if (semantic == null || expression == null) {
+                return null;
+            }
+
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(expression);
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol) {
+                return methodSymbol;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                return symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines whether a symbol has the TypeScript async attribute applied.
+        /// </summary>
+        /// <param name="symbol">Symbol to inspect.</param>
+        /// <returns>True when the attribute is present.</returns>
+        static bool HasTypeScriptAsyncAttribute(ISymbol symbol) {
+            if (symbol == null) {
+                return false;
+            }
+
+            foreach (AttributeData attribute in symbol.GetAttributes()) {
+                INamedTypeSymbol attributeType = attribute.AttributeClass;
+                if (attributeType == null) {
+                    continue;
+                }
+
+                string name = attributeType.Name;
+                if (string.Equals(name, "TypeScriptAsyncAttribute", StringComparison.Ordinal) ||
+                    string.Equals(name, "TypeScriptAsync", StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
