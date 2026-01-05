@@ -404,7 +404,13 @@ namespace cs2.ts {
                 return false;
             });
 
-            if (constructors.Count == 1) {
+            for (int i = 0; i < constructors.Count; i++) {
+                AnalyzeConstructorAsync(cl, constructors[i]);
+            }
+
+            bool useFactory = constructors.Count > 1 || constructors.Any(c => c.IsAsync);
+
+            if (!useFactory && constructors.Count == 1) {
                 ConversionFunction fn = constructors[0];
                 writer.Write("constructor(");
 
@@ -435,7 +441,7 @@ namespace cs2.ts {
             } else {
                 string generic = cl.GetGenericArguments();
 
-                if (constructors.Count > 1 && classOverrides > 0) {
+                if (useFactory && classOverrides > 0) {
                     string baseClassName = null;
                     for (int i = 0; i < cl.Extensions.Count; i++) {
                         string extension = cl.Extensions[i];
@@ -488,7 +494,8 @@ namespace cs2.ts {
                     bodyLines.AddRange(lines);
 
                     string returnType = fn.IsAsync ? $"Promise<{cl.Name}{generic}>" : $"{cl.Name}{generic}";
-                    writer.Write($"static {fn.GetAsync()}{fn.Name}{generic}(");
+                    string factoryName = constructors.Count == 1 ? "New1" : fn.Name;
+                    writer.Write($"static {fn.GetAsync()}{factoryName}{generic}(");
 
                     for (int k = 0; k < fn.InParameters.Count; k++) {
                         var param = fn.InParameters[k];
@@ -510,6 +517,46 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
             }
+        }
+
+        /// <summary>
+        /// Analyzes a constructor body to determine whether it must be async.
+        /// </summary>
+        /// <param name="cl">The class that owns the constructor.</param>
+        /// <param name="fn">The constructor to analyze.</param>
+        void AnalyzeConstructorAsync(ConversionClass cl, ConversionFunction fn) {
+            if (fn == null || fn.IsAsync) {
+                return;
+            }
+
+            if (fn.RawBlock == null && fn.ArrowExpression == null && fn.ConstructorInitializer == null) {
+                return;
+            }
+
+            LayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
+            int start = context.DepthClass;
+            int startFn = context.DepthFunction;
+
+            context.AddClass(cl);
+            context.AddFunction(new FunctionStack(fn));
+
+            if (fn.IsConstructor && fn.ConstructorInitializer?.ArgumentList != null) {
+                var arguments = fn.ConstructorInitializer.ArgumentList.Arguments;
+                for (int i = 0; i < arguments.Count; i++) {
+                    int startArg = context.DepthClass;
+                    Conversion.ProcessExpression(cl.Semantic, context, arguments[i].Expression, new List<string>());
+                    context.PopClass(startArg);
+                }
+            }
+
+            if (fn.ArrowExpression != null) {
+                Conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, new List<string>());
+            } else if (fn.RawBlock != null) {
+                Conversion.ProcessBlock(cl.Semantic, context, fn.RawBlock, new List<string>());
+            }
+
+            context.PopClass(start);
+            context.PopFunction(startFn);
         }
 
         /// <summary>
