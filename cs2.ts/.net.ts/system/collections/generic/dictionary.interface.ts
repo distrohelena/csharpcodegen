@@ -4,6 +4,9 @@ export interface IDictionary<TKey, TValue> {
     get keys(): TKey[];
     get values(): TValue[];
     get count(): number;
+    get Keys(): TKey[];
+    get Values(): TValue[];
+    get Count(): number;
 
     // Methods
     add(key: TKey, value: TValue): void;

@@ -106,6 +106,25 @@ function visit(node) {
                     returnType: member.type ? member.type.getText() : "void",
                 });
             }
+
+            if (ts.isGetAccessorDeclaration(member) && member.name) {
+                interfaceMembers.push({
+                    type: "getter",
+                    name: member.name.getText(),
+                    returnType: member.type ? member.type.getText() : "any",
+                });
+            }
+
+            if (ts.isSetAccessorDeclaration(member) && member.name) {
+                interfaceMembers.push({
+                    type: "setter",
+                    name: member.name.getText(),
+                    parameters: member.parameters.map(param => ({
+                        name: param.name.getText(),
+                        type: param.type ? param.type.getText() : "any",
+                    })),
+                });
+            }
         });
 
         symbols.push({

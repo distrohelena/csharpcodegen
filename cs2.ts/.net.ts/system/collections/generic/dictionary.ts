@@ -158,6 +158,11 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         return this._count;
     }
 
+    // Uppercase aliases for generated code that preserves .NET naming
+    public get Count(): number {
+        return this._count;
+    }
+
     // Get all keys in the dictionary
     public get keys(): TKey[] {
         const result: TKey[] = [];
@@ -170,6 +175,11 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         return result;
     }
 
+    // Uppercase alias for .NET naming
+    public get Keys(): TKey[] {
+        return this.keys;
+    }
+
     // Get all values in the dictionary
     public get values(): TValue[] {
         const result: TValue[] = [];
@@ -180,6 +190,11 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
             }
         }
         return result;
+    }
+
+    // Uppercase alias for .NET naming
+    public get Values(): TValue[] {
+        return this.values;
     }
 
     // Clear the dictionary

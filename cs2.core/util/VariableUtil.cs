@@ -122,6 +122,9 @@ namespace cs2.core {
                     case "double":
                         dataType = VariableDataType.Double;
                         break;
+                    case "decimal":
+                        dataType = VariableDataType.Double;
+                        break;
                     case "sbyte":
                         dataType = VariableDataType.Int8;
                         break;
@@ -316,6 +319,7 @@ namespace cs2.core {
                 SpecialType.System_Int32 => "Int32",
                 SpecialType.System_UInt32 => "UInt32",
                 SpecialType.System_Single => "Single",
+                SpecialType.System_Decimal => "Decimal",
                 SpecialType.System_Int64 => "Int64",
                 SpecialType.System_UInt64 => "UInt64",
                 SpecialType.System_Boolean => "Boolean",
@@ -342,6 +346,8 @@ namespace cs2.core {
                 case "float":
                     return VariableDataType.Single;
                 case "double":
+                case "decimal":
+                case "Decimal":
                     return VariableDataType.Double;
                 case "byte":
                     return VariableDataType.UInt8;

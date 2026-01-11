@@ -79,7 +79,11 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
 
     // Get the count of elements in the dictionary
     public get count(): number {
-        return this.count;
+        return this._count;
+    }
+
+    public get Count(): number {
+        return this._count;
     }
 
     // Get all keys in the dictionary
@@ -87,9 +91,17 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
         return Object.keys(this.items).map(key => JSON.parse(key));
     }
 
+    public get Keys(): TKey[] {
+        return this.keys;
+    }
+
     // Get all values in the dictionary
     public get values(): TValue[] {
         return Object.values(this.items);
+    }
+
+    public get Values(): TValue[] {
+        return this.values;
     }
 
     // Clear the dictionary

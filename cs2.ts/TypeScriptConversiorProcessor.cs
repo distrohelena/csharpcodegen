@@ -170,14 +170,15 @@ namespace cs2.ts {
             List<ExpressionResult> refTypes = null) {
             if (expression is SwitchExpressionSyntax switchExpression) {
                 return ProcessSwitchExpression(semantic, context, switchExpression, lines);
-            }
-
-            if (expression is IsPatternExpressionSyntax patternExpression) {
+            } else if (expression is IsPatternExpressionSyntax patternExpression) {
                 return ProcessIsPatternExpression(semantic, context, patternExpression, lines);
-            }
-
-            if (expression is CollectionExpressionSyntax collectionExpression) {
+            } else if (expression is CollectionExpressionSyntax collectionExpression) {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            } else if (expression is CheckedExpressionSyntax checkedExpression) {
+                lines.Add("(");
+                ExpressionResult result = ProcessExpression(semantic, context, checkedExpression.Expression, lines, refTypes);
+                lines.Add(")");
+                return result;
             }
 
             return base.ProcessExpression(semantic, context, expression, lines, refTypes);
@@ -758,28 +759,7 @@ namespace cs2.ts {
             }
 
             if (foundMultiple) {
-                ConversionFunction fn = constructors.Find(c => {
-                    if (c.InParameters.Count == types.Count) {
-                        // match parameters
-                        for (int i = 0; i < types.Count; i++) {
-                            ConversionVariable var = c.InParameters[i];
-                            ExpressionResult res = types[i];
-
-                            if (res.Type == null) {
-                                return false;
-                            }
-
-                            if (var.VarType.TypeName != res.Type.TypeName) {
-                                return false;
-                            }
-                        }
-                    } else {
-                        return false;
-                    }
-
-                    return true;
-                });
-
+                ConversionFunction fn = ResolveConstructorForObjectCreation(semantic, objectCreation, constructors, types);
                 if (fn == null) {
                     throw new Exception("Constructor not found");
                 }
@@ -802,6 +782,155 @@ namespace cs2.ts {
             lines.AddRange(afterLines);
             lines.AddRange(finalLines);
             return result;
+        }
+
+        /// <summary>
+        /// Resolves the constructor overload to use for an object creation expression.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="objectCreation">The object creation expression being processed.</param>
+        /// <param name="constructors">Available constructors for the target type.</param>
+        /// <param name="argumentTypes">Resolved argument expression types.</param>
+        /// <returns>The matching constructor, or null if no match is found.</returns>
+        ConversionFunction ResolveConstructorForObjectCreation(
+            SemanticModel semantic,
+            ObjectCreationExpressionSyntax objectCreation,
+            List<ConversionFunction> constructors,
+            List<ExpressionResult> argumentTypes) {
+            if (constructors == null || constructors.Count == 0) {
+                return null;
+            }
+
+            IMethodSymbol constructorSymbol = GetObjectCreationConstructorSymbol(semantic, objectCreation);
+            if (constructorSymbol != null) {
+                int symbolParamCount = constructorSymbol.Parameters.Length;
+                for (int i = 0; i < constructors.Count; i++) {
+                    ConversionFunction candidate = constructors[i];
+                    if (candidate.InParameters.Count != symbolParamCount) {
+                        continue;
+                    }
+
+                    bool matches = true;
+                    for (int paramIndex = 0; paramIndex < symbolParamCount; paramIndex++) {
+                        VariableType symbolType = VariableUtil.GetVarType(constructorSymbol.Parameters[paramIndex].Type);
+                        VariableType expectedType = candidate.InParameters[paramIndex].VarType;
+                        if (!AreConstructorTypesCompatible(expectedType, symbolType)) {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (matches) {
+                        return candidate;
+                    }
+                }
+            }
+
+            if (argumentTypes != null && argumentTypes.Count > 0) {
+                ConversionFunction argMatch = constructors.Find(candidate =>
+                    ConstructorMatchesArgumentTypes(candidate, argumentTypes));
+                if (argMatch != null) {
+                    return argMatch;
+                }
+            }
+
+            int argCount = argumentTypes?.Count ?? 0;
+            List<ConversionFunction> countMatches = constructors.Where(c => c.InParameters.Count == argCount).ToList();
+            if (countMatches.Count == 1) {
+                return countMatches[0];
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Gets the constructor symbol selected by Roslyn for a given object creation expression.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="objectCreation">The object creation expression being resolved.</param>
+        /// <returns>The constructor symbol, or null when it cannot be resolved.</returns>
+        static IMethodSymbol GetObjectCreationConstructorSymbol(
+            SemanticModel semantic,
+            ObjectCreationExpressionSyntax objectCreation) {
+            if (semantic == null || objectCreation == null) {
+                return null;
+            }
+
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(objectCreation);
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol &&
+                methodSymbol.MethodKind == MethodKind.Constructor) {
+                return methodSymbol;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                return symbolInfo.CandidateSymbols
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(candidate => candidate.MethodKind == MethodKind.Constructor);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines whether a constructor's parameter list matches the provided argument types.
+        /// </summary>
+        /// <param name="constructor">The constructor candidate.</param>
+        /// <param name="argumentTypes">Resolved argument types from the invocation.</param>
+        /// <returns>True when the argument types line up with the constructor.</returns>
+        static bool ConstructorMatchesArgumentTypes(
+            ConversionFunction constructor,
+            List<ExpressionResult> argumentTypes) {
+            if (constructor == null || argumentTypes == null) {
+                return false;
+            }
+
+            if (constructor.InParameters.Count != argumentTypes.Count) {
+                return false;
+            }
+
+            for (int i = 0; i < argumentTypes.Count; i++) {
+                ExpressionResult argument = argumentTypes[i];
+                if (argument.Type == null) {
+                    return false;
+                }
+
+                VariableType expectedType = constructor.InParameters[i].VarType;
+                if (!AreConstructorTypesCompatible(expectedType, argument.Type)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether two variable types are compatible for constructor overload selection.
+        /// </summary>
+        /// <param name="expected">The constructor parameter type.</param>
+        /// <param name="actual">The resolved argument type.</param>
+        /// <returns>True when the types are considered compatible.</returns>
+        static bool AreConstructorTypesCompatible(VariableType expected, VariableType actual) {
+            if (expected == null || actual == null) {
+                return false;
+            }
+
+            if (string.Equals(actual.TypeName, "null", StringComparison.Ordinal)) {
+                return expected.Type != VariableDataType.Boolean &&
+                    expected.Type != VariableDataType.Char &&
+                    expected.Type != VariableDataType.Single &&
+                    expected.Type != VariableDataType.Double &&
+                    expected.Type != VariableDataType.Int8 &&
+                    expected.Type != VariableDataType.UInt8 &&
+                    expected.Type != VariableDataType.Int16 &&
+                    expected.Type != VariableDataType.UInt16 &&
+                    expected.Type != VariableDataType.Int32 &&
+                    expected.Type != VariableDataType.UInt32 &&
+                    expected.Type != VariableDataType.Int64 &&
+                    expected.Type != VariableDataType.UInt64 &&
+                    expected.Type != VariableDataType.Enum;
+            }
+
+            return string.Equals(expected.ToString(), actual.ToString(), StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2910,7 +3039,9 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
             // Process the condition (before the ?)
+            int startDepth = context.DepthClass;
             ProcessExpression(semantic, context, conditional.Condition, lines);
+            context.PopClass(startDepth);
             lines.Add(" ? ");
 
             // Process the true branch (after the ? and before the :)
@@ -2938,7 +3069,9 @@ namespace cs2.ts {
                 return;
             }
 
+            int branchDepth = context.DepthClass;
             ProcessExpression(semantic, context, branchExpression, lines);
+            context.PopClass(branchDepth);
         }
 
         /// <summary>
@@ -3173,7 +3306,9 @@ namespace cs2.ts {
             lines.Add("for (let ");
             lines.Add(forEachStatement.Identifier.Text);
             lines.Add(" of ");
+            int exprDepth = context.DepthClass;
             ExpressionResult result = ProcessExpression(semantic, context, forEachStatement.Expression, lines);
+            context.PopClass(exprDepth);
             lines.Add(") {\n");
 
             FunctionStack fn = context.GetCurrentFunction();
@@ -3221,7 +3356,9 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessWhileStatement(SemanticModel semantic, LayerContext context, WhileStatementSyntax whileStatement, List<string> lines) {
             lines.Add("while (");
+            int conditionDepth = context.DepthClass;
             ProcessExpression(semantic, context, whileStatement.Condition, lines);
+            context.PopClass(conditionDepth);
             lines.Add(") {\n");
 
             // Process the body of the while loop
@@ -3245,7 +3382,9 @@ namespace cs2.ts {
                 ProcessDeclaration(semantic, context, forStatement.Declaration, lines);
             } else if (forStatement.Initializers.Any()) {
                 foreach (var initializer in forStatement.Initializers) {
+                    int initDepth = context.DepthClass;
                     ProcessExpression(semantic, context, initializer, lines);
+                    context.PopClass(initDepth);
                 }
             }
             lines.Add("; ");
@@ -3363,9 +3502,32 @@ namespace cs2.ts {
         /// <returns>The expression result describing the statement.</returns>
         protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
             int startDepth = context.DepthClass;
-            ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
+            ExpressionResult result;
+            if (statement is CheckedStatementSyntax checkedStatement) {
+                lines.Add("{\n");
+                result = ProcessStatement(semantic, context, checkedStatement.Block, lines, depth);
+                lines.Add("}\n");
+            } else if (statement is LocalDeclarationStatementSyntax localDeclaration) {
+                List<string> declLines = new List<string>();
+                result = ProcessDeclaration(semantic, context, localDeclaration.Declaration, declLines, false);
+                if (result.BeforeLines != null) {
+                    lines.AddRange(result.BeforeLines);
+                }
+                lines.AddRange(declLines);
+                lines.Add(";\n");
+                if (result.AfterLines != null) {
+                    lines.AddRange(result.AfterLines);
+                }
+                result.BeforeLines = null;
+                result.AfterLines = null;
+            } else {
+                result = base.ProcessStatement(semantic, context, statement, lines, depth);
+            }
             context.PopClass(startDepth);
             if (statement is ExpressionStatementSyntax) {
+                result.BeforeLines = null;
+                result.AfterLines = null;
+            } else if (statement is LocalDeclarationStatementSyntax) {
                 result.BeforeLines = null;
                 result.AfterLines = null;
             }
@@ -3643,6 +3805,8 @@ namespace cs2.ts {
             int start = context.DepthClass;
 
             ExpressionResult initResult = default(ExpressionResult);
+            List<string> beforeLines = null;
+            List<string> afterLines = null;
 
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
@@ -3665,6 +3829,14 @@ namespace cs2.ts {
 
                     List<string> initLines = new List<string>();
                     initResult = ProcessExpression(semantic, context, variable.Initializer.Value, initLines);
+                    if (initResult.BeforeLines != null && initResult.BeforeLines.Count > 0) {
+                        beforeLines ??= new List<string>();
+                        beforeLines.AddRange(initResult.BeforeLines);
+                    }
+                    if (initResult.AfterLines != null && initResult.AfterLines.Count > 0) {
+                        afterLines ??= new List<string>();
+                        afterLines.AddRange(initResult.AfterLines);
+                    }
 
                     if (initResult.Type != null &&
                         initResult.Type.TypeName.StartsWith("Promise<")) {
@@ -3684,6 +3856,13 @@ namespace cs2.ts {
             }
 
             context.PopClass(start);
+
+            if (beforeLines != null) {
+                initResult.BeforeLines = beforeLines;
+            }
+            if (afterLines != null) {
+                initResult.AfterLines = afterLines;
+            }
 
             return initResult;
         }

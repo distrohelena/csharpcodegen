@@ -135,6 +135,7 @@ declare global {
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
         Where(predicate: (item: T, index: number) => boolean): T[];
+        Select<TResult>(selector: (item: T, index: number) => TResult): TResult[];
         ToArray(): T[];
     }
 }
@@ -160,6 +161,15 @@ if (!(Array.prototype as any).Where) {
             throw new Error("Predicate cannot be null.");
         }
         return this.filter((item: any, index: number) => predicate(item, index));
+    };
+}
+
+if (!(Array.prototype as any).Select) {
+    (Array.prototype as any).Select = function (selector: (item: any, index: number) => any) {
+        if (!selector) {
+            throw new Error("Selector cannot be null.");
+        }
+        return this.map((item: any, index: number) => selector(item, index));
     };
 }
 

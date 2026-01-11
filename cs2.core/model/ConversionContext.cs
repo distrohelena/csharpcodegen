@@ -12,8 +12,21 @@ namespace cs2.core {
             classes = new List<ConversionClass>();
         }
 
+        /// <summary>
+        /// Resets the conversion context to a clean state, clearing any active scope tracking.
+        /// </summary>
         public void Reset() {
-            Program.Classes.RemoveAll(cl => !cl.IsNative);
+            Reset(false);
+        }
+
+        /// <summary>
+        /// Resets the conversion context to a clean state, optionally preserving existing program classes.
+        /// </summary>
+        /// <param name="preserveProgramClasses">True to keep non-native classes already registered on the program.</param>
+        public void Reset(bool preserveProgramClasses) {
+            if (!preserveProgramClasses) {
+                Program.Classes.RemoveAll(cl => !cl.IsNative);
+            }
             classes.Clear();
 
             CurrentClass = null;

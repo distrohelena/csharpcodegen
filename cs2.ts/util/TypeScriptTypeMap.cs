@@ -31,6 +31,7 @@ namespace cs2.ts.util {
             { "float", "number" },
             { "double", "number" },
             { "decimal", "number" },
+            { "Decimal", "number" },
             { "Single", "number" },
 
             { "bool", "boolean" },

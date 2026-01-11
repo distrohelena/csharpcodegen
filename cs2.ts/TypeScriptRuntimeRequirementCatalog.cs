@@ -124,6 +124,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("RegexOptions", "./system/text/regular-expressions/regex-options"),
             new TypeScriptRuntimeRequirementDefinition("JsonSerializer", "./system/text/json/json-serializer"),
             new TypeScriptRuntimeRequirementDefinition("JsonSerializerOptions", "./system/text/json/json-serializer-options"),
+            new TypeScriptRuntimeRequirementDefinition("JsonNamingPolicy", "./system/text/json/json-naming-policy"),
             new TypeScriptRuntimeRequirementDefinition("JsonDocument", "./system/text/json/json-document"),
             new TypeScriptRuntimeRequirementDefinition("JsonDocumentOptions", "./system/text/json/json-document-options"),
             new TypeScriptRuntimeRequirementDefinition("JsonElement", "./system/text/json/json-element"),
@@ -136,6 +137,10 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("JsonIgnoreCondition", "./system/text/json/json-ignore-condition"),
             new TypeScriptRuntimeRequirementDefinition("JsonConverter", "./system/text/json/serialization/json-converter"),
             new TypeScriptRuntimeRequirementDefinition("JsonStringEnumConverter", "./system/text/json/serialization/json-string-enum-converter"),
+
+            // system.globalization
+            new TypeScriptRuntimeRequirementDefinition("CultureInfo", "./system/globalization/culture-info"),
+            new TypeScriptRuntimeRequirementDefinition("TextInfo", "./system/globalization/text-info"),
 
             // system.threading
             new TypeScriptRuntimeRequirementDefinition("Thread", "./system/threading/thread"),

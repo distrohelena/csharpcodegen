@@ -24,7 +24,7 @@ namespace cs2.core {
         public void AddCsproj(string csprojPath) {
             if (!File.Exists(csprojPath)) {
                 Console.WriteLine($"The .csproj file '{csprojPath}' does not exist.");
-                return;
+                throw new Exception($"The .csproj file '{csprojPath}' does not exist.");
             }
 
             if (program == null) {

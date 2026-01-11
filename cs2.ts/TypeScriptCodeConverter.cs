@@ -171,26 +171,17 @@ namespace cs2.ts {
         /// </summary>
         /// <param name="builder">The pipeline builder used to register stages.</param>
         protected override void ConfigurePipeline(ConversionPipelineBuilder builder) {
-            base.ConfigurePipeline(builder);
-
-            var preprocessorFilter = new TypeScriptPreprocessorFilterStage(this);
-            var metadataStage = new TypeScriptAssemblyMetadataStage(this);
-
-            int applyIndex = -1;
-            for (int i = 0; i < builder.Stages.Count; i++) {
-                if (builder.Stages[i] is ApplyPreprocessorSymbolsStage) {
-                    applyIndex = i;
-                    break;
-                }
+            if (builder == null) {
+                throw new ArgumentNullException(nameof(builder));
             }
 
-            if (applyIndex >= 0) {
-                builder.Insert(applyIndex + 1, preprocessorFilter);
-                builder.Insert(applyIndex + 2, metadataStage);
-            } else {
-                builder.AddStage(preprocessorFilter);
-                builder.AddStage(metadataStage);
-            }
+            builder.AddStage(new TypeScriptResetConversionStateStage())
+                   .AddStage(new ApplyPreprocessorSymbolsStage(PreProcessorSymbols))
+                   .AddStage(new TypeScriptPreprocessorFilterStage(this))
+                   .AddStage(new TypeScriptAssemblyMetadataStage(this))
+                   .AddStage(new DocumentPreprocessingStage())
+                   .AddStage(new ClassProcessingStage())
+                   .AddStage(new ProgramSortingStage());
         }
 
         /// <summary>
