@@ -91,7 +91,11 @@ namespace cs2.core {
                 string identifierName = identifier.ToString();
 
                 if (identifierName == "var") {
-                    string typeInfoName = typeInfo.Type.Name;
+                    ITypeSymbol inferredType = typeInfo.ConvertedType ?? typeInfo.Type;
+                    if (inferredType != null) {
+                        return GetVarType(inferredType);
+                    }
+                    string typeInfoName = typeInfo.Type?.Name ?? "object";
                     return new VariableType(GetVarDataType(typeInfoName), typeInfoName);
                 } else {
                     return new VariableType(GetVarDataType(identifierName), identifierName);

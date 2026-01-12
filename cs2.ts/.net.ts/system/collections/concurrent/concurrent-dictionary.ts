@@ -44,15 +44,19 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
     }
 
     // Remove an item by key
-    public remove(key: TKey, outValue: { value?: TValue }): boolean {
+    public remove(key: TKey, outValue?: { value?: TValue }): boolean {
         const stringKey = this.keyToString(key);
         if (this.items.hasOwnProperty(stringKey)) {
-            outValue.value = this.items[stringKey];
+            if (outValue) {
+                outValue.value = this.items[stringKey];
+            }
             delete this.items[stringKey];
             this._count--;
             return true;
         }
-        outValue.value = undefined;
+        if (outValue) {
+            outValue.value = undefined;
+        }
         return false;
     }
 

@@ -262,6 +262,9 @@ namespace cs2.ts {
             }
             TypeInfo identifierType = semantic.GetTypeInfo(identifier);
             AssignmentExpressionSyntax assignment = identifier.Parent as AssignmentExpressionSyntax;
+            bool isObjectInitializerTarget = assignment != null &&
+                assignment.Left == identifier &&
+                IsInsideObjectInitializer(assignment);
             bool isMethodGroup = invokedMethod != null &&
                 !isInvocation &&
                 IsDelegateType(identifierType.ConvertedType ?? identifierType.Type);
@@ -527,7 +530,7 @@ namespace cs2.ts {
             if (currentClass == null) {
                 lines.Add(variableIdentifier);
             } else {
-                if (layer == 1 && !forcedStaticPrefix) {
+                if (layer == 1 && !forcedStaticPrefix && !isObjectInitializerTarget) {
                     bool isClassVar = (classVar != null &&
                         functionInVar == null &&
                         matchingVars.Count == 0) ||
@@ -1253,6 +1256,10 @@ namespace cs2.ts {
                 return enumResult;
             }
 
+            if (TryProcessPrimitiveToString(semantic, context, invocationExpression, lines, out ExpressionResult primitiveResult)) {
+                return primitiveResult;
+            }
+
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Name.Identifier.Text == "AsSpan") {
                 int targetStart = context.DepthClass;
@@ -1327,7 +1334,7 @@ namespace cs2.ts {
                     strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
                     strName = StringUtil.Replace(strName, "-", "");
                     beforeLines.Add(strName);
-                    beforeLines.Add(" = { value: null };\n");
+                    beforeLines.Add(" = { value: undefined };\n");
                 }
 
                 int startArg = context.DepthClass;
@@ -2235,13 +2242,37 @@ namespace cs2.ts {
         /// <param name="typeOfExpression">The typeof expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessTypeOfExpression(SemanticModel semantic, LayerContext context, TypeOfExpressionSyntax typeOfExpression, List<string> lines) {
-            var tsProgram = (TypeScriptProgram)context.Program;
-            VariableType variableType = VariableUtil.GetVarType(typeOfExpression.Type, semantic);
-            string tsType = variableType.ToTypeScriptString(tsProgram);
+            ITypeSymbol typeSymbol = semantic.GetTypeInfo(typeOfExpression.Type).Type;
+            if (typeSymbol == null) {
+                lines.Add("Type.object");
+                return;
+            }
 
-            string target = NormalizeTypeForTypeof(tsType);
-            lines.Add("typeof ");
-            lines.Add(target);
+            if (typeSymbol.SpecialType == SpecialType.System_String ||
+                typeSymbol.SpecialType == SpecialType.System_Char) {
+                lines.Add("Type.string");
+                return;
+            }
+
+            if (typeSymbol.SpecialType == SpecialType.System_Boolean) {
+                lines.Add("Type.boolean");
+                return;
+            }
+
+            if (typeSymbol.SpecialType == SpecialType.System_Object) {
+                lines.Add("Type.object");
+                return;
+            }
+
+            if (IsNumericSpecialType(typeSymbol.SpecialType)) {
+                lines.Add("Type.number");
+                return;
+            }
+
+            string fullName = typeSymbol.ToDisplayString();
+            lines.Add("Type.GetType(");
+            lines.Add(QuoteString(fullName));
+            lines.Add(") ?? Type.object");
         }
 
         /// <summary>
@@ -2686,6 +2717,91 @@ namespace cs2.ts {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Handles primitive ToString calls by emitting the JavaScript toString without format arguments.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="invocationExpression">The invocation expression to inspect.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="result">The expression result when handled.</param>
+        /// <returns>True when a primitive ToString was emitted.</returns>
+        bool TryProcessPrimitiveToString(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            if (memberAccess.Name is not IdentifierNameSyntax memberName ||
+                memberName.Identifier.Text != "ToString") {
+                return false;
+            }
+
+            ITypeSymbol targetType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (!IsPrimitiveToStringTarget(targetType)) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> targetLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, targetLines);
+            context.PopClass(depth);
+
+            lines.AddRange(targetLines);
+            lines.Add(".toString()");
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether a type symbol should map ToString to the JavaScript primitive implementation.
+        /// </summary>
+        /// <param name="typeSymbol">The type symbol to inspect.</param>
+        /// <returns>True when the symbol is a primitive that should use toString().</returns>
+        static bool IsPrimitiveToStringTarget(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            if (ResolveEnumType(typeSymbol) != null) {
+                return false;
+            }
+
+            if (typeSymbol.SpecialType == SpecialType.System_String ||
+                typeSymbol.SpecialType == SpecialType.System_Boolean ||
+                typeSymbol.SpecialType == SpecialType.System_Char) {
+                return true;
+            }
+
+            return IsNumericSpecialType(typeSymbol.SpecialType);
+        }
+
+        /// <summary>
+        /// Determines whether a special type represents a numeric primitive.
+        /// </summary>
+        /// <param name="specialType">The special type to inspect.</param>
+        /// <returns>True when the type is numeric.</returns>
+        static bool IsNumericSpecialType(SpecialType specialType) {
+            return specialType == SpecialType.System_SByte ||
+                specialType == SpecialType.System_Byte ||
+                specialType == SpecialType.System_Int16 ||
+                specialType == SpecialType.System_UInt16 ||
+                specialType == SpecialType.System_Int32 ||
+                specialType == SpecialType.System_UInt32 ||
+                specialType == SpecialType.System_Int64 ||
+                specialType == SpecialType.System_UInt64 ||
+                specialType == SpecialType.System_Single ||
+                specialType == SpecialType.System_Double ||
+                specialType == SpecialType.System_Decimal;
         }
 
         static INamedTypeSymbol ResolveEnumType(ITypeSymbol typeSymbol) {
@@ -3185,6 +3301,8 @@ namespace cs2.ts {
 
             // process the resource declaration (if any)
             List<string> nameLines = new List<string>();
+            bool isSingleDeclaration = usingStatement.Declaration != null &&
+                usingStatement.Declaration.Variables.Count == 1;
             if (usingStatement.Declaration != null) {
                 var declaration = usingStatement.Declaration;
                 for (int i = 0; i < declaration.Variables.Count; i++) {
@@ -3208,14 +3326,27 @@ namespace cs2.ts {
                 ExpressionResult result = ProcessDeclaration(semantic, context, usingStatement.Declaration, declLines, true);
 
                 if (result.Type != null) {
-                    nameLines.Add($": {result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program)}");
+                    string typeName = result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program);
+                    if (isSingleDeclaration) {
+                        nameLines.Add($": {typeName} | null");
+                    } else {
+                        nameLines.Add($": {typeName}");
+                    }
                 }
             } else if (usingStatement.Expression != null) {
                 ExpressionResult result = ProcessExpression(semantic, context, usingStatement.Expression, declLines);
 
                 if (result.Type != null) {
-                    nameLines.Add($": {result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program)}");
+                    string typeName = result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program);
+                    if (isSingleDeclaration) {
+                        nameLines.Add($": {typeName} | null");
+                    } else {
+                        nameLines.Add($": {typeName}");
+                    }
                 }
+            }
+            if (isSingleDeclaration) {
+                nameLines.Add(" = null");
             }
             nameLines.Add(";\n");
             declLines.Add(";\n");

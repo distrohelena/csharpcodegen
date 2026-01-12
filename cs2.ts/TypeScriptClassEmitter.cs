@@ -844,11 +844,12 @@ namespace cs2.ts {
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
+                    type = NormalizeParameterType(param, type);
                     string def = GetParameterDefaultSuffix(cl, param);
                     string paramName = GetParameterName(cl, param);
 
                     if (param.Modifier.HasFlag(core.ParameterModifier.Out)) {
-                        writer.Write($"{paramName}: {{ value: {type}{def} }}");
+                        writer.Write($"{paramName}: {{ value?: {type} }}");
                     } else {
                         writer.Write($"{paramName}: {type}{def}");
                     }
@@ -888,6 +889,41 @@ namespace cs2.ts {
                 return "";
             }
             return def;
+        }
+
+        /// <summary>
+        /// Normalizes parameter types to account for null default values.
+        /// </summary>
+        /// <param name="param">The parameter metadata to inspect.</param>
+        /// <param name="type">The original TypeScript type string.</param>
+        /// <returns>The adjusted type string.</returns>
+        static string NormalizeParameterType(ConversionVariable param, string type) {
+            if (param == null || string.IsNullOrWhiteSpace(type)) {
+                return type;
+            }
+
+            if (!HasNullDefaultValue(param)) {
+                return type;
+            }
+
+            if (type == "any" || type.Contains("null", StringComparison.Ordinal)) {
+                return type;
+            }
+
+            return $"{type} | null";
+        }
+
+        /// <summary>
+        /// Determines whether the parameter specifies a null default value.
+        /// </summary>
+        /// <param name="param">The parameter to inspect.</param>
+        /// <returns>True when the default value resolves to null.</returns>
+        static bool HasNullDefaultValue(ConversionVariable param) {
+            if (param == null || string.IsNullOrWhiteSpace(param.DefaultValue)) {
+                return false;
+            }
+
+            return string.Equals(param.DefaultValue.Trim(), "= null", StringComparison.Ordinal);
         }
 
         static string GetParameterName(ConversionClass cl, ConversionVariable param) {

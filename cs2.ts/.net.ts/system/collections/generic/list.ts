@@ -33,8 +33,17 @@ export class List<T> extends Array<T> {
     }
 
     // Add multiple items to the list
-    public addRange(items: T[]): void {
-        this.push(...items);
+    public addRange(items: Iterable<T> | T[]): void {
+        if (items == null) {
+            throw new Error("Items cannot be null.");
+        }
+        if (Array.isArray(items)) {
+            this.push(...items);
+            return;
+        }
+        for (const item of items) {
+            this.push(item);
+        }
     }
 
     // Remove an item from the list (first occurrence)
@@ -132,11 +141,14 @@ export class List<T> extends Array<T> {
 
 declare global {
     interface Array<T> {
+        readonly count: number;
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
         Where(predicate: (item: T, index: number) => boolean): T[];
         Select<TResult>(selector: (item: T, index: number) => TResult): TResult[];
         ToArray(): T[];
+        OrderBy<TKey>(selector: (item: T) => TKey): T[];
+        OrderByDescending<TKey>(selector: (item: T) => TKey): T[];
     }
 }
 
@@ -176,5 +188,48 @@ if (!(Array.prototype as any).Select) {
 if (!(Array.prototype as any).ToArray) {
     (Array.prototype as any).ToArray = function () {
         return [...this];
+    };
+}
+
+if (!Object.getOwnPropertyDescriptor(Array.prototype, "count")) {
+    Object.defineProperty(Array.prototype, "count", {
+        get: function () {
+            return this.length;
+        },
+        enumerable: false
+    });
+}
+
+if (!(Array.prototype as any).OrderBy) {
+    (Array.prototype as any).OrderBy = function (selector: (item: any) => any) {
+        if (!selector) {
+            throw new Error("Selector cannot be null.");
+        }
+        const result = [...this];
+        result.sort((left, right) => {
+            const leftKey = selector(left);
+            const rightKey = selector(right);
+            if (leftKey < rightKey) return -1;
+            if (leftKey > rightKey) return 1;
+            return 0;
+        });
+        return result;
+    };
+}
+
+if (!(Array.prototype as any).OrderByDescending) {
+    (Array.prototype as any).OrderByDescending = function (selector: (item: any) => any) {
+        if (!selector) {
+            throw new Error("Selector cannot be null.");
+        }
+        const result = [...this];
+        result.sort((left, right) => {
+            const leftKey = selector(left);
+            const rightKey = selector(right);
+            if (leftKey < rightKey) return 1;
+            if (leftKey > rightKey) return -1;
+            return 0;
+        });
+        return result;
     };
 }
