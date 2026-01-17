@@ -185,9 +185,9 @@ namespace cs2.ts {
         }
 
         /// <summary>
-        /// Writes the generated TypeScript file and copies runtime helpers into <paramref name="outputFolder"/>.
+        /// Writes the generated TypeScript file and copies runtime helpers into the configured runtime import folder.
         /// </summary>
-        /// <param name="outputFolder">The folder that receives generated output.</param>
+        /// <param name="outputFolder">The folder that receives generated output and default runtime helpers.</param>
         /// <param name="fileName">The TypeScript file name to write.</param>
         public void WriteFile(string outputFolder, string fileName) {
             var replacements = new Dictionary<string, string>() {
@@ -207,7 +207,16 @@ namespace cs2.ts {
             }
 
             string rootPath = Path.Combine(entryDirectory, ".net.ts");
-            DirectoryUtil.RecursiveCopy(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder),
+
+            string outputFile = Path.Combine(outputFolder, fileName);
+            string outputDir = Path.GetDirectoryName(outputFile);
+            if (string.IsNullOrWhiteSpace(outputDir)) {
+                throw new InvalidOperationException("Unable to resolve output directory.");
+            }
+            Directory.CreateDirectory(outputDir);
+
+            string runtimeOutputFolder = ResolveRuntimeOutputFolder(outputFolder, outputDir);
+            DirectoryUtil.RecursiveCopy(new DirectoryInfo(rootPath), new DirectoryInfo(runtimeOutputFolder),
                 (file, reader, writer) => {
                     string source = reader.ReadToEnd();
                     source = Utils.ReplacePlaceholders(source, replacements);
@@ -220,13 +229,6 @@ namespace cs2.ts {
                         && !file.FullName.EndsWith("tsconfig.strict.json", StringComparison.OrdinalIgnoreCase);
             },
                 (dir) => !dir.Name.Equals("node_modules", StringComparison.OrdinalIgnoreCase));
-
-            string outputFile = Path.Combine(outputFolder, fileName);
-            string outputDir = Path.GetDirectoryName(outputFile);
-            if (string.IsNullOrWhiteSpace(outputDir)) {
-                throw new InvalidOperationException("Unable to resolve output directory.");
-            }
-            Directory.CreateDirectory(outputDir);
 
             if (File.Exists(outputFile)) {
                 File.Delete(outputFile);
@@ -251,22 +253,25 @@ namespace cs2.ts {
                         }
                     }
 
-                    output.WriteLine($"import type {{ {imports} }} from \"{pair.Path}\";");
+                    string importPath = ResolveRuntimeImportPath(pair.Path);
+                    output.WriteLine($"import type {{ {imports} }} from \"{importPath}\";");
                 } else {
                     string importPrefix = pair.IsType ? "import type" : "import";
+                    string importPath = ResolveRuntimeImportPath(pair.Path);
                     if (string.IsNullOrEmpty(pair.Replacement)) {
-                        output.WriteLine($"{importPrefix} {{ {pair.Name} }} from \"{pair.Path}\";");
+                        output.WriteLine($"{importPrefix} {{ {pair.Name} }} from \"{importPath}\";");
                     } else {
-                        output.WriteLine($"{importPrefix} {{ {pair.Name} as {pair.Replacement} }} from \"{pair.Path}\";");
+                        output.WriteLine($"{importPrefix} {{ {pair.Name} as {pair.Replacement} }} from \"{importPath}\";");
                     }
                 }
             }
 
+            ReflectionOptions reflectionOptions = ResolveRuntimeReflectionOptions();
             TypeScriptReflectionEmitter.EmitRuntimeImport(output.Writer,
                 ReflectionImportTracker.NeedsTypeImport,
                 ReflectionImportTracker.NeedsEnumImport,
                 ReflectionImportTracker.NeedsMetadataImport,
-                conversionOptions.Reflection);
+                reflectionOptions);
             output.WriteLine();
 
             writeOutput(output);
@@ -277,6 +282,116 @@ namespace cs2.ts {
             File.WriteAllText(outputFile, formatted);
 
             WriteStrictTsConfig(outputFolder);
+        }
+
+        /// <summary>
+        /// Resolves the output folder for runtime helpers based on the configured import path.
+        /// </summary>
+        /// <param name="outputFolder">The top-level output folder.</param>
+        /// <param name="outputDir">The directory containing the generated TypeScript file.</param>
+        /// <returns>The folder that should receive runtime helper files.</returns>
+        string ResolveRuntimeOutputFolder(string outputFolder, string outputDir) {
+            string runtimeImportPath = conversionOptions.RuntimeImportPath;
+            if (string.IsNullOrWhiteSpace(runtimeImportPath)) {
+                return outputFolder;
+            }
+
+            string normalizedBase = NormalizeRuntimeImportBase(runtimeImportPath);
+            if (string.IsNullOrWhiteSpace(normalizedBase)) {
+                return outputDir;
+            }
+
+            string relativePath = normalizedBase;
+            if (relativePath.StartsWith("./", StringComparison.Ordinal)) {
+                relativePath = relativePath.Substring(2);
+            }
+
+            return Path.Combine(outputDir, relativePath);
+        }
+
+        /// <summary>
+        /// Resolves the runtime import path for a module when a runtime import base is configured.
+        /// </summary>
+        /// <param name="modulePath">The module path declared by runtime requirements.</param>
+        /// <returns>The runtime import path to emit in TypeScript.</returns>
+        string ResolveRuntimeImportPath(string modulePath) {
+            string normalizedModulePath = NormalizeImportPath(modulePath);
+            string basePath = NormalizeRuntimeImportBase(conversionOptions.RuntimeImportPath);
+            if (string.IsNullOrWhiteSpace(basePath)) {
+                return normalizedModulePath;
+            }
+
+            if (!normalizedModulePath.StartsWith("./", StringComparison.Ordinal)) {
+                return normalizedModulePath;
+            }
+
+            string trimmedModulePath = normalizedModulePath.Substring(2);
+            if (string.IsNullOrWhiteSpace(trimmedModulePath)) {
+                return basePath;
+            }
+
+            return $"{basePath}/{trimmedModulePath}";
+        }
+
+        /// <summary>
+        /// Resolves reflection options with the runtime import base applied when appropriate.
+        /// </summary>
+        /// <returns>The reflection options used for runtime imports.</returns>
+        ReflectionOptions ResolveRuntimeReflectionOptions() {
+            ReflectionOptions options = conversionOptions.Reflection;
+            if (options == null) {
+                throw new InvalidOperationException("Reflection options were not provided.");
+            }
+
+            string resolvedImport = ResolveRuntimeImportPath(options.RuntimeImportModule);
+            if (string.Equals(resolvedImport, options.RuntimeImportModule, StringComparison.Ordinal)) {
+                return options;
+            }
+
+            ReflectionOptions clone = options.Clone();
+            clone.RuntimeImportModule = resolvedImport;
+            return clone;
+        }
+
+        /// <summary>
+        /// Normalizes the runtime import base into a relative TypeScript module prefix.
+        /// </summary>
+        /// <param name="runtimeImportPath">The configured runtime import base.</param>
+        /// <returns>The normalized runtime import base, or an empty string for defaults.</returns>
+        string NormalizeRuntimeImportBase(string runtimeImportPath) {
+            if (string.IsNullOrWhiteSpace(runtimeImportPath)) {
+                return string.Empty;
+            }
+
+            string trimmed = runtimeImportPath.Trim();
+            if (string.Equals(trimmed, ".", StringComparison.Ordinal) ||
+                string.Equals(trimmed, "./", StringComparison.Ordinal)) {
+                return string.Empty;
+            }
+
+            if (Path.IsPathRooted(trimmed)) {
+                throw new InvalidOperationException("RuntimeImportPath must be a relative path.");
+            }
+
+            string normalized = trimmed.Replace('\\', '/').TrimEnd('/');
+            if (!normalized.StartsWith(".", StringComparison.Ordinal)) {
+                normalized = "./" + normalized;
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
+        /// Normalizes module paths for import output.
+        /// </summary>
+        /// <param name="modulePath">The module path to normalize.</param>
+        /// <returns>The normalized module path.</returns>
+        string NormalizeImportPath(string modulePath) {
+            if (string.IsNullOrWhiteSpace(modulePath)) {
+                throw new InvalidOperationException("Runtime import module path was not provided.");
+            }
+
+            return modulePath.Replace('\\', '/');
         }
 
         /// <summary>

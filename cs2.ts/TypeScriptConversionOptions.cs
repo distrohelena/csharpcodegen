@@ -22,6 +22,11 @@ namespace cs2.ts {
         public List<string> AdditionalPreprocessorSymbols { get; set; } = new();
 
         /// <summary>
+        /// Gets or sets the relative path from the generated TypeScript file to the runtime helper root.
+        /// </summary>
+        public string RuntimeImportPath { get; set; } = string.Empty;
+
+        /// <summary>
         /// When true, retain preprocessor symbols defined in the source project in addition to the TypeScript ones.
         /// </summary>
         public bool IncludeProjectDefinedPreprocessorSymbols { get; set; }
@@ -34,6 +39,7 @@ namespace cs2.ts {
             return new TypeScriptConversionOptions {
                 Reflection = Reflection.Clone(),
                 AdditionalPreprocessorSymbols = new List<string>(AdditionalPreprocessorSymbols),
+                RuntimeImportPath = RuntimeImportPath,
                 IncludeProjectDefinedPreprocessorSymbols = IncludeProjectDefinedPreprocessorSymbols
             };
         }
