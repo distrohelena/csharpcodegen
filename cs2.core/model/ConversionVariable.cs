@@ -28,6 +28,7 @@ namespace cs2.core {
         public ParameterModifier Modifier { get; set; }
 
         public string? Assignment { get; set; }
+        public ExpressionSyntax? AssignmentExpression { get; set; }
         public string? DefaultValue { get; set; }
 
         public BlockSyntax? GetBlock { get; set; }

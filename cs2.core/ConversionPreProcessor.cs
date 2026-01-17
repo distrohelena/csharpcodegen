@@ -351,6 +351,7 @@ namespace cs2.core {
             variable.DeclarationType = type;
 
             if (firstVar.Initializer != null) {
+                variable.AssignmentExpression = firstVar.Initializer.Value;
                 if (firstVar.Initializer.Value is LiteralExpressionSyntax literal) {
                     variable.Assignment = ProcessLiteralExpression(literal, context);
                 }

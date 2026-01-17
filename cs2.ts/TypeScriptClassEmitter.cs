@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 
 namespace cs2.ts {
     /// <summary>
@@ -276,6 +277,8 @@ namespace cs2.ts {
                     string ass = var.Assignment;
                     ass = ass.Replace("=>", "").Trim();
                     assignment = $" = {ass}";
+                } else if (var.AssignmentExpression != null) {
+                    assignment = $" = {BuildAssignmentExpression(cl, var.AssignmentExpression)}";
                 }
 
                 string definiteAssignment = string.IsNullOrEmpty(assignment) && !var.IsStatic ? "!" : string.Empty;
@@ -365,6 +368,37 @@ namespace cs2.ts {
             }
 
             return false;
+        }
+
+        string BuildAssignmentExpression(ConversionClass cl, ExpressionSyntax expression) {
+            List<string> expressionLines = new List<string>();
+            TypeScriptLayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
+
+            int start = context.DepthClass;
+            context.AddClass(cl);
+            ExpressionResult result = Conversion.ProcessExpression(cl.Semantic, context, expression, expressionLines);
+            context.PopClass(start);
+
+            string expressionText = string.Concat(expressionLines);
+            bool hasBeforeLines = result.BeforeLines != null && result.BeforeLines.Count > 0;
+            bool hasAfterLines = result.AfterLines != null && result.AfterLines.Count > 0;
+            if (!hasBeforeLines && !hasAfterLines) {
+                return expressionText;
+            }
+
+            StringBuilder builder = new StringBuilder();
+            builder.Append("(() => {");
+            if (hasBeforeLines) {
+                builder.Append(string.Concat(result.BeforeLines));
+            }
+            builder.Append("const __value = ");
+            builder.Append(expressionText);
+            builder.Append(";\n");
+            if (hasAfterLines) {
+                builder.Append(string.Concat(result.AfterLines));
+            }
+            builder.Append("return __value; })()");
+            return builder.ToString();
         }
 
         /// <summary>

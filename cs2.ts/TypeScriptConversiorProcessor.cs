@@ -680,6 +680,10 @@ namespace cs2.ts {
                     return creationResult;
                 }
 
+                if (TryProcessCollectionInitializer(semantic, context, objectCreation, initializer, lines, out var collectionResult)) {
+                    return collectionResult;
+                }
+
                 return ProcessExpression(semantic, context, objectCreation.Initializer, lines);
             }
 
@@ -697,6 +701,66 @@ namespace cs2.ts {
             }
 
             return initializer.Expressions.Any(expression => expression is AssignmentExpressionSyntax);
+        }
+
+        static bool IsCollectionInitializer(InitializerExpressionSyntax initializer) {
+            return initializer != null && initializer.IsKind(SyntaxKind.CollectionInitializerExpression);
+        }
+
+        bool TryProcessCollectionInitializer(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            InitializerExpressionSyntax initializer,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+
+            if (!IsCollectionInitializer(initializer)) {
+                return false;
+            }
+
+            List<string> creationLines = new List<string>();
+            ExpressionResult creationResult = BuildObjectCreationExpression(semantic, context, objectCreation, creationLines);
+
+            string collectionName = "__collection_" + Guid.NewGuid().ToString("N")[..8];
+
+            lines.Add("(() => {");
+            lines.Add("const ");
+            lines.Add(collectionName);
+            lines.Add(" = ");
+            lines.AddRange(creationLines);
+            lines.Add(";\n");
+
+            foreach (var element in initializer.Expressions) {
+                lines.Add(collectionName);
+                lines.Add(".add(");
+
+                if (element is InitializerExpressionSyntax complex) {
+                    for (int i = 0; i < complex.Expressions.Count; i++) {
+                        int startDepth = context.DepthClass;
+                        ProcessExpression(semantic, context, complex.Expressions[i], lines);
+                        context.PopClass(startDepth);
+
+                        if (i < complex.Expressions.Count - 1) {
+                            lines.Add(", ");
+                        }
+                    }
+                } else {
+                    int startDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, element, lines);
+                    context.PopClass(startDepth);
+                }
+
+                lines.Add(");\n");
+            }
+
+            lines.Add("return ");
+            lines.Add(collectionName);
+            lines.Add("; })()");
+
+            result = creationResult;
+            return true;
         }
 
         /// <summary>
@@ -1763,14 +1827,14 @@ namespace cs2.ts {
         protected override ExpressionResult ProcessBinaryExpressionSyntax(SemanticModel semantic, LayerContext context, BinaryExpressionSyntax binary, List<string> lines) {
             if (binary.IsKind(SyntaxKind.CoalesceExpression) && binary.Right is ThrowExpressionSyntax throwExpression) {
                 List<string> throwLeft = new List<string>();
-                int startLeft = context.DepthClass;
+                int startThrowLeft = context.DepthClass;
                 ExpressionResult throwResult = ProcessExpression(semantic, context, binary.Left, throwLeft);
-                context.PopClass(startLeft);
+                context.PopClass(startThrowLeft);
 
                 List<string> thrown = new List<string>();
-                int startRight = context.DepthClass;
+                int startThrowRight = context.DepthClass;
                 ProcessExpression(semantic, context, throwExpression.Expression, thrown);
-                context.PopClass(startRight);
+                context.PopClass(startThrowRight);
 
                 lines.AddRange(throwLeft);
                 lines.Add(" ?? ");
@@ -1780,13 +1844,215 @@ namespace cs2.ts {
                 return throwResult;
             }
 
-            BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
-            lines.AddRange(left);
+            List<string> left = new List<string>();
+            int startLeft = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binary.Left, left);
+            context.PopClass(startLeft);
 
-            lines.Add($" {op.ToStringOperator()} ");
+            List<string> right = new List<string>();
+            int startRight = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binary.Right, right);
+            context.PopClass(startRight);
 
-            lines.AddRange(right);
-            return result;
+            BinaryOpTypes op = ParseBinaryOperator(binary.Kind());
+
+            bool hasLeftBefore = leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0;
+            bool hasLeftAfter = leftResult.AfterLines != null && leftResult.AfterLines.Count > 0;
+            bool hasRightBefore = rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0;
+            bool hasRightAfter = rightResult.AfterLines != null && rightResult.AfterLines.Count > 0;
+
+            if (!hasLeftBefore && !hasLeftAfter && !hasRightBefore && !hasRightAfter) {
+                lines.AddRange(left);
+                lines.Add($" {op.ToStringOperator()} ");
+                lines.AddRange(right);
+                return leftResult;
+            }
+
+            List<string> preludeLines = new List<string>();
+            string resultVar = "__binary_" + Guid.NewGuid().ToString("N")[..8];
+            string leftVar = "__left_" + Guid.NewGuid().ToString("N")[..8];
+            string rightVar = "__right_" + Guid.NewGuid().ToString("N")[..8];
+
+            preludeLines.Add("let ");
+            preludeLines.Add(resultVar);
+            preludeLines.Add(";\n");
+
+            List<string> declarationLines = new List<string>();
+            List<string> leftAssignments = new List<string>();
+            List<string> rightAssignments = new List<string>();
+
+            if (hasLeftAfter) {
+                SplitAfterLines(leftResult.AfterLines, declarationLines, leftAssignments);
+            }
+            if (hasRightAfter) {
+                SplitAfterLines(rightResult.AfterLines, declarationLines, rightAssignments);
+            }
+
+            if (declarationLines.Count > 0) {
+                preludeLines.AddRange(declarationLines);
+            }
+
+            if (hasLeftBefore) {
+                preludeLines.AddRange(leftResult.BeforeLines);
+            }
+            preludeLines.Add("const ");
+            preludeLines.Add(leftVar);
+            preludeLines.Add(" = ");
+            preludeLines.AddRange(left);
+            preludeLines.Add(";\n");
+            if (leftAssignments.Count > 0) {
+                preludeLines.AddRange(leftAssignments);
+            }
+
+            bool isShortCircuit = op == BinaryOpTypes.BinAnd || op == BinaryOpTypes.BinOr || op == BinaryOpTypes.Coalesce;
+            if (isShortCircuit) {
+                preludeLines.Add("if (");
+                if (op == BinaryOpTypes.BinAnd) {
+                    preludeLines.Add("!");
+                    preludeLines.Add(leftVar);
+                } else if (op == BinaryOpTypes.BinOr) {
+                    preludeLines.Add(leftVar);
+                } else {
+                    preludeLines.Add(leftVar);
+                    preludeLines.Add(" !== null && ");
+                    preludeLines.Add(leftVar);
+                    preludeLines.Add(" !== undefined");
+                }
+                preludeLines.Add(") {\n");
+                preludeLines.Add(resultVar);
+                preludeLines.Add(" = ");
+                preludeLines.Add(leftVar);
+                preludeLines.Add(";\n");
+                preludeLines.Add("} else {\n");
+
+                if (hasRightBefore) {
+                    preludeLines.AddRange(rightResult.BeforeLines);
+                }
+                preludeLines.Add("const ");
+                preludeLines.Add(rightVar);
+                preludeLines.Add(" = ");
+                preludeLines.AddRange(right);
+                preludeLines.Add(";\n");
+                if (rightAssignments.Count > 0) {
+                    preludeLines.AddRange(rightAssignments);
+                }
+
+                preludeLines.Add(resultVar);
+                preludeLines.Add(" = ");
+                preludeLines.Add(rightVar);
+                preludeLines.Add(";\n");
+                preludeLines.Add("}\n");
+            } else {
+                if (hasRightBefore) {
+                    preludeLines.AddRange(rightResult.BeforeLines);
+                }
+                preludeLines.Add("const ");
+                preludeLines.Add(rightVar);
+                preludeLines.Add(" = ");
+                preludeLines.AddRange(right);
+                preludeLines.Add(";\n");
+                if (rightAssignments.Count > 0) {
+                    preludeLines.AddRange(rightAssignments);
+                }
+                preludeLines.Add(resultVar);
+                preludeLines.Add(" = ");
+                preludeLines.Add(leftVar);
+                preludeLines.Add($" {op.ToStringOperator()} ");
+                preludeLines.Add(rightVar);
+                preludeLines.Add(";\n");
+            }
+
+            lines.Add(resultVar);
+
+            leftResult.BeforeLines = preludeLines;
+            leftResult.AfterLines = null;
+            return leftResult;
+        }
+
+        static BinaryOpTypes ParseBinaryOperator(SyntaxKind kind) {
+            switch (kind) {
+                case SyntaxKind.AddExpression:
+                    return BinaryOpTypes.Plus;
+                case SyntaxKind.SubtractExpression:
+                    return BinaryOpTypes.Minus;
+                case SyntaxKind.DivideExpression:
+                    return BinaryOpTypes.Divide;
+                case SyntaxKind.MultiplyExpression:
+                    return BinaryOpTypes.Multiply;
+                case SyntaxKind.GreaterThanExpression:
+                    return BinaryOpTypes.GreaterThan;
+                case SyntaxKind.GreaterThanOrEqualExpression:
+                    return BinaryOpTypes.GreaterThanOrEqual;
+                case SyntaxKind.LessThanExpression:
+                    return BinaryOpTypes.LessThan;
+                case SyntaxKind.LessThanOrEqualExpression:
+                    return BinaryOpTypes.LessThanOrEqual;
+                case SyntaxKind.EqualsExpression:
+                    return BinaryOpTypes.Equal;
+                case SyntaxKind.LogicalAndExpression:
+                    return BinaryOpTypes.BinAnd;
+                case SyntaxKind.LogicalOrExpression:
+                    return BinaryOpTypes.BinOr;
+                case SyntaxKind.LogicalNotExpression:
+                    return BinaryOpTypes.BinNot;
+                case SyntaxKind.NotEqualsExpression:
+                    return BinaryOpTypes.NotEqual;
+                case SyntaxKind.IsExpression:
+                    return BinaryOpTypes.InstanceOf;
+                case SyntaxKind.BitwiseAndExpression:
+                    return BinaryOpTypes.BitwiseAnd;
+                case SyntaxKind.BitwiseNotExpression:
+                    return BinaryOpTypes.BitwiseNot;
+                case SyntaxKind.BitwiseOrExpression:
+                    return BinaryOpTypes.BitwiseOr;
+                case SyntaxKind.RightShiftExpression:
+                    return BinaryOpTypes.RightShift;
+                case SyntaxKind.LeftShiftExpression:
+                    return BinaryOpTypes.LeftShift;
+                case SyntaxKind.ExclusiveOrExpression:
+                    return BinaryOpTypes.ExclusiveOr;
+                case SyntaxKind.ModuloExpression:
+                    return BinaryOpTypes.Modulo;
+                case SyntaxKind.CoalesceExpression:
+                    return BinaryOpTypes.Coalesce;
+                case SyntaxKind.AsExpression:
+                    return BinaryOpTypes.As;
+                default:
+                    throw new Exception("Unknown binary");
+            }
+        }
+
+        static void SplitAfterLines(
+            List<string> afterLines,
+            List<string> declarations,
+            List<string> assignments) {
+            if (afterLines == null || afterLines.Count == 0) {
+                return;
+            }
+
+            for (int i = 0; i < afterLines.Count; i++) {
+                string line = afterLines[i];
+                if (line == null) {
+                    continue;
+                }
+
+                string trimmed = line.TrimStart();
+                if (trimmed.StartsWith("let ", StringComparison.Ordinal)) {
+                    string remainder = trimmed[4..];
+                    int eqIndex = remainder.IndexOf('=');
+                    if (eqIndex > 0) {
+                        string name = remainder[..eqIndex].Trim();
+                        string value = remainder[(eqIndex + 1)..].Trim();
+                        if (!string.IsNullOrWhiteSpace(name)) {
+                            declarations.Add($"let {name};\n");
+                            assignments.Add($"{name} = {value}\n");
+                            continue;
+                        }
+                    }
+                }
+
+                assignments.Add(line);
+            }
         }
 
         /// <summary>
@@ -3688,21 +3954,34 @@ namespace cs2.ts {
                 return new ExpressionResult(false);
             }
 
-            lines.Add("const __patternTarget = ");
+            bool wrapElseBlock = false;
+            if (lines.Count > 0 && lines[^1] == "else ") {
+                lines.RemoveAt(lines.Count - 1);
+                lines.Add("else {\n");
+                wrapElseBlock = true;
+            }
+
+            string patternTarget = "__patternTarget" + Guid.NewGuid().ToString("N")[..8];
+
+            lines.Add("const ");
+            lines.Add(patternTarget);
+            lines.Add(" = ");
             int targetDepth = context.DepthClass;
             ProcessExpression(semantic, context, patternExpression.Expression, lines);
             context.PopClass(targetDepth);
             lines.Add(";\n");
 
             lines.Add("if (");
-            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, "__patternTarget", lines, out _)) {
+            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, patternTarget, lines, out _)) {
                 throw new NotSupportedException($"Unsupported pattern expression: {patternExpression.Pattern}");
             }
             lines.Add(") {\n");
 
             lines.Add("const ");
             lines.Add(declaredVariable);
-            lines.Add(" = __patternTarget;\n");
+            lines.Add(" = ");
+            lines.Add(patternTarget);
+            lines.Add(";\n");
 
             ProcessStatement(semantic, context, ifStatement.Statement, lines);
             lines.Add("\n}\n");
@@ -3716,6 +3995,10 @@ namespace cs2.ts {
                     ProcessStatement(semantic, context, ifStatement.Else.Statement, lines);
                     lines.Add("}\n");
                 }
+            }
+
+            if (wrapElseBlock) {
+                lines.Add("}\n");
             }
 
             return new ExpressionResult(true);
