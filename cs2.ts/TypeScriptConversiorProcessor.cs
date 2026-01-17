@@ -3667,19 +3667,27 @@ namespace cs2.ts {
 
             // Process the 'catch' block(s)
             foreach (var catchClause in tryStatement.Catches) {
-                lines.Add("catch (");
+                string catchVarName = null;
                 if (catchClause.Declaration != null) {
-                    lines.Add(catchClause.Declaration.Identifier.Text);
+                    var identifier = catchClause.Declaration.Identifier;
+                    if (!identifier.IsMissing && !string.IsNullOrWhiteSpace(identifier.Text)) {
+                        catchVarName = identifier.Text;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(catchVarName)) {
+                    lines.Add("catch {\n");
+                } else {
+                    lines.Add("catch (");
+                    lines.Add(catchVarName);
+                    lines.Add(") {\n");
 
                     FunctionStack fn = context.GetCurrentFunction();
                     ConversionVariable var = new ConversionVariable();
-                    var.Name = catchClause.Declaration.Identifier.Text;
-                    var.VarType = VariableUtil.GetVarType(catchClause.Declaration.Type, semantic);
+                    var.Name = catchVarName;
+                    var.VarType = VariableUtil.GetVarType(catchClause.Declaration?.Type, semantic);
                     fn.Stack.Add(var);
-                } else {
-                    lines.Add("err"); // Default error variable if none provided
                 }
-                lines.Add(") {\n");
                 ProcessStatement(semantic, context, catchClause.Block, lines);
                 lines.Add("}\n");
             }

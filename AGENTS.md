@@ -11,6 +11,7 @@
 - Do not use tuples.
 - Follow MVC: keep logic in separate classes (controllers/services/managers) and keep UI classes focused only on presentation and input wiring.
 - Avoid half-measures that patch broken state; ensure systems are correctly initialized or fix the underlying cause instead of bolting on runtime fixes.
+- Do not mask failures with "best-effort" patches (for example, catching formatter errors and returning the original output) unless explicitly requested; preserve existing failure behavior and fix the root cause.
 - Do not create local helper functions; if a helper is needed, add it to the appropriate Utils class or to a related type.
 - Do not create default values when a valid value is required; throw exceptions instead of silently constructing default.
 - Avoid using `??` for exception handling; validate inputs before assignment so error causes stay clear.

@@ -154,6 +154,8 @@ namespace cs2.ts.util {
             builder.AppendLine("if (!inputPath || !outputPath) { process.stderr.write('Missing input/output path.'); process.exit(1); }");
             builder.AppendLine("const input = fs.readFileSync(inputPath, 'utf8');");
             builder.AppendLine("const fileName = inputPath;");
+            builder.AppendLine("let currentText = input;");
+            builder.AppendLine("let version = 0;");
             builder.AppendLine("const formatSettings = ts.getDefaultFormatCodeSettings();");
             builder.AppendLine("formatSettings.indentSize = 4;");
             builder.AppendLine("formatSettings.tabSize = 4;");
@@ -161,8 +163,8 @@ namespace cs2.ts.util {
             builder.AppendLine("formatSettings.newLineCharacter = ts.sys.newLine;");
             builder.AppendLine("const host = {");
             builder.AppendLine("  getScriptFileNames: () => [fileName],");
-            builder.AppendLine("  getScriptVersion: () => '0',");
-            builder.AppendLine("  getScriptSnapshot: (name) => name === fileName ? ts.ScriptSnapshot.fromString(input) : undefined,");
+            builder.AppendLine("  getScriptVersion: () => version.toString(),");
+            builder.AppendLine("  getScriptSnapshot: (name) => name === fileName ? ts.ScriptSnapshot.fromString(currentText) : undefined,");
             builder.AppendLine("  getCurrentDirectory: () => process.cwd(),");
             builder.AppendLine("  getCompilationSettings: () => ({}),");
             builder.AppendLine("  getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),");
@@ -172,7 +174,7 @@ namespace cs2.ts.util {
             builder.AppendLine("};");
             builder.AppendLine("const service = ts.createLanguageService(host, ts.createDocumentRegistry());");
             builder.AppendLine("const edits = service.getFormattingEditsForDocument(fileName, formatSettings);");
-            builder.AppendLine("const output = ts.textChanges.applyChanges(input, edits);");
+            builder.AppendLine("const output = ts.textChanges.applyChanges(currentText, edits);");
             builder.AppendLine("fs.writeFileSync(outputPath, output, 'utf8');");
             return builder.ToString();
         }
