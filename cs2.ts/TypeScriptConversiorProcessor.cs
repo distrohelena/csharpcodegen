@@ -785,6 +785,8 @@ namespace cs2.ts {
 
             bool foundMultiple = false;
             List<ConversionFunction> constructors = null;
+            IMethodSymbol externalConstructorSymbol = null;
+            List<IMethodSymbol> externalConstructors = null;
             if (result.Class != null) {
                 constructors = result.Class.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
                 if (constructors.Count == 1) {
@@ -792,6 +794,24 @@ namespace cs2.ts {
                 }
                 if (constructors.Count > 1 || constructors.Any(c => c.IsAsync)) {
                     foundMultiple = true;
+                }
+            } else {
+                externalConstructorSymbol = GetObjectCreationConstructorSymbol(semantic, objectCreation);
+                if (externalConstructorSymbol != null) {
+                    INamedTypeSymbol containingType = externalConstructorSymbol.ContainingType;
+                    TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+                    ConversionClass knownClass = null;
+                    if (tsProgram != null && containingType != null) {
+                        knownClass = tsProgram.GetClassByName(containingType.Name);
+                    }
+                    if (knownClass == null || !knownClass.IsNative) {
+                        if (containingType != null) {
+                            externalConstructors = containingType.Constructors.Where(c => !c.IsStatic).ToList();
+                            if (externalConstructors.Count > 1) {
+                                foundMultiple = true;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -826,23 +846,36 @@ namespace cs2.ts {
             }
 
             if (foundMultiple) {
-                ConversionFunction fn = ResolveConstructorForObjectCreation(semantic, objectCreation, constructors, types);
-                if (fn == null) {
-                    throw new Exception("Constructor not found");
-                }
-
-                EnsureFunctionAsyncState(semantic, context, result.Class, fn);
-
-                if (fn.IsAsync) {
-                    FunctionStack functionStack = context.GetCurrentFunction();
-                    if (functionStack != null) {
-                        newLines.Add("await ");
-                        functionStack.Function.IsAsync = true;
+                if (result.Class != null) {
+                    ConversionFunction fn = ResolveConstructorForObjectCreation(semantic, objectCreation, constructors, types);
+                    if (fn == null) {
+                        throw new Exception("Constructor not found");
                     }
-                }
 
-                int index = constructors.IndexOf(fn);
-                afterLines.Add($"{index + 1}");
+                    EnsureFunctionAsyncState(semantic, context, result.Class, fn);
+
+                    if (fn.IsAsync) {
+                        FunctionStack functionStack = context.GetCurrentFunction();
+                        if (functionStack != null) {
+                            newLines.Add("await ");
+                            functionStack.Function.IsAsync = true;
+                        }
+                    }
+
+                    int index = constructors.IndexOf(fn);
+                    afterLines.Add($"{index + 1}");
+                } else {
+                    if (externalConstructorSymbol == null || externalConstructors == null || externalConstructors.Count == 0) {
+                        throw new Exception("Constructor not found");
+                    }
+
+                    int index = externalConstructors.IndexOf(externalConstructorSymbol);
+                    if (index < 0) {
+                        throw new Exception("Constructor not found");
+                    }
+
+                    afterLines.Add($"{index + 1}");
+                }
             }
 
             lines.AddRange(newLines);
