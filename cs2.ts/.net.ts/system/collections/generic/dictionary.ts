@@ -235,6 +235,17 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         return list;
     }
 
+    // Return all entries as an array of KeyValuePair
+    public ToArray(): KeyValuePair<TKey, TValue>[] {
+        const entries: KeyValuePair<TKey, TValue>[] = [];
+
+        this.forEach((key, value) => {
+            entries.push({ Key: key, Value: value });
+        });
+
+        return entries;
+    }
+
     [Symbol.iterator](): Iterator<KeyValuePair<TKey, TValue>> {
         const entries: KeyValuePair<TKey, TValue>[] = [];
 

@@ -144,6 +144,7 @@ declare global {
         readonly count: number;
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
+        FirstOrDefault(predicate?: (item: T, index: number) => boolean): T | undefined;
         Where(predicate: (item: T, index: number) => boolean): T[];
         Select<TResult>(selector: (item: T, index: number) => TResult): TResult[];
         ToArray(): T[];
@@ -164,6 +165,23 @@ if (!(Array.prototype as any).Any) {
             return this.some((item: any) => predicate(item));
         }
         return this.length > 0;
+    };
+}
+
+if (!(Array.prototype as any).FirstOrDefault) {
+    (Array.prototype as any).FirstOrDefault = function (predicate?: (item: any, index: number) => boolean) {
+        if (predicate === undefined) {
+            return this.length > 0 ? this[0] : undefined;
+        }
+        if (!predicate) {
+            throw new Error("Predicate cannot be null.");
+        }
+        for (let i = 0; i < this.length; i++) {
+            if (predicate(this[i], i)) {
+                return this[i];
+            }
+        }
+        return undefined;
     };
 }
 

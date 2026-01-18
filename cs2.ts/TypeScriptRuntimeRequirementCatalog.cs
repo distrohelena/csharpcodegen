@@ -47,6 +47,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("IDictionary", "./system/collections/generic/dictionary.interface"),
             new TypeScriptRuntimeRequirementDefinition("Dictionary", "./system/collections/generic/dictionary"),
             new TypeScriptRuntimeRequirementDefinition("ICollection", "./system/collections/generic/icollection"),
+            new TypeScriptRuntimeRequirementDefinition("IList", "./system/collections/generic/ilist"),
             new TypeScriptRuntimeRequirementDefinition("IEqualityComparer", "./system/collections/generic/iequalitycomparer"),
             new TypeScriptRuntimeRequirementDefinition("IEnumerable", "./system/collections/generic/ienumerable"),
             new TypeScriptRuntimeRequirementDefinition("IReadOnlyDictionary", "./system/collections/generic/ireadonlydictionary"),
