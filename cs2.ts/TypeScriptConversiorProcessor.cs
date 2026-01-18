@@ -530,7 +530,9 @@ namespace cs2.ts {
             if (currentClass == null) {
                 lines.Add(variableIdentifier);
             } else {
-                bool isMemberAccessName = identifier.Parent is MemberAccessExpressionSyntax || identifier.Parent is MemberBindingExpressionSyntax;
+                bool isMemberAccessName = identifier.Parent is MemberAccessExpressionSyntax memberAccess &&
+                    memberAccess.Name == identifier ||
+                    identifier.Parent is MemberBindingExpressionSyntax;
                 if (layer == 1 && !forcedStaticPrefix && !isObjectInitializerTarget && !isMemberAccessName) {
                     bool isClassVar = (classVar != null &&
                         functionInVar == null &&
