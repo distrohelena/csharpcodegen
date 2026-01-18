@@ -256,6 +256,8 @@ namespace cs2.ts {
             makeTypeScriptFunction("Replace", "replace", clString, "string");
             makeTypeScriptFunction("Remove", "slice", clString, "string");
             makeTypeScriptFunction("StartsWith", "startsWith", clString, "string");
+            makeTypeScriptFunction("EndsWith", "endsWith", clString, "string");
+            makeTypeScriptFunction("Contains", "includes", clString, "string");
             makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
             makeTypeScriptFunction("Trim", "trim", clString, "string");
