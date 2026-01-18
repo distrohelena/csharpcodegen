@@ -1312,6 +1312,24 @@ namespace cs2.ts {
                     }
                 }
 
+                ISymbol leftSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+                if (leftSymbol is IAliasSymbol aliasSymbol) {
+                    leftSymbol = aliasSymbol.Target;
+                }
+
+                if (leftSymbol is not INamedTypeSymbol) {
+                    ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).Type ??
+                        semantic.GetTypeInfo(memberAccess.Expression).ConvertedType;
+                    if (leftTypeSymbol != null && leftTypeSymbol.SpecialType == SpecialType.System_String) {
+                        TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+                        ConversionClass stringClass = tsProgram.GetClassByName("string");
+                        ConversionClass currentClass = context.GetCurrentClass();
+                        if (stringClass != null && currentClass != stringClass) {
+                            context.AddClass(stringClass);
+                        }
+                    }
+                }
+
                 lines.AddRange(leftLines);
                 lines.Add(".");
             }
