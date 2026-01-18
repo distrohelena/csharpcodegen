@@ -61,9 +61,32 @@ export class Guid {
     }
 
     // Method to return the string representation of the GUID
-    public toString(): string {
+    public toString(format?: string): string {
         const hexPairs = Array.from(this.byteArray).map(byte => byte.toString(16).padStart(2, '0'));
-        return `${hexPairs.slice(3, 4).join('')}${hexPairs.slice(2, 3).join('')}${hexPairs.slice(1, 2).join('')}${hexPairs.slice(0, 1).join('')}-${hexPairs.slice(5, 6).join('')}${hexPairs.slice(4, 5).join('')}-${hexPairs.slice(7, 8).join('')}${hexPairs.slice(6, 7).join('')}-${hexPairs.slice(8, 10).join('')}-${hexPairs.slice(10).join('')}`;
+        const dashed = `${hexPairs.slice(3, 4).join('')}${hexPairs.slice(2, 3).join('')}${hexPairs.slice(1, 2).join('')}${hexPairs.slice(0, 1).join('')}-${hexPairs.slice(5, 6).join('')}${hexPairs.slice(4, 5).join('')}-${hexPairs.slice(7, 8).join('')}${hexPairs.slice(6, 7).join('')}-${hexPairs.slice(8, 10).join('')}-${hexPairs.slice(10).join('')}`;
+
+        if (format == null || format.trim().length === 0) {
+            return dashed;
+        }
+
+        switch (format.trim()) {
+            case "D":
+            case "d":
+            case "G":
+            case "g":
+                return dashed;
+            case "N":
+            case "n":
+                return dashed.replace(/-/g, "");
+            case "B":
+            case "b":
+                return `{${dashed}}`;
+            case "P":
+            case "p":
+                return `(${dashed})`;
+            default:
+                throw new Error(`Invalid GUID format specifier '${format}'.`);
+        }
     }
 
     // Static method to check if a string is a valid GUID

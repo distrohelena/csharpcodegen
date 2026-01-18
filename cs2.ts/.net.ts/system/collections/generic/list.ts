@@ -95,6 +95,11 @@ export class List<T> extends Array<T> {
         return this.length;
     }
 
+    // Get the number of items in the list (C#-style)
+    public get Count(): number {
+        return this.length;
+    }
+
     // Get all items in the list as an array
     public toArray(): T[] {
         return [...this];
@@ -142,6 +147,7 @@ export class List<T> extends Array<T> {
 declare global {
     interface Array<T> {
         readonly count: number;
+        readonly Count: number;
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
         FirstOrDefault(predicate?: (item: T, index: number) => boolean): T | undefined;
@@ -211,6 +217,15 @@ if (!(Array.prototype as any).ToArray) {
 
 if (!Object.getOwnPropertyDescriptor(Array.prototype, "count")) {
     Object.defineProperty(Array.prototype, "count", {
+        get: function () {
+            return this.length;
+        },
+        enumerable: false
+    });
+}
+
+if (!Object.getOwnPropertyDescriptor(Array.prototype, "Count")) {
+    Object.defineProperty(Array.prototype, "Count", {
         get: function () {
             return this.length;
         },

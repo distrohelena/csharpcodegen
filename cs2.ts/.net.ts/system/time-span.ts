@@ -127,13 +127,19 @@ export class TimeSpan {
         return new TimeSpan(0, 0, 0, 0, -this._milliseconds);
     }
 
-    public toString(): string {
+    public toString(format?: string, formatProvider?: any): string {
         const days = this.Days > 0 ? `${this.Days}.` : '';
         const hours = this.Hours.toString().padStart(2, '0');
         const minutes = this.Minutes.toString().padStart(2, '0');
         const seconds = this.Seconds.toString().padStart(2, '0');
         const milliseconds = this.Milliseconds > 0 ? `.${this.Milliseconds.toString().padStart(3, '0')}` : '';
-        return `${days}${hours}:${minutes}:${seconds}${milliseconds}`;
+        const formatted = `${days}${hours}:${minutes}:${seconds}${milliseconds}`;
+        const normalizedFormat = format == null ? '' : format.trim();
+        if (normalizedFormat.length === 0 || normalizedFormat === 'c') {
+            return formatted;
+        }
+
+        throw new Error(`Invalid TimeSpan format specifier '${format}'.`);
     }
 
     // Static methods for comparison and equality
