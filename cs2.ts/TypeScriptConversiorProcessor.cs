@@ -782,6 +782,12 @@ namespace cs2.ts {
             List<string> newLines = new List<string>();
             List<string> afterLines = new List<string>();
 
+            if (objectCreation.Type is PredefinedTypeSyntax predefinedType &&
+                predefinedType.Keyword.IsKind(SyntaxKind.ObjectKeyword)) {
+                lines.Add("new Object()");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
+            }
+
             int startDepth = context.DepthClass;
             ExpressionResult result = ProcessExpression(semantic, context, objectCreation.Type, afterLines);
             context.PopClass(startDepth);
