@@ -2647,7 +2647,7 @@ namespace cs2.ts {
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
             TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
             TypeInfo type = semantic.GetTypeInfo(simpleLambda);
-            int start;
+            int start = context.DepthClass;
             if (type.ConvertedType is INamedTypeSymbol namedFuncType) {
                 var invoke = namedFuncType.DelegateInvokeMethod;
                 if (invoke == null) {
@@ -2655,7 +2655,10 @@ namespace cs2.ts {
                 }
 
                 ITypeSymbol returnType = invoke.ReturnType;
-                start = context.AddClass(tsProgram.GetClassByName(returnType.Name));
+                ConversionClass returnClass = tsProgram.GetClassByName(returnType.Name);
+                if (returnClass != null && context.GetCurrentClass() == null) {
+                    start = context.AddClass(returnClass);
+                }
             } else {
                 throw new NotImplementedException();
             }
