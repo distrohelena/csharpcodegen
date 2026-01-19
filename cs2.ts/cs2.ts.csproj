@@ -38,6 +38,9 @@
     <None Include=".net.ts\system\invalid-operation.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\file-not-found.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\security\cryptography\aes-gcm.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

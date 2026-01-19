@@ -16,6 +16,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("ArgumentException", "./system/argument.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentNullException", "./system/argument-null.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentOutOfRangeException", "./system/argument-out-of-range.exception"),
+            new TypeScriptRuntimeRequirementDefinition("FileNotFoundException", "./system/file-not-found.exception"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 0, false, "Action", "./system/action"),
             TypeScriptRuntimeRequirementDefinition.CreateGeneric(17, 1, false, "Func", "./system/func"),
             new TypeScriptRuntimeRequirementDefinition("Event", "./system/event"),
