@@ -271,6 +271,7 @@ namespace cs2.ts {
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsNullOrWhiteSpace", "isNullOrWhiteSpace", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsLetter", "isLetter", clStringUpper, "bool", "NativeStringUtil");
+            makeTypeScriptFunction("IsLetterOrDigit", "isLetterOrDigit", clStringUpper, "bool", "NativeStringUtil");
             makeTypeScriptVariable("Empty", "Empty", clStringUpper, "string", "NativeStringUtil");
             RegisterClass(clStringUpper);
 
