@@ -1384,6 +1384,10 @@ namespace cs2.ts {
                 return primitiveResult;
             }
 
+            if (TryProcessStringCompare(semantic, context, invocationExpression, lines, out ExpressionResult compareResult)) {
+                return compareResult;
+            }
+
             if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
                 memberAccess.Name.Identifier.Text == "AsSpan") {
                 int targetStart = context.DepthClass;
@@ -3128,6 +3132,119 @@ namespace cs2.ts {
                 specialType == SpecialType.System_Single ||
                 specialType == SpecialType.System_Double ||
                 specialType == SpecialType.System_Decimal;
+        }
+
+        /// <summary>
+        /// Processes String.Compare invocations that specify StringComparison.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="invocationExpression">The invocation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="result">The expression result describing the comparison.</param>
+        /// <returns>True when the invocation is handled.</returns>
+        bool TryProcessStringCompare(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            if (memberAccess.Name is not IdentifierNameSyntax memberName ||
+                memberName.Identifier.Text != "Compare") {
+                return false;
+            }
+
+            IMethodSymbol methodSymbol = semantic.GetSymbolInfo(invocationExpression.Expression).Symbol as IMethodSymbol;
+            if (methodSymbol == null && semantic.GetSymbolInfo(invocationExpression.Expression).CandidateSymbols.Length > 0) {
+                methodSymbol = semantic.GetSymbolInfo(invocationExpression.Expression).CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            }
+
+            if (methodSymbol == null ||
+                !methodSymbol.IsStatic ||
+                methodSymbol.ContainingType == null ||
+                methodSymbol.ContainingType.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocationExpression.ArgumentList.Arguments;
+            if (arguments.Count < 2) {
+                throw new NotSupportedException("String.Compare requires at least two arguments.");
+            }
+
+            if (arguments.Count != 3) {
+                throw new NotSupportedException("String.Compare overload without StringComparison is not supported.");
+            }
+
+            if (!TryGetStringComparisonName(semantic, arguments[2].Expression, out string comparisonName)) {
+                throw new NotSupportedException("String.Compare requires a StringComparison argument.");
+            }
+
+            string comparerName = comparisonName switch {
+                "Ordinal" => "StringComparer.Ordinal",
+                "OrdinalIgnoreCase" => "StringComparer.OrdinalIgnoreCase",
+                _ => null
+            };
+
+            if (comparerName == null) {
+                throw new NotSupportedException($"String.Compare with StringComparison.{comparisonName} is not supported.");
+            }
+
+            List<string> leftLines = new List<string>();
+            int startLeft = context.DepthClass;
+            ProcessExpression(semantic, context, arguments[0].Expression, leftLines);
+            context.PopClass(startLeft);
+
+            List<string> rightLines = new List<string>();
+            int startRight = context.DepthClass;
+            ProcessExpression(semantic, context, arguments[1].Expression, rightLines);
+            context.PopClass(startRight);
+
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+            ConversionClass comparerClass = tsProgram.GetClassByName("StringComparer");
+            context.AddClass(comparerClass);
+
+            lines.Add(comparerName);
+            lines.Add(".Compare(");
+            lines.AddRange(leftLines);
+            lines.Add(", ");
+            lines.AddRange(rightLines);
+            lines.Add(")");
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to extract the StringComparison enum member name.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="expression">The expression supplying the comparison.</param>
+        /// <param name="comparisonName">The resolved enum member name.</param>
+        /// <returns>True when the comparison name is resolved.</returns>
+        static bool TryGetStringComparisonName(SemanticModel semantic, ExpressionSyntax expression, out string comparisonName) {
+            comparisonName = null;
+
+            if (expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is IdentifierNameSyntax memberName) {
+                comparisonName = memberName.Identifier.Text;
+                return true;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is IFieldSymbol fieldSymbol &&
+                fieldSymbol.ContainingType != null &&
+                fieldSymbol.ContainingType.Name == "StringComparison") {
+                comparisonName = fieldSymbol.Name;
+                return true;
+            }
+
+            return false;
         }
 
         static INamedTypeSymbol ResolveEnumType(ITypeSymbol typeSymbol) {
