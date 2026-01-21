@@ -32,6 +32,11 @@ namespace cs2.ts {
         public bool IncludeProjectDefinedPreprocessorSymbols { get; set; }
 
         /// <summary>
+        /// When true, emit a strict tsconfig alongside generated output.
+        /// </summary>
+        public bool EmitStrictTsConfig { get; set; }
+
+        /// <summary>
         /// Creates a shallow copy so that callers can tweak options without mutating shared instances.
         /// </summary>
         /// <returns>A copy of the current options instance.</returns>
@@ -40,7 +45,8 @@ namespace cs2.ts {
                 Reflection = Reflection.Clone(),
                 AdditionalPreprocessorSymbols = new List<string>(AdditionalPreprocessorSymbols),
                 RuntimeImportPath = RuntimeImportPath,
-                IncludeProjectDefinedPreprocessorSymbols = IncludeProjectDefinedPreprocessorSymbols
+                IncludeProjectDefinedPreprocessorSymbols = IncludeProjectDefinedPreprocessorSymbols,
+                EmitStrictTsConfig = EmitStrictTsConfig
             };
         }
     }

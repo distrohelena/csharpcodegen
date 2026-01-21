@@ -18,6 +18,11 @@ namespace cs2.ts {
     /// Writes TS output and copies required runtime helpers from .net.ts.
     /// </summary>
     public class TypeScriptCodeConverter : CodeConverter {
+        static readonly string[] GeneratedHeaderLines = {
+            "// /////////////////////////////////////////",
+            "// Generated file. Do not modify.",
+            "// /////////////////////////////////////////"
+        };
         /// <summary>
         /// Stores the resolved assembly name for placeholder replacement.
         /// </summary>
@@ -220,6 +225,7 @@ namespace cs2.ts {
                 (file, reader, writer) => {
                     string source = reader.ReadToEnd();
                     source = Utils.ReplacePlaceholders(source, replacements);
+                    source = PrependGeneratedHeaderIfNeeded(source, file.FullName);
 
                     writer.Write(source);
             },
@@ -239,6 +245,7 @@ namespace cs2.ts {
 
             ValidateReflectionUsage();
             ComputeReflectionImports();
+            WriteGeneratedHeader(output);
             foreach (var pair in tsProgram.Requirements) {
                 if (pair is TypeScriptGenericKnownClass gen) {
                     string imports = "";
@@ -281,7 +288,9 @@ namespace cs2.ts {
             string formatted = TypeScriptCodeFormatter.Format(stringWriter.ToString(), rootPath, Console.WriteLine);
             File.WriteAllText(outputFile, formatted);
 
-            WriteStrictTsConfig(outputFolder);
+            if (conversionOptions.EmitStrictTsConfig) {
+                WriteStrictTsConfig(outputFolder);
+            }
         }
 
         /// <summary>
@@ -1006,6 +1015,75 @@ namespace cs2.ts {
 
             Directory.CreateDirectory(outputFolder);
             File.WriteAllText(configPath, configContent);
+        }
+
+        static void WriteGeneratedHeader(TypeScriptOutputWriter output) {
+            foreach (string line in GeneratedHeaderLines) {
+                output.WriteLine(line);
+            }
+        }
+
+        static string PrependGeneratedHeaderIfNeeded(string source, string filePath) {
+            if (string.IsNullOrEmpty(source)) {
+                return GetGeneratedHeader("\n") + "\n";
+            }
+
+            if (!filePath.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) &&
+                !filePath.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase)) {
+                return source;
+            }
+
+            if (HasGeneratedHeader(source)) {
+                return source;
+            }
+
+            string lineBreak = source.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            const string noCheck = "// @ts-nocheck";
+            if (source.StartsWith(noCheck, StringComparison.Ordinal)) {
+                int lineEnd = source.IndexOf('\n');
+                if (lineEnd < 0) {
+                    return source + lineBreak + GetGeneratedHeader(lineBreak) + lineBreak;
+                }
+                return source.Substring(0, lineEnd + 1)
+                    + GetGeneratedHeader(lineBreak) + lineBreak
+                    + source.Substring(lineEnd + 1);
+            }
+
+            return GetGeneratedHeader(lineBreak) + lineBreak + source;
+        }
+
+        static bool HasGeneratedHeader(string source) {
+            if (string.IsNullOrEmpty(source)) {
+                return false;
+            }
+
+            string[] lines = source.Split('\n');
+            int index = 0;
+            if (lines.Length == 0) {
+                return false;
+            }
+
+            string first = lines[0].TrimEnd('\r');
+            if (first == "// @ts-nocheck") {
+                index = 1;
+            }
+
+            if (lines.Length < index + GeneratedHeaderLines.Length) {
+                return false;
+            }
+
+            for (int i = 0; i < GeneratedHeaderLines.Length; i++) {
+                string candidate = lines[index + i].TrimEnd('\r');
+                if (!string.Equals(candidate, GeneratedHeaderLines[i], StringComparison.Ordinal)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static string GetGeneratedHeader(string lineBreak) {
+            return string.Join(lineBreak, GeneratedHeaderLines);
         }
 
     }

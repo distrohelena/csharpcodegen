@@ -36,6 +36,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("NativeArrayUtil", "./system/util/nat-array-util"),
             new TypeScriptRuntimeRequirementDefinition("NativeStringUtil", "./system/util/nat-string-util"),
             new TypeScriptRuntimeRequirementDefinition("Convert", "./system/convert"),
+            new TypeScriptRuntimeRequirementDefinition("Enum", "./system/enum"),
             new TypeScriptRuntimeRequirementDefinition("Environment", "./system/environment"),
             new TypeScriptRuntimeRequirementDefinition("AppDomain", "./system/app-domain"),
             new TypeScriptRuntimeRequirementDefinition("StringComparer", "./system/string-comparer"),

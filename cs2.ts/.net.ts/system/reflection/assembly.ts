@@ -8,6 +8,7 @@ export class Assembly {
     public name: string;
     public version: string;
     public description: string;
+    private location: string;
 
     static {
         Assembly.SetEntryAssembly(
@@ -16,10 +17,11 @@ export class Assembly {
     }
 
     // Constructor to initialize an assembly with a name and optional metadata
-    constructor(name: string, version: string = "1.0.0", description: string) {
+    constructor(name: string, version: string = "1.0.0", description: string, location: string = "") {
         this.name = name;
         this.version = version;
         this.description = description;
+        this.location = location;
     }
 
     // Sets the entry assembly manually
@@ -36,8 +38,8 @@ export class Assembly {
     }
 
     // Creates a custom assembly manually
-    public static CreateAssembly(name: string, version: string = "1.0.0", description: string): Assembly {
-        return new Assembly(name, version, description);
+    public static CreateAssembly(name: string, version: string = "1.0.0", description: string, location: string = ""): Assembly {
+        return new Assembly(name, version, description, location);
     }
 
     // Retrieves metadata about the assembly
@@ -51,5 +53,9 @@ export class Assembly {
 
     public GetDescription(): string {
         return this.description;
+    }
+
+    public get Location(): string {
+        return this.location;
     }
 }

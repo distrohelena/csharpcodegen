@@ -29,6 +29,9 @@
     <None Include=".net.ts\system\environment.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\enum.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\argument-null.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

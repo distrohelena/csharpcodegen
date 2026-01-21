@@ -174,6 +174,8 @@ namespace cs2.ts {
                 return ProcessIsPatternExpression(semantic, context, patternExpression, lines);
             } else if (expression is CollectionExpressionSyntax collectionExpression) {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            } else if (expression is ImplicitObjectCreationExpressionSyntax implicitCreation) {
+                return ProcessImplicitObjectCreationExpressionSyntax(semantic, context, implicitCreation, lines);
             } else if (expression is CheckedExpressionSyntax checkedExpression) {
                 lines.Add("(");
                 ExpressionResult result = ProcessExpression(semantic, context, checkedExpression.Expression, lines, refTypes);
@@ -182,6 +184,48 @@ namespace cs2.ts {
             }
 
             return base.ProcessExpression(semantic, context, expression, lines, refTypes);
+        }
+
+        /// <summary>
+        /// Processes implicit object creation expressions (target-typed new).
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="objectCreation">The implicit object creation expression.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result describing the creation.</returns>
+        ExpressionResult ProcessImplicitObjectCreationExpressionSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax objectCreation,
+            List<string> lines) {
+            if (objectCreation.Initializer is InitializerExpressionSyntax initializer) {
+                if (TryProcessImplicitDictionaryCreation(semantic, context, objectCreation, initializer, lines, out var dictResult)) {
+                    return dictResult;
+                }
+
+                if (IsObjectInitializer(initializer)) {
+                    List<string> creationLines = new List<string>();
+                    ExpressionResult creationResult = BuildImplicitObjectCreationExpression(semantic, context, objectCreation, creationLines);
+                    List<string> initLines = new List<string>();
+                    ProcessExpression(semantic, context, initializer, initLines);
+
+                    lines.Add("Object.assign(");
+                    lines.AddRange(creationLines);
+                    lines.Add(", ");
+                    lines.AddRange(initLines);
+                    lines.Add(")");
+                    return creationResult;
+                }
+
+                if (TryProcessImplicitCollectionInitializer(semantic, context, objectCreation, initializer, lines, out var collectionResult)) {
+                    return collectionResult;
+                }
+
+                return ProcessExpression(semantic, context, initializer, lines);
+            }
+
+            return BuildImplicitObjectCreationExpression(semantic, context, objectCreation, lines);
         }
 
         /// <summary>
@@ -891,6 +935,334 @@ namespace cs2.ts {
             lines.AddRange(afterLines);
             lines.AddRange(finalLines);
             return result;
+        }
+
+        /// <summary>
+        /// Handles collection initializers for implicit object creation.
+        /// </summary>
+        bool TryProcessImplicitCollectionInitializer(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax objectCreation,
+            InitializerExpressionSyntax initializer,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+
+            if (!IsCollectionInitializer(initializer)) {
+                return false;
+            }
+
+            List<string> creationLines = new List<string>();
+            ExpressionResult creationResult = BuildImplicitObjectCreationExpression(semantic, context, objectCreation, creationLines);
+
+            string collectionName = "__collection_" + Guid.NewGuid().ToString("N")[..8];
+
+            lines.Add("(() => {");
+            lines.Add("const ");
+            lines.Add(collectionName);
+            lines.Add(" = ");
+            lines.AddRange(creationLines);
+            lines.Add(";\n");
+
+            foreach (var element in initializer.Expressions) {
+                lines.Add(collectionName);
+                lines.Add(".add(");
+
+                if (element is InitializerExpressionSyntax complex) {
+                    for (int i = 0; i < complex.Expressions.Count; i++) {
+                        int startDepth = context.DepthClass;
+                        ProcessExpression(semantic, context, complex.Expressions[i], lines);
+                        context.PopClass(startDepth);
+
+                        if (i < complex.Expressions.Count - 1) {
+                            lines.Add(", ");
+                        }
+                    }
+                } else {
+                    int startDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, element, lines);
+                    context.PopClass(startDepth);
+                }
+
+                lines.Add(");\n");
+            }
+
+            lines.Add("return ");
+            lines.Add(collectionName);
+            lines.Add("; })()");
+
+            result = creationResult;
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to emit a dictionary creation expression from an implicit initializer.
+        /// </summary>
+        bool TryProcessImplicitDictionaryCreation(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax objectCreation,
+            InitializerExpressionSyntax initializer,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+
+            if (objectCreation.ArgumentList != null && objectCreation.ArgumentList.Arguments.Count > 0) {
+                return false;
+            }
+
+            TypeInfo typeInfo = semantic.GetTypeInfo(objectCreation);
+            ITypeSymbol typeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+            if (!IsDictionaryType(typeSymbol)) {
+                return false;
+            }
+
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+            VariableType type = VariableUtil.GetVarType(typeSymbol);
+            List<string> typeLines = new List<string> { type.GetTypeScriptType(tsProgram) };
+
+            List<string> beforeLines = new List<string>();
+            List<string> entryStrings = new List<string>();
+
+            foreach (var element in initializer.Expressions) {
+                if (element is not InitializerExpressionSyntax complex || complex.Expressions.Count < 2) {
+                    return false;
+                }
+
+                string keyText = BuildExpressionString(semantic, context, complex.Expressions[0], beforeLines);
+                string valueText = BuildExpressionString(semantic, context, complex.Expressions[1], beforeLines);
+                entryStrings.Add($"[{keyText}, {valueText}]");
+            }
+
+            if (beforeLines.Count > 0) {
+                lines.AddRange(beforeLines);
+            }
+
+            lines.Add("new ");
+            lines.AddRange(typeLines);
+
+            if (entryStrings.Count == 0) {
+                lines.Add("()");
+            } else {
+                lines.Add("(undefined, [ ");
+                for (int i = 0; i < entryStrings.Count; i++) {
+                    if (i > 0) {
+                        lines.Add(", ");
+                    }
+                    lines.Add(entryStrings[i]);
+                }
+                lines.Add(" ])");
+            }
+
+            ConversionClass resolvedClass = GetClass(tsProgram, type);
+            result = new ExpressionResult(true, VariablePath.Unknown, type);
+            result.Class = resolvedClass;
+            return true;
+        }
+
+        /// <summary>
+        /// Builds the TypeScript expression for implicit object creation.
+        /// </summary>
+        ExpressionResult BuildImplicitObjectCreationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax objectCreation,
+            List<string> lines) {
+            List<string> newLines = new List<string>();
+            List<string> afterLines = new List<string>();
+
+            TypeInfo typeInfo = semantic.GetTypeInfo(objectCreation);
+            ITypeSymbol typeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+            if (typeSymbol == null) {
+                throw new InvalidOperationException("Unable to resolve implicit object creation type.");
+            }
+
+            TypeScriptProgram tsProgram = (TypeScriptProgram)context.Program;
+            VariableType type = VariableUtil.GetVarType(typeSymbol);
+            ConversionClass resolvedClass = GetClass(tsProgram, type);
+
+            bool foundMultiple = false;
+            List<ConversionFunction> constructors = null;
+            IMethodSymbol externalConstructorSymbol = null;
+            List<IMethodSymbol> externalConstructors = null;
+            if (resolvedClass != null) {
+                constructors = resolvedClass.Functions.Where(c => c.IsConstructor && !c.IsStatic).ToList();
+                if (constructors.Count == 1) {
+                    EnsureFunctionAsyncState(semantic, context, resolvedClass, constructors[0]);
+                }
+                if (constructors.Count > 1 || constructors.Any(c => c.IsAsync)) {
+                    foundMultiple = true;
+                }
+            } else {
+                externalConstructorSymbol = GetImplicitObjectCreationConstructorSymbol(semantic, objectCreation);
+                if (externalConstructorSymbol != null) {
+                    INamedTypeSymbol containingType = externalConstructorSymbol.ContainingType;
+                    ConversionClass knownClass = null;
+                    if (tsProgram != null && containingType != null) {
+                        knownClass = tsProgram.GetClassByName(containingType.Name);
+                    }
+                    if (knownClass == null || !knownClass.IsNative) {
+                        if (containingType != null) {
+                            externalConstructors = containingType.Constructors.Where(c => !c.IsStatic).ToList();
+                            if (externalConstructors.Count > 1) {
+                                foundMultiple = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (foundMultiple) {
+                afterLines.Add(".New");
+            } else {
+                newLines.Add("new ");
+            }
+
+            afterLines.Add(type.GetTypeScriptType(tsProgram));
+
+            List<ExpressionResult> types = new List<ExpressionResult>();
+            List<string> finalLines = new List<string>();
+            if (objectCreation.ArgumentList == null) {
+                finalLines.Add("()");
+            } else {
+                finalLines.Add("(");
+                for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
+                    var arg = objectCreation.ArgumentList.Arguments[i];
+
+                    int startArg = context.DepthClass;
+                    types.Add(ProcessExpression(semantic, context, arg.Expression, finalLines));
+                    if (types[i].Type == null) {
+                        //Debugger.Break();
+                    }
+                    context.PopClass(startArg);
+
+                    if (i != objectCreation.ArgumentList.Arguments.Count - 1) {
+                        finalLines.Add(", ");
+                    }
+                }
+                finalLines.Add(")");
+            }
+
+            if (foundMultiple) {
+                if (resolvedClass != null) {
+                    ConversionFunction fn = ResolveConstructorForImplicitObjectCreation(semantic, objectCreation, constructors, types);
+                    if (fn == null) {
+                        throw new Exception("Constructor not found");
+                    }
+
+                    EnsureFunctionAsyncState(semantic, context, resolvedClass, fn);
+
+                    if (fn.IsAsync) {
+                        FunctionStack functionStack = context.GetCurrentFunction();
+                        if (functionStack != null) {
+                            newLines.Add("await ");
+                            functionStack.Function.IsAsync = true;
+                        }
+                    }
+
+                    int index = constructors.IndexOf(fn);
+                    afterLines.Add($"{index + 1}");
+                } else {
+                    if (externalConstructorSymbol == null || externalConstructors == null || externalConstructors.Count == 0) {
+                        throw new Exception("Constructor not found");
+                    }
+
+                    int index = externalConstructors.IndexOf(externalConstructorSymbol);
+                    if (index < 0) {
+                        throw new Exception("Constructor not found");
+                    }
+
+                    afterLines.Add($"{index + 1}");
+                }
+            }
+
+            ExpressionResult result = new ExpressionResult(true, VariablePath.Unknown, type);
+            result.Class = resolvedClass;
+
+            lines.AddRange(newLines);
+            lines.AddRange(afterLines);
+            lines.AddRange(finalLines);
+            return result;
+        }
+
+        /// <summary>
+        /// Resolves the constructor overload to use for an implicit object creation expression.
+        /// </summary>
+        ConversionFunction ResolveConstructorForImplicitObjectCreation(
+            SemanticModel semantic,
+            ImplicitObjectCreationExpressionSyntax objectCreation,
+            List<ConversionFunction> constructors,
+            List<ExpressionResult> argumentTypes) {
+            if (constructors == null || constructors.Count == 0) {
+                return null;
+            }
+
+            IMethodSymbol constructorSymbol = GetImplicitObjectCreationConstructorSymbol(semantic, objectCreation);
+            if (constructorSymbol != null) {
+                int symbolParamCount = constructorSymbol.Parameters.Length;
+                for (int i = 0; i < constructors.Count; i++) {
+                    ConversionFunction candidate = constructors[i];
+                    if (candidate.InParameters.Count != symbolParamCount) {
+                        continue;
+                    }
+
+                    bool matches = true;
+                    for (int paramIndex = 0; paramIndex < symbolParamCount; paramIndex++) {
+                        VariableType symbolType = VariableUtil.GetVarType(constructorSymbol.Parameters[paramIndex].Type);
+                        VariableType expectedType = candidate.InParameters[paramIndex].VarType;
+                        if (!AreConstructorTypesCompatible(expectedType, symbolType)) {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (matches) {
+                        return candidate;
+                    }
+                }
+            }
+
+            if (argumentTypes != null && argumentTypes.Count > 0) {
+                ConversionFunction argMatch = constructors.Find(candidate =>
+                    ConstructorMatchesArgumentTypes(candidate, argumentTypes));
+                if (argMatch != null) {
+                    return argMatch;
+                }
+            }
+
+            int argCount = argumentTypes?.Count ?? 0;
+            List<ConversionFunction> countMatches = constructors.Where(c => c.InParameters.Count == argCount).ToList();
+            if (countMatches.Count == 1) {
+                return countMatches[0];
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Gets the constructor symbol selected by Roslyn for a given implicit object creation expression.
+        /// </summary>
+        static IMethodSymbol GetImplicitObjectCreationConstructorSymbol(
+            SemanticModel semantic,
+            ImplicitObjectCreationExpressionSyntax objectCreation) {
+            if (semantic == null || objectCreation == null) {
+                return null;
+            }
+
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(objectCreation);
+            if (symbolInfo.Symbol is IMethodSymbol methodSymbol &&
+                methodSymbol.MethodKind == MethodKind.Constructor) {
+                return methodSymbol;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                return symbolInfo.CandidateSymbols
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(candidate => candidate.MethodKind == MethodKind.Constructor);
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -2600,9 +2972,16 @@ namespace cs2.ts {
             }
 
             string fullName = typeSymbol.ToDisplayString();
+            bool wrapForMemberAccess = typeOfExpression.Parent is MemberAccessExpressionSyntax;
+            if (wrapForMemberAccess) {
+                lines.Add("(");
+            }
             lines.Add("Type.GetType(");
             lines.Add(QuoteString(fullName));
             lines.Add(") ?? Type.object");
+            if (wrapForMemberAccess) {
+                lines.Add(")");
+            }
         }
 
         /// <summary>

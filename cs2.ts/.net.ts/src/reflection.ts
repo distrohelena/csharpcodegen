@@ -9,6 +9,9 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { Assembly } from "../system/reflection/assembly";
+import { Enum } from "../system/enum";
+
 export type AttributeData = {
     type: string; // full name
     ctorArgs?: any[];
@@ -379,6 +382,7 @@ export class Type {
     private ctorsCache?: ConstructorInfo[];
     private baseTypeResolved?: Type | null;
     private interfacesResolved?: Type[];
+    private assemblyResolved?: Assembly;
     private static primitivesInitialized = false;
     private static primitiveVoid: Type;
     private static primitiveObject: Type;
@@ -449,7 +453,12 @@ export class Type {
     get Namespace(): string | undefined { return this.meta.namespace; }
     get FullName(): string { return this.meta.fullName; }
     get fullName(): string { return this.meta.fullName; }
-    get Assembly(): string { return this.meta.assembly ?? "Generated"; }
+    get Assembly(): Assembly {
+        if (!this.assemblyResolved) {
+            this.assemblyResolved = new Assembly(this.meta.assembly ?? "Generated", "", "");
+        }
+        return this.assemblyResolved;
+    }
     get IsClass(): boolean { return !!this.meta.isClass || (!this.meta.isInterface && !this.meta.isEnum && !this.meta.isArray); }
     get IsInterface(): boolean { return !!this.meta.isInterface; }
     get IsEnum(): boolean { return !!this.meta.isEnum; }
@@ -675,6 +684,7 @@ export function registerEnum(ctor: any, metadata: TypeMetadata): Type {
         }
         metadata.enumValues = values;
     }
+    Enum.RegisterEnum(ctor, metadata);
     return registry.register(ctor, metadata);
 }
 

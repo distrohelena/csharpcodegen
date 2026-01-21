@@ -197,5 +197,93 @@ namespace cs2.ts.tests {
             proc.ProcessArrowExpressionClause(model, ctx, arrow, lines);
             Assert.Contains("return ", string.Concat(lines));
         }
+
+        [Fact]
+        public void Break_EmitsBreak() {
+            var code = "class C { void M(){ while(true){ break; } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var brk = method.DescendantNodes().OfType<BreakStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, brk));
+            Assert.Contains("break;", s);
+        }
+
+        [Fact]
+        public void Throw_Empty_EmitsPlaceholder() {
+            var code = "class C { void M(){ try { throw new System.Exception(); } catch { throw; } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var thr = method.DescendantNodes().OfType<ThrowStatementSyntax>().First(t => t.Expression == null);
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, thr));
+            Assert.Contains("Throw empty", s);
+        }
+
+        [Fact]
+        public void IfPatternDeclaration_EmitsPatternTargetAndBinding() {
+            var code = "class C { void M(object o){ if (o is string s) { } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var ifStmt = method.DescendantNodes().OfType<IfStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, ifStmt));
+            Assert.Contains("const __patternTarget", s);
+            Assert.Contains("const s = __patternTarget", s);
+        }
+
+        [Fact]
+        public void PatternSwitch_EmitsIfElseChain() {
+            var code = "class C { void M(object o){ switch (o) { case string s: break; case null: break; default: break; } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var sw = method.DescendantNodes().OfType<SwitchStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, sw));
+            Assert.Contains("const __switch", s);
+            Assert.Contains("if (", s);
+            Assert.Contains("else", s);
+        }
+
+        [Fact]
+        public void PatternSwitch_WithWhenClause_EmitsCondition() {
+            var code = "class C { void M(object o){ switch (o) { case int x when x > 0: break; default: break; } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var sw = method.DescendantNodes().OfType<SwitchStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, sw));
+            Assert.Contains("&& (", s);
+        }
+
+        [Fact]
+        public void TryCatch_WithoutVariable_EmitsBareCatch() {
+            var code = "class C { void M(){ try { } catch { } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var tryStmt = method.DescendantNodes().OfType<TryStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, tryStmt));
+            Assert.Contains("catch {", s);
+        }
+
+        [Fact]
+        public void CheckedStatement_EmitsWrappedBlock() {
+            var code = "class C { void M(){ checked { int x = 1 + 2; } } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var chk = method.DescendantNodes().OfType<CheckedStatementSyntax>().First();
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, chk));
+            Assert.Contains("{", s);
+            Assert.Contains("}", s);
+        }
     }
 }

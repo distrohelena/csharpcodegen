@@ -90,7 +90,7 @@ export class BinaryReader implements IDisposable {
     }
 
     readString(): string {
-        const length = this.readByte();
+        const length = this.read7BitEncodedInt();
         const buffer = this.readBytes(length);
         return new TextDecoder("utf-8").decode(buffer);
     }
@@ -112,5 +112,20 @@ export class BinaryReader implements IDisposable {
 
     readBoolean(): boolean {
         return this.readByte() !== 0;
+    }
+
+    read7BitEncodedInt(): number {
+        let count = 0;
+        let shift = 0;
+        let byte = 0;
+        do {
+            if (shift >= 35) {
+                throw new Error("7-bit encoded int is too large.");
+            }
+            byte = this.readByte();
+            count |= (byte & 0x7F) << shift;
+            shift += 7;
+        } while ((byte & 0x80) !== 0);
+        return count;
     }
 }

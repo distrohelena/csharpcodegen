@@ -448,5 +448,340 @@ namespace cs2.ts.tests {
                 proc.ProcessExpression(model, ctx, invoke, lines);
             });
         }
+
+        [Fact]
+        public void LiteralExpressions_MappedForms() {
+            var code = "class C { void M(){ 1; 1UL; 'a'; \"hi\"; true; false; null; default; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var literals = method.DescendantNodes().OfType<LiteralExpressionSyntax>().ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var outputs = literals.Select(l => TsProcessorTestHarness.JoinLines(
+                TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, l))).ToList();
+
+            Assert.Contains("1", outputs);
+            Assert.Contains("1n", outputs);
+            Assert.Contains("\"a\"", outputs);
+            Assert.Contains("\"hi\"", outputs);
+            Assert.Contains("true", outputs);
+            Assert.Contains("false", outputs);
+            Assert.Contains("null", outputs);
+        }
+
+        [Fact]
+        public void AssignmentOperators_EmitExpectedTokens() {
+            var code = "class C { void M(){ int? x = null; x += 1; x -= 2; x ??= 3; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var assignments = method.DescendantNodes().OfType<AssignmentExpressionSyntax>().ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var output = string.Join("\n", assignments.Select(a =>
+                TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, a))));
+
+            Assert.Contains(" += ", output);
+            Assert.Contains(" -= ", output);
+            Assert.Contains(" ??= ", output);
+        }
+
+        [Fact]
+        public void DictionaryElementAccess_UsesGet() {
+            var code = "using System.Collections.Generic; class C { Dictionary<string,int> d = new Dictionary<string,int>(); void M(){ var x = d[\"a\"]; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var access = method.DescendantNodes().OfType<ElementAccessExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, access));
+
+            Assert.Contains(".get(", output);
+        }
+
+        [Fact]
+        public void DictionaryAssignment_UsesSet() {
+            var code = "using System.Collections.Generic; class C { Dictionary<string,int> d = new Dictionary<string,int>(); void M(){ d[\"a\"] = 1; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var assignment = method.DescendantNodes().OfType<AssignmentExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, assignment));
+
+            Assert.Contains(".set(", output);
+        }
+
+        [Fact]
+        public void ObjectInitializer_UsesObjectAssignAndColon() {
+            var code = "class Foo { public int A {get;set;} public int B {get;set;} } class C { void M(){ var f = new Foo { A = 1, B = 2 }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains("Object.assign(", output);
+            Assert.Contains("A : 1", output);
+            Assert.Contains("B : 2", output);
+        }
+
+        [Fact]
+        public void ImplicitObjectCreation_UsesTypeName() {
+            var code = "class Foo { } class C { void M(){ Foo f = new(); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains("new Foo", output);
+        }
+
+        [Fact]
+        public void ImplicitObjectCreation_WithInitializer_UsesObjectAssign() {
+            var code = "class Foo { public int A {get;set;} } class C { void M(){ Foo f = new() { A = 1 }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains("Object.assign(", output);
+            Assert.Contains("new Foo", output);
+        }
+
+        [Fact]
+        public void CollectionInitializer_UsesAddCalls() {
+            var code = "using System.Collections.Generic; class C { void M(){ var list = new List<int> { 1, 2 }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains(".add(", output);
+            Assert.Contains("return", output);
+        }
+
+        [Fact]
+        public void ImplicitCollectionInitializer_UsesAddCalls() {
+            var code = "using System.Collections.Generic; class C { void M(){ List<int> list = new() { 1, 2 }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains(".add(", output);
+        }
+
+        [Fact]
+        public void DictionaryInitializer_EmitsEntries() {
+            var code = "using System.Collections.Generic; class C { void M(){ var dict = new Dictionary<string,int> { { \"a\", 1 }, { \"b\", 2 } }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains("new Dictionary", output);
+            Assert.Contains("(undefined, [", output);
+            Assert.Contains("[\"a\", 1]", output);
+            Assert.Contains("[\"b\", 2]", output);
+        }
+
+        [Fact]
+        public void ImplicitDictionaryInitializer_EmitsEntries() {
+            var code = "using System.Collections.Generic; class C { void M(){ Dictionary<string,int> dict = new() { { \"a\", 1 } }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var creation = method.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, creation));
+
+            Assert.Contains("new Dictionary", output);
+            Assert.Contains("(undefined, [", output);
+            Assert.Contains("[\"a\", 1]", output);
+        }
+
+        [Fact]
+        public void ArrayEmpty_EmitsSpecializedOutputs() {
+            var code = "class C { void M(){ var a = System.Array.Empty<int>(); var b = System.Array.Empty<byte>(); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                .Where(i => i.ToString().Contains("Array.Empty")).ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var output = string.Join("\n", invocations.Select(i =>
+                TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, i))));
+
+            Assert.Contains("[]", output);
+            Assert.Contains("new Uint8Array(0)", output);
+        }
+
+        [Fact]
+        public void EnumToString_EmitsLookupOrCamelCase() {
+            var code = "enum E { A, B } class C { void M(E e){ e.ToString(); e.ToString().ToLowerInvariant(); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var output = string.Join("\n", invocations.Select(i =>
+                TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, i))));
+
+            Assert.Contains("E[", output);
+            Assert.Contains("NativeStringUtil.toCamelCase", output);
+        }
+
+        [Fact]
+        public void PrimitiveToString_EmitsToStringCalls() {
+            var code = "class C { void M(int x, bool b){ x.ToString(); b.ToString(); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var output = string.Join("\n", invocations.Select(i =>
+                TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, i))));
+
+            Assert.Contains(".toString()", output);
+        }
+
+        [Fact]
+        public void StringCompare_OrdinalIgnoreCase_UsesComparer() {
+            var code = "class C { void M(string a, string b){ System.String.Compare(a, b, System.StringComparison.OrdinalIgnoreCase); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var invocation = method.DescendantNodes().OfType<InvocationExpressionSyntax>().First();
+
+            var (proc, ctx, prog) = TsProcessorTestHarness.Create();
+            prog.Classes.Add(new ConversionClass { Name = "StringComparer" });
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, invocation));
+
+            Assert.Contains("StringComparer.OrdinalIgnoreCase.Compare", output);
+        }
+
+        [Fact]
+        public void IndexFromEnd_EmitsLengthBasedAccess() {
+            var code = "class C { int[] a = new int[2]; void M(){ var x = a[^1]; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var access = method.DescendantNodes().OfType<ElementAccessExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, access));
+
+            Assert.Contains("__indexTarget", output);
+            Assert.Contains("length - 1", output);
+        }
+
+        [Fact]
+        public void RangeFromEnd_EmitsSliceWithTarget() {
+            var code = "class C { int[] a = new int[10]; void M(){ var x = a[1..^1]; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var access = method.DescendantNodes().OfType<ElementAccessExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, access));
+
+            Assert.Contains("__rangeTarget.slice(", output);
+        }
+
+        [Fact]
+        public void CollectionExpression_WithSpread_EmitsArrayLiteral() {
+            var code = "class C { void M(){ int[] a = new int[]{1,2}; int[] b = [..a, 3]; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var collection = method.DescendantNodes().OfType<CollectionExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, collection));
+
+            Assert.Contains("[", output);
+            Assert.Contains("...", output);
+            Assert.Contains("]", output);
+        }
+
+        [Fact]
+        public void Nameof_EmitsStringLiteral() {
+            var code = "class C { void M(){ var c = nameof(C); var m = nameof(M); } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var method = RoslynTestHelper.GetFirstMethod(root);
+            var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>()
+                .Where(i => i.Expression is IdentifierNameSyntax ident && ident.Identifier.Text == "nameof")
+                .ToList();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+
+            var output = string.Join("\n", invocations.Select(i =>
+                TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, i))));
+
+            Assert.Contains("\"C\"", output);
+            Assert.Contains("\"M\"", output);
+        }
+
+        [Fact]
+        public void PatternIsExpression_EmitsIifeChecks() {
+            var code = "class C { void M(object o){ var x = o is string; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var pattern = root.DescendantNodes().OfType<IsPatternExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, pattern));
+
+            Assert.Contains("__pattern", output);
+            Assert.Contains("typeof __pattern", output);
+        }
+
+        [Fact]
+        public void SwitchExpression_WithWhenAndThrow_EmitsBranches() {
+            var code = "class C { string M(int value){ return value switch { 1 when value > 0 => \"one\", 2 => throw new System.Exception(), _ => \"other\" }; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var expr = root.DescendantNodes().OfType<SwitchExpressionSyntax>().First();
+
+            var (proc, ctx, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(ctx, returnType: new VariableType(VariableDataType.String));
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr));
+
+            Assert.Contains("const __switch", output);
+            Assert.Contains("&& (", output);
+            Assert.Contains("throw ", output);
+            Assert.Contains("return ", output);
+        }
     }
 }

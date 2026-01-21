@@ -71,6 +71,23 @@ export class JsonElement {
         return false;
     }
 
+    public TryGetProperty(name: string, outValue: { value: JsonElement }): boolean {
+        const value = this._value;
+        if (!name || value == null || typeof value !== "object" || Array.isArray(value)) {
+            outValue.value = null;
+            return false;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(value, name)) {
+            const propertyValue = value[name];
+            outValue.value = propertyValue instanceof JsonElement ? propertyValue : new JsonElement(propertyValue);
+            return true;
+        }
+
+        outValue.value = null;
+        return false;
+    }
+
     public EnumerateArray(): JsonArrayEnumerator {
         const items = Array.isArray(this._value) ? this._value : [];
         return new JsonArrayEnumerator(items);
@@ -98,6 +115,17 @@ class JsonArrayEnumerator {
     public get Current(): JsonElement {
         return new JsonElement(this._items[this._index]);
     }
+
+    public next(): IteratorResult<JsonElement> {
+        if (this.MoveNext()) {
+            return { value: this.Current, done: false };
+        }
+        return { value: undefined as any, done: true };
+    }
+
+    public [Symbol.iterator](): Iterator<JsonElement> {
+        return this;
+    }
 }
 
 class JsonObjectEnumerator {
@@ -116,5 +144,16 @@ class JsonObjectEnumerator {
     public get Current(): JsonProperty {
         const entry = this._entries[this._index];
         return new JsonProperty(entry[0], entry[1]);
+    }
+
+    public next(): IteratorResult<JsonProperty> {
+        if (this.MoveNext()) {
+            return { value: this.Current, done: false };
+        }
+        return { value: undefined as any, done: true };
+    }
+
+    public [Symbol.iterator](): Iterator<JsonProperty> {
+        return this;
     }
 }
