@@ -1893,10 +1893,14 @@ namespace cs2.ts {
             }
 
             IMethodSymbol invocationSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool wrapInt64 = ShouldWrapBinaryReaderInt64(invocationSymbol);
             bool forceAsync = HasTypeScriptAsyncAttribute(invocationSymbol) ||
                 HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType);
             bool shouldAwait = forceAsync ||
                 (result.Type != null && result.Type.TypeName.StartsWith("Promise<"));
+            if (wrapInt64) {
+                lines.Add("Number(");
+            }
             if (shouldAwait) {
                 lines.Add("await ");
                 context.GetCurrentFunction().Function.IsAsync = true;
@@ -1905,6 +1909,12 @@ namespace cs2.ts {
             lines.AddRange(invoLines);
 
             lines.AddRange(argLines);
+            if (wrapInt64) {
+                lines.Add(")");
+                if (invocationSymbol?.ReturnType != null) {
+                    result.Type = VariableUtil.GetVarType(invocationSymbol.ReturnType);
+                }
+            }
 
             foreach (var pair in outs) {
                 if (outDeclarations.Contains(pair.Key)) {
@@ -1917,6 +1927,19 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        static bool ShouldWrapBinaryReaderInt64(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            if (!string.Equals(methodSymbol.Name, "ReadInt64", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            string containingType = methodSymbol.ContainingType?.ToDisplayString();
+            return string.Equals(containingType, "System.IO.BinaryReader", StringComparison.Ordinal);
         }
 
         static void AppendOptionalArguments(
