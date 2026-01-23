@@ -526,8 +526,20 @@ namespace cs2.ts {
                     return false;
                 });
 
+                if (overload == null) {
+                    var countMatches = currentClass.Functions
+                        .Where(c => c.Name.StartsWith(name) &&
+                            c.InParameters != null &&
+                            c.InParameters.Count == refTypes.Count)
+                        .ToList();
+                    if (countMatches.Count == 1) {
+                        overload = countMatches[0];
+                    }
+                }
+
                 if (overload != null) {
                     classFn = overload;
+                    name = overload.Name;
                 }
             }
 
@@ -1913,6 +1925,18 @@ namespace cs2.ts {
                 lines.Add(")");
                 if (invocationSymbol?.ReturnType != null) {
                     result.Type = VariableUtil.GetVarType(invocationSymbol.ReturnType);
+                }
+            }
+
+            if (invocationSymbol?.ReturnType != null &&
+                (result.Type == null ||
+                (result.Type.Type == VariableDataType.Object &&
+                (string.IsNullOrWhiteSpace(result.Type.TypeName) ||
+                string.Equals(result.Type.TypeName, "object", StringComparison.Ordinal) ||
+                string.Equals(result.Type.TypeName, "any", StringComparison.Ordinal))))) {
+                VariableType inferredReturn = VariableUtil.GetVarType(invocationSymbol.ReturnType);
+                if (inferredReturn != null && inferredReturn.Type != VariableDataType.Void) {
+                    result.Type = inferredReturn;
                 }
             }
 
