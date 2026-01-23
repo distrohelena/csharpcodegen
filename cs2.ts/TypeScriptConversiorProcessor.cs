@@ -1756,6 +1756,10 @@ namespace cs2.ts {
                 return primitiveResult;
             }
 
+            if (TryProcessObjectGetType(semantic, context, invocationExpression, lines, out ExpressionResult getTypeResult)) {
+                return getTypeResult;
+            }
+
             if (TryProcessStringCompare(semantic, context, invocationExpression, lines, out ExpressionResult compareResult)) {
                 return compareResult;
             }
@@ -2573,12 +2577,12 @@ namespace cs2.ts {
                     lines.Add("true");
                     return true;
                 }
-                AppendPatternTypeCheck(typeName, targetIdentifier, lines);
+                AppendPatternTypeCheck(context, typeName, targetIdentifier, lines);
                 return true;
             }
 
             if (pattern is TypePatternSyntax typePattern) {
-                AppendPatternTypeCheck(typePattern.Type.ToString(), targetIdentifier, lines);
+                AppendPatternTypeCheck(context, typePattern.Type.ToString(), targetIdentifier, lines);
                 return true;
             }
 
@@ -2601,8 +2605,13 @@ namespace cs2.ts {
         /// <param name="typeName">The type name from the pattern.</param>
         /// <param name="targetIdentifier">The identifier to test.</param>
         /// <param name="lines">The output lines to append to.</param>
-        void AppendPatternTypeCheck(string typeName, string targetIdentifier, List<string> lines) {
+        void AppendPatternTypeCheck(LayerContext context, string typeName, string targetIdentifier, List<string> lines) {
             string normalizedTypeName = NormalizePatternTypeName(typeName);
+            if (IsGenericTypeParameterName(context, normalizedTypeName)) {
+                lines.Add(targetIdentifier);
+                lines.Add(" != null");
+                return;
+            }
             if (string.Equals(normalizedTypeName, "bool", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(normalizedTypeName, "Boolean", StringComparison.OrdinalIgnoreCase)) {
                 lines.Add("typeof ");
@@ -2653,6 +2662,26 @@ namespace cs2.ts {
             lines.Add(targetIdentifier);
             lines.Add(" instanceof ");
             lines.Add(normalizedTypeName);
+        }
+
+        static bool IsGenericTypeParameterName(LayerContext context, string typeName) {
+            if (context == null || string.IsNullOrWhiteSpace(typeName)) {
+                return false;
+            }
+
+            FunctionStack fn = context.GetCurrentFunction();
+            if (fn?.Function?.GenericParameters != null &&
+                fn.Function.GenericParameters.Contains(typeName, StringComparer.Ordinal)) {
+                return true;
+            }
+
+            ConversionClass cl = context.GetCurrentClass();
+            if (cl?.GenericArgs != null &&
+                cl.GenericArgs.Contains(typeName, StringComparer.Ordinal)) {
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -2868,6 +2897,10 @@ namespace cs2.ts {
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
                 VariableType type = VariableUtil.GetVarType(genType, semantic);
+                HashSet<string> erasedTypeParameters = GetStaticClassGenericParameters(context);
+                if (erasedTypeParameters != null && erasedTypeParameters.Count > 0) {
+                    type = ReplaceTypeParameters(type, erasedTypeParameters);
+                }
                 lines.Add(type.ToTypeScriptString((TypeScriptProgram)context.Program));
 
                 if (i < count - 1) {
@@ -3475,6 +3508,57 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Maps instance GetType() calls to the Type.of runtime helper.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="invocationExpression">The invocation expression to inspect.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="result">The expression result when handled.</param>
+        /// <returns>True when the invocation was rewritten.</returns>
+        bool TryProcessObjectGetType(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            if (memberAccess.Name is not IdentifierNameSyntax memberName ||
+                memberName.Identifier.Text != "GetType") {
+                return false;
+            }
+
+            if (invocationExpression.ArgumentList?.Arguments.Count > 0) {
+                return false;
+            }
+
+            IMethodSymbol methodSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (methodSymbol == null ||
+                methodSymbol.Parameters.Length != 0 ||
+                methodSymbol.ContainingType == null ||
+                methodSymbol.ContainingType.SpecialType != SpecialType.System_Object) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> targetLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, targetLines);
+            context.PopClass(depth);
+
+            lines.Add("Type.of(");
+            lines.AddRange(targetLines);
+            lines.Add(")");
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("Type"));
+            return true;
+        }
+
+        /// <summary>
         /// Determines whether a type symbol should map ToString to the JavaScript primitive implementation.
         /// </summary>
         /// <param name="typeSymbol">The type symbol to inspect.</param>
@@ -3960,6 +4044,10 @@ namespace cs2.ts {
         /// <returns>The expression result describing the cast.</returns>
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
             VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
+            HashSet<string> erasedTypeParameters = GetStaticClassGenericParameters(context);
+            if (erasedTypeParameters != null && erasedTypeParameters.Count > 0) {
+                varType = ReplaceTypeParameters(varType, erasedTypeParameters);
+            }
 
             lines.Add("<");
             lines.Add(varType.ToTypeScriptString((TypeScriptProgram)context.Program)); // Type of the cast
@@ -3971,6 +4059,64 @@ namespace cs2.ts {
             return new ExpressionResult(true, VariablePath.Unknown, varType);
         }
 
+        static HashSet<string> GetStaticClassGenericParameters(LayerContext context) {
+            if (context == null) {
+                return null;
+            }
+
+            FunctionStack fn = context.GetCurrentFunction();
+            if (fn == null || !fn.Function.IsStatic) {
+                return null;
+            }
+
+            ConversionClass cl = context.GetCurrentClass();
+            if (cl?.GenericArgs == null || cl.GenericArgs.Count == 0) {
+                return null;
+            }
+
+            HashSet<string> erased = new HashSet<string>(cl.GenericArgs, StringComparer.Ordinal);
+            if (fn.Function.GenericParameters != null) {
+                for (int i = 0; i < fn.Function.GenericParameters.Count; i++) {
+                    erased.Remove(fn.Function.GenericParameters[i]);
+                }
+            }
+
+            return erased.Count > 0 ? erased : null;
+        }
+
+        static VariableType ReplaceTypeParameters(VariableType source, HashSet<string> erased) {
+            if (source == null) {
+                return null;
+            }
+
+            VariableType clone = new VariableType(source);
+            if (!string.IsNullOrWhiteSpace(clone.TypeName) && erased.Contains(clone.TypeName)) {
+                clone.TypeName = "any";
+                clone.Type = VariableDataType.Object;
+                clone.Args = new List<VariableType>();
+                clone.GenericArgs = new List<VariableType>();
+                return clone;
+            }
+
+            if (clone.Args != null && clone.Args.Count > 0) {
+                List<VariableType> replacedArgs = new List<VariableType>(clone.Args.Count);
+                for (int i = 0; i < clone.Args.Count; i++) {
+                    replacedArgs.Add(ReplaceTypeParameters(clone.Args[i], erased));
+                }
+                clone.Args = replacedArgs;
+            }
+
+            if (clone.GenericArgs != null && clone.GenericArgs.Count > 0) {
+                List<VariableType> replacedGenerics = new List<VariableType>(clone.GenericArgs.Count);
+                for (int i = 0; i < clone.GenericArgs.Count; i++) {
+                    replacedGenerics.Add(ReplaceTypeParameters(clone.GenericArgs[i], erased));
+                }
+                clone.GenericArgs = replacedGenerics;
+            }
+
+            return clone;
+        }
+
         /// <summary>
         /// Processes conditional (ternary) expressions.
         /// </summary>
@@ -3979,18 +4125,66 @@ namespace cs2.ts {
         /// <param name="conditional">The conditional expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
-            // Process the condition (before the ?)
+            List<string> conditionLines = new List<string>();
             int startDepth = context.DepthClass;
-            ProcessExpression(semantic, context, conditional.Condition, lines);
+            ExpressionResult condResult = ProcessExpression(semantic, context, conditional.Condition, conditionLines);
             context.PopClass(startDepth);
-            lines.Add(" ? ");
 
-            // Process the true branch (after the ? and before the :)
-            AppendConditionalBranch(semantic, context, conditional.WhenTrue, lines);
-            lines.Add(" : ");
+            List<string> whenTrueLines = new List<string>();
+            ExpressionResult whenTrueResult = BuildConditionalBranchExpression(semantic, context, conditional.WhenTrue, whenTrueLines);
 
-            // Process the false branch (after the :)
-            AppendConditionalBranch(semantic, context, conditional.WhenFalse, lines);
+            List<string> whenFalseLines = new List<string>();
+            ExpressionResult whenFalseResult = BuildConditionalBranchExpression(semantic, context, conditional.WhenFalse, whenFalseLines);
+
+            bool needsPrelude = HasPreludeLines(condResult) ||
+                HasPreludeLines(whenTrueResult) ||
+                HasPreludeLines(whenFalseResult);
+
+            if (!needsPrelude) {
+                lines.AddRange(conditionLines);
+                lines.Add(" ? ");
+                lines.AddRange(whenTrueLines);
+                lines.Add(" : ");
+                lines.AddRange(whenFalseLines);
+                return;
+            }
+
+            string resultVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+            lines.Add("(() => {\n");
+            lines.Add("let ");
+            lines.Add(resultVar);
+            lines.Add(";\n");
+
+            if (condResult.BeforeLines != null && condResult.BeforeLines.Count > 0) {
+                lines.AddRange(condResult.BeforeLines);
+            }
+
+            bool hasCondAfter = condResult.AfterLines != null && condResult.AfterLines.Count > 0;
+            if (hasCondAfter) {
+                string condVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                lines.Add("const ");
+                lines.Add(condVar);
+                lines.Add(" = ");
+                lines.AddRange(conditionLines);
+                lines.Add(";\n");
+                lines.AddRange(condResult.AfterLines);
+                lines.Add("if (");
+                lines.Add(condVar);
+                lines.Add(") {\n");
+            } else {
+                lines.Add("if (");
+                lines.AddRange(conditionLines);
+                lines.Add(") {\n");
+            }
+
+            AppendConditionalBranchAssignment(lines, resultVar, whenTrueLines, whenTrueResult);
+            lines.Add("} else {\n");
+            AppendConditionalBranchAssignment(lines, resultVar, whenFalseLines, whenFalseResult);
+            lines.Add("}\n");
+            lines.Add("return ");
+            lines.Add(resultVar);
+            lines.Add(";\n");
+            lines.Add("})()");
         }
 
         /// <summary>
@@ -4013,6 +4207,82 @@ namespace cs2.ts {
             int branchDepth = context.DepthClass;
             ProcessExpression(semantic, context, branchExpression, lines);
             context.PopClass(branchDepth);
+        }
+
+        /// <summary>
+        /// Determines whether an expression result requires prelude or follow-up statements.
+        /// </summary>
+        /// <param name="result">The expression result to inspect.</param>
+        /// <returns>True when prelude or follow-up lines are present.</returns>
+        bool HasPreludeLines(ExpressionResult result) {
+            return result.BeforeLines != null && result.BeforeLines.Count > 0 ||
+                result.AfterLines != null && result.AfterLines.Count > 0;
+        }
+
+        /// <summary>
+        /// Builds a conditional branch expression, handling throw expressions when needed.
+        /// </summary>
+        /// <param name="semantic">The semantic model for the current document.</param>
+        /// <param name="context">The active conversion context.</param>
+        /// <param name="branchExpression">The branch expression to render.</param>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <returns>The expression result for the branch.</returns>
+        ExpressionResult BuildConditionalBranchExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax branchExpression,
+            List<string> lines) {
+            if (branchExpression is ThrowExpressionSyntax throwExpression) {
+                lines.Add("(() => { throw ");
+                int startDepth = context.DepthClass;
+                ProcessExpression(semantic, context, throwExpression.Expression, lines);
+                context.PopClass(startDepth);
+                lines.Add("; })()");
+                return new ExpressionResult(true);
+            }
+
+            int branchDepth = context.DepthClass;
+            ExpressionResult result = ProcessExpression(semantic, context, branchExpression, lines);
+            context.PopClass(branchDepth);
+            return result;
+        }
+
+        /// <summary>
+        /// Appends a conditional branch assignment into a prelude-based conditional expression.
+        /// </summary>
+        /// <param name="lines">The output lines to append to.</param>
+        /// <param name="resultVar">The variable receiving the branch value.</param>
+        /// <param name="branchLines">The rendered branch expression lines.</param>
+        /// <param name="branchResult">The expression result for the branch.</param>
+        void AppendConditionalBranchAssignment(
+            List<string> lines,
+            string resultVar,
+            List<string> branchLines,
+            ExpressionResult branchResult) {
+            if (branchResult.BeforeLines != null && branchResult.BeforeLines.Count > 0) {
+                lines.AddRange(branchResult.BeforeLines);
+            }
+
+            bool hasAfter = branchResult.AfterLines != null && branchResult.AfterLines.Count > 0;
+            if (hasAfter) {
+                string branchVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                lines.Add("const ");
+                lines.Add(branchVar);
+                lines.Add(" = ");
+                lines.AddRange(branchLines);
+                lines.Add(";\n");
+                lines.AddRange(branchResult.AfterLines);
+                lines.Add(resultVar);
+                lines.Add(" = ");
+                lines.Add(branchVar);
+                lines.Add(";\n");
+                return;
+            }
+
+            lines.Add(resultVar);
+            lines.Add(" = ");
+            lines.AddRange(branchLines);
+            lines.Add(";\n");
         }
 
         /// <summary>

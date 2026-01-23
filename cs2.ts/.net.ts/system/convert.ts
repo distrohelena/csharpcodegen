@@ -144,3 +144,34 @@
         return truncated;
     }
 }
+
+declare global {
+    interface NumberConstructor {
+        TryParse(value: string, style: any, provider: any, outValue: { value: number }): boolean;
+    }
+}
+
+if (typeof Number.TryParse !== "function") {
+    Number.TryParse = (value: string, _style: any, _provider: any, outValue: { value: number }): boolean => {
+        if (value == null) {
+            outValue.value = 0;
+            return false;
+        }
+        const text = String(value).trim();
+        if (!text) {
+            outValue.value = 0;
+            return false;
+        }
+        if (!/^[+-]?\d+$/.test(text)) {
+            outValue.value = 0;
+            return false;
+        }
+        const parsed = Number(text);
+        if (Number.isNaN(parsed)) {
+            outValue.value = 0;
+            return false;
+        }
+        outValue.value = parsed;
+        return true;
+    };
+}

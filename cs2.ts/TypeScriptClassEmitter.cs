@@ -243,7 +243,12 @@ namespace cs2.ts {
                 access = "";
             }
 
-            string type = var.VarType.ToTypeScriptString(TypeScriptProgram);
+            VariableType varType = var.VarType;
+            HashSet<string> erasedTypeParameters = GetClassGenericParametersToErase(cl, null, var.IsStatic);
+            if (erasedTypeParameters != null) {
+                varType = ReplaceTypeParameters(varType, erasedTypeParameters);
+            }
+            string type = varType.ToTypeScriptString(TypeScriptProgram);
 
             string accessType = "";
             if (var.DeclarationType != MemberDeclarationType.Class) {
@@ -443,6 +448,17 @@ namespace cs2.ts {
             }
 
             bool useFactory = constructors.Count > 1 || constructors.Any(c => c.IsAsync);
+            bool hasThisInitializer = constructors.Any(c =>
+                c.ConstructorInitializer != null &&
+                c.ConstructorInitializer.IsKind(SyntaxKind.ThisConstructorInitializer));
+
+            if (cl.DeclarationType == MemberDeclarationType.Abstract &&
+                useFactory &&
+                !constructors.Any(c => c.IsAsync) &&
+                !hasThisInitializer) {
+                EmitAbstractConstructorOverloads(cl, constructors, writer, classOverrides);
+                return;
+            }
 
             if (!useFactory && constructors.Count == 1) {
                 ConversionFunction fn = constructors[0];
@@ -551,6 +567,88 @@ namespace cs2.ts {
                     writer.WriteLine();
                 }
             }
+        }
+
+        void EmitAbstractConstructorOverloads(
+            ConversionClass cl,
+            List<ConversionFunction> constructors,
+            TypeScriptOutputWriter writer,
+            int classOverrides) {
+            if (constructors == null || constructors.Count == 0) {
+                return;
+            }
+
+            for (int i = 0; i < constructors.Count; i++) {
+                ConversionFunction fn = constructors[i];
+                writer.Write("constructor(");
+
+                for (int k = 0; k < fn.InParameters.Count; k++) {
+                    var param = fn.InParameters[k];
+                    string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
+                    string def = GetParameterDefaultSuffix(cl, param);
+                    string paramName = GetParameterName(cl, param);
+
+                    writer.Write($"{paramName}: {type}{def}");
+
+                    if (k != fn.InParameters.Count - 1) {
+                        writer.Write(", ");
+                    }
+                }
+
+                writer.WriteLine(");");
+            }
+
+            writer.WriteLine();
+            writer.WriteLine("constructor(...__args: any[]) {");
+
+            for (int i = 0; i < constructors.Count; i++) {
+                ConversionFunction fn = constructors[i];
+                string condition = i == 0 ? "if" : "else if";
+                writer.WriteLine($"{condition} (__args.length === {fn.InParameters.Count}) {{");
+
+                for (int k = 0; k < fn.InParameters.Count; k++) {
+                    var param = fn.InParameters[k];
+                    string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
+                    string paramName = GetParameterName(cl, param);
+                    string defaultExpr = GetParameterDefaultValueExpression(param);
+
+                    if (HasDefaultValue(param.DefaultValue)) {
+                        writer.WriteLine($"const {paramName} = __args.length > {k} ? __args[{k}] as {type} : {defaultExpr};");
+                    } else {
+                        writer.WriteLine($"const {paramName} = __args[{k}] as {type};");
+                    }
+                }
+
+                if (classOverrides > 0) {
+                    EmitBaseConstructorCall(cl, fn, writer);
+                }
+
+                List<string> lines = new List<string>();
+                LayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
+
+                int start = context.DepthClass;
+                int startFn = context.DepthFunction;
+
+                context.AddClass(cl);
+                context.AddFunction(new FunctionStack(fn));
+
+                if (fn.ArrowExpression != null) {
+                    Conversion.ProcessArrowExpressionClause(cl.Semantic, context, fn.ArrowExpression, lines);
+                } else if (fn.RawBlock != null) {
+                    Conversion.ProcessBlock(cl.Semantic, context, fn.RawBlock, lines);
+                }
+
+                context.PopClass(start);
+                context.PopFunction(startFn);
+
+                TypeScriptFunction.PrintLines(writer, lines);
+                writer.WriteLine("return;");
+                writer.WriteLine("}");
+            }
+
+            writer.WriteLine("throw new Error(\"Invalid constructor overload.\");");
+            writer.WriteLine("}");
+            writer.WriteLine();
         }
 
         /// <summary>
@@ -869,6 +967,7 @@ namespace cs2.ts {
                     async = "";
                 }
 
+                HashSet<string> erasedTypeParameters = GetClassGenericParametersToErase(cl, fn, fn.IsStatic);
                 if (fn.IsStatic) {
                     writer.Write($"{access}static {async}{fn.Remap}{generic}(");
                 } else {
@@ -877,7 +976,11 @@ namespace cs2.ts {
 
                 for (int k = 0; k < fn.InParameters.Count; k++) {
                     var param = fn.InParameters[k];
-                    string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
+                    VariableType paramType = param.VarType;
+                    if (erasedTypeParameters != null) {
+                        paramType = ReplaceTypeParameters(paramType, erasedTypeParameters);
+                    }
+                    string type = paramType.ToTypeScriptString(TypeScriptProgram);
                     type = NormalizeParameterType(param, type);
                     string def = GetParameterDefaultSuffix(cl, param);
                     string paramName = GetParameterName(cl, param);
@@ -895,7 +998,11 @@ namespace cs2.ts {
 
                 string returnParameter = null;
                 if (fn.ReturnType != null) {
-                    returnParameter = fn.ReturnType.ToTypeScriptString(TypeScriptProgram);
+                    VariableType returnType = fn.ReturnType;
+                    if (erasedTypeParameters != null) {
+                        returnType = ReplaceTypeParameters(returnType, erasedTypeParameters);
+                    }
+                    returnParameter = returnType.ToTypeScriptString(TypeScriptProgram);
                 }
                 if (string.IsNullOrWhiteSpace(returnParameter)) {
                     returnParameter = "void";
@@ -923,6 +1030,70 @@ namespace cs2.ts {
                 return "";
             }
             return def;
+        }
+
+        static string GetParameterDefaultValueExpression(ConversionVariable param) {
+            if (param == null || string.IsNullOrWhiteSpace(param.DefaultValue)) {
+                return "undefined";
+            }
+
+            string value = param.DefaultValue.Trim();
+            if (value.StartsWith("=", StringComparison.Ordinal)) {
+                value = value.Substring(1).Trim();
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? "undefined" : value;
+        }
+
+        static HashSet<string> GetClassGenericParametersToErase(
+            ConversionClass cl,
+            ConversionFunction fn,
+            bool isStatic) {
+            if (!isStatic || cl?.GenericArgs == null || cl.GenericArgs.Count == 0) {
+                return null;
+            }
+
+            HashSet<string> erased = new HashSet<string>(cl.GenericArgs, StringComparer.Ordinal);
+            if (fn?.GenericParameters != null) {
+                for (int i = 0; i < fn.GenericParameters.Count; i++) {
+                    erased.Remove(fn.GenericParameters[i]);
+                }
+            }
+
+            return erased.Count > 0 ? erased : null;
+        }
+
+        static VariableType ReplaceTypeParameters(VariableType source, HashSet<string> erased) {
+            if (source == null) {
+                return null;
+            }
+
+            VariableType clone = new VariableType(source);
+            if (!string.IsNullOrWhiteSpace(clone.TypeName) && erased.Contains(clone.TypeName)) {
+                clone.TypeName = "any";
+                clone.Type = VariableDataType.Object;
+                clone.Args = new List<VariableType>();
+                clone.GenericArgs = new List<VariableType>();
+                return clone;
+            }
+
+            if (clone.Args != null && clone.Args.Count > 0) {
+                List<VariableType> replacedArgs = new List<VariableType>(clone.Args.Count);
+                for (int i = 0; i < clone.Args.Count; i++) {
+                    replacedArgs.Add(ReplaceTypeParameters(clone.Args[i], erased));
+                }
+                clone.Args = replacedArgs;
+            }
+
+            if (clone.GenericArgs != null && clone.GenericArgs.Count > 0) {
+                List<VariableType> replacedGenerics = new List<VariableType>(clone.GenericArgs.Count);
+                for (int i = 0; i < clone.GenericArgs.Count; i++) {
+                    replacedGenerics.Add(ReplaceTypeParameters(clone.GenericArgs[i], erased));
+                }
+                clone.GenericArgs = replacedGenerics;
+            }
+
+            return clone;
         }
 
         /// <summary>

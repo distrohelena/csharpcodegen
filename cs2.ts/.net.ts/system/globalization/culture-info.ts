@@ -18,6 +18,22 @@ export class CultureInfo {
     }
 }
 
+export enum NumberStyles {
+    None = 0,
+    AllowLeadingWhite = 1,
+    AllowTrailingWhite = 2,
+    AllowLeadingSign = 4,
+    Integer = AllowLeadingWhite | AllowTrailingWhite | AllowLeadingSign
+}
+
+declare global {
+    var NumberStyles: typeof NumberStyles;
+}
+
+if (typeof globalThis !== "undefined" && !(globalThis as any).NumberStyles) {
+    (globalThis as any).NumberStyles = NumberStyles;
+}
+
 declare global {
     interface Boolean {
         toString(provider?: any): string;

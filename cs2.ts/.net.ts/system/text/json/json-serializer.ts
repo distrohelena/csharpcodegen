@@ -361,3 +361,22 @@ export class JsonSerializer {
         return parsed;
     }
 }
+
+export class JsonException extends Error {
+    constructor(message?: string) {
+        super(message ?? "JsonException");
+        this.name = "JsonException";
+    }
+
+    public static New3(message: string): JsonException {
+        return new JsonException(message);
+    }
+}
+
+declare global {
+    var JsonException: typeof JsonException;
+}
+
+if (typeof globalThis !== "undefined" && !(globalThis as any).JsonException) {
+    (globalThis as any).JsonException = JsonException;
+}

@@ -35,11 +35,54 @@ export class Enum {
     }
 
     public static IsDefined(enumType: any, value: any): boolean {
-        if (enumType == null || enumType.IsEnum !== true) {
+        if (enumType == null) {
             return false;
         }
-        const enumObject = enumType._ctor;
+        const enumObject = enumType.IsEnum === true ? enumType._ctor : enumType;
         return Enum.IsDefinedOnObject(enumObject, value);
+    }
+
+    public static GetValues(enumType: any): any[] {
+        const enumObject = enumType?.IsEnum === true ? enumType._ctor : enumType;
+        if (enumObject == null) {
+            return [];
+        }
+        const values: any[] = [];
+        const keys = Object.keys(enumObject);
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            if (Enum.isNumericKey(key)) {
+                continue;
+            }
+            values.push(enumObject[key]);
+        }
+        return values;
+    }
+
+    public static GetName(enumType: any, value: any): string | null {
+        const enumObject = enumType?.IsEnum === true ? enumType._ctor : enumType;
+        if (enumObject == null) {
+            return null;
+        }
+        if (typeof value === "number" && Object.prototype.hasOwnProperty.call(enumObject, value)) {
+            const name = enumObject[value];
+            return typeof name === "string" ? name : null;
+        }
+        const keys = Object.keys(enumObject);
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            if (Enum.isNumericKey(key)) {
+                continue;
+            }
+            if (enumObject[key] === value) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    public static ToObject(_enumType: any, value: any): any {
+        return value;
     }
 
     public static TryParse(value: any, ignoreCase: boolean, outValue: { value: any }, enumType?: any): boolean {
@@ -110,5 +153,12 @@ export class Enum {
             }
         }
         return false;
+    }
+
+    private static isNumericKey(key: string): boolean {
+        if (!key) {
+            return false;
+        }
+        return !Number.isNaN(Number(key));
     }
 }
