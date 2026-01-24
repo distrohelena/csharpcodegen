@@ -431,6 +431,40 @@ namespace cs2.ts {
                 }
             }
 
+            if (invokedMethod != null) {
+                ConversionClass methodClass = currentClass;
+                if (invokedMethod.ContainingType != null &&
+                    (methodClass == null || methodClass.Name != invokedMethod.ContainingType.Name)) {
+                    methodClass = tsProgram.GetClassByName(invokedMethod.ContainingType.Name);
+                }
+
+                if (methodClass != null &&
+                    invokedMethod.Parameters != null &&
+                    invokedMethod.Parameters.Length >= 0) {
+                    var candidates = methodClass.Functions
+                        .Where(c => c.Name == invokedMethod.Name &&
+                            c.InParameters != null &&
+                            c.InParameters.Count == invokedMethod.Parameters.Length)
+                        .ToList();
+                    if (candidates.Count > 0) {
+                        List<VariableType> paramTypes = new List<VariableType>();
+                        foreach (var parameter in invokedMethod.Parameters) {
+                            paramTypes.Add(VariableUtil.GetVarType(parameter.Type));
+                        }
+
+                        ConversionFunction match = candidates.FirstOrDefault(c => MethodParameterTypesMatch(c.InParameters, paramTypes));
+                        if (match == null && candidates.Count == 1) {
+                            match = candidates[0];
+                        }
+
+                        if (match != null) {
+                            classFn = match;
+                            currentClass = methodClass;
+                        }
+                    }
+                }
+            }
+
             if (!isMethodGroup &&
                 !isInvocation &&
                 classFn != null &&
@@ -1426,6 +1460,218 @@ namespace cs2.ts {
             return string.Equals(expected.ToString(), actual.ToString(), StringComparison.Ordinal);
         }
 
+        static bool MethodParameterTypesMatch(List<ConversionVariable> parameters, List<VariableType> types) {
+            if (parameters == null || types == null) {
+                return false;
+            }
+
+            if (parameters.Count != types.Count) {
+                return false;
+            }
+
+            for (int i = 0; i < parameters.Count; i++) {
+                VariableType expected = parameters[i].VarType;
+                VariableType actual = types[i];
+                if (expected == null || actual == null) {
+                    return false;
+                }
+                if (!string.Equals(expected.ToString(), actual.ToString(), StringComparison.Ordinal)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static ConversionFunction ResolveMethodSymbol(TypeScriptProgram program, IMethodSymbol methodSymbol) {
+            if (program == null || methodSymbol == null || methodSymbol.ContainingType == null) {
+                return null;
+            }
+
+            ConversionClass methodClass = program.GetClassByName(methodSymbol.ContainingType.Name);
+            if (methodClass == null || methodClass.Functions == null) {
+                return null;
+            }
+
+            var candidates = methodClass.Functions
+                .Where(c => c.Name == methodSymbol.Name &&
+                    c.InParameters != null &&
+                    c.InParameters.Count == methodSymbol.Parameters.Length)
+                .ToList();
+            if (candidates.Count == 0) {
+                return null;
+            }
+
+            List<VariableType> paramTypes = new List<VariableType>();
+            foreach (var parameter in methodSymbol.Parameters) {
+                paramTypes.Add(VariableUtil.GetVarType(parameter.Type));
+            }
+
+            ConversionFunction match = candidates.FirstOrDefault(c => MethodParameterTypesMatch(c.InParameters, paramTypes));
+            if (match == null && candidates.Count == 1) {
+                match = candidates[0];
+            }
+
+            return match;
+        }
+
+        static void ReplaceLastIdentifier(List<string> lines, string identifier, string replacement) {
+            if (lines == null || string.IsNullOrEmpty(identifier) || string.IsNullOrEmpty(replacement)) {
+                return;
+            }
+
+            for (int i = lines.Count - 1; i >= 0; i--) {
+                if (lines[i] == identifier) {
+                    lines[i] = replacement;
+                    return;
+                }
+            }
+        }
+
+        static ConversionFunction ResolveInvocationFromLines(
+            TypeScriptProgram program,
+            List<string> lines,
+            List<ExpressionResult> argumentTypes,
+            int argumentCount,
+            ConversionClass fallbackClass,
+            out string methodName) {
+            methodName = null;
+            if (program == null || lines == null || lines.Count == 0) {
+                return null;
+            }
+
+            int methodIndex = -1;
+            for (int i = lines.Count - 1; i >= 0; i--) {
+                if (IsIdentifierToken(lines[i])) {
+                    methodIndex = i;
+                    methodName = lines[i];
+                    break;
+                }
+            }
+
+            if (methodIndex == -1 || string.IsNullOrEmpty(methodName)) {
+                return null;
+            }
+
+            string ownerName = null;
+            if (methodIndex > 1 && lines[methodIndex - 1] == ".") {
+                for (int i = methodIndex - 2; i >= 0; i--) {
+                    if (IsIdentifierToken(lines[i])) {
+                        ownerName = lines[i];
+                        break;
+                    }
+                    if (lines[i] == ".") {
+                        break;
+                    }
+                }
+            }
+
+            ConversionClass ownerClass = fallbackClass;
+            if (!string.IsNullOrEmpty(ownerName) &&
+                ownerName != "this" &&
+                ownerName != "base") {
+                ownerClass = program.GetClassByName(ownerName) ?? ownerClass;
+            }
+
+            if (ownerClass == null || ownerClass.Functions == null) {
+                return null;
+            }
+
+            string resolvedName = methodName;
+            int argCount = argumentCount;
+            var candidates = ownerClass.Functions
+                .Where(c => c.Name == resolvedName &&
+                    c.InParameters != null &&
+                    c.InParameters.Count == argCount)
+                .ToList();
+            if (candidates.Count == 0) {
+                return null;
+            }
+
+            ConversionFunction match = null;
+            if (argumentTypes != null && argumentTypes.Count == argCount) {
+                match = candidates.FirstOrDefault(c => MethodParametersMatchExpressionResults(c.InParameters, argumentTypes));
+            }
+            if (match == null && candidates.Count == 1) {
+                match = candidates[0];
+            }
+
+            return match;
+        }
+
+        static bool MethodParametersMatchExpressionResults(List<ConversionVariable> parameters, List<ExpressionResult> types) {
+            if (parameters == null || types == null) {
+                return false;
+            }
+
+            if (parameters.Count != types.Count) {
+                return false;
+            }
+
+            for (int i = 0; i < parameters.Count; i++) {
+                ExpressionResult arg = types[i];
+                if (arg.Type == null) {
+                    continue;
+                }
+                if (!string.Equals(parameters[i].VarType.ToString(), arg.Type.ToString(), StringComparison.Ordinal)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool IsIdentifierToken(string token) {
+            if (string.IsNullOrWhiteSpace(token)) {
+                return false;
+            }
+
+            for (int i = 0; i < token.Length; i++) {
+                char ch = token[i];
+                if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '$')) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static int GetMethodOverloadIndex(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null || methodSymbol.ContainingType == null) {
+                return 0;
+            }
+
+            var methods = methodSymbol.ContainingType
+                .GetMembers(methodSymbol.Name)
+                .OfType<IMethodSymbol>()
+                .Where(m => !m.IsImplicitlyDeclared)
+                .ToList();
+            if (methods.Count <= 1) {
+                return 0;
+            }
+
+            if (methods.Any(m => m.Locations.All(l => !l.IsInSource))) {
+                return 0;
+            }
+
+            methods.Sort((a, b) => {
+                var aLoc = a.Locations.FirstOrDefault(l => l.IsInSource);
+                var bLoc = b.Locations.FirstOrDefault(l => l.IsInSource);
+                if (aLoc == null || bLoc == null) {
+                    return 0;
+                }
+                return aLoc.SourceSpan.Start.CompareTo(bLoc.SourceSpan.Start);
+            });
+
+            for (int i = 0; i < methods.Count; i++) {
+                if (SymbolEqualityComparer.Default.Equals(methodSymbol, methods[i])) {
+                    return i + 1;
+                }
+            }
+
+            return 0;
+        }
+
         /// <summary>
         /// Attempts to emit a dictionary creation expression from an initializer.
         /// </summary>
@@ -1717,6 +1963,20 @@ namespace cs2.ts {
                 lines.AddRange(leftLines);
                 lines.Add(".");
             }
+            TypeScriptProgram program = (TypeScriptProgram)context.Program;
+            ConversionClass targetClass = leftResult.Class;
+            if (targetClass == null && leftResult.Type != null) {
+                targetClass = GetClass(program, leftResult.Type);
+            }
+
+            if (targetClass != null) {
+                int startDepth = context.DepthClass;
+                context.AddClass(targetClass);
+                ExpressionResult memberResult = ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
+                context.PopClass(startDepth);
+                return memberResult;
+            }
+
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
         }
 
@@ -1905,6 +2165,30 @@ namespace cs2.ts {
             }
 
             IMethodSymbol invocationSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            TypeScriptProgram program = (TypeScriptProgram)context.Program;
+            ConversionFunction resolvedFunction = ResolveMethodSymbol(program, invocationSymbol);
+            string invocationName = invocationSymbol?.Name;
+            if (resolvedFunction == null) {
+                resolvedFunction = ResolveInvocationFromLines(program, invoLines, types, count, context.GetCurrentClass(), out string lineName);
+                if (string.IsNullOrEmpty(invocationName)) {
+                    invocationName = lineName;
+                }
+            }
+            string remappedName = null;
+            if (resolvedFunction != null && !string.IsNullOrEmpty(resolvedFunction.Remap)) {
+                remappedName = resolvedFunction.Remap;
+            } else if (invocationSymbol != null) {
+                int overloadIndex = GetMethodOverloadIndex(invocationSymbol);
+                if (overloadIndex > 1) {
+                    remappedName = $"{invocationSymbol.Name}{overloadIndex}";
+                }
+            }
+
+            if (!string.IsNullOrEmpty(remappedName) &&
+                !string.IsNullOrEmpty(invocationName) &&
+                !string.Equals(remappedName, invocationName, StringComparison.Ordinal)) {
+                ReplaceLastIdentifier(invoLines, invocationName, remappedName);
+            }
             bool wrapInt64 = ShouldWrapBinaryReaderInt64(invocationSymbol);
             bool forceAsync = HasTypeScriptAsyncAttribute(invocationSymbol) ||
                 HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType);

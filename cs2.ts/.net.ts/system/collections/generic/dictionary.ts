@@ -116,7 +116,18 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
 
     // Set value by key using indexing
     public set(key: TKey, value: TValue): void {
-        this.add(key, value);
+        const hash = this.getHash(key);
+        const bucket = this.buckets[hash] ?? [];
+        for (let i = 0; i < bucket.length; i++) {
+            if (this.keysEqual(bucket[i].key, key)) {
+                bucket[i].value = value;
+                this.buckets[hash] = bucket;
+                return;
+            }
+        }
+        bucket.push({ key, value });
+        this.buckets[hash] = bucket;
+        this._count++;
     }
 
     // Get the value by key
