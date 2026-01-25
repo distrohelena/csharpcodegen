@@ -2189,6 +2189,7 @@ namespace cs2.ts {
                 !string.Equals(remappedName, invocationName, StringComparison.Ordinal)) {
                 ReplaceLastIdentifier(invoLines, invocationName, remappedName);
             }
+            TryInjectJsonSerializerReturnType(invocationSymbol, invoLines, argLines);
             bool wrapInt64 = ShouldWrapBinaryReaderInt64(invocationSymbol);
             bool forceAsync = HasTypeScriptAsyncAttribute(invocationSymbol) ||
                 HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType);
@@ -2235,6 +2236,67 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        static void TryInjectJsonSerializerReturnType(IMethodSymbol invocationSymbol, List<string> invocationLines, List<string> argLines) {
+            if (invocationSymbol == null || argLines == null || argLines.Count < 2) {
+                return;
+            }
+
+            if (!string.Equals(invocationSymbol.Name, "Deserialize", StringComparison.Ordinal)) {
+                return;
+            }
+
+            if (!invocationSymbol.IsGenericMethod || invocationSymbol.TypeArguments.Length == 0) {
+                return;
+            }
+
+            string containingType = invocationSymbol.ContainingType?.ToDisplayString();
+            if (!string.Equals(containingType, "System.Text.Json.JsonSerializer", StringComparison.Ordinal)) {
+                return;
+            }
+
+            if (invocationSymbol.TypeArguments[0] is ITypeParameterSymbol) {
+                return;
+            }
+
+            string typeName = invocationSymbol.TypeArguments[0].ToDisplayString();
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return;
+            }
+
+            string returnTypeExpr = $"Type.GetType(\"{typeName}\")";
+            int firstDelimiter = argLines.IndexOf(", ");
+            if (firstDelimiter >= 0) {
+                argLines.Insert(firstDelimiter + 1, returnTypeExpr);
+                argLines.Insert(firstDelimiter + 2, ", ");
+                StripGenericInvocation(invocationLines);
+                return;
+            }
+
+            int closeIndex = argLines.Count - 1;
+            if (closeIndex <= 0) {
+                return;
+            }
+            argLines.Insert(closeIndex, returnTypeExpr);
+            argLines.Insert(closeIndex, ", ");
+            StripGenericInvocation(invocationLines);
+        }
+
+        static void StripGenericInvocation(List<string> invocationLines) {
+            if (invocationLines == null || invocationLines.Count == 0) {
+                return;
+            }
+
+            int start = invocationLines.LastIndexOf("<");
+            if (start < 0) {
+                return;
+            }
+            int end = invocationLines.IndexOf(">", start + 1);
+            if (end < 0 || end <= start) {
+                return;
+            }
+            invocationLines.RemoveRange(start, end - start + 1);
         }
 
         static bool ShouldWrapBinaryReaderInt64(IMethodSymbol methodSymbol) {

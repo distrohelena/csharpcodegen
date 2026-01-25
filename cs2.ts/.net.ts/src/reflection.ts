@@ -182,7 +182,41 @@ class ReflectionRegistry {
 
     getByFullName(fullName: string): Type | undefined {
         const handle = this.byFullName.get(fullName);
-        return handle?.toType();
+        if (handle) {
+            return handle.toType();
+        }
+        const genericStart = fullName.indexOf("<");
+        if (genericStart > 0) {
+            const baseName = fullName.substring(0, genericStart);
+            const baseHandle = this.byFullName.get(baseName);
+            if (baseHandle) {
+                const baseMeta = (baseHandle as any).meta as TypeMetadata;
+                const meta: TypeMetadata = {
+                    ...baseMeta,
+                    fullName,
+                    name: baseMeta.name,
+                };
+                const ctor = (baseHandle as any).toType?.()._ctor ?? null;
+                const typeHolder = new LazyType(meta, ctor);
+                this.byFullName.set(fullName, typeHolder);
+                return typeHolder.toType();
+            }
+            const nameStart = baseName.lastIndexOf(".");
+            const namespace = nameStart >= 0 ? baseName.substring(0, nameStart) : undefined;
+            const shortName = nameStart >= 0 ? baseName.substring(nameStart + 1) : baseName;
+            const meta: TypeMetadata = {
+                name: shortName,
+                namespace,
+                fullName,
+                isClass: true,
+                isGeneric: true,
+                genericArity: Math.max(1, fullName.split(",").length),
+            };
+            const typeHolder = new LazyType(meta, null);
+            this.byFullName.set(fullName, typeHolder);
+            return typeHolder.toType();
+        }
+        return undefined;
     }
 
     getById(id: string): Type | undefined {

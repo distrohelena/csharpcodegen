@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { JsonIgnoreCondition } from "./json-ignore-condition";
+import { JsonNamingPolicy } from "./json-naming-policy";
 import { JsonNumberHandling } from "./json-number-handling";
 import { JsonSerializerOptions } from "./json-serializer-options";
 import { JsonStringEnumConverter } from "./serialization/json-string-enum-converter";
@@ -30,6 +31,67 @@ function applyNamingPolicy(name: string, options?: JsonSerializerOptions): strin
     return name;
 }
 
+function getJsonPropertyName(prop: any): string | null {
+    if (!prop || typeof prop.GetCustomAttribute !== "function") {
+        return null;
+    }
+    const attr = prop.GetCustomAttribute("System.Text.Json.Serialization.JsonPropertyNameAttribute")
+        ?? prop.GetCustomAttribute("JsonPropertyNameAttribute");
+    const args = attr?.ctorArgs;
+    return Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
+}
+
+function getJsonIgnoreCondition(prop: any): JsonIgnoreCondition | null {
+    if (!prop || typeof prop.GetCustomAttribute !== "function") {
+        return null;
+    }
+    const attr = prop.GetCustomAttribute("System.Text.Json.Serialization.JsonIgnoreAttribute")
+        ?? prop.GetCustomAttribute("JsonIgnoreAttribute");
+    const condition = attr?.namedArgs?.Condition;
+    return typeof condition === "number" ? condition : null;
+}
+
+function getJsonConverterTypeName(prop: any): string | null {
+    if (!prop || typeof prop.GetCustomAttribute !== "function") {
+        return null;
+    }
+    const attr = prop.GetCustomAttribute("System.Text.Json.Serialization.JsonConverterAttribute")
+        ?? prop.GetCustomAttribute("JsonConverterAttribute");
+    const args = attr?.ctorArgs;
+    if (!Array.isArray(args) || args.length === 0) {
+        return null;
+    }
+    return args[0] != null ? String(args[0]) : null;
+}
+
+function shouldIgnoreValue(value: any, condition: JsonIgnoreCondition): boolean {
+    if (condition === JsonIgnoreCondition.Always) {
+        return true;
+    }
+    if (condition === JsonIgnoreCondition.WhenWritingNull) {
+        return value == null;
+    }
+    if (condition === JsonIgnoreCondition.WhenWritingDefault) {
+        if (value == null) return true;
+        if (typeof value === "boolean") return value === false;
+        if (typeof value === "number") return value === 0;
+        if (typeof value === "string") return value.length === 0;
+        if (Array.isArray(value)) return value.length === 0;
+    }
+    return false;
+}
+
+function writeEnumValue(writer: Utf8JsonWriter, type: Type, value: any, camelCase: boolean): void {
+    const numericValue = Number(value);
+    const name = getEnumName(type, numericValue);
+    if (name != null) {
+        const text = camelCase ? JsonNamingPolicy.CamelCase.ConvertName(name) : name;
+        writer.WriteStringValue(text);
+        return;
+    }
+    writer.WriteNumberValue(numericValue);
+}
+
 function hasStringEnumConverter(options?: JsonSerializerOptions): boolean {
     if (!options?.Converters) {
         return false;
@@ -46,8 +108,8 @@ function hasStringEnumConverter(options?: JsonSerializerOptions): boolean {
 function getEnumName(type: Type, value: number): string | null {
     const enumObj = (type as any)._ctor;
     if (!enumObj || typeof enumObj !== "object") {
-        return null;
-    }
+    return null;
+}
     const name = enumObj[value];
     return typeof name === "string" ? name : null;
 }
@@ -183,11 +245,18 @@ function serializeValue(writer: Utf8JsonWriter, value: any, type: Type | null, o
                     continue;
                 }
                 const propValue = prop.GetValue(value);
-                if (options?.DefaultIgnoreCondition === JsonIgnoreCondition.WhenWritingNull && propValue == null) {
+                const ignoreCondition = getJsonIgnoreCondition(prop) ?? options?.DefaultIgnoreCondition ?? JsonIgnoreCondition.Never;
+                if (shouldIgnoreValue(propValue, ignoreCondition)) {
                     continue;
                 }
-                const name = applyNamingPolicy(prop.name, options);
+                const nameOverride = getJsonPropertyName(prop);
+                const name = nameOverride ?? applyNamingPolicy(prop.name, options);
                 writer.WritePropertyName(name);
+                const converterType = getJsonConverterTypeName(prop);
+                if (converterType && converterType.indexOf("CamelCaseEnumJsonConverter") >= 0 && prop.propertyType?.IsEnum) {
+                    writeEnumValue(writer, prop.propertyType, propValue, true);
+                    continue;
+                }
                 serializeValue(writer, propValue, prop.propertyType, options);
             }
             writer.WriteEndObject();
@@ -213,10 +282,21 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
     }
 
     if (type.IsEnum) {
-        if (typeof value === "string" && hasStringEnumConverter(options)) {
+        if (typeof value === "string") {
             const enumObj = (type as any)._ctor;
-            if (enumObj && value in enumObj) {
-                return enumObj[value];
+            if (enumObj) {
+                if (value in enumObj) {
+                    return enumObj[value];
+                }
+                const lowered = value.toLowerCase();
+                for (const key of Object.keys(enumObj)) {
+                    if (!isNaN(Number(key))) {
+                        continue;
+                    }
+                    if (key.toLowerCase() === lowered) {
+                        return enumObj[key];
+                    }
+                }
             }
         }
         return Number(value);
@@ -252,7 +332,15 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
     if (Array.isArray(value)) {
         if (fullName.indexOf("List") >= 0) {
             const list = new List<any>();
-            list.addRange(value);
+            const elementTypeName = getGenericArgument(fullName, 0);
+            const elementType = elementTypeName ? Type.get(elementTypeName) ?? null : null;
+            if (elementType) {
+                for (let i = 0; i < value.length; i++) {
+                    list.add(convertValueFromJson(value[i], elementType, options));
+                }
+            } else {
+                list.addRange(value);
+            }
             return list;
         }
         return value;
@@ -261,8 +349,11 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
     if (value && typeof value === "object") {
         if (fullName.indexOf("Dictionary") >= 0) {
             const dict = new Dictionary<string, any>();
+            const valueTypeName = getGenericArgument(fullName, 1);
+            const valueType = valueTypeName ? Type.get(valueTypeName) ?? null : null;
             for (const key of Object.keys(value)) {
-                dict.set(key, value[key]);
+                const entry = value[key];
+                dict.set(key, valueType ? convertValueFromJson(entry, valueType, options) : entry);
             }
             return dict;
         }
@@ -278,22 +369,36 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
             return instance;
         }
 
-        let keyMap: Record<string, string> | null = null;
-        if (options?.PropertyNameCaseInsensitive) {
-            keyMap = {};
-            for (const key of Object.keys(value)) {
-                keyMap[key.toLowerCase()] = key;
-            }
-        }
-
         for (let i = 0; i < props.length; i++) {
             const prop = props[i];
             if (!prop.canWrite) {
                 continue;
             }
-            const propName = prop.name;
-            const sourceKey = keyMap ? keyMap[propName.toLowerCase()] : propName;
-            if (!sourceKey || !(sourceKey in value)) {
+            const nameOverride = getJsonPropertyName(prop);
+            const defaultName = applyNamingPolicy(prop.name, options);
+            const candidates = [nameOverride, defaultName, prop.name].filter((x) => !!x) as string[];
+            let sourceKey: string | null = null;
+            if (options?.PropertyNameCaseInsensitive) {
+                const keyMap: Record<string, string> = {};
+                for (const key of Object.keys(value)) {
+                    keyMap[key.toLowerCase()] = key;
+                }
+                for (const candidate of candidates) {
+                    const resolved = keyMap[candidate.toLowerCase()];
+                    if (resolved) {
+                        sourceKey = resolved;
+                        break;
+                    }
+                }
+            } else {
+                for (const candidate of candidates) {
+                    if (candidate in value) {
+                        sourceKey = candidate;
+                        break;
+                    }
+                }
+            }
+            if (!sourceKey) {
                 continue;
             }
             const converted = convertValueFromJson(value[sourceKey], prop.propertyType, options);
@@ -304,6 +409,44 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
     }
 
     return value;
+}
+
+function getGenericArgument(typeName: string, index: number): string | null {
+    if (!typeName) {
+        return null;
+    }
+    const start = typeName.indexOf("<");
+    const end = typeName.lastIndexOf(">");
+    if (start < 0 || end <= start) {
+        return null;
+    }
+    const inner = typeName.substring(start + 1, end);
+    const args: string[] = [];
+    let depth = 0;
+    let current = "";
+    for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i];
+        if (ch === "<") {
+            depth++;
+            current += ch;
+            continue;
+        }
+        if (ch === ">") {
+            depth--;
+            current += ch;
+            continue;
+        }
+        if (ch === "," && depth === 0) {
+            args.push(current.trim());
+            current = "";
+            continue;
+        }
+        current += ch;
+    }
+    if (current.trim().length > 0) {
+        args.push(current.trim());
+    }
+    return index >= 0 && index < args.length ? args[index] : null;
 }
 
 export class JsonSerializer {
