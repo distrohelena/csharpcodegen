@@ -2125,14 +2125,18 @@ namespace cs2.ts {
                         outName = res.Variable.Name;
                     }
 
-                    if (isOutDeclaration) {
-                        outs.Add(outName, strName);
-                        outDeclarations.Add(outName);
-                    } else if (res.Variable != null && res.Variable.Modifier.HasFlag(ParameterModifier.Out)) {
-                        outs.Add(outName + ".value", strName);
-                    } else {
-                        outs.Add(outName, strName);
+                    bool isDiscardOut = string.Equals(outName, "_", StringComparison.Ordinal);
+                    if (!isDiscardOut) {
+                        if (isOutDeclaration) {
+                            outs[outName] = strName;
+                            outDeclarations.Add(outName);
+                        } else if (res.Variable != null && res.Variable.Modifier.HasFlag(ParameterModifier.Out)) {
+                            outs[outName + ".value"] = strName;
+                        } else {
+                            outs[outName] = strName;
+                        }
                     }
+
                     argLines.RemoveAt(argLinesIndex);
                     argLines.Add(strName);
                 }
@@ -4791,6 +4795,8 @@ namespace cs2.ts {
             List<string> nameLines = new List<string>();
             bool isSingleDeclaration = usingStatement.Declaration != null &&
                 usingStatement.Declaration.Variables.Count == 1;
+            bool isExpressionResource = usingStatement.Expression != null;
+            string expressionResourceName = null;
             if (usingStatement.Declaration != null) {
                 var declaration = usingStatement.Declaration;
                 for (int i = 0; i < declaration.Variables.Count; i++) {
@@ -4802,7 +4808,8 @@ namespace cs2.ts {
                     }
                 }
             } else if (usingStatement.Expression != null) {
-                Debugger.Break();
+                expressionResourceName = "__using_" + Guid.NewGuid().ToString("N")[..8];
+                nameLines.Add(expressionResourceName);
             }
 
 
@@ -4822,18 +4829,23 @@ namespace cs2.ts {
                     }
                 }
             } else if (usingStatement.Expression != null) {
-                ExpressionResult result = ProcessExpression(semantic, context, usingStatement.Expression, declLines);
+                List<string> expressionLines = new List<string>();
+                ExpressionResult result = ProcessExpression(semantic, context, usingStatement.Expression, expressionLines);
 
                 if (result.Type != null) {
                     string typeName = result.Type.ToTypeScriptStringNoAsync((TypeScriptProgram)context.Program);
-                    if (isSingleDeclaration) {
+                    if (isExpressionResource || isSingleDeclaration) {
                         nameLines.Add($": {typeName} | null");
                     } else {
                         nameLines.Add($": {typeName}");
                     }
                 }
+
+                declLines.Add($"{expressionResourceName} = ");
+                declLines.AddRange(expressionLines);
+                declLines.Add(";\n");
             }
-            if (isSingleDeclaration) {
+            if (isExpressionResource || isSingleDeclaration) {
                 nameLines.Add(" = null");
             }
             nameLines.Add(";\n");
@@ -4850,7 +4862,7 @@ namespace cs2.ts {
                     declLines.Add($"{variable.Identifier.Text}?.dispose();\n");
                 }
             } else if (usingStatement.Expression != null) {
-                declLines.Add(usingStatement.Expression.ToString() + "?.dispose();\n");
+                declLines.Add($"{expressionResourceName}?.dispose();\n");
             }
 
             declLines.Add("}\n\n");

@@ -672,7 +672,7 @@ namespace cs2.core {
             if (usingStatement.Declaration != null) {
                 PreProcessDeclaration(semantic, context, usingStatement.Declaration);
             } else if (usingStatement.Expression != null) {
-                throw new NotImplementedException();
+                PreProcessExpression(semantic, context, usingStatement.Expression);
             }
 
             PreProcessExpression(semantic, context, usingStatement.Statement);
