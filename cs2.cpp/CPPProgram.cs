@@ -1,13 +1,16 @@
 using cs2.core;
 using cs2.core.symbols;
 using cs2.cpp.doxygen;
-using Nucleus;
 using System.Diagnostics;
 
 namespace cs2.cpp;
 
 public class CPPProgram : ConversionProgram {
     public List<CPPKnownClass> Requirements { get; private set; }
+    public CPPConversionOptions Options { get; set; }
+    public CPPConversionReport Report { get; set; }
+    public List<string> EmittedFiles { get; } = new List<string>();
+    public List<string> RuntimeRequirements { get; } = new List<string>();
 
     public CPPProgram(ConversionRules rules)
         : base(rules) {
@@ -128,4 +131,3 @@ public class CPPProgram : ConversionProgram {
         }
     }
 }
-

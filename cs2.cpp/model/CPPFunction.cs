@@ -2,7 +2,15 @@
 
 namespace cs2.cpp {
     public static class CPPFunction {
-        public static void WriteLines(this ConversionFunction fn, ConversionProcessor conversion, ConversionProgram program, ConversionClass cl, StreamWriter writer) {
+        /// <summary>
+        /// Emits the converted function body lines into the supplied text writer.
+        /// </summary>
+        /// <param name="fn">The function whose body should be lowered.</param>
+        /// <param name="conversion">Processor used to lower Roslyn syntax into C++ source tokens.</param>
+        /// <param name="program">Program model used by the lowering context.</param>
+        /// <param name="cl">Owning class for the function body.</param>
+        /// <param name="writer">Writer that receives the lowered body.</param>
+        public static void WriteLines(this ConversionFunction fn, ConversionProcessor conversion, ConversionProgram program, ConversionClass cl, TextWriter writer) {
             List<string> lines = new List<string>();
             LayerContext context = new CPPLayerContext(program);
 

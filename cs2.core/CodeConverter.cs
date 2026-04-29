@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
-using Nucleus;
 using cs2.core.Pipeline;
 
 namespace cs2.core {
@@ -162,6 +161,5 @@ namespace cs2.core {
         }
     }
 }
-
 
 

@@ -2,7 +2,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Nucleus;
 using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
@@ -11,6 +10,263 @@ namespace cs2.cpp {
 
         public CPPConversiorProcessor(CPPCodeConverter converter) {
             codeConverter = converter;
+        }
+
+        /// <summary>
+        /// Processes an expression and records a structured diagnostic when no C++ lowering path exists.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="expression">Expression to lower.</param>
+        /// <param name="lines">Output line buffer that receives lowered tokens.</param>
+        /// <param name="refTypes">Known argument or receiver types for overload resolution.</param>
+        /// <returns>The result of expression lowering.</returns>
+        public override ExpressionResult ProcessExpression(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> lines, List<ExpressionResult> refTypes = null) {
+            if (expression is SizeOfExpressionSyntax sizeOfExpression) {
+                return ProcessSizeOfExpression(semantic, context, sizeOfExpression, lines);
+            }
+
+            if (expression is CollectionExpressionSyntax collectionExpression) {
+                return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            }
+
+            int diagnosticCount = GetDiagnosticCount();
+            ExpressionResult result = base.ProcessExpression(semantic, context, expression, lines, refTypes);
+
+            if (!result.Processed && diagnosticCount == GetDiagnosticCount()) {
+                ReportUnsupportedNode(context, expression, $"The C++ backend does not yet support expression syntax '{expression.Kind()}'.");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Processes a block without re-appending expression prelude and epilogue lines that are already handled at the statement level.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the block.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="block">Block to lower.</param>
+        /// <param name="lines">Output line buffer that receives lowered tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        /// <returns>The result produced by the last lowered statement.</returns>
+        public override ExpressionResult ProcessBlock(SemanticModel semantic, LayerContext context, BlockSyntax block, List<string> lines, int depth = 1) {
+            int diagnosticCount = GetDiagnosticCount();
+
+            foreach (StatementSyntax statement in block.Statements) {
+                int start = context.DepthClass;
+                ProcessStatement(semantic, context, statement, lines, depth);
+                context.PopClass(start);
+            }
+
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+        }
+
+        /// <summary>
+        /// Processes a statement and records a structured diagnostic when no C++ lowering path exists.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the statement.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="statement">Statement to lower.</param>
+        /// <param name="lines">Output line buffer that receives lowered tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        /// <returns>The result of statement lowering.</returns>
+        protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
+            if (statement is LocalFunctionStatementSyntax localFunctionStatement) {
+                return ProcessLocalFunctionStatement(semantic, context, localFunctionStatement, lines, depth);
+            }
+
+        if (statement is CheckedStatementSyntax uncheckedStatement &&
+            uncheckedStatement.Kind() == SyntaxKind.UncheckedStatement) {
+            return ProcessUncheckedStatement(semantic, context, uncheckedStatement, lines, depth);
+        }
+
+            int diagnosticCount = GetDiagnosticCount();
+            ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
+
+            if (!result.Processed && diagnosticCount == GetDiagnosticCount()) {
+                if (IsHandledStatement(statement)) {
+                    return new ExpressionResult(true);
+                }
+
+                ReportUnsupportedNode(context, statement, $"The C++ backend does not yet support statement syntax '{statement.Kind()}'.");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Lowers a C# unchecked statement by preserving its lexical scope and emitting only the enclosed block statements.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the unchecked statement.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="uncheckedStatement">Unchecked statement to lower.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        /// <returns>The result of lowering the enclosed block.</returns>
+    ExpressionResult ProcessUncheckedStatement(
+        SemanticModel semantic,
+        LayerContext context,
+        CheckedStatementSyntax uncheckedStatement,
+        List<string> lines,
+        int depth) {
+            lines.Add("{\n");
+            ExpressionResult result = ProcessBlock(semantic, context, uncheckedStatement.Block, lines, depth);
+            lines.Add("}\n");
+            return result;
+        }
+
+        /// <summary>
+        /// Lowers a C# local function into a capture-by-reference C++ lambda declared inside the active function body.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the local function.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="localFunctionStatement">Local function statement to lower.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        /// <returns>The lowering result for the emitted local lambda declaration.</returns>
+        ExpressionResult ProcessLocalFunctionStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            LocalFunctionStatementSyntax localFunctionStatement,
+            List<string> lines,
+            int depth) {
+            FunctionStack outerFunction = context.GetCurrentFunction();
+            if (outerFunction != null) {
+                ConversionVariable localFunctionVariable = new ConversionVariable();
+                localFunctionVariable.Name = localFunctionStatement.Identifier.Text;
+                localFunctionVariable.VarType = new VariableType(VariableDataType.Callback, "callback");
+                outerFunction.Stack.Add(localFunctionVariable);
+            }
+
+            VariableType returnType = localFunctionStatement.ReturnType == null
+                ? new VariableType(VariableDataType.Void, "void")
+                : VariableUtil.GetVarType(localFunctionStatement.ReturnType, semantic);
+
+            ConversionFunction localFunction = new ConversionFunction();
+            localFunction.Name = localFunctionStatement.Identifier.Text;
+            localFunction.ReturnType = returnType;
+            localFunction.InParameters = CreateLocalFunctionParameters(semantic, localFunctionStatement);
+
+            lines.Add("auto ");
+            lines.Add(localFunctionStatement.Identifier.Text);
+            lines.Add(" = [&](");
+            WriteLocalFunctionParameters(localFunction.InParameters, context, lines);
+            lines.Add(") -> ");
+            lines.Add(GetCppTypeSignature(returnType, context));
+
+            int functionDepth = context.DepthFunction;
+            context.AddFunction(new FunctionStack(localFunction));
+
+            if (localFunctionStatement.Body != null) {
+                lines.Add(" {\n");
+                ProcessBlock(semantic, context, localFunctionStatement.Body, lines, depth);
+                lines.Add("};\n");
+                context.PopFunction(functionDepth);
+                return new ExpressionResult(true, VariablePath.FunctionStack, returnType);
+            }
+
+            if (localFunctionStatement.ExpressionBody != null) {
+                lines.Add(" { ");
+                if (returnType.Type != VariableDataType.Void) {
+                    lines.Add("return ");
+                }
+
+                int start = context.DepthClass;
+                ExpressionResult expressionResult = ProcessExpression(semantic, context, localFunctionStatement.ExpressionBody.Expression, lines);
+                context.PopClass(start);
+
+                lines.Add("; };\n");
+                context.PopFunction(functionDepth);
+                return new ExpressionResult(expressionResult.Processed, VariablePath.FunctionStack, returnType);
+            }
+
+            lines.Add(" {};\n");
+            context.PopFunction(functionDepth);
+            return new ExpressionResult(true, VariablePath.FunctionStack, returnType);
+        }
+
+        /// <summary>
+        /// Creates the conversion parameter model used while lowering the body of a local function lambda.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the local function.</param>
+        /// <param name="localFunctionStatement">Local function statement whose parameters will be converted.</param>
+        /// <returns>The converted parameter list for the synthesized function scope.</returns>
+        List<ConversionVariable> CreateLocalFunctionParameters(
+            SemanticModel semantic,
+            LocalFunctionStatementSyntax localFunctionStatement) {
+            List<ConversionVariable> parameters = new List<ConversionVariable>();
+
+            foreach (ParameterSyntax parameter in localFunctionStatement.ParameterList.Parameters) {
+                ConversionVariable conversionVariable = new ConversionVariable();
+                conversionVariable.Name = parameter.Identifier.Text;
+                conversionVariable.VarType = VariableUtil.GetVarType(parameter.Type, semantic);
+                parameters.Add(conversionVariable);
+            }
+
+            return parameters;
+        }
+
+        /// <summary>
+        /// Emits the C++ parameter list for a lowered local lambda declaration.
+        /// </summary>
+        /// <param name="parameters">Converted local-function parameters to emit.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        void WriteLocalFunctionParameters(
+            List<ConversionVariable> parameters,
+            LayerContext context,
+            List<string> lines) {
+            for (int i = 0; i < parameters.Count; i++) {
+                ConversionVariable parameter = parameters[i];
+                lines.Add(GetCppTypeSignature(parameter.VarType, context));
+                lines.Add(" ");
+                lines.Add(parameter.Name);
+
+                if (i < parameters.Count - 1) {
+                    lines.Add(", ");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Resolves the emitted C++ type token for a source variable type, including pointer suffixes for reference types.
+        /// </summary>
+        /// <param name="sourceType">Source variable type to convert.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>The emitted C++ type token.</returns>
+        string GetCppTypeSignature(VariableType sourceType, LayerContext context) {
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            string cppTypeName = cppType.ToCPPString(context.Program);
+
+            if (typeData.IsPointer) {
+                return cppTypeName + "*";
+            }
+
+            return cppTypeName;
+        }
+
+        /// <summary>
+        /// Determines whether the current backend has a lowering path for the supplied statement syntax.
+        /// </summary>
+        /// <param name="statement">Statement syntax being evaluated after the shared processor dispatch runs.</param>
+        /// <returns><c>true</c> when the statement kind is intentionally lowered by this backend; otherwise, <c>false</c>.</returns>
+        static bool IsHandledStatement(StatementSyntax statement) {
+            return statement is ReturnStatementSyntax
+                || statement is LocalDeclarationStatementSyntax
+                || statement is SwitchStatementSyntax
+                || statement is BlockSyntax
+                || statement is BreakStatementSyntax
+                || statement is ThrowStatementSyntax
+                || statement is ForStatementSyntax
+                || statement is WhileStatementSyntax
+                || statement is ContinueStatementSyntax
+                || statement is ForEachStatementSyntax
+                || statement is TryStatementSyntax
+                || statement is LockStatementSyntax
+                || statement is UsingStatementSyntax
+                || statement is DoStatementSyntax
+                || statement is EmptyStatementSyntax;
         }
 
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
@@ -35,20 +291,19 @@ namespace cs2.cpp {
             bool isMethod = false;
 
             ISymbol? nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
-            if (nsSymbol is INamespaceSymbol namespaceSymbol) {
-                if (namespaceSymbol.IsNamespace) {
-                    return new ExpressionResult(false);
-                }
-            } else if (nsSymbol is IMethodSymbol methodSymbol) {
+            if (nsSymbol is IAliasSymbol aliasSymbol) {
+                nsSymbol = aliasSymbol.Target;
+            }
+
+            if (nsSymbol is IMethodSymbol methodSymbol) {
                 isMethod = true;
             }
 
             VariablePath varPath = VariablePath.Unknown;
-            if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType) {
-                bool isType = nameSpaceType.IsType;
-                if (isType) {
-                    varPath = VariablePath.Static;
-                }
+            if (nsSymbol is INamespaceSymbol) {
+                varPath = VariablePath.Static;
+            } else if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType && nameSpaceType.IsType) {
+                varPath = VariablePath.Static;
             }
 
             int layer = context.GetClassLayer();
@@ -247,10 +502,11 @@ namespace cs2.cpp {
                 //Debugger.Break();
             }
 
-            return new ExpressionResult(true);
+            return new ExpressionResult(true, varPath, null);
         }
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
+            int diagnosticCount = GetDiagnosticCount();
             lines.Add("new ");
 
             int startDepth = context.DepthClass;
@@ -275,14 +531,32 @@ namespace cs2.cpp {
                 lines.Add(")");
             }
 
-            return new ExpressionResult(false);
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
             ExpressionResult result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
             if (result.Processed) {
+                bool useStaticAccess = result.VarPath == VariablePath.Static;
+                if (!useStaticAccess) {
+                    ISymbol? memberSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+                    if (memberSymbol is IAliasSymbol aliasSymbol) {
+                        memberSymbol = aliasSymbol.Target;
+                    }
+
+                    if (memberSymbol is INamespaceSymbol || memberSymbol is INamedTypeSymbol) {
+                        useStaticAccess = true;
+                    } else if (memberSymbol is IFieldSymbol fieldSymbol && fieldSymbol.IsStatic) {
+                        useStaticAccess = true;
+                    } else if (memberSymbol is IPropertySymbol propertySymbol && propertySymbol.IsStatic) {
+                        useStaticAccess = true;
+                    } else if (memberSymbol is IMethodSymbol methodSymbol && methodSymbol.IsStatic) {
+                        useStaticAccess = true;
+                    }
+                }
+
                 // shit is this static access, pointer access or direct access
-                switch (result.VarPath) {
+                switch (useStaticAccess ? VariablePath.Static : result.VarPath) {
                     case VariablePath.Static:
                         lines.Add("::");
                         break;
@@ -311,15 +585,9 @@ namespace cs2.cpp {
 
             foreach (var arg in invocationExpression.ArgumentList.Arguments) {
                 string refKeyword = arg.RefKindKeyword.ToString();
-                string strName = string.Empty;
                 bool isRef = false;
                 if (refKeyword != "") {
                     isRef = true;
-                    beforeLines.Add("let ");
-                    strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
-                    strName = StringUtil.Replace(strName, "-", "");
-                    beforeLines.Add(strName);
-                    beforeLines.Add(" = { value: null };\n");
                 }
 
                 int startArg = context.DepthClass;
@@ -328,9 +596,18 @@ namespace cs2.cpp {
                 context.PopClass(startArg);
 
                 if (isRef) {
-                    string outName = argLines[argLinesIndex];
-                    outs.Add(outName, strName);
-                    argLines.RemoveAt(argLinesIndex);
+                    int insertedTokenCount = argLines.Count - argLinesIndex;
+                    string outName = string.Concat(argLines.Skip(argLinesIndex).Take(insertedTokenCount));
+                    if (!outs.TryGetValue(outName, out string strName)) {
+                        strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
+                        strName = StringUtil.Replace(strName, "-", "");
+                        outs.Add(outName, strName);
+                        beforeLines.Add("let ");
+                        beforeLines.Add(strName);
+                        beforeLines.Add(" = { value: null };\n");
+                    }
+
+                    argLines.RemoveRange(argLinesIndex, insertedTokenCount);
                     argLines.Add(strName);
                 }
 
@@ -362,6 +639,10 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessBinaryExpressionSyntax(SemanticModel semantic, LayerContext context, BinaryExpressionSyntax binary, List<string> lines) {
+            if (binary.IsKind(SyntaxKind.CoalesceExpression) && binary.Right is ThrowExpressionSyntax throwExpression) {
+                return ProcessCoalesceThrowExpression(semantic, context, binary, throwExpression, lines);
+            }
+
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
             lines.AddRange(left);
 
@@ -369,6 +650,41 @@ namespace cs2.cpp {
 
             lines.AddRange(right);
             return result;
+        }
+
+        /// <summary>
+        /// Lowers a null-coalescing throw guard into a C++ conditional expression.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the active document.</param>
+        /// <param name="context">Conversion context for the current member.</param>
+        /// <param name="binary">The original coalesce expression.</param>
+        /// <param name="throwExpression">Throw branch used when the left operand is null.</param>
+        /// <param name="lines">Output token buffer that receives the lowered expression.</param>
+        /// <returns>The expression result for the left operand.</returns>
+        ExpressionResult ProcessCoalesceThrowExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binary,
+            ThrowExpressionSyntax throwExpression,
+            List<string> lines) {
+            List<string> left = new List<string>();
+            int startLeft = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binary.Left, left);
+            context.PopClass(startLeft);
+
+            List<string> thrown = new List<string>();
+            int startThrow = context.DepthClass;
+            ProcessExpression(semantic, context, throwExpression.Expression, thrown);
+            context.PopClass(startThrow);
+
+            lines.Add("(");
+            lines.AddRange(left);
+            lines.Add(" != nullptr ? ");
+            lines.AddRange(left);
+            lines.Add(" : throw ");
+            lines.AddRange(thrown);
+            lines.Add(")");
+            return leftResult;
         }
 
         protected override void ProcessGenericNameSyntax(SemanticModel semantic, LayerContext context, GenericNameSyntax generic, List<string> lines) {
@@ -418,8 +734,8 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessQualifiedName(SemanticModel semantic, LayerContext context, QualifiedNameSyntax qualifiedName, List<string> lines) {
             // Process the left part of the qualified name (e.g., "System" in "System.Console")
             if (ProcessExpression(semantic, context, qualifiedName.Left, lines).Processed) {
-                // Add the dot separator
-                lines.Add(".");
+                // Add the C++ scope-resolution separator.
+                lines.Add("::");
             }
 
             // Process the right part of the qualified name (e.g., "Console" in "System.Console")
@@ -448,10 +764,9 @@ namespace cs2.cpp {
             }
         }
 
-        protected override void ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
-            // Check if there's an initializer (e.g., new int[] { 1, 2, 3 })
+        protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
             if (arrayCreation.Initializer != null) {
-                lines.Add("[");
+                lines.Add("{ ");
                 for (int i = 0; i < arrayCreation.Initializer.Expressions.Count; i++) {
                     ProcessExpression(semantic, context, arrayCreation.Initializer.Expressions[i], lines);
 
@@ -459,18 +774,49 @@ namespace cs2.cpp {
                         lines.Add(", ");
                     }
                 }
-                lines.Add("]");
-            }
-            // If it's an array with specified size (e.g., new int[5])
-            else if (arrayCreation.Type.RankSpecifiers.Any()) {
+                lines.Add(" }");
+            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines)) {
+            } else if (arrayCreation.Type.RankSpecifiers.Any()) {
                 lines.Add("new Array(");
-                foreach (var rankSpecifier in arrayCreation.Type.RankSpecifiers) {
-                    foreach (var size in rankSpecifier.Sizes) {
+                foreach (ArrayRankSpecifierSyntax rankSpecifier in arrayCreation.Type.RankSpecifiers) {
+                    foreach (ExpressionSyntax size in rankSpecifier.Sizes.OfType<ExpressionSyntax>()) {
                         ProcessExpression(semantic, context, size, lines);
                     }
                 }
                 lines.Add(")");
             }
+
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
+        }
+
+        /// <summary>
+        /// Emits a C++ brace-initializer for collection expressions.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the collection expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="collectionExpression">Collection expression to lower.</param>
+        /// <param name="lines">Output line buffer that receives lowered tokens.</param>
+        /// <returns>A processed result representing the lowered collection expression.</returns>
+        ExpressionResult ProcessCollectionExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            CollectionExpressionSyntax collectionExpression,
+            List<string> lines) {
+            lines.Add("{ ");
+
+            for (int i = 0; i < collectionExpression.Elements.Count; i++) {
+                if (collectionExpression.Elements[i] is not ExpressionElementSyntax expressionElement) {
+                    return new ExpressionResult(false);
+                }
+
+                ProcessExpression(semantic, context, expressionElement.Expression, lines);
+                if (i < collectionExpression.Elements.Count - 1) {
+                    lines.Add(", ");
+                }
+            }
+
+            lines.Add(" }");
+            return new ExpressionResult(true, VariablePath.Unknown, null);
         }
 
         protected override void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
@@ -863,6 +1209,10 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessIfStatement(SemanticModel semantic, LayerContext context, IfStatementSyntax ifStatement, List<string> lines) {
+            if (TryProcessDeclarationPatternIfStatement(semantic, context, ifStatement, lines, out ExpressionResult patternResult)) {
+                return patternResult;
+            }
+
             lines.Add("    if (");
 
             int start = context.DepthClass;
@@ -889,6 +1239,100 @@ namespace cs2.cpp {
             }
 
             return condResult;
+        }
+
+        /// <summary>
+        /// Attempts to lower a declaration-pattern guard of the form <c>if (value is TargetType target)</c>.
+        /// </summary>
+        /// <param name="semantic">Semantic model that resolves the source type information.</param>
+        /// <param name="context">Current lowering context for the active class and function.</param>
+        /// <param name="ifStatement">If statement being lowered.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="result">Lowering result for the processed guard expression.</param>
+        /// <returns><c>true</c> when the declaration-pattern guard was lowered by this specialized path; otherwise, <c>false</c>.</returns>
+        bool TryProcessDeclarationPatternIfStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            IfStatementSyntax ifStatement,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (ifStatement.Condition is not IsPatternExpressionSyntax isPatternExpression) {
+                return false;
+            }
+
+            if (isPatternExpression.Pattern is not DeclarationPatternSyntax declarationPattern) {
+                return false;
+            }
+
+            if (declarationPattern.Designation is not SingleVariableDesignationSyntax designation) {
+                return false;
+            }
+
+            VariableType declaredType = VariableUtil.GetVarType(declarationPattern.Type, semantic);
+            CPPTypeData declaredTypeData;
+            VariableType cppDeclaredType = ConvertToCPPType(declaredType, out declaredTypeData);
+            if (!declaredTypeData.IsPointer) {
+                return false;
+            }
+
+            List<string> conditionExpressionLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult conditionExpression = ProcessExpression(semantic, context, isPatternExpression.Expression, conditionExpressionLines);
+            context.PopClass(start);
+            if (!conditionExpression.Processed) {
+                result = conditionExpression;
+                return true;
+            }
+
+            if (conditionExpression.BeforeLines != null && conditionExpression.BeforeLines.Count > 0) {
+                lines.AddRange(conditionExpression.BeforeLines);
+            }
+
+            string declaredTypeName = cppDeclaredType.ToCPPString(context.Program);
+            string variableName = designation.Identifier.Text;
+            string sourceExpression = string.Join(string.Empty, conditionExpressionLines);
+
+            codeConverter?.RegisterRuntimeRequirement("NativeCast");
+
+            FunctionStack currentFunction = context.GetCurrentFunction();
+            ConversionVariable conversionVariable = null;
+            if (currentFunction != null) {
+                conversionVariable = new ConversionVariable();
+                conversionVariable.Name = variableName;
+                conversionVariable.VarType = declaredType;
+                currentFunction.Stack.Add(conversionVariable);
+            }
+
+            lines.Add($"    {declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
+            lines.Add($"    if ({variableName} != nullptr)\n");
+            lines.Add("    {\n");
+
+            ExpressionResult statementResult = ProcessStatement(semantic, context, ifStatement.Statement, lines);
+            lines.Add("    }\n");
+
+            if (ifStatement.Else != null) {
+                lines.Add("else ");
+                if (ifStatement.Else.Statement is IfStatementSyntax elseIfStatement) {
+                    ProcessIfStatement(semantic, context, elseIfStatement, lines);
+                } else {
+                    lines.Add("{\n");
+                    ProcessStatement(semantic, context, ifStatement.Else.Statement, lines);
+                    lines.Add("}\n");
+                }
+            }
+
+            result = new ExpressionResult(
+                statementResult.Processed,
+                conversionVariable != null ? VariablePath.FunctionStack : VariablePath.Unknown,
+                declaredType);
+
+            if (conversionVariable != null) {
+                result.Variable = conversionVariable;
+            }
+
+            return true;
         }
 
         protected override void ProcessThrowStatement(SemanticModel semantic, LayerContext context, ThrowStatementSyntax throwStatement, List<string> lines) {
@@ -975,6 +1419,42 @@ namespace cs2.cpp {
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "int64_t");
                 }
+                case VariableDataType.Int8: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "int8_t");
+                }
+                case VariableDataType.UInt8: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "uint8_t");
+                }
+                case VariableDataType.Int16: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "int16_t");
+                }
+                case VariableDataType.UInt16: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "uint16_t");
+                }
+                case VariableDataType.Boolean: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "bool");
+                }
+                case VariableDataType.Char: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "char");
+                }
 
                 case VariableDataType.String:
 
@@ -1002,13 +1482,21 @@ namespace cs2.cpp {
             ) {
             VariableType varType = VariableUtil.GetVarType(declaration.Type, semantic);
 
+            if (TryProcessStackAllocDeclaration(semantic, context, declaration, varType, lines)) {
+                return;
+            }
+
+            if (TryProcessCollectionExpressionArrayDeclaration(semantic, context, declaration, varType, lines)) {
+                return;
+            }
+
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
 
             FunctionStack fnStack = context.GetCurrentFunction();
 
             string pointer = typeData.IsPointer ? " *" : " ";
-            List<string> newLines = [$"{cppType.TypeName}{pointer}"];
+            List<string> newLines = [$"{cppType.ToCPPString(context.Program)}{pointer}"];
 
             FunctionStack? fn = context.GetCurrentFunction();
             bool isConstant = true;
@@ -1058,6 +1546,183 @@ namespace cs2.cpp {
                 lines.Add("const ");
             }
             lines.AddRange(newLines);
+        }
+
+        /// <summary>
+        /// Lowers local span declarations backed by stackalloc into fixed-size native C++ buffers.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="declaration">Declaration being evaluated.</param>
+        /// <param name="declarationType">Resolved abstract type for the declaration.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the declaration was handled by this specialized lowering path; otherwise, <c>false</c>.</returns>
+        bool TryProcessStackAllocDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            VariableType declarationType,
+            List<string> lines) {
+            if (declaration.Variables.Count != 1) {
+                return false;
+            }
+
+            if (declarationType.TypeName != "Span" || declarationType.GenericArgs.Count != 1) {
+                return false;
+            }
+
+            VariableDeclaratorSyntax variable = declaration.Variables[0];
+            if (variable.Initializer?.Value is not StackAllocArrayCreationExpressionSyntax stackAllocExpression) {
+                return false;
+            }
+
+            if (stackAllocExpression.Type is not ArrayTypeSyntax stackAllocType) {
+                return false;
+            }
+
+            if (stackAllocType.RankSpecifiers.Count != 1 || stackAllocType.RankSpecifiers[0].Sizes.Count != 1) {
+                return false;
+            }
+
+            VariableType elementType = VariableUtil.GetVarType(stackAllocType.ElementType, semantic);
+            CPPTypeData elementTypeData;
+            VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
+            List<string> sizeLines = new List<string>();
+            ExpressionResult sizeResult = ProcessExpression(semantic, context, stackAllocType.RankSpecifiers[0].Sizes[0], sizeLines);
+            if (!sizeResult.Processed) {
+                return false;
+            }
+
+            FunctionStack currentFunction = context.GetCurrentFunction();
+            if (currentFunction != null) {
+                ConversionVariable stackVariable = new ConversionVariable();
+                stackVariable.Name = variable.Identifier.ToString();
+                stackVariable.VarType = declarationType;
+                currentFunction.Stack.Add(stackVariable);
+            }
+
+            lines.Add(cppElementType.ToCPPString(context.Program));
+            lines.Add(" ");
+            lines.Add(variable.Identifier.ToString());
+            lines.Add("[");
+            lines.AddRange(sizeLines);
+            lines.Add("]");
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers local array declarations initialized from C# collection expressions into C++ fixed-size arrays.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="declaration">Declaration being evaluated.</param>
+        /// <param name="declarationType">Resolved abstract type for the declaration.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the declaration was handled by this specialized lowering path; otherwise, <c>false</c>.</returns>
+        bool TryProcessCollectionExpressionArrayDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            VariableType declarationType,
+            List<string> lines) {
+            if (declaration.Variables.Count != 1) {
+                return false;
+            }
+
+            if (declaration.Type is not ArrayTypeSyntax arrayType || arrayType.RankSpecifiers.Count != 1) {
+                return false;
+            }
+
+            VariableDeclaratorSyntax variable = declaration.Variables[0];
+            if (variable.Initializer?.Value is not CollectionExpressionSyntax collectionExpression) {
+                return false;
+            }
+
+            VariableType elementType = VariableUtil.GetVarType(arrayType.ElementType, semantic);
+            CPPTypeData elementTypeData;
+            VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
+
+            FunctionStack currentFunction = context.GetCurrentFunction();
+            if (currentFunction != null) {
+                ConversionVariable stackVariable = new ConversionVariable();
+                stackVariable.Name = variable.Identifier.ToString();
+                stackVariable.VarType = declarationType;
+                currentFunction.Stack.Add(stackVariable);
+            }
+
+            lines.Add(cppElementType.ToCPPString(context.Program));
+            lines.Add(" ");
+            lines.Add(variable.Identifier.ToString());
+            lines.Add("[] = ");
+            ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            return true;
+        }
+
+        /// <summary>
+        /// Emits native C++ dynamic-array allocation for single-dimension and jagged-array creation expressions.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the array creation.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="arrayCreation">Array creation syntax being lowered.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the array creation was lowered as a native allocation; otherwise, <c>false</c>.</returns>
+        bool TryProcessDynamicArrayCreation(
+            SemanticModel semantic,
+            LayerContext context,
+            ArrayCreationExpressionSyntax arrayCreation,
+            List<string> lines) {
+            if (arrayCreation.Type.RankSpecifiers.Count == 0) {
+                return false;
+            }
+
+            ArrayRankSpecifierSyntax outerRankSpecifier = arrayCreation.Type.RankSpecifiers[0];
+            if (outerRankSpecifier.Sizes.Count != 1 || outerRankSpecifier.Sizes[0] is OmittedArraySizeExpressionSyntax) {
+                return false;
+            }
+
+            for (int i = 1; i < arrayCreation.Type.RankSpecifiers.Count; i++) {
+                ArrayRankSpecifierSyntax rankSpecifier = arrayCreation.Type.RankSpecifiers[i];
+                if (rankSpecifier.Sizes.Count != 1 || rankSpecifier.Sizes[0] is not OmittedArraySizeExpressionSyntax) {
+                    return false;
+                }
+            }
+
+            VariableType elementType = VariableUtil.GetVarType(arrayCreation.Type.ElementType, semantic);
+            CPPTypeData elementTypeData;
+            VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
+
+            lines.Add("new ");
+            lines.Add(cppElementType.ToCPPString(context.Program));
+            for (int i = 1; i < arrayCreation.Type.RankSpecifiers.Count; i++) {
+                lines.Add("*");
+            }
+            lines.Add("[");
+            ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            lines.Add("]");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits a native C++ <c>sizeof(...)</c> expression for stack buffer sizes and similar constant-length operations.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="sizeOfExpression">Roslyn sizeof expression syntax.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns>A processed result for the emitted size expression.</returns>
+        ExpressionResult ProcessSizeOfExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            SizeOfExpressionSyntax sizeOfExpression,
+            List<string> lines) {
+            VariableType sourceType = VariableUtil.GetVarType(sizeOfExpression.Type, semantic);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+
+            lines.Add("sizeof(");
+            lines.Add(cppType.ToCPPString(context.Program));
+            lines.Add(")");
+            return new ExpressionResult(true, VariablePath.Unknown, new VariableType(VariableDataType.UInt64, "size_t"));
         }
 
         protected override ExpressionResult ProcessLiteralExpression(LayerContext context, LiteralExpressionSyntax literalExpression, List<string> lines) {
@@ -1114,9 +1779,111 @@ namespace cs2.cpp {
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(type));
         }
 
+        protected override void ProcessReturnStatement(SemanticModel semantic, LayerContext context, ReturnStatementSyntax ret, List<string> lines) {
+            if (ret.Expression == null) {
+                lines.Add("return;");
+                return;
+            }
+
+            int start = context.Class.Count;
+            List<string> returnLines = new List<string>();
+            ExpressionResult result = ProcessExpression(semantic, context, ret.Expression, returnLines);
+
+            if (result.BeforeLines != null) {
+                lines.AddRange(result.BeforeLines);
+            }
+
+            if (result.AfterLines == null || result.AfterLines.Count == 0) {
+                lines.Add("return ");
+                lines.AddRange(returnLines);
+                lines.Add(";");
+            } else {
+                lines.Add("auto ___result = ");
+                lines.AddRange(returnLines);
+                lines.Add(";\n");
+                lines.AddRange(result.AfterLines);
+                lines.Add("return ___result;");
+            }
+
+            context.PopClass(start);
+        }
+
+        protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
+            if (declaration.Designation is SingleVariableDesignationSyntax single) {
+                string identifier = single.Identifier.Text;
+                lines.Add(identifier);
+
+                VariableType variableType = VariableUtil.GetVarType(declaration.Type, semantic);
+                ConversionVariable conversionVariable = null;
+                FunctionStack fn = context.GetCurrentFunction();
+                if (fn != null) {
+                    conversionVariable = new ConversionVariable {
+                        Name = identifier,
+                        VarType = variableType,
+                        Modifier = ParameterModifier.Out
+                    };
+                    fn.Stack.Add(conversionVariable);
+                }
+
+                ExpressionResult result = new ExpressionResult(true, conversionVariable != null ? VariablePath.FunctionStack : VariablePath.Unknown, variableType);
+                if (conversionVariable != null) {
+                    result.Variable = conversionVariable;
+                }
+
+                return result;
+            }
+
+            if (declaration.Designation is DiscardDesignationSyntax) {
+                lines.Add("_");
+                return new ExpressionResult(true);
+            }
+
+            lines.Add(declaration.Designation.ToString());
+            return new ExpressionResult(true);
+        }
+
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {
             lines.Add(" = ");
             ProcessExpression(semantic, context, arrowExpression.Expression, lines);
+        }
+
+        /// <summary>
+        /// Gets the current number of recorded conversion diagnostics.
+        /// </summary>
+        /// <returns>The number of diagnostics attached to the active converter report.</returns>
+        int GetDiagnosticCount() {
+            if (codeConverter == null) {
+                return 0;
+            }
+
+            return codeConverter.Report.Diagnostics.Count;
+        }
+
+        /// <summary>
+        /// Records a generic unsupported-construct diagnostic for a Roslyn syntax node.
+        /// </summary>
+        /// <param name="context">Current lowering context that identifies the active type and member.</param>
+        /// <param name="node">Unsupported syntax node.</param>
+        /// <param name="message">Human-readable explanation of the unsupported construct.</param>
+        void ReportUnsupportedNode(LayerContext context, SyntaxNode node, string message) {
+            if (codeConverter == null || node == null) {
+                return;
+            }
+
+            ConversionClass currentClass = context?.GetCurrentClass();
+            FunctionStack currentFunction = context?.GetCurrentFunction();
+            string sourceTypeName = currentClass?.Name ?? string.Empty;
+            string sourceMemberName = currentFunction?.Function?.Name ?? string.Empty;
+            string filePath = node.SyntaxTree?.FilePath ?? string.Empty;
+            string recommendation = "Add a lowering rule for this syntax or move the behavior behind a native runtime adapter.";
+
+            codeConverter.ReportUnsupportedConstruct(
+                sourceTypeName,
+                sourceMemberName,
+                node.Kind().ToString(),
+                message,
+                recommendation,
+                filePath);
         }
     }
 }
