@@ -463,6 +463,13 @@ namespace cs2.core {
                 cl.Semantic = semantic;
                 cl.TypeSymbol = semantic.GetDeclaredSymbol(ifaceDecl) as INamedTypeSymbol;
 
+                if (ifaceDecl.TypeParameterList != null) {
+                    cl.GenericArgs = new List<string>();
+                    foreach (var type in ifaceDecl.TypeParameterList.Parameters) {
+                        cl.GenericArgs.Add(type.ToString());
+                    }
+                }
+
                 foreach (MemberDeclarationSyntax memberSyntax in ifaceDecl.Members) {
                     PreProcessExpression(semantic, context, memberSyntax);
                 }
@@ -471,8 +478,8 @@ namespace cs2.core {
                     foreach (var baseType in ifaceDecl.BaseList.ChildNodes()) {
                         if (baseType is SimpleBaseTypeSyntax) {
                             SimpleBaseTypeSyntax baseSyntax = (SimpleBaseTypeSyntax)baseType;
-                            string type = baseSyntax.Type.ToString();
-                            cl.Extensions.Add(type);
+                            VariableType type = VariableUtil.GetVarType(baseSyntax.Type!, semantic);
+                            cl.Extensions.Add(type.TypeName);
                         }
                     }
                 }

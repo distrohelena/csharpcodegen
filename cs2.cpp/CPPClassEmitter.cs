@@ -132,11 +132,16 @@ namespace cs2.cpp {
         /// <param name="referencedClass">Referenced type name to resolve.</param>
         /// <returns><c>true</c> when an include directive was emitted; otherwise <c>false</c>.</returns>
         bool WriteInclude(TextWriter headerWriter, ConversionClass conversionClass, string referencedClass) {
-            if (string.Equals(referencedClass, conversionClass.Name, StringComparison.Ordinal)) {
+            string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+
+            if (string.Equals(referencedClass, conversionClass.Name, StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, conversionClass.Name, StringComparison.Ordinal)) {
                 return false;
             }
 
-            if (conversionClass.GenericArgs != null && conversionClass.GenericArgs.Contains(referencedClass, StringComparer.Ordinal)) {
+            if (conversionClass.GenericArgs != null &&
+                (conversionClass.GenericArgs.Contains(referencedClass, StringComparer.Ordinal) ||
+                 conversionClass.GenericArgs.Contains(normalizedReferencedClass, StringComparer.Ordinal))) {
                 return false;
             }
 
@@ -169,6 +174,66 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
+            string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+
+            if (string.Equals(referencedClass, "IDisposable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.IDisposable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "IDisposable", StringComparison.Ordinal)) {
+                if (processor != null) {
+                    CPPTypeData runtimeTypeData;
+                    processor.ConvertToCPPType(VariableUtil.GetVarType(normalizedReferencedClass), out runtimeTypeData);
+                }
+
+                return "runtime/native_disposable";
+            }
+
+            if (string.Equals(referencedClass, "IEquatable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.IEquatable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "IEquatable", StringComparison.Ordinal)) {
+                if (processor != null) {
+                    CPPTypeData runtimeTypeData;
+                    processor.ConvertToCPPType(VariableUtil.GetVarType(normalizedReferencedClass), out runtimeTypeData);
+                }
+
+                return "runtime/native_equatable";
+            }
+
+            string includePath = TryResolveIncludePath(referencedClass);
+            if (!string.IsNullOrWhiteSpace(includePath) &&
+                !string.Equals(includePath, referencedClass, StringComparison.Ordinal)) {
+                return includePath;
+            }
+
+            if (!string.Equals(normalizedReferencedClass, referencedClass, StringComparison.Ordinal)) {
+                includePath = TryResolveIncludePath(normalizedReferencedClass);
+                if (!string.IsNullOrWhiteSpace(includePath)) {
+                    return includePath;
+                }
+
+                if (!string.IsNullOrWhiteSpace(includePath)) {
+                    return includePath;
+                }
+            }
+
+            if (string.Equals(normalizedReferencedClass, "Stream", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "Stream")) {
+                processor?.RegisterRuntimeRequirement("Stream");
+                return "system/io/stream";
+            }
+
+            if (!string.IsNullOrWhiteSpace(includePath)) {
+                return includePath;
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Attempts to resolve an include path for a referenced type name without applying namespace fallback.
+        /// </summary>
+        /// <param name="referencedClass">Referenced type name to resolve.</param>
+        /// <returns>The include path without extension when resolution succeeds; otherwise, an empty string.</returns>
+        string TryResolveIncludePath(string referencedClass) {
             VariableType variableType = VariableUtil.GetVarType(referencedClass);
 
             if (referencedClass.Contains("[]", StringComparison.Ordinal) || variableType.Type == VariableDataType.Array) {
@@ -213,6 +278,24 @@ namespace cs2.cpp {
             }
 
             return variableType.TypeName;
+        }
+
+        /// <summary>
+        /// Collapses a namespace-qualified type reference to the leaf type name used by generated headers.
+        /// </summary>
+        /// <param name="referencedClass">Referenced type name to normalize.</param>
+        /// <returns>The leaf type name when the reference is namespace qualified; otherwise, the original value.</returns>
+        static string NormalizeReferencedClassName(string referencedClass) {
+            if (string.IsNullOrWhiteSpace(referencedClass) || !referencedClass.Contains('.', StringComparison.Ordinal)) {
+                return referencedClass;
+            }
+
+            int separatorIndex = referencedClass.LastIndexOf('.');
+            if (separatorIndex < 0 || separatorIndex == referencedClass.Length - 1) {
+                return referencedClass;
+            }
+
+            return referencedClass[(separatorIndex + 1)..];
         }
 
         /// <summary>
@@ -276,6 +359,8 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the header declaration.</param>
         /// <param name="sourceWriter">Writer that receives the source definitions.</param>
         void WriteClass(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            WriteTemplateDeclaration(conversionClass, headerWriter);
+
             string inheritance = CPPUtils.GetInheritance(program, conversionClass);
             if (string.IsNullOrWhiteSpace(inheritance)) {
                 headerWriter.WriteLine($"class {conversionClass.Name}");
@@ -295,6 +380,20 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("};");
+        }
+
+        /// <summary>
+        /// Writes a template declaration for generic class-like types so generic parameters remain compile-time only.
+        /// </summary>
+        /// <param name="conversionClass">The type being emitted.</param>
+        /// <param name="headerWriter">Writer that receives the template declaration.</param>
+        void WriteTemplateDeclaration(ConversionClass conversionClass, TextWriter headerWriter) {
+            if (conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0) {
+                return;
+            }
+
+            string templateArguments = string.Join(", ", conversionClass.GenericArgs.Select(static argument => $"typename {argument}"));
+            headerWriter.WriteLine($"template <{templateArguments}>");
         }
 
         /// <summary>

@@ -77,9 +77,78 @@ namespace cs2.core {
         }
 
         public static VariableType GetVarType(string type) {
-            VariableType baseType = new VariableType(GetVarDataType(type), type);
+            string normalizedTypeName = type?.Trim() ?? string.Empty;
 
-            return baseType;
+            if (normalizedTypeName.Length == 0) {
+                return new VariableType(VariableDataType.Unknown);
+            }
+
+            int genericStart = FindTopLevelGenericStart(normalizedTypeName);
+            if (genericStart >= 0 && normalizedTypeName.EndsWith(">", StringComparison.Ordinal)) {
+                string genericBaseName = normalizedTypeName[..genericStart].Trim();
+                string genericArgumentText = normalizedTypeName[(genericStart + 1)..^1];
+                string leafTypeName = NormalizeLeafTypeName(genericBaseName);
+                VariableType genericType = new VariableType(GetVarDataType(leafTypeName), leafTypeName);
+
+                foreach (string genericArgument in SplitGenericArgumentList(genericArgumentText)) {
+                    genericType.GenericArgs.Add(GetVarType(genericArgument));
+                }
+
+                return genericType;
+            }
+
+            return new VariableType(GetVarDataType(normalizedTypeName), normalizedTypeName);
+        }
+
+        static int FindTopLevelGenericStart(string typeName) {
+            for (int index = 0; index < typeName.Length; index++) {
+                if (typeName[index] == '<') {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        static string NormalizeLeafTypeName(string typeName) {
+            int separatorIndex = typeName.LastIndexOf('.');
+            if (separatorIndex < 0 || separatorIndex == typeName.Length - 1) {
+                return typeName;
+            }
+
+            return typeName[(separatorIndex + 1)..];
+        }
+
+        static IEnumerable<string> SplitGenericArgumentList(string genericArgumentText) {
+            List<string> genericArguments = new List<string>();
+            int startIndex = 0;
+            int genericDepth = 0;
+
+            for (int index = 0; index < genericArgumentText.Length; index++) {
+                char currentCharacter = genericArgumentText[index];
+
+                if (currentCharacter == '<') {
+                    genericDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '>') {
+                    genericDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ',' && genericDepth == 0) {
+                    genericArguments.Add(genericArgumentText[startIndex..index].Trim());
+                    startIndex = index + 1;
+                }
+            }
+
+            string trailingArgument = genericArgumentText[startIndex..].Trim();
+            if (trailingArgument.Length > 0) {
+                genericArguments.Add(trailingArgument);
+            }
+
+            return genericArguments;
         }
 
         public static VariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
@@ -344,39 +413,62 @@ namespace cs2.core {
                     return VariableDataType.Array;
 
                 case "void":
+                case "Void":
                     return VariableDataType.Void;
                 case "bool":
+                case "Boolean":
                     return VariableDataType.Boolean;
                 case "float":
+                case "Single":
                     return VariableDataType.Single;
                 case "double":
                 case "decimal":
                 case "Decimal":
+                case "Double":
                     return VariableDataType.Double;
                 case "byte":
+                case "Byte":
                     return VariableDataType.UInt8;
                 case "sbyte":
+                case "SByte":
                     return VariableDataType.Int8;
                 case "short":
+                case "Int16":
                     return VariableDataType.Int16;
                 case "ushort":
+                case "UInt16":
                     return VariableDataType.UInt16;
                 case "int":
+                case "Int32":
                     return VariableDataType.Int32;
                 case "uint":
+                case "UInt32":
                     return VariableDataType.UInt32;
                 case "long":
+                case "Int64":
                     return VariableDataType.Int64;
                 case "ulong":
+                case "UInt64":
                     return VariableDataType.UInt64;
                 case "string":
+                case "String":
                     return VariableDataType.String;
                 case "char":
+                case "Char":
                     return VariableDataType.Char;
+                case "object":
+                case "Object":
+                    return VariableDataType.Object;
 
                 case "List":
+                case "IReadOnlyList":
+                case "ICollection":
+                case "IReadOnlyCollection":
+                case "IEnumerable":
                     return VariableDataType.List;
                 case "Dictionary":
+                case "IDictionary":
+                case "IReadOnlyDictionary":
                     return VariableDataType.Dictionary;
 
 

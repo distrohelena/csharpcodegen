@@ -33,12 +33,51 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures namespace-qualified engine types resolve to the generated local header name instead of a dotted include path.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNamespaceQualifiedEngineTypes_UsesLocalGeneratedHeaderIncludes() {
+            string source = """
+                namespace helengine {
+                    public class float3 {
+                    }
+
+                    public class float4 {
+                        public helengine.float3 Axis;
+
+                        public static helengine.float3 Rotate(helengine.float3 value) {
+                            return value;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
+            string float4Header = File.ReadAllText(Path.Combine(output.OutputPath, "float4.hpp"));
+
+            AssertNoDiagnostic(report, "IdentifierName");
+            Assert.Contains("#include \"float3.hpp\"", float4Header);
+            Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns all generated textual output.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>
         /// <param name="report">Parsed conversion report produced by the converter.</param>
         /// <returns>Concatenated generated file contents.</returns>
         static string RunConversion(string source, out JsonDocument report) {
+            ConversionOutput output = RunConversionWithOutput(source, out report);
+            return ReadGeneratedOutput(output.OutputPath);
+        }
+
+        /// <summary>
+        /// Runs the C++ converter against a temporary single-file project and returns the generated output path.
+        /// </summary>
+        /// <param name="source">C# source file content to convert.</param>
+        /// <param name="report">Parsed conversion report produced by the converter.</param>
+        /// <returns>Output metadata for the generated fixture.</returns>
+        static ConversionOutput RunConversionWithOutput(string source, out JsonDocument report) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-qualified-name-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string sourcePath = Path.Combine(rootPath, "Fixture.cs");
@@ -59,7 +98,7 @@ namespace cs2.cpp.tests {
 
             string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
             report = JsonDocument.Parse(File.ReadAllText(reportPath));
-            return ReadGeneratedOutput(outputPath);
+            return new ConversionOutput(outputPath);
         }
 
         /// <summary>
@@ -105,5 +144,11 @@ namespace cs2.cpp.tests {
                 Assert.NotEqual(syntaxKind, actualSyntaxKind);
             }
         }
+
+        /// <summary>
+        /// Represents the generated output directory captured for a qualified-name fixture.
+        /// </summary>
+        /// <param name="OutputPath">Generated output directory.</param>
+        record ConversionOutput(string OutputPath);
     }
 }

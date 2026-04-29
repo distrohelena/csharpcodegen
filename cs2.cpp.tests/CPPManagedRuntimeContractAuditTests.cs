@@ -3,63 +3,78 @@ using cs2.cpp;
 
 namespace cs2.cpp.tests {
     /// <summary>
-    /// Covers managed type mapping regressions that surfaced during native compile validation of generated helengine.core output.
+    /// Covers runtime-backed managed contract mappings required for native compile validation.
     /// </summary>
-    public class CPPManagedTypeMappingAuditTests {
+    public class CPPManagedRuntimeContractAuditTests {
         /// <summary>
-        /// Ensures the C++ backend maps core managed aliases and containers to native/runtime-backed C++ types instead of leaking raw C# names.
+        /// Ensures IDisposable resolves to a runtime header instead of a missing generated header.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithManagedAliasesAndContainers_UsesNativeCppTypeMappings() {
+        public void WriteOutput_WithDisposableBase_UsesRuntimeContractHeader() {
             string source = """
-                using System.Collections.Generic;
+                using System;
 
-                public class ManagedMapGate {
-                    public bool Enabled;
-                    public string Name;
-                    public List<string> Labels;
-                    public IReadOnlyList<string> LabelView;
-                    public Dictionary<string, byte[]> Buffers;
-                    public IReadOnlyDictionary<string, byte[]> BufferView;
-
-                    public string GetName() {
-                        return this.Name;
-                    }
-
-                    public void SetData(List<string> labels, IReadOnlyList<string> labelView, Dictionary<string, byte[]> buffers, IReadOnlyDictionary<string, byte[]> bufferView, UInt16 count, UInt32 mask, Single scale, byte kind) {
-                        this.Labels = labels;
-                        this.LabelView = labelView;
-                        this.Buffers = buffers;
-                        this.BufferView = bufferView;
+                public class Entity : IDisposable {
+                    public void Dispose() {
                     }
                 }
                 """;
 
             ConversionOutput output = RunConversion(source);
+            string entityHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Entity.hpp"));
 
-            Assert.Contains("std::string", output.GeneratedText);
-            Assert.Contains("List<std::string>", output.GeneratedText);
-            Assert.Contains("Dictionary<std::string, Array<uint8_t>>", output.GeneratedText);
-            Assert.Contains("bool Enabled;", output.GeneratedText);
-            Assert.Contains("uint16_t", output.GeneratedText);
-            Assert.Contains("uint32_t", output.GeneratedText);
-            Assert.Contains("float", output.GeneratedText);
-            Assert.Contains("uint8_t", output.GeneratedText);
-            Assert.DoesNotContain("\n    string Name;", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("List<string>", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("IReadOnlyList<string>", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("Dictionary<string, byte[]>", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("IReadOnlyDictionary<string, byte[]>", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"Boolean.hpp\"", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"UInt16.hpp\"", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"string.hpp\"", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"IReadOnlyList<string>.hpp\"", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"IReadOnlyDictionary<string, byte[]>.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("#include \"runtime/native_disposable.hpp\"", entityHeader);
+            Assert.DoesNotContain("#include \"IDisposable.hpp\"", entityHeader, StringComparison.Ordinal);
+            Assert.Contains("class Entity : public IDisposable", entityHeader);
+            AssertRuntimeRequirement(output.Report, "NativeDisposable");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_disposable.hpp")));
+        }
 
-            AssertRegisteredRuntimeRequirement(output.Report, "NativeString");
-            AssertRegisteredRuntimeRequirement(output.Report, "NativeList");
-            AssertRegisteredRuntimeRequirement(output.Report, "NativeDictionary");
-            AssertRegisteredRuntimeRequirement(output.Report, "NativeArray");
+        /// <summary>
+        /// Ensures IEquatable resolves to a runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEquatableBase_UsesRuntimeContractHeader() {
+            string source = """
+                using System;
+
+                public class Vector3 : IEquatable<Vector3> {
+                    public bool Equals(Vector3 other) {
+                        return true;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string vectorHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Vector3.hpp"));
+
+            Assert.Contains("#include \"runtime/native_equatable.hpp\"", vectorHeader);
+            Assert.DoesNotContain("#include \"IEquatable.hpp\"", vectorHeader, StringComparison.Ordinal);
+            Assert.Contains("class Vector3 : public IEquatable", vectorHeader);
+            AssertRuntimeRequirement(output.Report, "NativeEquatable");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_equatable.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.IO.Stream resolves to the built-in runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemIoStreamParameter_UsesRuntimeStreamHeader() {
+            string source = """
+                using System.IO;
+
+                public interface IContentProcessor<T> {
+                    T Read(Stream stream);
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "IContentProcessor.hpp"));
+
+            Assert.Contains("#include \"system/io/stream.hpp\"", header);
+            Assert.DoesNotContain("#include \"Stream.hpp\"", header, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "Stream");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "stream.hpp")));
         }
 
         /// <summary>
@@ -68,7 +83,7 @@ namespace cs2.cpp.tests {
         /// <param name="source">C# source file content to convert.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
         static ConversionOutput RunConversion(string source) {
-            string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-managed-type-mapping-tests", Guid.NewGuid().ToString("N"));
+            string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-runtime-contract-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string sourcePath = Path.Combine(rootPath, "Fixture.cs");
             string outputPath = Path.Combine(rootPath, "out");
@@ -125,14 +140,13 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Asserts that the conversion report registered the supplied runtime requirement.
+        /// Ensures the conversion report registered the expected runtime requirement.
         /// </summary>
-        /// <param name="report">Parsed conversion report to inspect.</param>
-        /// <param name="requirementName">Stable runtime requirement name that should be present.</param>
-        static void AssertRegisteredRuntimeRequirement(JsonDocument report, string requirementName) {
+        /// <param name="report">Parsed conversion report.</param>
+        /// <param name="requirementName">Stable runtime requirement name that must be present.</param>
+        static void AssertRuntimeRequirement(JsonDocument report, string requirementName) {
             foreach (JsonElement requirement in report.RootElement.GetProperty("registeredRuntimeRequirements").EnumerateArray()) {
-                string actualRequirementName = requirement.GetString() ?? string.Empty;
-                if (actualRequirementName == requirementName) {
+                if (string.Equals(requirement.GetString(), requirementName, StringComparison.Ordinal)) {
                     return;
                 }
             }
@@ -141,7 +155,7 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Represents the generated output artifacts captured for a managed type mapping fixture.
+        /// Represents the generated output artifacts captured for a managed runtime contract fixture.
         /// </summary>
         /// <param name="OutputPath">Generated output directory.</param>
         /// <param name="GeneratedText">Concatenated generated textual output.</param>

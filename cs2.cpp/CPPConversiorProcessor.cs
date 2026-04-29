@@ -13,6 +13,14 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Registers a named runtime requirement for the active conversion run.
+        /// </summary>
+        /// <param name="name">Stable runtime requirement name to record.</param>
+        public void RegisterRuntimeRequirement(string name) {
+            codeConverter?.RegisterRuntimeRequirement(name);
+        }
+
+        /// <summary>
         /// Processes an expression and records a structured diagnostic when no C++ lowering path exists.
         /// </summary>
         /// <param name="semantic">Semantic model associated with the expression.</param>
@@ -1662,6 +1670,16 @@ namespace cs2.cpp {
                         if (string.Equals(parsedType.TypeName, "object", StringComparison.OrdinalIgnoreCase)) {
                             typeData.IsNativeType = true;
                             return new VariableType(parsedType.Type, "void");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "IDisposable", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IDisposable", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeDisposable");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "IEquatable", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IEquatable", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeEquatable");
                         }
 
                         typeData.IsNativeType = false;
