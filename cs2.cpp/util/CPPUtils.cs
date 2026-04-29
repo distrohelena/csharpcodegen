@@ -4,33 +4,18 @@ using Microsoft.CodeAnalysis;
 namespace cs2.cpp {
     public static class CPPUtils {
         public static string GetInheritance(ConversionProgram program, ConversionClass cl) {
-            string implements = "";
-            string extends = "";
-
             List<string> exts = new List<string>();
-            List<string> impls = new List<string>();
 
             for (int i = 0; i < cl.Extensions.Count; i++) {
                 string ext = cl.Extensions[i];
+                if (string.IsNullOrWhiteSpace(ext)) {
+                    continue;
+                }
 
-                var extCl = program.Classes.FirstOrDefault(c => c.Name == ext);
-                //if (extCl == null) {
-                //    var knownClass = ((CPPProgram)program).Requirements.FirstOrDefault(c => c.Name == ext);
-
-                //    if (knownClass == null) {
-                //        //throw new Exception($"Class not found: {ext}");
-                //    }
-                //}
-
-                //if (extCl?.DeclarationType == MemberDeclarationType.Interface ||
-                //    cl.DeclarationType == MemberDeclarationType.Interface) {
-                //    impls.Add(ext);
-                //} else {
-                //    exts.Add(ext);
-                //}
+                exts.Add($"public {ext}");
             }
 
-            return "";
+            return string.Join(", ", exts);
         }
     }
 }

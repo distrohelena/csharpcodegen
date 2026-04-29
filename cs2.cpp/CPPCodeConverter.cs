@@ -122,6 +122,10 @@ namespace cs2.cpp {
 
             writeClasses(outputFolder);
 
+            foreach (string harnessFile in CPPCompileHarnessWriter.Write(outputFolder, Options)) {
+                TrackEmittedFile(harnessFile);
+            }
+
             if (Options.WriteConversionReport) {
                 string reportPath = Path.Combine(outputFolder, CPPConversionReportWriter.DefaultFileName);
                 TrackEmittedFile(reportPath);

@@ -29,6 +29,7 @@ namespace cs2.cpp {
 
         static IEnumerable<CPPRuntimeRequirementDefinition> CreateDefinitions() {
             return new[] {
+                Make("NativeArray", "runtime/array.hpp", "HE_CPP_REQ_NATIVE_ARRAY", "Managed-style array abstraction support."),
                 Make("NativeString", "runtime/native_string.hpp", "HE_CPP_REQ_NATIVE_STRING", "Managed-style string abstraction support."),
                 Make("NativeList", "runtime/native_list.hpp", "HE_CPP_REQ_NATIVE_LIST", "Managed-style list abstraction support."),
                 Make("NativeDictionary", "runtime/native_dictionary.hpp", "HE_CPP_REQ_NATIVE_DICTIONARY", "Managed-style dictionary abstraction support."),

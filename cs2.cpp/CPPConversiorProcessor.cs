@@ -434,7 +434,7 @@ namespace cs2.cpp {
 
                             if (b2 == "this" && b1.IndexOf(";") == -1) {
                             } else {
-                                lines.Add("this.");
+                                lines.Add("this->");
                             }
                         } else {
                             // semantic
@@ -442,10 +442,10 @@ namespace cs2.cpp {
                             if (symbol is INamedTypeSymbol namedTypeSymbol) {
                                 if (!namedTypeSymbol.IsStatic &&
                                     !namedTypeSymbol.IsType) {
-                                    lines.Add("this.");
+                                    lines.Add("this->");
                                 }
                             } else {
-                                lines.Add("this.");
+                                lines.Add("this->");
                             }
                         }
                     }
@@ -506,6 +506,105 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
+            if (objectCreation.Initializer is InitializerExpressionSyntax initializer && IsObjectInitializer(initializer)) {
+                return ProcessObjectInitializerCreation(semantic, context, objectCreation, initializer, lines);
+            }
+
+            if (IsSystemObjectType(semantic, objectCreation.Type)) {
+                lines.Add("new char[1]");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
+            }
+
+            int diagnosticCount = GetDiagnosticCount();
+            BuildObjectCreationExpression(semantic, context, objectCreation, lines);
+
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+        }
+
+        /// <summary>
+        /// Determines whether an initializer expression represents a C# object initializer with member assignments.
+        /// </summary>
+        /// <param name="initializer">Initializer syntax attached to the object creation expression.</param>
+        /// <returns><c>true</c> when the initializer contains assignment entries; otherwise <c>false</c>.</returns>
+        static bool IsObjectInitializer(InitializerExpressionSyntax initializer) {
+            if (initializer == null) {
+                return false;
+            }
+
+            return initializer.Expressions.Any(expression => expression is AssignmentExpressionSyntax);
+        }
+
+        /// <summary>
+        /// Lowers a C# object initializer into a temporary object construction expression followed by member assignments.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the current document.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="objectCreation">Object creation expression being lowered.</param>
+        /// <param name="initializer">Initializer that contains member assignments.</param>
+        /// <param name="lines">Output token buffer that receives the lowered expression.</param>
+        /// <returns>The result produced by the underlying object construction expression.</returns>
+        ExpressionResult ProcessObjectInitializerCreation(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            InitializerExpressionSyntax initializer,
+            List<string> lines) {
+            string objectName = "__object_" + Guid.NewGuid().ToString("N")[..8];
+
+            lines.Add("([&]() {\n");
+            lines.Add("auto ");
+            lines.Add(objectName);
+            lines.Add(" = ");
+
+            ExpressionResult result = BuildObjectCreationExpression(semantic, context, objectCreation, lines);
+            lines.Add(";\n");
+
+            foreach (ExpressionSyntax expression in initializer.Expressions) {
+                if (expression is not AssignmentExpressionSyntax assignment) {
+                    continue;
+                }
+
+                lines.Add(objectName);
+                lines.Add("->");
+
+                int startLeft = context.DepthClass;
+                ProcessExpression(semantic, context, assignment.Left, lines);
+                context.PopClass(startLeft);
+
+                lines.Add(" = ");
+
+                int startRight = context.DepthClass;
+                ProcessExpression(semantic, context, assignment.Right, lines);
+                context.PopClass(startRight);
+
+                lines.Add(";\n");
+            }
+
+            lines.Add("return ");
+            lines.Add(objectName);
+            lines.Add(";\n");
+            lines.Add("})()");
+            return result;
+        }
+
+        /// <summary>
+        /// Emits the core C++ object construction expression without applying C# object-initializer assignments.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the current document.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="objectCreation">Object creation expression being lowered.</param>
+        /// <param name="lines">Output token buffer that receives the construction expression.</param>
+        /// <returns>The expression result describing the constructed object.</returns>
+        ExpressionResult BuildObjectCreationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            List<string> lines) {
+            if (IsSystemObjectType(semantic, objectCreation.Type)) {
+                lines.Add("new char[1]");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
+            }
+
             int diagnosticCount = GetDiagnosticCount();
             lines.Add("new ");
 
@@ -513,31 +612,29 @@ namespace cs2.cpp {
             ExpressionResult typeResult = ProcessExpression(semantic, context, objectCreation.Type, lines);
             context.PopClass(startDepth);
 
-            if (objectCreation.ArgumentList == null) {
-                ProcessExpression(semantic, context, objectCreation.Initializer, lines);
-            } else {
-                lines.Add("(");
+            lines.Add("(");
+            if (objectCreation.ArgumentList != null) {
                 for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
-                    var arg = objectCreation.ArgumentList.Arguments[i];
+                    ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
 
                     int startArg = context.DepthClass;
-                    ExpressionResult expResult = ProcessExpression(semantic, context, arg.Expression, lines);
+                    ProcessExpression(semantic, context, arg.Expression, lines);
                     context.PopClass(startArg);
 
                     if (i != objectCreation.ArgumentList.Arguments.Count - 1) {
                         lines.Add(", ");
                     }
                 }
-                lines.Add(")");
             }
 
-            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+            lines.Add(")");
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, typeResult.Type);
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
             ExpressionResult result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
             if (result.Processed) {
-                bool useStaticAccess = result.VarPath == VariablePath.Static;
+                bool useStaticAccess = result.VarPath == VariablePath.Static || memberAccess.Expression is BaseExpressionSyntax;
                 if (!useStaticAccess) {
                     ISymbol? memberSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
                     if (memberSymbol is IAliasSymbol aliasSymbol) {
@@ -826,10 +923,12 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines) {
-            lines.Add("super");
+            ConversionClass? currentClass = context.GetCurrentClass();
+            string baseClassName = currentClass?.Extensions?.FirstOrDefault() ?? currentClass?.Name ?? "base";
+            lines.Add(baseClassName);
 
-            context.AddClass(context.GetCurrentClass());
-
+            ConversionClass? baseClass = context.Program.Classes.FirstOrDefault(c => c.Name == baseClassName);
+            context.AddClass(baseClass ?? currentClass);
         }
 
         protected override void ProcessInitializerExpression(SemanticModel semantic, LayerContext context, InitializerExpressionSyntax initializerExpression, List<string> lines) {
@@ -895,7 +994,7 @@ namespace cs2.cpp {
                     name = "String";
                     break;
                 case "object":
-                    name = "any";
+                    name = "void";
                     break;
                 case "void":
                     name = "void";
@@ -923,26 +1022,99 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessInterpolatedStringExpression(SemanticModel semantic, LayerContext context, InterpolatedStringExpressionSyntax interpolatedString, List<string> lines) {
-            // Add the backtick to start the template literal
-            lines.Add("`");
+            bool emittedAnySegment = false;
 
-            // Process each content part inside the interpolated string
             foreach (var content in interpolatedString.Contents) {
+                if (content is InterpolatedStringTextSyntax text) {
+                    string textValue = text.TextToken.ValueText;
+                    if (textValue.Length == 0) {
+                        continue;
+                    }
+
+                    AppendInterpolatedStringSegment(lines, $"std::string(\"{EscapeCppStringLiteral(textValue)}\")", ref emittedAnySegment);
+                    continue;
+                }
+
                 if (content is InterpolationSyntax interpolation) {
-                    // For interpolated expressions, wrap them in ${}
-                    lines.Add("${");
-                    ProcessExpression(semantic, context, interpolation.Expression, lines);
-                    lines.Add("}");
-                } else if (content is InterpolatedStringTextSyntax text) {
-                    // Regular string content
-                    lines.Add(text.TextToken.Text);
+                    AppendInterpolatedStringSegment(lines, BuildInterpolatedExpressionSegment(semantic, context, interpolation), ref emittedAnySegment);
                 }
             }
 
-            // Add the backtick to close the template literal
-            lines.Add("`");
+            if (!emittedAnySegment) {
+                lines.Add("std::string()");
+            }
 
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+        }
+
+        void AppendInterpolatedStringSegment(List<string> lines, string segment, ref bool emittedAnySegment) {
+            if (emittedAnySegment) {
+                lines.Add(" + ");
+            }
+
+            lines.Add(segment);
+            emittedAnySegment = true;
+        }
+
+        string BuildInterpolatedExpressionSegment(SemanticModel semantic, LayerContext context, InterpolationSyntax interpolation) {
+            List<string> interpolationLines = new List<string>();
+            ProcessExpression(semantic, context, interpolation.Expression, interpolationLines);
+
+            string expressionText = string.Concat(interpolationLines);
+            VariableType expressionType = ResolveInterpolationType(semantic, interpolation.Expression);
+
+            if (expressionType.Type == VariableDataType.String) {
+                return expressionText;
+            }
+
+            if (expressionType.Type == VariableDataType.Char) {
+                return $"std::string(1, {expressionText})";
+            }
+
+            if (IsNativeInterpolationType(expressionType.Type)) {
+                return $"std::to_string({expressionText})";
+            }
+
+            return $"{expressionText}->ToString()";
+        }
+
+        VariableType ResolveInterpolationType(SemanticModel semantic, ExpressionSyntax expression) {
+            TypeInfo typeInfo = semantic.GetTypeInfo(expression);
+            ITypeSymbol expressionType = typeInfo.ConvertedType ?? typeInfo.Type;
+
+            if (expressionType != null) {
+                return VariableUtil.GetVarType(expressionType);
+            }
+
+            return VariableUtil.GetVarType("string");
+        }
+
+        bool IsNativeInterpolationType(VariableDataType dataType) {
+            switch (dataType) {
+                case VariableDataType.Single:
+                case VariableDataType.Double:
+                case VariableDataType.UInt32:
+                case VariableDataType.Int32:
+                case VariableDataType.UInt64:
+                case VariableDataType.Int64:
+                case VariableDataType.Int8:
+                case VariableDataType.UInt8:
+                case VariableDataType.Int16:
+                case VariableDataType.UInt16:
+                case VariableDataType.Boolean:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        string EscapeCppStringLiteral(string value) {
+            return value
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n")
+                .Replace("\t", "\\t");
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
@@ -1459,12 +1631,48 @@ namespace cs2.cpp {
                 case VariableDataType.String:
 
                     if (codeConverter.CPPRules.UseStdString) {
-                        throw new NotImplementedException();
+                        codeConverter?.RegisterRuntimeRequirement("NativeString");
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "std::string");
                 } else {
                         typeData.IsArray = true;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "char");
+                }
+                case VariableDataType.List: {
+                        codeConverter?.RegisterRuntimeRequirement("NativeList");
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = false;
+                        typeData.IsPointer = true;
+                        return CreateConvertedGenericType(parsedType, "List");
+                }
+                case VariableDataType.Dictionary: {
+                        codeConverter?.RegisterRuntimeRequirement("NativeDictionary");
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = false;
+                        typeData.IsPointer = true;
+                        return CreateConvertedGenericType(parsedType, "Dictionary");
+                }
+                case VariableDataType.Object: {
+                        typeData.IsArray = false;
+                        typeData.IsPointer = true;
+                        if (string.Equals(parsedType.TypeName, "object", StringComparison.OrdinalIgnoreCase)) {
+                            typeData.IsNativeType = true;
+                            return new VariableType(parsedType.Type, "void");
+                        }
+
+                        typeData.IsNativeType = false;
+                        return parsedType;
+                }
+                case VariableDataType.Array: {
+                        codeConverter?.RegisterRuntimeRequirement("NativeArray");
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = false;
+                        typeData.IsPointer = true;
+                        return parsedType;
                 }
                 default:
                     typeData.IsArray = false;
@@ -1472,6 +1680,50 @@ namespace cs2.cpp {
                     typeData.IsPointer = true;
                     return parsedType;
             }
+        }
+
+        /// <summary>
+        /// Creates a converted generic type shell whose generic arguments have already been normalized for C++ emission.
+        /// </summary>
+        /// <param name="parsedType">The source generic type.</param>
+        /// <param name="cppTypeName">The emitted C++ generic type name.</param>
+        /// <returns>A generic variable type that carries converted C++ generic arguments.</returns>
+        VariableType CreateConvertedGenericType(VariableType parsedType, string cppTypeName) {
+            List<VariableType> convertedGenericArguments = new List<VariableType>();
+
+            foreach (VariableType genericArgument in parsedType.GenericArgs) {
+                CPPTypeData genericTypeData;
+                VariableType convertedGenericArgument = ConvertToCPPType(genericArgument, out genericTypeData);
+
+                if (genericTypeData.IsPointer) {
+                    if (convertedGenericArgument.Type == VariableDataType.Array) {
+                        convertedGenericArgument = new VariableType(
+                            convertedGenericArgument.Type,
+                            convertedGenericArgument.TypeName,
+                            convertedGenericArgument.Args.ToList(),
+                            convertedGenericArgument.GenericArgs.ToList());
+                    } else {
+                        convertedGenericArgument = new VariableType(
+                            VariableDataType.Unknown,
+                            $"{convertedGenericArgument.ToCPPString(null)}*");
+                    }
+                }
+
+                convertedGenericArguments.Add(convertedGenericArgument);
+            }
+
+            return new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+        }
+
+        bool IsSystemObjectType(SemanticModel semantic, TypeSyntax typeSyntax) {
+            if (typeSyntax is PredefinedTypeSyntax predefinedTypeSyntax &&
+                predefinedTypeSyntax.Keyword.ValueText == "object") {
+                return true;
+            }
+
+            TypeInfo typeInfo = semantic.GetTypeInfo(typeSyntax);
+            ITypeSymbol typeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+            return typeSymbol?.SpecialType == SpecialType.System_Object;
         }
 
         protected override void ProcessDeclaration(
@@ -1744,12 +1996,7 @@ namespace cs2.cpp {
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
                         type = "char";
-                        string value = literalExpression.Token.ValueText;
-                        literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
-                        literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
-                            return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                    });
-                        literalValue = $"\"{literalValue}\"";
+                        literalValue = literalExpression.Token.Text;
                         break;
                 }
                 case SyntaxKind.StringLiteralExpression: {
@@ -1764,11 +2011,11 @@ namespace cs2.cpp {
                 }
                 case SyntaxKind.NullLiteralExpression:
                     type = "null";
-                    literalValue = "null";
+                    literalValue = "nullptr";
                     break;
                 case SyntaxKind.DefaultLiteralExpression:
                     type = "null";
-                    literalValue = "null";
+                    literalValue = "nullptr";
                     break;
                 default:
                     throw new Exception("Unsupported literal type");

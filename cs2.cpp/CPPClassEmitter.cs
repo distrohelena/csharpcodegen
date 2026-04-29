@@ -55,25 +55,98 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the header preamble.</param>
         void WriteHeaderPreamble(ConversionClass conversionClass, TextWriter headerWriter) {
             headerWriter.WriteLine("#pragma once");
+            headerWriter.WriteLine("#include <cstdint>");
+            headerWriter.WriteLine();
 
             bool wroteInclude = false;
+            HashSet<string> referencedTypes = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
+                referencedTypes.Add(extension);
+            }
+
             foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
-                if (string.Equals(referencedClass, conversionClass.Name, StringComparison.Ordinal)) {
-                    continue;
-                }
+                referencedTypes.Add(referencedClass);
+            }
 
-                string includePath = ResolveIncludePath(referencedClass);
-                if (string.IsNullOrWhiteSpace(includePath)) {
-                    continue;
-                }
+            AddSignatureTypeReferences(conversionClass, referencedTypes);
 
-                headerWriter.WriteLine($"#include \"{includePath}.hpp\"");
-                wroteInclude = true;
+            foreach (string referencedType in referencedTypes) {
+                if (WriteInclude(headerWriter, conversionClass, referencedType)) {
+                    wroteInclude = true;
+                }
             }
 
             if (wroteInclude) {
                 headerWriter.WriteLine();
             }
+        }
+
+        /// <summary>
+        /// Collects referenced type names from fields, properties, method return types, and parameters so header dependencies remain concrete.
+        /// </summary>
+        /// <param name="conversionClass">The type whose declared member signatures should be scanned.</param>
+        /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
+        void AddSignatureTypeReferences(ConversionClass conversionClass, ISet<string> referencedTypes) {
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                AddTypeReference(variable.VarType, referencedTypes);
+            }
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                AddTypeReference(function.ReturnType, referencedTypes);
+
+                foreach (ConversionVariable parameter in function.InParameters) {
+                    AddTypeReference(parameter.VarType, referencedTypes);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds the referenced type and any nested generic argument types to the include set.
+        /// </summary>
+        /// <param name="variableType">The type metadata to inspect.</param>
+        /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
+        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes) {
+            if (variableType == null) {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(variableType.TypeName)) {
+                referencedTypes.Add(variableType.TypeName);
+            }
+
+            if (variableType.GenericArgs == null) {
+                return;
+            }
+
+            foreach (VariableType genericArgument in variableType.GenericArgs) {
+                AddTypeReference(genericArgument, referencedTypes);
+            }
+        }
+
+        /// <summary>
+        /// Writes a single include directive when the referenced type resolves to a concrete generated header.
+        /// </summary>
+        /// <param name="headerWriter">Writer that receives the include directive.</param>
+        /// <param name="conversionClass">Type currently being emitted.</param>
+        /// <param name="referencedClass">Referenced type name to resolve.</param>
+        /// <returns><c>true</c> when an include directive was emitted; otherwise <c>false</c>.</returns>
+        bool WriteInclude(TextWriter headerWriter, ConversionClass conversionClass, string referencedClass) {
+            if (string.Equals(referencedClass, conversionClass.Name, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (conversionClass.GenericArgs != null && conversionClass.GenericArgs.Contains(referencedClass, StringComparer.Ordinal)) {
+                return false;
+            }
+
+            string includePath = ResolveIncludePath(referencedClass);
+            if (string.IsNullOrWhiteSpace(includePath)) {
+                return false;
+            }
+
+            headerWriter.WriteLine($"#include \"{includePath}.hpp\"");
+            return true;
         }
 
         /// <summary>
@@ -92,7 +165,38 @@ namespace cs2.cpp {
         /// <param name="referencedClass">The referenced class name as discovered during conversion.</param>
         /// <returns>The include path without extension.</returns>
         string ResolveIncludePath(string referencedClass) {
+            if (string.IsNullOrWhiteSpace(referencedClass) || referencedClass == "var" || referencedClass == "?") {
+                return string.Empty;
+            }
+
             VariableType variableType = VariableUtil.GetVarType(referencedClass);
+
+            if (referencedClass.Contains("[]", StringComparison.Ordinal) || variableType.Type == VariableDataType.Array) {
+                return "runtime/array";
+            }
+
+            if (variableType.Type == VariableDataType.String) {
+                return "runtime/native_string";
+            }
+
+            if (variableType.Type == VariableDataType.List) {
+                return "runtime/native_list";
+            }
+
+            if (variableType.Type == VariableDataType.Dictionary) {
+                return "runtime/native_dictionary";
+            }
+
+            ConversionClass generatedClass = program.Classes.FirstOrDefault(candidate => !candidate.IsNative && candidate.Name == variableType.TypeName);
+            if (generatedClass != null) {
+                return generatedClass.Name;
+            }
+
+            CPPKnownClass knownSourceClass = program.Requirements.FirstOrDefault(requirement => requirement.Name == variableType.TypeName);
+            if (knownSourceClass != null && !string.IsNullOrWhiteSpace(knownSourceClass.Path)) {
+                return knownSourceClass.Path;
+            }
+
             CPPTypeData typeData = new CPPTypeData();
 
             if (processor != null) {
@@ -255,7 +359,7 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the field declaration.</param>
         void WriteField(ConversionVariable variable, TextWriter headerWriter) {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
-            string typeName = variable.VarType.ToCPPString(program);
+            string typeName = ConvertType(variable.VarType);
             headerWriter.WriteLine($"    {staticKeyword}{typeName} {variable.Name};");
         }
 
@@ -382,7 +486,7 @@ namespace cs2.cpp {
         void WriteParameters(ConversionFunction function, TextWriter writer) {
             for (int index = 0; index < function.InParameters.Count; index++) {
                 ConversionVariable parameter = function.InParameters[index];
-                writer.Write($"{parameter.VarType.ToCPPString(program)} {parameter.Name}");
+                writer.Write($"{ConvertType(parameter.VarType)} {parameter.Name}");
 
                 if (index != function.InParameters.Count - 1) {
                     writer.Write(", ");
@@ -414,7 +518,22 @@ namespace cs2.cpp {
                 return "void";
             }
 
-            return function.ReturnType.ToCPPString(program);
+            return ConvertType(function.ReturnType);
+        }
+
+        string ConvertType(VariableType variableType) {
+            if (variableType.Type == VariableDataType.Unknown && !variableType.IsNullable) {
+                return variableType.ToCPPString(program);
+            }
+
+            VariableType cppType = processor.ConvertToCPPType(variableType, out CPPTypeData typeData);
+            string cppTypeName = cppType.ToCPPString(program);
+
+            if (typeData.IsPointer) {
+                return cppTypeName + "*";
+            }
+
+            return cppTypeName;
         }
     }
 }

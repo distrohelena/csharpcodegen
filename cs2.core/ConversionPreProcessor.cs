@@ -531,6 +531,8 @@ namespace cs2.core {
                 PreProcessUsingStatement(semantic, context, usingStatement);
             } else if (exp is InvocationExpressionSyntax invocationExpression) {
                 PreProcessInvocationExpressionSyntax(semantic, context, invocationExpression);
+            } else if (exp is ObjectCreationExpressionSyntax objectCreationExpression) {
+                PreProcessObjectCreationExpressionSyntax(semantic, context, objectCreationExpression);
             } else if (exp is IfStatementSyntax ifStatement) {
                 PreProcessIfStatement(semantic, context, ifStatement);
             } else if (exp is MemberAccessExpressionSyntax memberAccess) {
@@ -624,6 +626,24 @@ namespace cs2.core {
             return PreProcessExpression(semantic, context, memberAccess.Name);
         }
 
+        protected static void PreProcessObjectCreationExpressionSyntax(SemanticModel semantic, ConversionContext context, ObjectCreationExpressionSyntax objectCreationExpression) {
+            string type = objectCreationExpression.Type.ToString();
+            ConversionClass cl = context.CurrentClass;
+            if (!cl.ReferencedClasses.Contains(type)) {
+                cl.ReferencedClasses.Add(type);
+            }
+
+            if (objectCreationExpression.ArgumentList != null) {
+                foreach (ArgumentSyntax argument in objectCreationExpression.ArgumentList.Arguments) {
+                    PreProcessExpression(semantic, context, argument.Expression);
+                }
+            }
+
+            if (objectCreationExpression.Initializer != null) {
+                PreProcessExpression(semantic, context, objectCreationExpression.Initializer);
+            }
+        }
+
         protected static void PreProcessDeclaration(SemanticModel semantic, ConversionContext context, VariableDeclarationSyntax declaration) {
             ConversionFunction fn = context.CurrentFunction;
 
@@ -636,8 +656,19 @@ namespace cs2.core {
                 usage.Name = variable.Identifier.ToString();
 
                 string type = declaration.Type.ToString();
-                if (!cl.ReferencedClasses.Contains(type)) {
+                if (type != "var" && !cl.ReferencedClasses.Contains(type)) {
                     cl.ReferencedClasses.Add(type);
+                }
+
+                if (type == "var" && variable.Initializer != null) {
+                    string inferredType = semantic.GetTypeInfo(variable.Initializer.Value).Type?.ToString();
+                    if (!string.IsNullOrWhiteSpace(inferredType) && !cl.ReferencedClasses.Contains(inferredType)) {
+                        cl.ReferencedClasses.Add(inferredType);
+                    }
+                }
+
+                if (variable.Initializer != null) {
+                    PreProcessExpression(semantic, context, variable.Initializer.Value);
                 }
 
                 fn.BodyVariables.Add(usage);
