@@ -848,8 +848,16 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessTypeOfExpression(SemanticModel semantic, LayerContext context, TypeOfExpressionSyntax typeOfExpression, List<string> lines) {
-            lines.Add("typeof ");
-            ProcessExpression(semantic, context, typeOfExpression.Type, lines);
+            VariableType sourceType = VariableUtil.GetVarType(typeOfExpression.Type, semantic);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            string cppTypeName = cppType.ToCPPString(context.Program);
+            string sourceTypeName = string.IsNullOrWhiteSpace(sourceType.TypeName)
+                ? typeOfExpression.Type.ToString()
+                : sourceType.TypeName;
+
+            RegisterRuntimeRequirement("NativeType");
+            lines.Add($"he_cpp_type_of<{cppTypeName}>(\"{sourceTypeName}\")");
         }
 
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
@@ -1670,6 +1678,13 @@ namespace cs2.cpp {
                         if (string.Equals(parsedType.TypeName, "object", StringComparison.OrdinalIgnoreCase)) {
                             typeData.IsNativeType = true;
                             return new VariableType(parsedType.Type, "void");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Type", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Type", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeType");
+                            typeData.IsNativeType = false;
+                            return new VariableType(parsedType.Type, "Type");
                         }
 
                         if (string.Equals(parsedType.TypeName, "IDisposable", StringComparison.Ordinal) ||

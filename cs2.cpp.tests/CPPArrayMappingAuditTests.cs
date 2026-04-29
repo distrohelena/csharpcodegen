@@ -30,6 +30,46 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures lowered array-backed properties do not reintroduce a fake generated Array header include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayProperty_DoesNotEmitSyntheticArrayHeader() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public interface IContentProcessor {
+                    Type OutputType { get; }
+                }
+
+                public class ContentProcessorRegistration {
+                    readonly string[] ExtensionsValue;
+                    readonly IContentProcessor ProcessorValue;
+
+                    public ContentProcessorRegistration(IContentProcessor processor, IReadOnlyList<string> extensions) {
+                        ProcessorValue = processor;
+                        ExtensionsValue = extensions == null ? Array.Empty<string>() : NormalizeExtensions(extensions);
+                    }
+
+                    public IReadOnlyList<string> Extensions => ExtensionsValue;
+
+                    string[] NormalizeExtensions(IReadOnlyList<string> sourceExtensions) {
+                        string[] normalized = new string[sourceExtensions.Count];
+                        return normalized;
+                    }
+                }
+                """;
+
+            string outputPath = RunConversion(source, out string output, out JsonDocument report);
+            string header = File.ReadAllText(Path.Combine(outputPath, "ContentProcessorRegistration.hpp"));
+
+            AssertNoDiagnostic(report, "ArrayType");
+            Assert.Contains("#include \"runtime/array.hpp\"", header);
+            Assert.DoesNotContain("#include \"Array.hpp\"", header, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(outputPath, "runtime", "array.hpp")));
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the output folder and concatenated generated text.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

@@ -78,6 +78,60 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures System.IO.FileStream resolves to the built-in runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemIoFileStreamReturnType_UsesRuntimeFileStreamHeader() {
+            string source = """
+                using System.IO;
+
+                public class ContentManager {
+                    public FileStream Open() {
+                        return null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+
+            Assert.Contains("#include \"system/io/file-stream.hpp\"", header);
+            Assert.DoesNotContain("#include \"FileStream.hpp\"", header, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "FileStream");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "file-stream.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Type resolves to a lightweight runtime token header and typeof expressions lower through the native helper.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemTypeContract_UsesRuntimeTypeTokenHeader() {
+            string source = """
+                using System;
+
+                public interface IContentProcessor {
+                    Type OutputType { get; }
+                }
+
+                public class ContentManager {
+                    public Type Resolve() {
+                        return typeof(ContentManager);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string contentManagerHeader = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+
+            Assert.Contains("#include \"runtime/native_type.hpp\"", contentManagerHeader);
+            Assert.DoesNotContain("#include \"Type.hpp\"", contentManagerHeader, StringComparison.Ordinal);
+            Assert.Contains("Type* Resolve()", output.GeneratedText);
+            Assert.Contains("he_cpp_type_of<ContentManager>(\"ContentManager\")", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "NativeType");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_type.hpp")));
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

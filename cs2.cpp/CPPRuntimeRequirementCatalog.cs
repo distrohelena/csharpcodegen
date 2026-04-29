@@ -35,10 +35,12 @@ namespace cs2.cpp {
                 Make("NativeDictionary", "runtime/native_dictionary.hpp", "HE_CPP_REQ_NATIVE_DICTIONARY", "Managed-style dictionary abstraction support."),
                 Make("NativeDisposable", "runtime/native_disposable.hpp", "HE_CPP_REQ_NATIVE_DISPOSABLE", "Managed-style disposable contract support."),
                 Make("NativeEquatable", "runtime/native_equatable.hpp", "HE_CPP_REQ_NATIVE_EQUATABLE", "Managed-style equatable contract support."),
+                Make("NativeType", "runtime/native_type.hpp", "HE_CPP_REQ_NATIVE_TYPE", "Lightweight managed type-token support without reflection."),
                 Make("NativeCast", "runtime/native_cast.hpp", "HE_CPP_REQ_NATIVE_CAST", "Runtime-assisted safe cast support for declaration-pattern lowering."),
                 Make("BinaryReader", "system/io/binary-reader.hpp", "HE_CPP_REQ_BINARY_READER", "Binary reader support for serialized engine data."),
                 Make("BinaryWriter", "system/io/binary-writer.hpp", "HE_CPP_REQ_BINARY_WRITER", "Binary writer support for serialized engine data."),
                 Make("Stream", "system/io/stream.hpp", "HE_CPP_REQ_STREAM", "Stream abstraction support for runtime IO."),
+                Make("FileStream", "system/io/file-stream.hpp", "HE_CPP_REQ_FILE_STREAM", "File stream abstraction support for host-backed runtime IO."),
                 Make("File", "system/io/file.hpp", "HE_CPP_REQ_FILE", "File abstraction support for host-backed IO.")
             };
         }

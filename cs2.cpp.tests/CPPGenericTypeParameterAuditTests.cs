@@ -29,6 +29,34 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures method-level generic parameters remain compile-time template symbols and do not generate header includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericMethodOnNonGenericClass_DoesNotEmitGenericParameterInclude() {
+            string source = """
+                public class Stream {
+                }
+
+                public interface IContentProcessor<T> {
+                    T Read(Stream stream);
+                }
+
+                public class ContentManager {
+                    public T Load<T>(string assetPath, IContentProcessor<T> processor) {
+                        return processor.Read(new Stream());
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string classHeader = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+
+            Assert.DoesNotContain("#include \"T.hpp\"", classHeader, StringComparison.Ordinal);
+            Assert.Contains("template <typename T>", classHeader);
+            Assert.Contains("Load", classHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

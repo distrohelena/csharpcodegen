@@ -60,13 +60,18 @@ namespace cs2.cpp {
 
             bool wroteInclude = false;
             HashSet<string> referencedTypes = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
 
             foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
-                referencedTypes.Add(extension);
+                if (!excludedTypeNames.Contains(extension)) {
+                    referencedTypes.Add(extension);
+                }
             }
 
             foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
-                referencedTypes.Add(referencedClass);
+                if (!excludedTypeNames.Contains(referencedClass)) {
+                    referencedTypes.Add(referencedClass);
+                }
             }
 
             AddSignatureTypeReferences(conversionClass, referencedTypes);
@@ -89,14 +94,15 @@ namespace cs2.cpp {
         /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
         void AddSignatureTypeReferences(ConversionClass conversionClass, ISet<string> referencedTypes) {
             foreach (ConversionVariable variable in conversionClass.Variables) {
-                AddTypeReference(variable.VarType, referencedTypes);
+                AddTypeReference(variable.VarType, referencedTypes, conversionClass.GenericArgs);
             }
 
             foreach (ConversionFunction function in conversionClass.Functions) {
-                AddTypeReference(function.ReturnType, referencedTypes);
+                HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass, function);
+                AddTypeReference(function.ReturnType, referencedTypes, excludedTypeNames);
 
                 foreach (ConversionVariable parameter in function.InParameters) {
-                    AddTypeReference(parameter.VarType, referencedTypes);
+                    AddTypeReference(parameter.VarType, referencedTypes, excludedTypeNames);
                 }
             }
         }
@@ -106,12 +112,18 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="variableType">The type metadata to inspect.</param>
         /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
-        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes) {
+        /// <param name="excludedTypeNames">Type names that should remain compile-time only and must not become includes.</param>
+        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes, IEnumerable<string> excludedTypeNames) {
             if (variableType == null) {
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(variableType.TypeName)) {
+            HashSet<string> excludedTypeNameSet = excludedTypeNames == null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(excludedTypeNames, StringComparer.Ordinal);
+
+            if (!string.IsNullOrWhiteSpace(variableType.TypeName) &&
+                !excludedTypeNameSet.Contains(variableType.TypeName)) {
                 referencedTypes.Add(variableType.TypeName);
             }
 
@@ -120,8 +132,59 @@ namespace cs2.cpp {
             }
 
             foreach (VariableType genericArgument in variableType.GenericArgs) {
-                AddTypeReference(genericArgument, referencedTypes);
+                AddTypeReference(genericArgument, referencedTypes, excludedTypeNameSet);
             }
+        }
+
+        /// <summary>
+        /// Builds the set of compile-time generic symbols that must not generate runtime or header dependencies.
+        /// </summary>
+        /// <param name="conversionClass">The class that owns the emitted members.</param>
+        /// <param name="function">The function whose generic scope should be excluded.</param>
+        /// <returns>A case-sensitive set of generic symbol names that remain compile-time only.</returns>
+        static HashSet<string> GetExcludedTypeNames(ConversionClass conversionClass, ConversionFunction function) {
+            HashSet<string> excludedTypeNames = new HashSet<string>(StringComparer.Ordinal);
+
+            if (conversionClass.GenericArgs != null) {
+                foreach (string genericArgument in conversionClass.GenericArgs) {
+                    excludedTypeNames.Add(genericArgument);
+                }
+            }
+
+            if (function.GenericParameters != null) {
+                foreach (string genericParameter in function.GenericParameters) {
+                    excludedTypeNames.Add(genericParameter);
+                }
+            }
+
+            return excludedTypeNames;
+        }
+
+        /// <summary>
+        /// Builds the set of compile-time generic symbols declared anywhere on the class surface so they never become includes.
+        /// </summary>
+        /// <param name="conversionClass">The class whose generic symbols should stay compile-time only.</param>
+        /// <returns>A case-sensitive set of generic symbol names that must not generate includes.</returns>
+        static HashSet<string> GetExcludedTypeNames(ConversionClass conversionClass) {
+            HashSet<string> excludedTypeNames = new HashSet<string>(StringComparer.Ordinal);
+
+            if (conversionClass.GenericArgs != null) {
+                foreach (string genericArgument in conversionClass.GenericArgs) {
+                    excludedTypeNames.Add(genericArgument);
+                }
+            }
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                if (function.GenericParameters == null) {
+                    continue;
+                }
+
+                foreach (string genericParameter in function.GenericParameters) {
+                    excludedTypeNames.Add(genericParameter);
+                }
+            }
+
+            return excludedTypeNames;
         }
 
         /// <summary>
@@ -176,6 +239,13 @@ namespace cs2.cpp {
 
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
 
+            if (string.Equals(referencedClass, "Array", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Array", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Array", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeArray");
+                return "runtime/array";
+            }
+
             if (string.Equals(referencedClass, "IDisposable", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.IDisposable", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "IDisposable", StringComparison.Ordinal)) {
@@ -196,6 +266,17 @@ namespace cs2.cpp {
                 }
 
                 return "runtime/native_equatable";
+            }
+
+            if (string.Equals(referencedClass, "Type", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Type", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Type", StringComparison.Ordinal)) {
+                if (processor != null) {
+                    CPPTypeData runtimeTypeData;
+                    processor.ConvertToCPPType(VariableUtil.GetVarType(normalizedReferencedClass), out runtimeTypeData);
+                }
+
+                return "runtime/native_type";
             }
 
             string includePath = TryResolveIncludePath(referencedClass);
@@ -219,6 +300,12 @@ namespace cs2.cpp {
                 !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "Stream")) {
                 processor?.RegisterRuntimeRequirement("Stream");
                 return "system/io/stream";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "FileStream", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "FileStream")) {
+                processor?.RegisterRuntimeRequirement("FileStream");
+                return "system/io/file-stream";
             }
 
             if (!string.IsNullOrWhiteSpace(includePath)) {
@@ -538,6 +625,7 @@ namespace cs2.cpp {
         /// <param name="function">The function to declare.</param>
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         void WriteFunctionDeclaration(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter) {
+            WriteFunctionTemplateDeclaration(function, headerWriter, "    ");
             headerWriter.Write("    ");
 
             if (function.IsStatic) {
@@ -560,11 +648,14 @@ namespace cs2.cpp {
         /// <param name="function">The function to define.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            WriteFunctionTemplateDeclaration(function, sourceWriter, string.Empty);
+
             if (!function.IsConstructor) {
                 sourceWriter.Write($"{GetReturnType(function)} ");
             }
 
-            sourceWriter.Write($"{conversionClass.Name}::{GetFunctionName(conversionClass, function)}(");
+            sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}(");
             WriteParameters(function, sourceWriter);
             sourceWriter.WriteLine(")");
             sourceWriter.WriteLine("{");
@@ -575,6 +666,22 @@ namespace cs2.cpp {
 
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Writes a template declaration for a generic method so method type parameters remain compile-time only.
+        /// </summary>
+        /// <param name="function">The function whose generic parameters should be declared.</param>
+        /// <param name="writer">Writer that receives the template declaration.</param>
+        /// <param name="indentation">Indentation applied before the template line.</param>
+        void WriteFunctionTemplateDeclaration(ConversionFunction function, TextWriter writer, string indentation) {
+            if (function.GenericParameters == null || function.GenericParameters.Count == 0) {
+                return;
+            }
+
+            string templateArguments = string.Join(", ", function.GenericParameters.Select(static argument => $"typename {argument}"));
+            writer.Write(indentation);
+            writer.WriteLine($"template <{templateArguments}>");
         }
 
         /// <summary>
@@ -605,6 +712,19 @@ namespace cs2.cpp {
             }
 
             return function.Name;
+        }
+
+        /// <summary>
+        /// Resolves the emitted class qualification token, including compile-time generic arguments when required.
+        /// </summary>
+        /// <param name="conversionClass">The class whose qualified emitted name is needed.</param>
+        /// <returns>The emitted class qualification token.</returns>
+        string GetQualifiedClassName(ConversionClass conversionClass) {
+            if (conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0) {
+                return conversionClass.Name;
+            }
+
+            return $"{conversionClass.Name}<{string.Join(", ", conversionClass.GenericArgs)}>";
         }
 
         /// <summary>
