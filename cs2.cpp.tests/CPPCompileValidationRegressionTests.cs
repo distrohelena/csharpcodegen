@@ -136,6 +136,80 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures cyclic generated pointer references emit forward declarations so headers stay compilable without depending on include order.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCyclicGeneratedPointerReferences_EmitsForwardDeclarations() {
+            string source = """
+                public class Component {
+                    public Entity Parent;
+                }
+
+                public class Entity {
+                    public Component Component;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string entityHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Entity.hpp"));
+            string componentHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Component.hpp"));
+
+            Assert.Contains("class Component;", entityHeader);
+            Assert.Contains("class Entity;", componentHeader);
+            Assert.Contains("Component* Component", entityHeader);
+            Assert.Contains("Entity* Parent", componentHeader);
+        }
+
+        /// <summary>
+        /// Ensures generated references to generic converted types emit template-aware forward declarations instead of non-template class declarations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericGeneratedReference_EmitsTemplateForwardDeclaration() {
+            string source = """
+                public class Stream {
+                }
+
+                public interface IContentProcessor<T> {
+                    T Read(Stream stream);
+                }
+
+                public class ContentManager {
+                    public IContentProcessor<Stream> Processor;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string contentManagerHeader = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+
+            Assert.Contains("template <typename T>", contentManagerHeader);
+            Assert.Contains("class IContentProcessor_1;", contentManagerHeader);
+            Assert.Contains("#include \"IContentProcessor_1.hpp\"", contentManagerHeader);
+        }
+
+        /// <summary>
+        /// Ensures generated enum references do not emit invalid class forward declarations that conflict with enum class output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEnumReference_DoesNotEmitClassForwardDeclaration() {
+            string source = """
+                public enum ButtonState {
+                    Released,
+                    Pressed
+                }
+
+                public class InputState {
+                    public ButtonState Button;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string inputStateHeader = File.ReadAllText(Path.Combine(output.OutputPath, "InputState.hpp"));
+
+            Assert.DoesNotContain("class ButtonState;", inputStateHeader, StringComparison.Ordinal);
+            Assert.Contains("#include \"ButtonState.hpp\"", inputStateHeader);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

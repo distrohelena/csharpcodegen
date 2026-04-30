@@ -3562,10 +3562,11 @@ namespace cs2.ts {
         /// <param name="context">The active conversion context.</param>
         /// <param name="parenthesizedExpression">The parenthesized expression.</param>
         /// <param name="lines">The output lines to append to.</param>
-        protected override void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
+        protected override ExpressionResult ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
             lines.Add("(");
-            ProcessExpression(semantic, context, parenthesizedExpression.Expression, lines);
+            ExpressionResult result = ProcessExpression(semantic, context, parenthesizedExpression.Expression, lines);
             lines.Add(")");
+            return result;
         }
 
         /// <summary>

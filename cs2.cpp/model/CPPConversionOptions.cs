@@ -46,9 +46,19 @@ namespace cs2.cpp {
         public bool WriteConversionReport { get; set; }
 
         /// <summary>
+        /// Gets or sets the explicit feature profile that controls optional subsystem pruning.
+        /// </summary>
+        public CPPBuildFeatureProfile BuildFeatureProfile { get; set; } = CPPBuildFeatureProfile.CreateDefault();
+
+        /// <summary>
         /// Gets or sets whether native runtime metadata should be loaded during converter construction.
         /// </summary>
         public bool LoadNativeRuntimeMetadata { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets an optional mirror folder that receives a fresh copy of the generated core for the Windows host repository.
+        /// </summary>
+        public string WindowsHandoffOutputFolder { get; set; } = string.Empty;
 
         /// <summary>
         /// Creates the default option set for the first Windows headless milestone.

@@ -14,8 +14,9 @@ namespace cs2.cpp {
         /// <param name="outputFolder">Output folder that receives the config header.</param>
         /// <param name="options">Active conversion options.</param>
         /// <param name="registrar">Runtime requirement registrar for the active conversion run.</param>
+        /// <param name="buildUsageReport">Resolved feature decisions for the active build.</param>
         /// <returns>The full path to the generated config header.</returns>
-        public static string Write(string outputFolder, CPPConversionOptions options, CPPRuntimeRequirementRegistrar registrar) {
+        public static string Write(string outputFolder, CPPConversionOptions options, CPPRuntimeRequirementRegistrar registrar, CPPBuildUsageReport buildUsageReport = null) {
             if (string.IsNullOrWhiteSpace(outputFolder)) {
                 throw new ArgumentException("Output folder must not be empty.", nameof(outputFolder));
             }
@@ -47,6 +48,8 @@ namespace cs2.cpp {
                 $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}"
             };
 
+            AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());
+
             foreach (CPPRuntimeRequirementDefinition requirement in registrar.RegisteredRequirements.OrderBy(requirement => requirement.Name, StringComparer.Ordinal)) {
                 lines.Add($"#define {requirement.ConfigDefineName} 1");
             }
@@ -57,6 +60,13 @@ namespace cs2.cpp {
 
         static int ToDefineValue(bool value) {
             return value ? 1 : 0;
+        }
+
+        static void AppendFeatureDefines(List<string> lines, CPPBuildUsageReport buildUsageReport) {
+            foreach (CPPFeatureKind feature in Enum.GetValues<CPPFeatureKind>()) {
+                bool enabled = buildUsageReport.GetDecision(feature).Enabled;
+                lines.Add($"#define HE_CPP_FEATURE_{feature.ToString().ToUpperInvariant()} {ToDefineValue(enabled)}");
+            }
         }
     }
 }

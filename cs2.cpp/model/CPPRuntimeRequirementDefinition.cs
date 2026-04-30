@@ -22,5 +22,10 @@ namespace cs2.cpp {
         /// Gets or sets a short human-readable description of the requirement role.
         /// </summary>
         public string Description { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets the features that own this runtime requirement when feature pruning is enabled.
+        /// </summary>
+        public List<CPPFeatureKind> OwningFeatures { get; } = new List<CPPFeatureKind>();
     }
 }

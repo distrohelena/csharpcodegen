@@ -12,7 +12,9 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                exts.Add($"public {ext}");
+                ConversionClass? generatedBaseClass = program.FindGeneratedClass(ext, 0);
+                string emittedBaseTypeName = generatedBaseClass?.GetEmittedTypeName() ?? ext;
+                exts.Add($"public {emittedBaseTypeName}");
             }
 
             return string.Join(", ", exts);

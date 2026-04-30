@@ -2,6 +2,7 @@ using cs2.core;
 using cs2.core.Pipeline;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.MSBuild;
 using System.Reflection;
 
@@ -19,6 +20,7 @@ namespace cs2.cpp {
         public CPPConversionRules CPPRules { get; private set; }
         public CPPConversionOptions Options { get; private set; }
         public CPPConversionReport Report { get; private set; }
+        public CPPBuildUsageReport BuildUsageReport { get; private set; }
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
 
@@ -33,6 +35,7 @@ namespace cs2.cpp {
             preprocessorSymbols = BuildPreprocessorSymbols(Options);
             includeProjectPreprocessorSymbols = Options.IncludeProjectDefinedPreprocessorSymbols;
             Report = new CPPConversionReport();
+            BuildUsageReport = new CPPBuildUsageReport();
             RuntimeRequirementCatalog = new CPPRuntimeRequirementCatalog();
             RuntimeRequirementRegistrar = new CPPRuntimeRequirementRegistrar(RuntimeRequirementCatalog, Report);
 
@@ -108,29 +111,43 @@ namespace cs2.cpp {
                 { "ASSEMBLY_DESCRIPTION", targetFramework }
             };
 
-            string rootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, ".net.cpp");
-            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
-
-
             if (Directory.Exists(outputFolder)) {
                 //Directory.Delete(outputFolder, true);
             }
 
             Directory.CreateDirectory(outputFolder);
-            string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar);
+
+            BuildUsageReport = ResolveBuildUsageReport();
+            Report.BuildUsageReport = BuildUsageReport;
+            RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
+
+            string rootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, ".net.cpp");
+            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
+
+            writeClasses(outputFolder, BuildUsageReport);
+            PruneDisabledFeatureRuntimeFiles(outputFolder);
+
+            string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
 
-            writeClasses(outputFolder);
+            foreach (string manifestFile in CPPFeatureManifestWriter.Write(outputFolder, BuildUsageReport)) {
+                TrackEmittedFile(manifestFile);
+            }
 
             foreach (string harnessFile in CPPCompileHarnessWriter.Write(outputFolder, Options)) {
                 TrackEmittedFile(harnessFile);
             }
+
+            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder);
+            TrackEmittedFile(windowsHandoffPath);
 
             if (Options.WriteConversionReport) {
                 string reportPath = Path.Combine(outputFolder, CPPConversionReportWriter.DefaultFileName);
                 TrackEmittedFile(reportPath);
                 CPPConversionReportWriter.Write(outputFolder, Report, Options);
             }
+
+            MirrorWindowsHandoffOutput(outputFolder);
 
             //string outputFile = Path.Combine(outputFolder, fileName);
             //string outputDir = Path.GetDirectoryName(outputFile)!;
@@ -208,7 +225,10 @@ namespace cs2.cpp {
             targetFramework = string.Empty;
 
             Report.Reset();
+            BuildUsageReport = new CPPBuildUsageReport();
+            Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.Reset();
+            RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
             RuntimeRequirementRegistrar.RegisterDefaults(Options);
             SynchronizeRunState();
         }
@@ -271,16 +291,79 @@ namespace cs2.cpp {
             }
         }
 
-        private void writeClasses(string folder) {
-            SortProgram();
+        /// <summary>
+        /// Removes feature-owned runtime helper files that were not registered for the resolved build.
+        /// </summary>
+        /// <param name="outputFolder">Generated output folder that contains copied runtime templates.</param>
+        void PruneDisabledFeatureRuntimeFiles(string outputFolder) {
+            foreach (CPPRuntimeRequirementDefinition definition in RuntimeRequirementCatalog.Definitions) {
+                if (definition.OwningFeatures.Count == 0) {
+                    continue;
+                }
 
-            for (int i = 0; i < program.Classes.Count; i++) {
-                ConversionClass cl = program.Classes[i];
+                if (RuntimeRequirementRegistrar.IsRegistered(definition.Name)) {
+                    continue;
+                }
+
+                string runtimePath = Path.Combine(outputFolder, definition.IncludePath.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(runtimePath)) {
+                    File.Delete(runtimePath);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Mirrors generated output into the configured Windows handoff folder when the conversion options request it.
+        /// </summary>
+        /// <param name="outputFolder">Generated output folder that contains the fresh core files.</param>
+        void MirrorWindowsHandoffOutput(string outputFolder) {
+            if (string.IsNullOrWhiteSpace(Options.WindowsHandoffOutputFolder)) {
+                return;
+            }
+
+            string sourcePath = Path.GetFullPath(outputFolder);
+            string handoffPath = Path.GetFullPath(Options.WindowsHandoffOutputFolder);
+
+            if (string.Equals(sourcePath, handoffPath, StringComparison.OrdinalIgnoreCase)) {
+                return;
+            }
+
+            if (Directory.Exists(handoffPath)) {
+                Directory.Delete(handoffPath, true);
+            }
+
+            CopyGeneratedOutputRecursively(new DirectoryInfo(sourcePath), new DirectoryInfo(handoffPath));
+        }
+
+        /// <summary>
+        /// Copies fully generated output files into a handoff folder without reapplying template replacements.
+        /// </summary>
+        /// <param name="sourceDirectory">Directory that contains the completed generated output.</param>
+        /// <param name="targetDirectory">Directory that receives the mirrored handoff copy.</param>
+        static void CopyGeneratedOutputRecursively(DirectoryInfo sourceDirectory, DirectoryInfo targetDirectory) {
+            Directory.CreateDirectory(targetDirectory.FullName);
+
+            foreach (DirectoryInfo childDirectory in sourceDirectory.GetDirectories()) {
+                DirectoryInfo childTargetDirectory = new DirectoryInfo(Path.Combine(targetDirectory.FullName, childDirectory.Name));
+                CopyGeneratedOutputRecursively(childDirectory, childTargetDirectory);
+            }
+
+            foreach (FileInfo sourceFile in sourceDirectory.GetFiles()) {
+                sourceFile.CopyTo(Path.Combine(targetDirectory.FullName, sourceFile.Name), true);
+            }
+        }
+
+        private void writeClasses(string folder, CPPBuildUsageReport buildUsageReport) {
+            SortProgram();
+            CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport);
+
+            for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
+                ConversionClass cl = reachabilityPlan.Types[i];
                 if (cl.IsNative) {
                     continue;
                 }
 
-                string filePath = Path.Combine(folder, cl.Name);
+                string filePath = Path.Combine(folder, cl.GetEmittedTypeName());
                 string headerPath = filePath + ".hpp";
                 string codePath = filePath + ".cpp";
 
@@ -299,6 +382,24 @@ namespace cs2.cpp {
                 TrackEmittedFile(codePath);
                 Report.EmittedTypeCount++;
             }
+        }
+
+        /// <summary>
+        /// Resolves the feature usage report for the currently loaded Roslyn project.
+        /// </summary>
+        /// <returns>The resolved build usage report for the current conversion.</returns>
+        CPPBuildUsageReport ResolveBuildUsageReport() {
+            if (project == null) {
+                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Array.Empty<CPPFeatureUsageRoot>());
+            }
+
+            Compilation compilation = AsyncUtil.RunSync(() => project.GetCompilationAsync());
+            if (compilation is not CSharpCompilation csharpCompilation) {
+                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Array.Empty<CPPFeatureUsageRoot>());
+            }
+
+            IReadOnlyList<CPPFeatureUsageRoot> detectedRoots = CPPFeatureScanner.Scan(csharpCompilation);
+            return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, detectedRoots);
         }
 
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {

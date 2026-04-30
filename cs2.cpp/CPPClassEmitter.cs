@@ -60,6 +60,7 @@ namespace cs2.cpp {
 
             bool wroteInclude = false;
             HashSet<string> referencedTypes = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> forwardDeclaredTypes = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
 
             foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
@@ -75,6 +76,20 @@ namespace cs2.cpp {
             }
 
             AddSignatureTypeReferences(conversionClass, referencedTypes);
+
+            foreach (string referencedType in referencedTypes) {
+                if (TryResolveForwardDeclaration(conversionClass, referencedType, out string forwardDeclaration)) {
+                    forwardDeclaredTypes.Add(forwardDeclaration);
+                }
+            }
+
+            foreach (string forwardDeclaration in forwardDeclaredTypes) {
+                headerWriter.WriteLine(forwardDeclaration);
+            }
+
+            if (forwardDeclaredTypes.Count > 0) {
+                headerWriter.WriteLine();
+            }
 
             foreach (string referencedType in referencedTypes) {
                 if (WriteInclude(headerWriter, conversionClass, referencedType)) {
@@ -122,9 +137,18 @@ namespace cs2.cpp {
                 ? new HashSet<string>(StringComparer.Ordinal)
                 : new HashSet<string>(excludedTypeNames, StringComparer.Ordinal);
 
-            if (!string.IsNullOrWhiteSpace(variableType.TypeName) &&
+            if (variableType.IsNullable) {
+                referencedTypes.Add("Nullable");
+            }
+
+            string referencedTypeName = variableType.GenericArgs.Count > 0
+                ? variableType.ToString()
+                : variableType.TypeName;
+
+            if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
+                !excludedTypeNameSet.Contains(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(variableType.TypeName)) {
-                referencedTypes.Add(variableType.TypeName);
+                referencedTypes.Add(referencedTypeName);
             }
 
             if (variableType.GenericArgs == null) {
@@ -196,9 +220,15 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when an include directive was emitted; otherwise <c>false</c>.</returns>
         bool WriteInclude(TextWriter headerWriter, ConversionClass conversionClass, string referencedClass) {
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+            string currentEmittedTypeName = conversionClass.GetEmittedTypeName();
 
-            if (string.Equals(referencedClass, conversionClass.Name, StringComparison.Ordinal) ||
-                string.Equals(normalizedReferencedClass, conversionClass.Name, StringComparison.Ordinal)) {
+            if (TryResolveGeneratedClass(referencedClass, out ConversionClass generatedClass) &&
+                string.Equals(generatedClass.GetEmittedTypeName(), currentEmittedTypeName, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (string.Equals(referencedClass, currentEmittedTypeName, StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, currentEmittedTypeName, StringComparison.Ordinal)) {
                 return false;
             }
 
@@ -218,12 +248,79 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Resolves whether a referenced type should be forward declared to break generated header cycles.
+        /// </summary>
+        /// <param name="conversionClass">The type currently being emitted.</param>
+        /// <param name="referencedClass">Referenced type name to inspect.</param>
+        /// <param name="forwardDeclaration">Receives the forward declaration text when a generated type declaration should be emitted.</param>
+        /// <returns><c>true</c> when a generated type forward declaration should be emitted; otherwise <c>false</c>.</returns>
+        bool TryResolveForwardDeclaration(ConversionClass conversionClass, string referencedClass, out string forwardDeclaration) {
+            forwardDeclaration = string.Empty;
+
+            if (!TryResolveGeneratedClass(referencedClass, out ConversionClass generatedClass)) {
+                return false;
+            }
+
+            string generatedTypeName = generatedClass.GetEmittedTypeName();
+            if (string.Equals(generatedTypeName, conversionClass.GetEmittedTypeName(), StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (generatedClass.DeclarationType == MemberDeclarationType.Enum) {
+                return false;
+            }
+
+            if (generatedClass.GenericArgs != null && generatedClass.GenericArgs.Count > 0) {
+                string templateParameters = string.Join(", ", generatedClass.GenericArgs.Select(static genericArgument => $"typename {genericArgument}"));
+                forwardDeclaration = $"template <{templateParameters}> class {generatedTypeName};";
+                return true;
+            }
+
+            forwardDeclaration = $"class {generatedTypeName};";
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves a referenced type name back to a generated class model when the type belongs to the converted program.
+        /// </summary>
+        /// <param name="referencedClass">Referenced type name to inspect.</param>
+        /// <param name="generatedClass">Receives the matching generated class when found.</param>
+        /// <returns><c>true</c> when the reference resolves to a generated class; otherwise <c>false</c>.</returns>
+        bool TryResolveGeneratedClass(string referencedClass, out ConversionClass generatedClass) {
+            generatedClass = null;
+
+            if (string.IsNullOrWhiteSpace(referencedClass)) {
+                return false;
+            }
+
+            VariableType variableType = VariableUtil.GetVarType(referencedClass);
+            generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
+            if (generatedClass != null) {
+                return true;
+            }
+
+            string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+            generatedClass = program.Classes.FirstOrDefault(candidate =>
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), referencedClass, StringComparison.Ordinal));
+
+            if (generatedClass != null) {
+                return true;
+            }
+
+            generatedClass = program.Classes.FirstOrDefault(candidate =>
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), normalizedReferencedClass, StringComparison.Ordinal));
+            return generatedClass != null;
+        }
+
+        /// <summary>
         /// Writes the source preamble that binds a converted implementation file to its header.
         /// </summary>
         /// <param name="conversionClass">The type being emitted.</param>
         /// <param name="sourceWriter">Writer that receives the source preamble.</param>
         void WriteSourcePreamble(ConversionClass conversionClass, TextWriter sourceWriter) {
-            sourceWriter.WriteLine($"#include \"{conversionClass.Name}.hpp\"");
+            sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedTypeName()}.hpp\"");
             sourceWriter.WriteLine();
         }
 
@@ -238,12 +335,41 @@ namespace cs2.cpp {
             }
 
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+            VariableType referencedType = VariableUtil.GetVarType(referencedClass);
+            string referencedTypeName = referencedType.TypeName;
 
             if (string.Equals(referencedClass, "Array", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.Array", StringComparison.Ordinal) ||
-                string.Equals(normalizedReferencedClass, "Array", StringComparison.Ordinal)) {
+                string.Equals(normalizedReferencedClass, "Array", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Array", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeArray");
                 return "runtime/array";
+            }
+
+            if (referencedType.Type == VariableDataType.Tuple ||
+                string.Equals(referencedTypeName, "ValueTuple", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeTuple");
+                return "runtime/native_tuple";
+            }
+
+            if (string.Equals(referencedClass, "Span", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Span", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Span", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Span", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "ReadOnlySpan", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.ReadOnlySpan", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "ReadOnlySpan", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "ReadOnlySpan", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeSpan");
+                return "runtime/native_span";
+            }
+
+            if (string.Equals(referencedClass, "Nullable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Nullable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Nullable", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Nullable", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeNullable");
+                return "runtime/native_nullable";
             }
 
             if (string.Equals(referencedClass, "IDisposable", StringComparison.Ordinal) ||
@@ -279,6 +405,107 @@ namespace cs2.cpp {
                 return "runtime/native_type";
             }
 
+            if (string.Equals(referencedClass, "DateTime", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.DateTime", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "DateTime", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "DateTime", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "TimeSpan", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeDateTime");
+                return "runtime/native_datetime";
+            }
+
+            if (string.Equals(referencedClass, "StringBuilder", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.StringBuilder", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "StringBuilder", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "StringBuilder", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("StringBuilder");
+                return "system/text/string-builder";
+            }
+
+            if (string.Equals(referencedClass, "Regex", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "Match", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "Group", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.Regex", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.Match", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.Group", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Text.RegularExpressions.RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Regex", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Match", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Group", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Regex", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Match", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Group", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "RegexOptions", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Regex");
+                return "system/text/regular_expressions/regex";
+            }
+
+            if (string.Equals(referencedClass, "StringReader", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.IO.StringReader", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "StringReader", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "StringReader", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("StringReader");
+                return "system/io/string-reader";
+            }
+
+            if (string.Equals(referencedClass, "StreamReader", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.IO.StreamReader", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "StreamReader", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "StreamReader", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("StreamReader");
+                return "system/io/stream-reader";
+            }
+
+            if (string.Equals(referencedClass, "Stack", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.Stack", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Stack", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Stack", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeStack");
+                return "runtime/native_stack";
+            }
+
+            if (string.Equals(referencedClass, "Event", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Event", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeEvent");
+                return "runtime/native_event";
+            }
+
+            if (string.Equals(referencedClass, "Action", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Action", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Action", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Action", StringComparison.Ordinal)) {
+                return "system/action";
+            }
+
+            if (string.Equals(referencedClass, "Func", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Func", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Func", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Func", StringComparison.Ordinal)) {
+                return "system/func";
+            }
+
+            if (string.Equals(referencedClass, "IntPtr", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.IntPtr", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "IntPtr", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "UIntPtr", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.UIntPtr", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "UIntPtr", StringComparison.Ordinal)) {
+                return string.Empty;
+            }
+
             string includePath = TryResolveIncludePath(referencedClass);
             if (!string.IsNullOrWhiteSpace(includePath) &&
                 !string.Equals(includePath, referencedClass, StringComparison.Ordinal)) {
@@ -300,6 +527,24 @@ namespace cs2.cpp {
                 !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "Stream")) {
                 processor?.RegisterRuntimeRequirement("Stream");
                 return "system/io/stream";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "StringReader", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "StringReader")) {
+                processor?.RegisterRuntimeRequirement("StringReader");
+                return "system/io/string-reader";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "StreamReader", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "StreamReader")) {
+                processor?.RegisterRuntimeRequirement("StreamReader");
+                return "system/io/stream-reader";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "MemoryStream", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "MemoryStream")) {
+                processor?.RegisterRuntimeRequirement("MemoryStream");
+                return "system/io/memory-stream";
             }
 
             if (string.Equals(normalizedReferencedClass, "FileStream", StringComparison.Ordinal) &&
@@ -327,6 +572,10 @@ namespace cs2.cpp {
                 return "runtime/array";
             }
 
+            if (variableType.Type == VariableDataType.Tuple || string.Equals(variableType.TypeName, "ValueTuple", StringComparison.Ordinal)) {
+                return "runtime/native_tuple";
+            }
+
             if (variableType.Type == VariableDataType.String) {
                 return "runtime/native_string";
             }
@@ -339,9 +588,31 @@ namespace cs2.cpp {
                 return "runtime/native_dictionary";
             }
 
-            ConversionClass generatedClass = program.Classes.FirstOrDefault(candidate => !candidate.IsNative && candidate.Name == variableType.TypeName);
+            if (string.Equals(variableType.TypeName, "Stack", StringComparison.Ordinal)) {
+                return "runtime/native_stack";
+            }
+
+            if (string.Equals(variableType.TypeName, "StringReader", StringComparison.Ordinal)) {
+                return "system/io/string-reader";
+            }
+
+            if (string.Equals(variableType.TypeName, "Regex", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "Match", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "Group", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "RegexOptions", StringComparison.Ordinal)) {
+                return "system/text/regular_expressions/regex";
+            }
+
+            ConversionClass generatedClass = null;
+            if (TryResolveGeneratedClass(referencedClass, out generatedClass)) {
+                return generatedClass.GetEmittedTypeName();
+            }
+
+            generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
             if (generatedClass != null) {
-                return generatedClass.Name;
+                return generatedClass.GetEmittedTypeName();
             }
 
             CPPKnownClass knownSourceClass = program.Requirements.FirstOrDefault(requirement => requirement.Name == variableType.TypeName);
@@ -391,7 +662,7 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The enum type to emit.</param>
         /// <param name="headerWriter">Writer that receives the enum declaration.</param>
         void WriteEnum(ConversionClass conversionClass, TextWriter headerWriter) {
-            headerWriter.WriteLine($"enum class {conversionClass.Name}");
+            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}");
             headerWriter.WriteLine("{");
 
             List<string> members = GetEnumMembers(conversionClass);
@@ -448,11 +719,12 @@ namespace cs2.cpp {
         void WriteClass(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
             WriteTemplateDeclaration(conversionClass, headerWriter);
 
+            string emittedTypeName = conversionClass.GetEmittedTypeName();
             string inheritance = CPPUtils.GetInheritance(program, conversionClass);
             if (string.IsNullOrWhiteSpace(inheritance)) {
-                headerWriter.WriteLine($"class {conversionClass.Name}");
+                headerWriter.WriteLine($"class {emittedTypeName}");
             } else {
-                headerWriter.WriteLine($"class {conversionClass.Name} : {inheritance}");
+                headerWriter.WriteLine($"class {emittedTypeName} : {inheritance}");
             }
 
             headerWriter.WriteLine("{");
@@ -708,7 +980,7 @@ namespace cs2.cpp {
         /// <returns>The emitted function name.</returns>
         string GetFunctionName(ConversionClass conversionClass, ConversionFunction function) {
             if (function.IsConstructor) {
-                return conversionClass.Name;
+                return conversionClass.GetEmittedTypeName();
             }
 
             return function.Name;
@@ -720,11 +992,12 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The class whose qualified emitted name is needed.</param>
         /// <returns>The emitted class qualification token.</returns>
         string GetQualifiedClassName(ConversionClass conversionClass) {
+            string emittedTypeName = conversionClass.GetEmittedTypeName();
             if (conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0) {
-                return conversionClass.Name;
+                return emittedTypeName;
             }
 
-            return $"{conversionClass.Name}<{string.Join(", ", conversionClass.GenericArgs)}>";
+            return $"{emittedTypeName}<{string.Join(", ", conversionClass.GenericArgs)}>";
         }
 
         /// <summary>

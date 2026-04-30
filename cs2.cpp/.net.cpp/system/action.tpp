@@ -1,23 +1,23 @@
 #ifndef ACTION_TPP
 #define ACTION_TPP
 
-#include "Action.hpp"
+#include "action.hpp"
 
 // Function pointer constructor
-template<typename T>
-Action<T>::Action(FuncType f) : func(f) {}
+template<typename... TArgs>
+Action<TArgs...>::Action(FuncType f) : func(f) {}
 
 // Invoke function
-template<typename T>
-void Action<T>::operator()(T arg) const {
+template<typename... TArgs>
+void Action<TArgs...>::operator()(TArgs... args) const {
     if (func) {
-        func(arg);
+        func(args...);
     }
 }
 
 // Check if Action is valid
-template<typename T>
-Action<T>::operator bool() const {
+template<typename... TArgs>
+Action<TArgs...>::operator bool() const {
     return func != nullptr;
 }
 

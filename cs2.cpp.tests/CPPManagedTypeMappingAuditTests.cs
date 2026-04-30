@@ -63,6 +63,31 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures pointer-sized managed handles lower to native pointer-sized integers instead of synthetic generated headers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithIntPtrSignature_UsesNativePointerSizedIntegerMapping() {
+            string source = """
+                using System;
+
+                public class NativeHandleGate {
+                    public IntPtr MainHandle;
+
+                    public void SetHandle(IntPtr handle) {
+                        this.MainHandle = handle;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("intptr_t MainHandle;", output.GeneratedText);
+            Assert.Contains("void SetHandle(intptr_t handle)", output.GeneratedText);
+            Assert.DoesNotContain("IntPtr*", output.GeneratedText, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"IntPtr.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

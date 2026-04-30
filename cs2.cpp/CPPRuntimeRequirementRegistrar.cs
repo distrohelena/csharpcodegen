@@ -4,6 +4,7 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPRuntimeRequirementRegistrar {
         readonly CPPRuntimeRequirementCatalog catalog;
+        CPPBuildUsageReport buildUsageReport;
         readonly Dictionary<string, CPPRuntimeRequirementDefinition> registeredRequirements;
         readonly CPPConversionReport report;
 
@@ -15,6 +16,7 @@ namespace cs2.cpp {
         public CPPRuntimeRequirementRegistrar(CPPRuntimeRequirementCatalog catalog, CPPConversionReport report) {
             this.catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
             this.report = report ?? throw new ArgumentNullException(nameof(report));
+            buildUsageReport = new CPPBuildUsageReport();
             registeredRequirements = new Dictionary<string, CPPRuntimeRequirementDefinition>(StringComparer.Ordinal);
         }
 
@@ -44,6 +46,14 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Applies the resolved feature decisions that should gate feature-owned runtime requirements.
+        /// </summary>
+        /// <param name="buildUsageReport">Resolved feature decisions for the active build.</param>
+        public void ApplyBuildUsageReport(CPPBuildUsageReport buildUsageReport) {
+            this.buildUsageReport = buildUsageReport ?? new CPPBuildUsageReport();
+        }
+
+        /// <summary>
         /// Clears the registered runtime requirement set so a new conversion run can rebuild it.
         /// </summary>
         public void Reset() {
@@ -65,6 +75,10 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (!IsRequirementEnabled(definition)) {
+                return false;
+            }
+
             registeredRequirements.TryAdd(definition.Name, definition);
             return true;
         }
@@ -76,6 +90,24 @@ namespace cs2.cpp {
         /// <returns>True when the requirement has been registered.</returns>
         public bool IsRegistered(string name) {
             return registeredRequirements.ContainsKey(name);
+        }
+
+        bool IsRequirementEnabled(CPPRuntimeRequirementDefinition definition) {
+            if (definition == null) {
+                throw new ArgumentNullException(nameof(definition));
+            }
+
+            if (definition.OwningFeatures.Count == 0) {
+                return true;
+            }
+
+            foreach (CPPFeatureKind owningFeature in definition.OwningFeatures) {
+                if (buildUsageReport.IsEnabled(owningFeature)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

@@ -24,6 +24,34 @@ public class CPPGeneratedConfigWriterTests {
     }
 
     /// <summary>
+    /// Ensures feature-owned runtime helpers are skipped when every owning feature resolved to disabled.
+    /// </summary>
+    [Fact]
+    public void Register_WhenFeatureOwnedRequirementIsDisabled_SkipsRegistration() {
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(catalog, report);
+        CPPBuildUsageReport buildUsageReport = new CPPBuildUsageReport();
+
+        buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
+            Feature = CPPFeatureKind.DebugOverlay,
+            Enabled = false,
+            Origin = CPPFeatureDecisionOrigin.ForcedDisabled
+        });
+        buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
+            Feature = CPPFeatureKind.Shaders,
+            Enabled = false,
+            Origin = CPPFeatureDecisionOrigin.ForcedDisabled
+        });
+
+        registrar.ApplyBuildUsageReport(buildUsageReport);
+
+        Assert.False(registrar.Register("StringBuilder"));
+        Assert.False(registrar.IsRegistered("StringBuilder"));
+        Assert.False(report.HasErrors);
+    }
+
+    /// <summary>
     /// Ensures the generated config writer emits profile and runtime requirement defines.
     /// </summary>
     [Fact]
@@ -43,5 +71,35 @@ public class CPPGeneratedConfigWriterTests {
         Assert.Contains("#define HE_CPP_REQ_NATIVE_STRING 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_LIST 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_DICTIONARY 1", output);
+    }
+
+    /// <summary>
+    /// Ensures the generated config writer emits resolved feature defines for compile-time pruning in native hosts.
+    /// </summary>
+    [Fact]
+    public void Write_WithResolvedFeatureUsage_WritesFeatureDefines() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
+        registrar.RegisterDefaults(options);
+
+        CPPBuildUsageReport buildUsageReport = new CPPBuildUsageReport();
+        buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
+            Feature = CPPFeatureKind.Shaders,
+            Enabled = false,
+            Origin = CPPFeatureDecisionOrigin.ForcedDisabled
+        });
+        buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
+            Feature = CPPFeatureKind.Sprites,
+            Enabled = true,
+            Origin = CPPFeatureDecisionOrigin.ForcedEnabled
+        });
+
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar, buildUsageReport);
+        string output = File.ReadAllText(filePath);
+
+        Assert.Contains("#define HE_CPP_FEATURE_SHADERS 0", output);
+        Assert.Contains("#define HE_CPP_FEATURE_SPRITES 1", output);
     }
 }

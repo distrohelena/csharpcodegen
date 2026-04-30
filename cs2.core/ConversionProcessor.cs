@@ -125,7 +125,7 @@ namespace cs2.core {
             } else if (expression is BaseExpressionSyntax baseExpression) {
                 ProcessBaseExpression(semantic, context, baseExpression, lines);
             } else if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
-                ProcessParenthesizedExpression(semantic, context, parenthesizedExpression, lines);
+                return ProcessParenthesizedExpression(semantic, context, parenthesizedExpression, lines);
             } else if (expression is ArrayCreationExpressionSyntax arrayCreation) {
                 return ProcessArrayCreationExpression(semantic, context, arrayCreation, lines);
             } else if (expression is SimpleLambdaExpressionSyntax simpleLambda) {
@@ -180,7 +180,7 @@ namespace cs2.core {
 
         protected abstract ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines);
 
-        protected abstract void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines);
+        protected abstract ExpressionResult ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines);
 
         protected abstract void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines);
 

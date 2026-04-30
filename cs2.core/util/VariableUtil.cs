@@ -83,10 +83,31 @@ namespace cs2.core {
                 return new VariableType(VariableDataType.Unknown);
             }
 
+            if (normalizedTypeName.StartsWith("[", StringComparison.Ordinal) &&
+                normalizedTypeName.EndsWith("]", StringComparison.Ordinal)) {
+                string tupleArgumentText = normalizedTypeName[1..^1];
+                VariableType tupleType = new VariableType(VariableDataType.Tuple);
+
+                foreach (string tupleArgument in SplitGenericArgumentList(tupleArgumentText)) {
+                    tupleType.GenericArgs.Add(GetVarType(tupleArgument));
+                }
+
+                return tupleType;
+            }
+
             int genericStart = FindTopLevelGenericStart(normalizedTypeName);
             if (genericStart >= 0 && normalizedTypeName.EndsWith(">", StringComparison.Ordinal)) {
                 string genericBaseName = normalizedTypeName[..genericStart].Trim();
                 string genericArgumentText = normalizedTypeName[(genericStart + 1)..^1];
+                string normalizedGenericBaseName = NormalizeLeafTypeName(genericBaseName);
+
+                if ((normalizedGenericBaseName == "Nullable" || genericBaseName == "System.Nullable") &&
+                    SplitGenericArgumentList(genericArgumentText).Take(2).Count() == 1) {
+                    VariableType nullableBaseType = GetVarType(SplitGenericArgumentList(genericArgumentText).First());
+                    nullableBaseType.IsNullable = true;
+                    return nullableBaseType;
+                }
+
                 string leafTypeName = NormalizeLeafTypeName(genericBaseName);
                 VariableType genericType = new VariableType(GetVarDataType(leafTypeName), leafTypeName);
 
@@ -173,6 +194,13 @@ namespace cs2.core {
                 GenericNameSyntax generic = (GenericNameSyntax)type;
 
                 string identifierName = generic.Identifier.ToString();
+
+                if (identifierName == "Nullable" && generic.TypeArgumentList.Arguments.Count == 1) {
+                    VariableType nullableBaseType = GetVarType(generic.TypeArgumentList.Arguments[0], semantic);
+                    nullableBaseType.IsNullable = true;
+                    return nullableBaseType;
+                }
+
                 VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
 
                 foreach (var genType in generic.TypeArgumentList.Arguments) {
@@ -466,6 +494,9 @@ namespace cs2.core {
                 case "IReadOnlyCollection":
                 case "IEnumerable":
                     return VariableDataType.List;
+                case "Stack":
+                case "IReadOnlySet":
+                    return VariableDataType.Object;
                 case "Dictionary":
                 case "IDictionary":
                 case "IReadOnlyDictionary":

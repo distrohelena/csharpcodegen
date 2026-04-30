@@ -38,6 +38,10 @@ namespace cs2.cpp {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
             }
 
+            if (expression is ElementAccessExpressionSyntax elementAccessExpression) {
+                return ProcessElementAccessExpressionResult(semantic, context, elementAccessExpression, lines);
+            }
+
             int diagnosticCount = GetDiagnosticCount();
             ExpressionResult result = base.ProcessExpression(semantic, context, expression, lines, refTypes);
 
@@ -46,6 +50,27 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Processes an element-access expression and preserves the resolved result type for downstream member-access lowering.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="elementAccess">Element-access expression to lower.</param>
+        /// <param name="lines">Output line buffer that receives lowered tokens.</param>
+        /// <returns>The lowered expression result including the resolved element type when available.</returns>
+        ExpressionResult ProcessElementAccessExpressionResult(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
+            int start = context.DepthClass;
+            ProcessElementAccessExpression(semantic, context, elementAccess, lines);
+            context.PopClass(start);
+
+            if (!TryGetExpressionTypeSymbol(semantic, elementAccess, out ITypeSymbol typeSymbol)) {
+                return new ExpressionResult(true, VariablePath.Unknown, null);
+            }
+
+            VariableType cppType = ConvertToCPPType(VariableUtil.GetVarType(typeSymbol.ToDisplayString()), out _);
+            return new ExpressionResult(true, VariablePath.Unknown, cppType);
         }
 
         /// <summary>
@@ -59,14 +84,72 @@ namespace cs2.cpp {
         /// <returns>The result produced by the last lowered statement.</returns>
         public override ExpressionResult ProcessBlock(SemanticModel semantic, LayerContext context, BlockSyntax block, List<string> lines, int depth = 1) {
             int diagnosticCount = GetDiagnosticCount();
+            ProcessStatementsInScope(semantic, context, block.Statements, 0, lines, depth);
 
-            foreach (StatementSyntax statement in block.Statements) {
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+        }
+
+        /// <summary>
+        /// Processes a contiguous statement range and rewrites C# using declarations into nested C++ scopes that preserve end-of-scope destruction.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the statements.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="statements">Statements in the active lexical scope.</param>
+        /// <param name="startIndex">Index of the next statement to lower.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        void ProcessStatementsInScope(
+            SemanticModel semantic,
+            LayerContext context,
+            SyntaxList<StatementSyntax> statements,
+            int startIndex,
+            List<string> lines,
+            int depth) {
+            for (int index = startIndex; index < statements.Count; index++) {
+                if (TryProcessUsingDeclarationScope(semantic, context, statements, index, lines, depth)) {
+                    return;
+                }
+
+                StatementSyntax statement = statements[index];
                 int start = context.DepthClass;
                 ProcessStatement(semantic, context, statement, lines, depth);
                 context.PopClass(start);
             }
+        }
 
-            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+        /// <summary>
+        /// Rewrites a C# using declaration into a nested lexical block so direct-value runtime types can rely on deterministic destruction on scope exit.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="statements">Statements in the active lexical scope.</param>
+        /// <param name="statementIndex">Index of the candidate using declaration.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="depth">Current indentation depth used by the lowerer.</param>
+        /// <returns><c>true</c> when the statement was rewritten as a scoped using declaration; otherwise, <c>false</c>.</returns>
+        bool TryProcessUsingDeclarationScope(
+            SemanticModel semantic,
+            LayerContext context,
+            SyntaxList<StatementSyntax> statements,
+            int statementIndex,
+            List<string> lines,
+            int depth) {
+            if (statements[statementIndex] is not LocalDeclarationStatementSyntax localDeclaration ||
+                !localDeclaration.UsingKeyword.IsKind(SyntaxKind.UsingKeyword)) {
+                return false;
+            }
+
+            lines.Add("{\n");
+
+            int start = context.DepthClass;
+            ProcessDeclaration(semantic, context, localDeclaration.Declaration, lines);
+            context.PopClass(start);
+            lines.Add(";\n");
+
+            ProcessStatementsInScope(semantic, context, statements, statementIndex + 1, lines, depth);
+
+            lines.Add("}\n");
+            return true;
         }
 
         /// <summary>
@@ -436,6 +519,19 @@ namespace cs2.cpp {
 
 
                     if (isClassVar) {
+                        bool isStaticClassMember = false;
+                        ISymbol identifierSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+                        if (identifierSymbol is IAliasSymbol identifierAliasSymbol) {
+                            identifierSymbol = identifierAliasSymbol.Target;
+                        }
+
+                        if (identifierSymbol is IFieldSymbol fieldSymbol) {
+                            isStaticClassMember = fieldSymbol.IsStatic;
+                        } else if (identifierSymbol is IPropertySymbol propertySymbol) {
+                            isStaticClassMember = propertySymbol.IsStatic;
+                        }
+
+                        if (!isStaticClassMember) {
                         if (lines.Count > 1) {
                             string b2 = lines[lines.Count - 2];
                             string b1 = lines[lines.Count - 1];
@@ -455,6 +551,7 @@ namespace cs2.cpp {
                             } else {
                                 lines.Add("this->");
                             }
+                        }
                         }
                     }
                 }
@@ -614,7 +711,9 @@ namespace cs2.cpp {
             }
 
             int diagnosticCount = GetDiagnosticCount();
-            lines.Add("new ");
+            if (!IsValueRuntimeTypeName(objectCreation.Type.ToString())) {
+                lines.Add("new ");
+            }
 
             int startDepth = context.DepthClass;
             ExpressionResult typeResult = ProcessExpression(semantic, context, objectCreation.Type, lines);
@@ -640,11 +739,63 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+            if (memberAccess.Expression is IdentifierNameSyntax encodingIdentifier &&
+                string.Equals(encodingIdentifier.Identifier.Text, "Encoding", StringComparison.Ordinal) &&
+                memberAccess.Name is IdentifierNameSyntax encodingMemberIdentifier) {
+                lines.Add("Encoding");
+                lines.Add("::");
+                lines.Add(encodingMemberIdentifier.Identifier.Text);
+                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType("object"));
+            }
+
+            ISymbol staticMemberSymbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+            if (staticMemberSymbol is IAliasSymbol staticMemberAliasSymbol) {
+                staticMemberSymbol = staticMemberAliasSymbol.Target;
+            }
+
+            if (staticMemberSymbol is IFieldSymbol staticFieldSymbol &&
+                staticFieldSymbol.IsStatic &&
+                staticFieldSymbol.ContainingType != null) {
+                if (string.Equals(staticFieldSymbol.ContainingType.Name, "Encoding", StringComparison.Ordinal)) {
+                    lines.Add("Encoding");
+                    lines.Add("::");
+                    lines.Add(staticFieldSymbol.Name);
+                    return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(staticFieldSymbol.Type));
+                }
+            }
+
+            if (staticMemberSymbol is IPropertySymbol staticPropertySymbol &&
+                staticPropertySymbol.IsStatic &&
+                staticPropertySymbol.ContainingType != null) {
+                if (string.Equals(staticPropertySymbol.ContainingType.Name, "Encoding", StringComparison.Ordinal)) {
+                    lines.Add("Encoding");
+                    lines.Add("::");
+                    lines.Add(staticPropertySymbol.Name);
+                    return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(staticPropertySymbol.Type));
+                }
+            }
+
             ExpressionResult result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
             if (result.Processed) {
                 bool useStaticAccess = result.VarPath == VariablePath.Static || memberAccess.Expression is BaseExpressionSyntax;
+                ISymbol memberSymbol = null;
                 if (!useStaticAccess) {
-                    ISymbol? memberSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+                    ISymbol? receiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+                    if (receiverSymbol is IAliasSymbol receiverAliasSymbol) {
+                        receiverSymbol = receiverAliasSymbol.Target;
+                    }
+
+                    if (receiverSymbol is INamespaceSymbol || receiverSymbol is INamedTypeSymbol) {
+                        useStaticAccess = true;
+                    }
+                }
+
+                if (!useStaticAccess) {
+                    memberSymbol = semantic.GetSymbolInfo(memberAccess).Symbol;
+                    if (memberSymbol == null) {
+                        memberSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+                    }
+
                     if (memberSymbol is IAliasSymbol aliasSymbol) {
                         memberSymbol = aliasSymbol.Target;
                     }
@@ -660,13 +811,30 @@ namespace cs2.cpp {
                     }
                 }
 
+                if (memberAccess.Name is IdentifierNameSyntax staticIdentifier &&
+                    IsDateTimeTypeReference(semantic, memberAccess.Expression) &&
+                    (string.Equals(staticIdentifier.Identifier.Text, "Now", StringComparison.Ordinal) ||
+                     string.Equals(staticIdentifier.Identifier.Text, "UtcNow", StringComparison.Ordinal))) {
+                    RegisterRuntimeRequirement("NativeDateTime");
+                    lines.Add("::");
+                    lines.Add(staticIdentifier.Identifier.Text);
+                    lines.Add("()");
+                    return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType("DateTime"));
+                }
+
+                bool useDirectMemberAccess = UsesDirectMemberAccess(result) ||
+                    UsesDirectMemberAccess(semantic, memberAccess.Expression) ||
+                    (memberAccess.Expression is ElementAccessExpressionSyntax elementAccessExpression &&
+                     UsesDirectMemberAccess(semantic, elementAccessExpression.Expression)) ||
+                    UsesDirectMemberAccess(memberSymbol);
+
                 // shit is this static access, pointer access or direct access
                 switch (useStaticAccess ? VariablePath.Static : result.VarPath) {
                     case VariablePath.Static:
                         lines.Add("::");
                         break;
                     default: {
-                            lines.Add("->");
+                            lines.Add(useDirectMemberAccess ? "." : "->");
 
                             if (result.Variable != null) {
                                 int xx = -1;
@@ -754,6 +922,12 @@ namespace cs2.cpp {
             lines.Add($" {op.ToStringOperator()} ");
 
             lines.AddRange(right);
+
+            if (binary.IsKind(SyntaxKind.SubtractExpression) && IsDateTimeVariableType(result.Type)) {
+                RegisterRuntimeRequirement("NativeDateTime");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("TimeSpan"));
+            }
+
             return result;
         }
 
@@ -932,10 +1106,11 @@ namespace cs2.cpp {
             return new ExpressionResult(true, VariablePath.Unknown, null);
         }
 
-        protected override void ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
+        protected override ExpressionResult ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
             lines.Add("(");
-            ProcessExpression(semantic, context, parenthesizedExpression.Expression, lines);
+            ExpressionResult result = ProcessExpression(semantic, context, parenthesizedExpression.Expression, lines);
             lines.Add(")");
+            return result;
         }
 
         protected override void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines) {
@@ -1287,11 +1462,16 @@ namespace cs2.cpp {
 
             // optionally, add resource disposal logic in the finally block
             if (usingStatement.Declaration != null) {
+                VariableType declarationType = VariableUtil.GetVarType(usingStatement.Declaration.Type, semantic);
+                CPPTypeData declarationTypeData;
+                ConvertToCPPType(declarationType, out declarationTypeData);
+                string memberAccessOperator = declarationTypeData.IsPointer ? "->" : ".";
+
                 foreach (var variable in usingStatement.Declaration.Variables) {
-                    lines.Add($"{variable.Identifier.Text}.dispose();\n");
+                    lines.Add($"{variable.Identifier.Text}{memberAccessOperator}Dispose();\n");
                 }
             } else if (usingStatement.Expression != null) {
-                lines.Add(usingStatement.Expression.ToString() + ".dispose();\n");
+                lines.Add(usingStatement.Expression.ToString() + ".Dispose();\n");
             }
 
         }
@@ -1570,6 +1750,28 @@ namespace cs2.cpp {
         public VariableType ConvertToCPPType(VariableType parsedType, out CPPTypeData typeData) {
             typeData = new CPPTypeData();
 
+            if (parsedType != null && parsedType.IsNullable) {
+                codeConverter?.RegisterRuntimeRequirement("NativeNullable");
+
+                VariableType nullableBaseSourceType = new VariableType(parsedType);
+                nullableBaseSourceType.IsNullable = false;
+
+                CPPTypeData nullableBaseTypeData;
+                VariableType nullableBaseType = ConvertToCPPType(nullableBaseSourceType, out nullableBaseTypeData);
+
+                if (nullableBaseTypeData.IsPointer) {
+                    nullableBaseType = new VariableType(
+                        VariableDataType.Unknown,
+                        $"{nullableBaseType.ToCPPString(null)}*");
+                }
+
+                typeData.IsArray = false;
+                typeData.IsNativeType = false;
+                typeData.IsPointer = false;
+
+                return new VariableType(VariableDataType.Unknown, "Nullable", genericArgs: [nullableBaseType]);
+            }
+
             switch (parsedType.Type) {
                 case VariableDataType.Single: {
                         typeData.IsArray = false;
@@ -1680,11 +1882,90 @@ namespace cs2.cpp {
                             return new VariableType(parsedType.Type, "void");
                         }
 
+                        if (string.Equals(parsedType.TypeName, "DateTime", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.DateTime", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeDateTime");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "DateTime");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "TimeSpan", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.TimeSpan", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeDateTime");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "TimeSpan");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "StringBuilder", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Text.StringBuilder", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("StringBuilder");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "StringBuilder");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "StringReader", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IO.StringReader", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("StringReader");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "StringReader");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "StreamReader", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IO.StreamReader", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("StreamReader");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "StreamReader");
+                        }
+
+                        if (IsRegexRuntimeTypeName(parsedType.TypeName)) {
+                            codeConverter?.RegisterRuntimeRequirement("Regex");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, NormalizeRegexRuntimeTypeName(parsedType.TypeName));
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Stack", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Collections.Generic.Stack", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeStack");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = true;
+                            return CreateConvertedGenericType(parsedType, "Stack");
+                        }
+
                         if (string.Equals(parsedType.TypeName, "Type", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.Type", StringComparison.Ordinal)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeType");
                             typeData.IsNativeType = false;
                             return new VariableType(parsedType.Type, "Type");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Span", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Span", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "ReadOnlySpan", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.ReadOnlySpan", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeSpan");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return CreateConvertedGenericType(parsedType, "Span");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "IntPtr", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IntPtr", StringComparison.Ordinal)) {
+                            typeData.IsNativeType = true;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "intptr_t");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "UIntPtr", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.UIntPtr", StringComparison.Ordinal)) {
+                            typeData.IsNativeType = true;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "uintptr_t");
                         }
 
                         if (string.Equals(parsedType.TypeName, "IDisposable", StringComparison.Ordinal) ||
@@ -1713,6 +1994,298 @@ namespace cs2.cpp {
                     typeData.IsPointer = true;
                     return parsedType;
             }
+        }
+
+        /// <summary>
+        /// Determines whether a lowered expression should use direct value-member access instead of pointer-member access.
+        /// </summary>
+        /// <param name="result">Lowered receiver expression metadata.</param>
+        /// <returns><c>true</c> when the receiver is a lightweight runtime value type; otherwise <c>false</c>.</returns>
+        static bool UsesDirectMemberAccess(ExpressionResult result) {
+            return result.Type != null &&
+                IsDirectRuntimeTypeName(result.Type.TypeName);
+        }
+
+        /// <summary>
+        /// Determines whether a lowered expression should use direct value-member access by inspecting Roslyn type information.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the expression type.</param>
+        /// <param name="expression">Expression to inspect.</param>
+        /// <returns><c>true</c> when the expression resolves to a lightweight runtime value type; otherwise <c>false</c>.</returns>
+        static bool UsesDirectMemberAccess(SemanticModel semantic, ExpressionSyntax expression) {
+            if (semantic == null || expression == null) {
+                return false;
+            }
+
+            return TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol typeSymbol) &&
+                (IsDirectRuntimeTypeName(typeSymbol.Name) ||
+                 IsDirectRuntimeTypeName(typeSymbol.ToDisplayString()));
+        }
+
+        /// <summary>
+        /// Determines whether a lowered member should use direct value-member access by inspecting its declaring type.
+        /// </summary>
+        /// <param name="symbol">Resolved member symbol.</param>
+        /// <returns><c>true</c> when the member belongs to a lightweight runtime value type; otherwise <c>false</c>.</returns>
+        static bool UsesDirectMemberAccess(ISymbol symbol) {
+            if (symbol == null || symbol.ContainingType == null) {
+                return false;
+            }
+
+            return IsDirectRuntimeTypeName(symbol.ContainingType.Name) ||
+                IsDirectRuntimeTypeName(symbol.ContainingType.ToDisplayString());
+        }
+
+        /// <summary>
+        /// Determines whether an expression syntax refers to the managed DateTime type.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the expression symbol.</param>
+        /// <param name="expression">Expression to inspect.</param>
+        /// <returns><c>true</c> when the expression resolves to DateTime; otherwise <c>false</c>.</returns>
+        static bool IsDateTimeTypeReference(SemanticModel semantic, ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is INamedTypeSymbol namedTypeSymbol) {
+                return string.Equals(namedTypeSymbol.Name, "DateTime", StringComparison.Ordinal) ||
+                    string.Equals(namedTypeSymbol.ToDisplayString(), "System.DateTime", StringComparison.Ordinal);
+            }
+
+            return string.Equals(expression.ToString(), "DateTime", StringComparison.Ordinal) ||
+                string.Equals(expression.ToString(), "System.DateTime", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the managed DateTime runtime value.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents DateTime; otherwise <c>false</c>.</returns>
+        static bool IsDateTimeVariableType(VariableType variableType) {
+            return variableType != null &&
+                (string.Equals(variableType.TypeName, "DateTime", StringComparison.Ordinal) ||
+                 string.Equals(variableType.TypeName, "System.DateTime", StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the managed TimeSpan runtime value.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents TimeSpan; otherwise <c>false</c>.</returns>
+        static bool IsTimeSpanVariableType(VariableType variableType) {
+            return variableType != null &&
+                (string.Equals(variableType.TypeName, "TimeSpan", StringComparison.Ordinal) ||
+                 string.Equals(variableType.TypeName, "System.TimeSpan", StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Determines whether a type-name string refers to the managed StringBuilder runtime value.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <returns><c>true</c> when the source type refers to StringBuilder; otherwise <c>false</c>.</returns>
+        static bool IsStringBuilderTypeName(string typeName) {
+            return string.Equals(typeName, "StringBuilder", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.StringBuilder", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.StringBuilder", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a type-name string refers to the managed StringReader runtime value.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <returns><c>true</c> when the source type refers to StringReader; otherwise <c>false</c>.</returns>
+        static bool IsStringReaderTypeName(string typeName) {
+            return string.Equals(typeName, "StringReader", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.StringReader", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.IO.StringReader", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a type-name string refers to the managed StreamReader runtime value.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <returns><c>true</c> when the source type refers to StreamReader; otherwise <c>false</c>.</returns>
+        static bool IsStreamReaderTypeName(string typeName) {
+            return string.Equals(typeName, "StreamReader", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.StreamReader", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.IO.StreamReader", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a type-name string refers to the lightweight regex runtime surface used by transpiled managed parsers.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <returns><c>true</c> when the source type refers to the regex runtime surface; otherwise, <c>false</c>.</returns>
+        static bool IsRegexRuntimeTypeName(string typeName) {
+            return string.Equals(typeName, "Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Match", StringComparison.Ordinal) ||
+                string.Equals(typeName, "MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Group", StringComparison.Ordinal) ||
+                string.Equals(typeName, "GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.Match", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.Group", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.Match", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.MatchCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.Group", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.GroupCollection", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.RegexOptions", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Normalizes a source regex runtime type name to its emitted C++ runtime type name.
+        /// </summary>
+        /// <param name="typeName">Source type name to normalize.</param>
+        /// <returns>The emitted C++ runtime type name.</returns>
+        static string NormalizeRegexRuntimeTypeName(string typeName) {
+            return typeName switch {
+                "System.Text.RegularExpressions.Regex" => "Regex",
+                "global::System.Text.RegularExpressions.Regex" => "Regex",
+                "System.Text.RegularExpressions.Match" => "Match",
+                "global::System.Text.RegularExpressions.Match" => "Match",
+                "System.Text.RegularExpressions.MatchCollection" => "MatchCollection",
+                "global::System.Text.RegularExpressions.MatchCollection" => "MatchCollection",
+                "System.Text.RegularExpressions.Group" => "Group",
+                "global::System.Text.RegularExpressions.Group" => "Group",
+                "System.Text.RegularExpressions.GroupCollection" => "GroupCollection",
+                "global::System.Text.RegularExpressions.GroupCollection" => "GroupCollection",
+                "System.Text.RegularExpressions.RegexOptions" => "RegexOptions",
+                "global::System.Text.RegularExpressions.RegexOptions" => "RegexOptions",
+                _ => typeName
+            };
+        }
+
+        /// <summary>
+        /// Determines whether a source type name represents a lightweight runtime value type that should be constructed without heap allocation.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <returns><c>true</c> when the type should be emitted as a direct runtime value; otherwise <c>false</c>.</returns>
+        static bool IsValueRuntimeTypeName(string typeName) {
+            return IsStringBuilderTypeName(typeName) ||
+                IsStringReaderTypeName(typeName) ||
+                IsStreamReaderTypeName(typeName) ||
+                string.Equals(typeName, "Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Text.RegularExpressions.Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Text.RegularExpressions.Regex", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the managed StringBuilder runtime value.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents StringBuilder; otherwise <c>false</c>.</returns>
+        static bool IsStringBuilderVariableType(VariableType variableType) {
+            return variableType != null &&
+                IsStringBuilderTypeName(variableType.TypeName);
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the managed StringReader runtime value.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents StringReader; otherwise <c>false</c>.</returns>
+        static bool IsStringReaderVariableType(VariableType variableType) {
+            return variableType != null &&
+                IsStringReaderTypeName(variableType.TypeName);
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the managed StreamReader runtime value.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents StreamReader; otherwise <c>false</c>.</returns>
+        static bool IsStreamReaderVariableType(VariableType variableType) {
+            return variableType != null &&
+                IsStreamReaderTypeName(variableType.TypeName);
+        }
+
+        /// <summary>
+        /// Determines whether a variable type represents the lightweight regex runtime surface.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to inspect.</param>
+        /// <returns><c>true</c> when the variable represents a regex runtime value; otherwise, <c>false</c>.</returns>
+        static bool IsRegexRuntimeVariableType(VariableType variableType) {
+            return variableType != null &&
+                IsRegexRuntimeTypeName(variableType.TypeName);
+        }
+
+        /// <summary>
+        /// Determines whether a type-name string represents a lightweight runtime value that should use direct member access.
+        /// </summary>
+        /// <param name="typeName">Type name to inspect.</param>
+        /// <returns><c>true</c> when the type should use direct member access; otherwise <c>false</c>.</returns>
+        static bool IsDirectRuntimeTypeName(string typeName) {
+            return string.Equals(typeName, "DateTime", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.DateTime", StringComparison.Ordinal) ||
+                string.Equals(typeName, "TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.TimeSpan", StringComparison.Ordinal) ||
+                IsStringBuilderTypeName(typeName) ||
+                IsStringReaderTypeName(typeName) ||
+                IsStreamReaderTypeName(typeName) ||
+                IsRegexRuntimeTypeName(typeName);
+        }
+
+        /// <summary>
+        /// Attempts to recover the resolved type symbol for an expression from Roslyn semantic information.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the expression.</param>
+        /// <param name="expression">Expression to inspect.</param>
+        /// <param name="typeSymbol">Resolved type symbol when available.</param>
+        /// <returns><c>true</c> when a concrete type symbol was recovered; otherwise <c>false</c>.</returns>
+        static bool TryGetExpressionTypeSymbol(SemanticModel semantic, ExpressionSyntax expression, out ITypeSymbol typeSymbol) {
+            TypeInfo typeInfo = semantic.GetTypeInfo(expression);
+            typeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+            if (typeSymbol != null) {
+                return true;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is ILocalSymbol localSymbol) {
+                typeSymbol = localSymbol.Type;
+                return typeSymbol != null;
+            }
+
+            if (symbol is IParameterSymbol parameterSymbol) {
+                typeSymbol = parameterSymbol.Type;
+                return typeSymbol != null;
+            }
+
+            if (symbol is IFieldSymbol fieldSymbol) {
+                typeSymbol = fieldSymbol.Type;
+                return typeSymbol != null;
+            }
+
+            if (symbol is IPropertySymbol propertySymbol) {
+                typeSymbol = propertySymbol.Type;
+                return typeSymbol != null;
+            }
+
+            if (symbol is IMethodSymbol methodSymbol) {
+                typeSymbol = methodSymbol.ReturnType;
+                return typeSymbol != null;
+            }
+
+            if (symbol is INamedTypeSymbol namedTypeSymbol) {
+                typeSymbol = namedTypeSymbol;
+                return true;
+            }
+
+            typeSymbol = null;
+            return false;
         }
 
         /// <summary>
@@ -1775,6 +2348,10 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryProcessStringReaderLineDeclaration(semantic, context, declaration, varType, lines)) {
+                return;
+            }
+
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
 
@@ -1831,6 +2408,65 @@ namespace cs2.cpp {
                 lines.Add("const ");
             }
             lines.AddRange(newLines);
+        }
+
+        /// <summary>
+        /// Lowers StringReader.ReadLine declarations to a lightweight nullable line wrapper that preserves null end-of-stream semantics.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="declaration">Declaration being evaluated.</param>
+        /// <param name="declarationType">Resolved abstract type for the declaration.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the declaration was handled by this specialized lowering path; otherwise, <c>false</c>.</returns>
+        bool TryProcessStringReaderLineDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            VariableType declarationType,
+            List<string> lines) {
+            if (declaration == null || declarationType == null) {
+                return false;
+            }
+
+            if (declaration.Variables.Count != 1 || declarationType.Type != VariableDataType.String) {
+                return false;
+            }
+
+            VariableDeclaratorSyntax variable = declaration.Variables[0];
+            if (variable.Initializer?.Value is not InvocationExpressionSyntax invocationExpression) {
+                return false;
+            }
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                !string.Equals(memberAccess.Name.Identifier.Text, "ReadLine", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (receiverTypeSymbol == null ||
+                !string.Equals(receiverTypeSymbol.Name, "StringReader", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("StringReader");
+
+            FunctionStack fn = context.GetCurrentFunction();
+            if (fn != null) {
+                ConversionVariable conversionVariable = new ConversionVariable();
+                conversionVariable.Name = variable.Identifier.ToString();
+                conversionVariable.VarType = declarationType;
+                fn.Stack.Add(conversionVariable);
+            }
+
+            lines.Add("StringReaderLine ");
+            lines.Add(variable.Identifier.ToString());
+            lines.Add(" = ");
+
+            int start = context.DepthClass;
+            ProcessExpression(semantic, context, variable.Initializer.Value, lines);
+            context.PopClass(start);
+            return true;
         }
 
         /// <summary>

@@ -15,17 +15,26 @@ namespace cs2.cpp.tests {
                 public class Stream {
                 }
 
-                public interface IContentProcessor<T> {
+                public interface IContentProcessor {
+                    object ReadObject(Stream stream);
+                }
+
+                public interface IContentProcessor<T> : IContentProcessor {
                     T Read(Stream stream);
                 }
                 """;
 
             ConversionOutput output = RunConversion(source);
-            string interfaceHeader = File.ReadAllText(Path.Combine(output.OutputPath, "IContentProcessor.hpp"));
+            string baseInterfaceHeader = File.ReadAllText(Path.Combine(output.OutputPath, "IContentProcessor.hpp"));
+            string genericInterfaceHeader = File.ReadAllText(Path.Combine(output.OutputPath, "IContentProcessor_1.hpp"));
 
-            Assert.Contains("template <typename T>", interfaceHeader);
-            Assert.DoesNotContain("#include \"T.hpp\"", interfaceHeader, StringComparison.Ordinal);
-            Assert.Contains("#include \"Stream.hpp\"", interfaceHeader);
+            Assert.Contains("class IContentProcessor", baseInterfaceHeader);
+            Assert.Contains("template <typename T>", genericInterfaceHeader);
+            Assert.Contains("class IContentProcessor_1", genericInterfaceHeader);
+            Assert.DoesNotContain(": public IContentProcessor_1", genericInterfaceHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"T.hpp\"", genericInterfaceHeader, StringComparison.Ordinal);
+            Assert.Contains("#include \"IContentProcessor.hpp\"", genericInterfaceHeader);
+            Assert.Contains("#include \"Stream.hpp\"", genericInterfaceHeader);
         }
 
         /// <summary>

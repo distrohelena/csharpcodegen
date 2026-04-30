@@ -42,6 +42,22 @@ namespace cs2.cpp {
                 .ThenBy(diagnostic => diagnostic.FilePath, StringComparer.Ordinal)
                 .ToArray();
 
+            CPPFeatureDecision[] orderedFeatureDecisions = report.BuildUsageReport.FeatureDecisions
+                .OrderBy(decision => decision.Feature.ToString(), StringComparer.Ordinal)
+                .ToArray();
+
+            CPPFeatureUsageRoot[] orderedDetectedRoots = report.BuildUsageReport.DetectedRoots
+                .OrderBy(root => root.Feature.ToString(), StringComparer.Ordinal)
+                .ThenBy(root => root.RootId, StringComparer.Ordinal)
+                .ThenBy(root => root.SourceKind, StringComparer.Ordinal)
+                .ToArray();
+
+            CPPFeatureConflict[] orderedConflicts = report.BuildUsageReport.Conflicts
+                .OrderBy(conflict => conflict.Feature.ToString(), StringComparer.Ordinal)
+                .ThenBy(conflict => conflict.Policy.ToString(), StringComparer.Ordinal)
+                .ThenBy(conflict => conflict.Message, StringComparer.Ordinal)
+                .ToArray();
+
             var model = new {
                 assemblyName = report.AssemblyName,
                 assemblyVersion = report.AssemblyVersion,
@@ -57,6 +73,23 @@ namespace cs2.cpp {
                     compiler = options?.CompilerProfile?.Name ?? string.Empty,
                     platform = options?.PlatformProfile?.Name ?? string.Empty,
                     runtime = options?.RuntimeProfile?.Name ?? string.Empty
+                },
+                buildFeatures = new {
+                    decisions = orderedFeatureDecisions.Select(decision => new {
+                        feature = decision.Feature.ToString(),
+                        enabled = decision.Enabled,
+                        origin = decision.Origin.ToString()
+                    }).ToArray(),
+                    detectedRoots = orderedDetectedRoots.Select(root => new {
+                        feature = root.Feature.ToString(),
+                        rootId = root.RootId,
+                        sourceKind = root.SourceKind
+                    }).ToArray(),
+                    conflicts = orderedConflicts.Select(conflict => new {
+                        feature = conflict.Feature.ToString(),
+                        policy = conflict.Policy.ToString(),
+                        message = conflict.Message
+                    }).ToArray()
                 },
                 registeredRuntimeRequirements = report.RegisteredRuntimeRequirements.ToArray(),
                 emittedFiles = report.EmittedFiles.ToArray(),

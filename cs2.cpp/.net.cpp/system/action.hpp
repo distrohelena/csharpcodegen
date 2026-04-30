@@ -1,10 +1,10 @@
 #ifndef ACTION_HPP
 #define ACTION_HPP
 
-template<typename T>
+template<typename... TArgs>
 class Action {
 private:
-    using FuncType = void(*)(T);
+    using FuncType = void(*)(TArgs...);
     FuncType func = nullptr;
 
 public:
@@ -15,13 +15,13 @@ public:
     explicit Action(FuncType f);
 
     // Invoke stored function
-    void operator()(T arg) const;
+    void operator()(TArgs... args) const;
 
     // Checks if the Action is valid
     explicit operator bool() const;
 };
 
 // Include implementation for template functions
-#include "Action.tpp"
+#include "action.tpp"
 
 #endif // ACTION_HPP

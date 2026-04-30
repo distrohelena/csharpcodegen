@@ -24,11 +24,15 @@ public class CPPTupleLoweringTests {
         converter.WriteOutput(outputRoot);
 
         string sourcePath = Path.Combine(outputRoot, "TupleStore.cpp");
+        string headerPath = Path.Combine(outputRoot, "TupleStore.hpp");
         string source = File.ReadAllText(sourcePath);
+        string header = File.ReadAllText(headerPath);
 
         Assert.DoesNotContain("<NULL>", source, StringComparison.Ordinal);
         Assert.Contains("ValueTuple", source, StringComparison.Ordinal);
         Assert.Contains("new List<ValueTuple", source, StringComparison.Ordinal);
+        Assert.Contains("#include \"runtime/native_tuple.hpp\"", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("[string, string].hpp", header, StringComparison.Ordinal);
     }
 
     /// <summary>

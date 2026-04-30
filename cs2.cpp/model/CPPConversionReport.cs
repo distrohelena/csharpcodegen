@@ -44,6 +44,11 @@ namespace cs2.cpp {
         public string TargetFramework { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets or sets the resolved build feature usage report for the active conversion run.
+        /// </summary>
+        public CPPBuildUsageReport BuildUsageReport { get; set; } = new CPPBuildUsageReport();
+
+        /// <summary>
         /// Gets whether the current report contains at least one error diagnostic.
         /// </summary>
         public bool HasErrors => Diagnostics.Any(diagnostic => diagnostic.Severity == CPPDiagnosticSeverity.Error);
@@ -82,6 +87,7 @@ namespace cs2.cpp {
             AssemblyName = string.Empty;
             AssemblyVersion = string.Empty;
             TargetFramework = string.Empty;
+            BuildUsageReport = new CPPBuildUsageReport();
         }
     }
 }
