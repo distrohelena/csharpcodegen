@@ -41,6 +41,7 @@ namespace cs2.cpp {
                 Make("NativeDisposable", "runtime/native_disposable.hpp", "HE_CPP_REQ_NATIVE_DISPOSABLE", "Managed-style disposable contract support."),
                 Make("NativeEquatable", "runtime/native_equatable.hpp", "HE_CPP_REQ_NATIVE_EQUATABLE", "Managed-style equatable contract support."),
                 Make("NativeEvent", "runtime/native_event.hpp", "HE_CPP_REQ_NATIVE_EVENT", "Managed-style event contract support for transpiled event members."),
+                Make("NativeFinally", "runtime/finally.hpp", "HE_CPP_REQ_NATIVE_FINALLY", "Scope-exit helper support for lowering managed finally blocks."),
                 Make("NativeDateTime", "runtime/native_datetime.hpp", "HE_CPP_REQ_NATIVE_DATETIME", "Lightweight managed DateTime and TimeSpan support for engine timing and timestamps."),
                 Make("NativeType", "runtime/native_type.hpp", "HE_CPP_REQ_NATIVE_TYPE", "Lightweight managed type-token support without reflection."),
                 Make("NativeCast", "runtime/native_cast.hpp", "HE_CPP_REQ_NATIVE_CAST", "Runtime-assisted safe cast support for declaration-pattern lowering."),
@@ -59,6 +60,8 @@ namespace cs2.cpp {
                 Make("Path", "system/io/path.hpp", "HE_CPP_REQ_PATH", "Path abstraction support for host-backed path normalization and resolution."),
                 Make("Debug", "system/diagnostics/debug.hpp", "HE_CPP_REQ_DEBUG", "Managed debug output surface support for System.Diagnostics.Debug."),
                 Make("Encoding", "system/text/encoding.hpp", "HE_CPP_REQ_ENCODING", "Managed Encoding surface support for UTF-8 oriented text readers and writers."),
+                Make("Number", "system/number.hpp", "HE_CPP_REQ_NUMBER", "Managed numeric helper surface for primitive TryParse and infinity checks."),
+                Make("BitConverter", "system/bit_converter.hpp", "HE_CPP_REQ_BIT_CONVERTER", "Managed BitConverter bit-cast helpers for serializer float/int conversions."),
                 Make("BinaryPrimitives", "system/binary_primitives.hpp", "HE_CPP_REQ_BINARY_PRIMITIVES", "Managed BinaryPrimitives support for fixed-width endian-aware scalar serialization."),
                 Make("Math", "system/math.hpp", "HE_CPP_REQ_MATH", "Managed Math and MidpointRounding support backed by standard C++ math facilities.")
             };

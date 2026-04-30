@@ -409,7 +409,7 @@ namespace cs2.core {
                         dataType = VariableDataType.Boolean;
                         break;
                     case "char":
-                        dataType = VariableDataType.String;
+                        dataType = VariableDataType.Char;
                         break;
                     case "string":
                         dataType = VariableDataType.String;

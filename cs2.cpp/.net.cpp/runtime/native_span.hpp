@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include "array.hpp"
 
 template <typename T>
 class Span {
@@ -16,6 +17,11 @@ public:
     Span(T* data, size_t length)
         : Data(data),
           Length(length) {
+    }
+
+    Span(Array<T>* array)
+        : Data(array != nullptr ? array->Data : nullptr),
+          Length(array != nullptr ? static_cast<size_t>(array->Length) : 0) {
     }
 
     template <size_t N>

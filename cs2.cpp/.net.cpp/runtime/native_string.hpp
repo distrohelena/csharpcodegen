@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <stdexcept>
 #include <string>
 
 /// <summary>
@@ -90,6 +92,68 @@ public:
         }
 
         return Equals(value.substr(value.size() - suffix.size()), suffix, comparison);
+    }
+
+    /// <summary>
+    /// Trims leading and trailing ASCII whitespace characters from a string.
+    /// </summary>
+    /// <param name="value">String to trim.</param>
+    /// <returns>Trimmed string copy.</returns>
+    static std::string Trim(const std::string& value) {
+        size_t start = 0;
+        while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+            start++;
+        }
+
+        size_t end = value.size();
+        while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+            end--;
+        }
+
+        return value.substr(start, end - start);
+    }
+
+    /// <summary>
+    /// Extracts a substring from the specified start index to the end of the string.
+    /// </summary>
+    /// <param name="value">Source string.</param>
+    /// <param name="startIndex">Zero-based start index.</param>
+    /// <returns>Substring copy.</returns>
+    static std::string Substring(const std::string& value, int32_t startIndex) {
+        if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
+            throw std::out_of_range("startIndex");
+        }
+
+        return value.substr(static_cast<size_t>(startIndex));
+    }
+
+    /// <summary>
+    /// Extracts a substring with the specified length.
+    /// </summary>
+    /// <param name="value">Source string.</param>
+    /// <param name="startIndex">Zero-based start index.</param>
+    /// <param name="length">Requested substring length.</param>
+    /// <returns>Substring copy.</returns>
+    static std::string Substring(const std::string& value, int32_t startIndex, int32_t length) {
+        if (startIndex < 0 || length < 0 || static_cast<size_t>(startIndex) > value.size()) {
+            throw std::out_of_range("startIndex");
+        }
+
+        size_t safeStartIndex = static_cast<size_t>(startIndex);
+        if (safeStartIndex + static_cast<size_t>(length) > value.size()) {
+            throw std::out_of_range("length");
+        }
+
+        return value.substr(safeStartIndex, static_cast<size_t>(length));
+    }
+
+    /// <summary>
+    /// Determines whether a character is an ASCII digit.
+    /// </summary>
+    /// <param name="value">Character to inspect.</param>
+    /// <returns>True when the character is a digit; otherwise false.</returns>
+    static bool IsDigit(char value) {
+        return std::isdigit(static_cast<unsigned char>(value)) != 0;
     }
 
     /// <summary>

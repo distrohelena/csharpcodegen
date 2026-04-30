@@ -1247,7 +1247,12 @@ namespace cs2.cpp {
         void WriteParameters(ConversionClass conversionClass, ConversionFunction function, TextWriter writer) {
             for (int index = 0; index < function.InParameters.Count; index++) {
                 ConversionVariable parameter = function.InParameters[index];
-                writer.Write($"{ConvertType(parameter.VarType, conversionClass, function)} {parameter.Name}");
+                string parameterType = ConvertType(parameter.VarType, conversionClass, function);
+                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
+                    parameterType += "&";
+                }
+
+                writer.Write($"{parameterType} {parameter.Name}");
 
                 if (index != function.InParameters.Count - 1) {
                     writer.Write(", ");

@@ -316,6 +316,42 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures event conditional invocation lowers to the native event placeholder instead of delegate-pointer null checks.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEventConditionalInvoke_UsesNativeEventInvoke() {
+            string source = """
+                using System;
+
+                public struct int2 {
+                    public int X;
+                    public int Y;
+                }
+
+                public enum PointerInteraction {
+                    None
+                }
+
+                public class Widget {
+                    public event Action<int2, int2, PointerInteraction> CursorEvent;
+
+                    public void OnCursor(int2 relPos, int2 delta, PointerInteraction state) {
+                        CursorEvent?.Invoke(relPos, delta, state);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("::Event CursorEvent;", headerOutput);
+            Assert.Contains("this->CursorEvent.Invoke(relPos, delta, state);", sourceOutput);
+            Assert.DoesNotContain("this->CursorEvent != nullptr", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("(*this->CursorEvent)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generated enum parameters and switches use value semantics instead of pointer semantics.
         /// </summary>
         [Fact]
@@ -1676,6 +1712,411 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures object.GetType().Name inside diagnostics lowers through the native type token helper instead of an unsupported instance GetType API.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithObjectGetTypeNameDiagnostic_UsesNativeTypeToken() {
+            string source = """
+                using System;
+
+                public class Asset {
+                }
+
+                public static class Serializer {
+                    public static string Describe(Asset asset) {
+                        return $"Asset type '{asset.GetType().Name}'";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.Contains("he_cpp_type_of<Asset>(\"Asset\")->Name", sourceOutput);
+            Assert.DoesNotContain("asset->GetType()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures binary serializer helpers lower through runtime constructor defaults and static helper surfaces that native compilation supports.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBinarySerializerHelpers_UsesStaticRuntimeBridgesAndMutableLocals() {
+            string source = """
+                using System;
+                using System.Text;
+
+                public class Stream {
+                    public virtual int ReadByte() {
+                        return 0;
+                    }
+
+                    public virtual void WriteByte(byte value) {
+                    }
+
+                    public virtual int Read(Span<byte> buffer) {
+                        return 0;
+                    }
+                }
+
+                public class BinaryReaderLE {
+                    public BinaryReaderLE(Stream stream, bool leaveOpen = true) {
+                    }
+                }
+
+                public class BinaryWriterLE {
+                    public BinaryWriterLE(Stream stream, bool leaveOpen = true) {
+                    }
+                }
+
+                public static class Serializer {
+                    public static BinaryReaderLE CreateReader(Stream stream) {
+                        return new BinaryReaderLE(stream);
+                    }
+
+                    public static BinaryWriterLE CreateWriter(Stream stream) {
+                        return new BinaryWriterLE(stream);
+                    }
+
+                    public static float ReadSingle(int value) {
+                        return BitConverter.Int32BitsToSingle(value);
+                    }
+
+                    public static int WriteSingle(float value) {
+                        return BitConverter.SingleToInt32Bits(value);
+                    }
+
+                    public static string ReadString(byte[] bytes) {
+                        return Encoding.UTF8.GetString(bytes);
+                    }
+
+                    public static byte[] WriteString(string value) {
+                        return Encoding.UTF8.GetBytes(value);
+                    }
+
+                    public static void Fill(Stream stream, Span<byte> buffer) {
+                        int totalBytesRead = 0;
+                        while (totalBytesRead < buffer.Length) {
+                            int bytesRead = stream.Read(buffer.Slice(totalBytesRead));
+                            totalBytesRead += bytesRead;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.Contains("new ::BinaryReaderLE(stream, true)", sourceOutput);
+            Assert.Contains("new ::BinaryWriterLE(stream, true)", sourceOutput);
+            Assert.Contains("BitConverter::Int32BitsToSingle(value)", sourceOutput);
+            Assert.Contains("BitConverter::SingleToInt32Bits(value)", sourceOutput);
+            Assert.Contains("Encoding::GetString(Encoding::UTF8, bytes)", sourceOutput);
+            Assert.Contains("Encoding::GetBytes(Encoding::UTF8, value)", sourceOutput);
+            Assert.Contains("int32_t totalBytesRead = 0;", sourceOutput);
+            Assert.DoesNotContain("const int32_t totalBytesRead = 0;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("BitConverter->", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Encoding::UTF8::", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "bit_converter.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures list removal uses the runtime list helper and qualified child/component callbacks do not rebind member names back onto the current instance.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedChildCallbacksAndListRemoval_UsesReceiverMemberAccess() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Component {
+                    public virtual void ParentEnabledChange(bool value) {
+                    }
+                }
+
+                public class Entity {
+                    public List<Component> Components;
+                    public List<Entity> Children;
+
+                    public void RemoveChild(Entity entity) {
+                        Children.Remove(entity);
+                    }
+
+                    public void RemoveComponent(Component component) {
+                        Components.Remove(component);
+                    }
+
+                    protected virtual void ParentEnabledChange(bool newEnabled) {
+                        if (Components != null) {
+                            for (int i = 0; i < Components.Count; i++) {
+                                Components[i].ParentEnabledChange(newEnabled);
+                            }
+                        }
+
+                        if (Children != null) {
+                            for (int i = 0; i < Children.Count; i++) {
+                                Children[i].ParentEnabledChange(Children[i].IsHierarchyEnabled);
+                            }
+                        }
+                    }
+
+                    public bool IsHierarchyEnabled => true;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Entity.cpp"));
+
+            Assert.Contains("this->Children->Remove(entity)", sourceOutput);
+            Assert.Contains("this->Components->Remove(component)", sourceOutput);
+            Assert.Contains("(*this->Components)[i]->ParentEnabledChange(newEnabled);", sourceOutput);
+            Assert.Contains("(*this->Children)[i]->ParentEnabledChange((*this->Children)[i]->IsHierarchyEnabled);", sourceOutput);
+            Assert.DoesNotContain("->this->ParentEnabledChange", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("->this->IsHierarchyEnabled", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures string indexers stay character-typed and dictionary out-var declarations use the resolved symbol type instead of leaking the C# var token.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringIndexAndOutVarDictionaryLookup_UsesCharAndResolvedOutType() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Glyph {
+                    public float AdvanceWidth;
+                }
+
+                public class FontAsset {
+                    public Dictionary<char, Glyph> Characters;
+
+                    public float Measure(string text) {
+                        float width = 0f;
+                        for (int i = 0; i < text.Length; i++) {
+                            char c = text[i];
+                            if (c == ' ') {
+                                continue;
+                            }
+
+                            if (Characters.TryGetValue(c, out var ch)) {
+                                width += ch.AdvanceWidth;
+                            }
+                        }
+
+                        return width;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
+
+            Assert.Contains("const char c = text[i];", sourceOutput);
+            Assert.Contains("if (c == ' ')", sourceOutput);
+            Assert.Contains("::Glyph* ch;", sourceOutput);
+            Assert.Contains("this->Characters->TryGetValue(c, ch)", sourceOutput);
+            Assert.DoesNotContain("const std::string c = text[i];", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("var* ch", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested struct receivers keep direct member access and primitive float limits lower to native literals instead of the fake Number type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStructGlyphMetricsAndFloatLimits_UsesDirectValueMemberAccessAndNativeFloatLimits() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public struct float4 {
+                    public float Z;
+                    public float W;
+                }
+
+                public struct FontChar {
+                    public float AdvanceWidth;
+                    public float4 SourceRect;
+                    public float OffsetY;
+                }
+
+                public struct FontTightMetrics {
+                    public FontTightMetrics(float width, float minTop, float maxBottom) {
+                    }
+                }
+
+                public class FontInfo {
+                    public float SpaceWidth;
+                }
+
+                public class FontAsset {
+                    public Dictionary<char, FontChar> Characters;
+                    public FontInfo FontInfo;
+                    public float LineHeight;
+                    public int AtlasWidth;
+                    public int AtlasHeight;
+
+                    public float Measure(string text) {
+                        float width = 0f;
+                        for (int i = 0; i < text.Length; i++) {
+                            char c = text[i];
+                            if (c == ' ') {
+                                width += FontInfo.SpaceWidth;
+                                continue;
+                            }
+
+                            if (Characters.TryGetValue(c, out var ch)) {
+                                float advance = ch.AdvanceWidth > 0 ? ch.AdvanceWidth : (ch.SourceRect.Z * AtlasWidth);
+                                width += advance;
+                            }
+                        }
+
+                        return width;
+                    }
+
+                    public FontTightMetrics MeasureTight(string text) {
+                        float minTop = float.MaxValue;
+                        float maxBottom = float.MinValue;
+
+                        for (int i = 0; i < text.Length; i++) {
+                            char c = text[i];
+                            if (!Characters.TryGetValue(c, out var ch)) {
+                                continue;
+                            }
+
+                            float glyphBottom = ch.OffsetY + (ch.SourceRect.W * AtlasHeight);
+                            if (glyphBottom > maxBottom) {
+                                maxBottom = glyphBottom;
+                            }
+                        }
+
+                        if (minTop == float.MaxValue) {
+                            minTop = 0f;
+                        }
+
+                        return new FontTightMetrics(0f, minTop, maxBottom);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
+
+            Assert.Contains("ch.SourceRect.Z * AtlasWidth", sourceOutput);
+            Assert.Contains("ch.SourceRect.W * this->AtlasHeight", sourceOutput);
+            Assert.Contains("float minTop = 3.4028234663852886e38f;", sourceOutput);
+            Assert.Contains("float maxBottom = -3.4028234663852886e38f;", sourceOutput);
+            Assert.Contains("if (minTop == 3.4028234663852886e38f)", sourceOutput);
+            Assert.DoesNotContain("SourceRect->Z", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("SourceRect->W", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Number.MaxValue", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Number.MinValue", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures HLSL parser helper patterns lower through native list adapters, runtime string helpers, numeric helpers, and string-switch if-chains.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithHlslParserHelpers_UsesListAdaptersStringHelpersAndStringSwitchLowering() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public class Define {
+                }
+
+                public class Binding {
+                }
+
+                public class Member {
+                    public int Offset;
+                    public int Size;
+
+                    public Member(string name, string type, int offset, int size) {
+                        Offset = offset;
+                        Size = size;
+                    }
+                }
+
+                public static class Parser {
+                    public static Binding[] Parse(string source) {
+                        return Parse(source, Array.Empty<Define>());
+                    }
+
+                    public static Binding[] Parse(string source, IReadOnlyList<Define> defines) {
+                        List<Binding> bindings = new List<Binding>();
+                        Member[] members = ParseMembers(source);
+                        int size = ComputeSize(members);
+                        return bindings.ToArray();
+                    }
+
+                    static Member[] ParseMembers(string body) {
+                        List<Member> members = new List<Member>();
+                        return members.ToArray();
+                    }
+
+                    static int ComputeSize(IReadOnlyList<Member> members) {
+                        if (members.Count == 0) {
+                            return 0;
+                        }
+
+                        Member lastMember = members[members.Count - 1];
+                        return lastMember.Offset + lastMember.Size;
+                    }
+
+                    static string ExtractBaseType(string type) {
+                        int numericIndex = type.Length;
+                        for (int characterIndex = 0; characterIndex < type.Length; characterIndex++) {
+                            if (char.IsDigit(type[characterIndex])) {
+                                numericIndex = characterIndex;
+                                break;
+                            }
+                        }
+
+                        return type.Substring(0, numericIndex).Trim();
+                    }
+
+                    static int ParseInt(string text) {
+                        if (int.TryParse(text, out int value)) {
+                            return value;
+                        }
+
+                        throw new InvalidOperationException();
+                    }
+
+                    static int ResolveScalarTypeSize(string type) {
+                        string baseType = ExtractBaseType(type);
+                        switch (baseType) {
+                            case "bool":
+                            case "int":
+                                return 4;
+                            default:
+                                return 0;
+                        }
+                    }
+
+                    public static bool IsFar(float value) {
+                        return float.IsPositiveInfinity(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Parser.cpp"));
+
+            Assert.Contains("return Parse(source, new List<Define*>(Array<Define*>::Empty()))", sourceOutput);
+            Assert.Contains("return members->ToArray()", sourceOutput);
+            Assert.Contains("const int32_t size = ComputeSize(new List<Member*>(members));", sourceOutput);
+            Assert.Contains("String::IsDigit(type[characterIndex])", sourceOutput);
+            Assert.Contains("String::Substring(type, 0, numericIndex)", sourceOutput);
+            Assert.Contains("return String::Trim(String::Substring(type, 0, numericIndex));", sourceOutput);
+            Assert.Contains("Number::TryParse(text, value)", sourceOutput);
+            Assert.Contains("return Number::IsPositiveInfinity(value);", sourceOutput);
+            Assert.Contains("if (String::Equals(__switchValue", sourceOutput);
+            Assert.DoesNotContain("switch (baseType)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(".Trim()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(".Substring(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Number.TryParse", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures arrays of generated reference types preserve pointer element semantics through native array helpers.
         /// </summary>
         [Fact]
@@ -2347,6 +2788,140 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("throw new ArgumentOutOfRangeException(\"size\", \"ComboBox size must be positive.\")", sourceOutput);
             Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures InputManager-style patterns lower through scope-exit finally handling, ref/out parameter emission, member-access var inference, and reference equality.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInputManagerPatterns_UsesScopeExitRefOutAndValueMemberInference() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public struct float4 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                    public float W;
+                }
+
+                public class Camera {
+                    public float4 Viewport;
+                }
+
+                public class Entity {
+                    public Entity Parent;
+                }
+
+                public class Interactable {
+                    public Entity Parent;
+                }
+
+                public class Drawable {
+                    public Entity Parent;
+                    public byte RenderOrder2D;
+                }
+
+                public class InputManager {
+                    Camera FindCamera(List<Camera> cameras, int x, int y) {
+                        for (int i = cameras.Count - 1; i >= 0; i--) {
+                            var cam = cameras[i];
+                            var vp = cam.Viewport;
+                            if (x >= vp.X && x < vp.X + vp.Z && y >= vp.Y && y < vp.Y + vp.W) {
+                                return cam;
+                            }
+                        }
+
+                        return null;
+                    }
+
+                    byte GetTopDrawableRenderOrder(List<Drawable> drawables, Interactable interactable, ushort cameraLayerMask, out int highestDrawableIndex) {
+                        highestDrawableIndex = -1;
+                        return 0;
+                    }
+
+                    bool IsSameEntityOrDescendant(Entity candidate, Entity root) {
+                        Entity current = candidate;
+                        while (current != null) {
+                            if (ReferenceEquals(current, root)) {
+                                return true;
+                            }
+
+                            current = current.Parent;
+                        }
+
+                        return false;
+                    }
+
+                    public byte Update(List<Drawable> drawables, Interactable interactable, List<Camera> cameras) {
+                        try {
+                            Camera topCamera = FindCamera(cameras, 10, 20);
+                            byte candidateRenderOrder = GetTopDrawableRenderOrder(drawables, interactable, 0, out int candidateDrawableIndex);
+                            return candidateRenderOrder;
+                        } finally {
+                            FindCamera(cameras, 0, 0);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "InputManager.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "InputManager.cpp"));
+
+            Assert.Contains("vp = cam->Viewport;", sourceOutput);
+            Assert.Contains("int32_t& highestDrawableIndex", headerOutput);
+            Assert.Contains("int32_t candidateDrawableIndex;", sourceOutput);
+            Assert.Contains("current == root", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.DoesNotContain("finally {", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("object *vp", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReferenceEquals(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures KeyboardState-style value-type helpers keep instance field access, preserve hexadecimal bitmasks, and lower boxed value checks to compilable C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithKeyboardStateValuePatterns_UsesThisPrefixesHexMasksAndBoxedValueCasts() {
+            string source = """
+                public struct KeyboardState {
+                    uint _keys0;
+                    uint _keys1;
+
+                    public static bool operator ==(KeyboardState a, KeyboardState b) {
+                        return a._keys0 == b._keys0 && a._keys1 == b._keys1;
+                    }
+
+                    public static bool operator !=(KeyboardState a, KeyboardState b) {
+                        return !(a == b);
+                    }
+
+                    public override bool Equals(object obj) {
+                        return obj is KeyboardState && this == (KeyboardState)obj;
+                    }
+
+                    public override int GetHashCode() {
+                        return (int)(_keys0 ^ _keys1);
+                    }
+
+                    public void Clear(int key) {
+                        uint mask = (uint)1 << (((int)key) & 0x1f);
+                        _keys1 &= ~mask;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "KeyboardState.cpp"));
+
+            Assert.Contains("return obj != nullptr && this == (*static_cast<KeyboardState*>(obj));", sourceOutput);
+            Assert.Contains("return static_cast<int32_t>((this->_keys0 ^ this->_keys1));", sourceOutput);
+            Assert.Contains("((static_cast<int32_t>(key)) & 0x1f)", sourceOutput);
+            Assert.Contains("this->_keys1 &= ~mask;", sourceOutput);
+            Assert.DoesNotContain("0x1.0f", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return  &&", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

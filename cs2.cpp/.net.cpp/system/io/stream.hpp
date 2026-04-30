@@ -20,8 +20,22 @@ public:
         return Read(buffer.Data, 0, buffer.Length);
     }
 
+    virtual size_t Read(Array<uint8_t>* buffer, size_t offset, size_t count) {
+        return buffer == nullptr
+            ? 0
+            : Read(buffer->Data, offset, count);
+    }
+
     virtual void Write(Span<uint8_t> buffer) {
         Write(buffer.Data, 0, buffer.Length);
+    }
+
+    virtual void Write(Array<uint8_t>* buffer, size_t offset, size_t count) {
+        if (buffer == nullptr) {
+            return;
+        }
+
+        Write(buffer->Data, offset, count);
     }
 
     // Properties
@@ -54,6 +68,8 @@ public:
     virtual void InternalReserve(size_t count) = 0;
     virtual void InternalWriteByte(uint8_t byte) = 0;
     virtual int InternalReadByte() = 0;
+    virtual void WriteByte(uint8_t byte) { InternalWriteByte(byte); }
+    virtual int ReadByte() { return InternalReadByte(); }
 
     virtual void Dispose() {}
     virtual void Close() {}
