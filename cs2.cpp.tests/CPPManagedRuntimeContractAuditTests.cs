@@ -56,6 +56,32 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures managed enum metadata edges resolve to the native enum runtime header instead of a synthetic generated include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEnumBaseReference_UsesRuntimeEnumHeader() {
+            string source = """
+                using System;
+
+                public enum Keys {
+                    None = 0
+                }
+
+                public class InputState {
+                    public Enum LastType { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "InputState.hpp"));
+
+            Assert.Contains("#include \"runtime/native_enum.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"Enum.hpp\"", headerOutput, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeEnum");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_enum.hpp")));
+        }
+
+        /// <summary>
         /// Ensures System.IO.Stream resolves to the built-in runtime header instead of a missing generated header.
         /// </summary>
         [Fact]

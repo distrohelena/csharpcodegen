@@ -131,7 +131,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("#include \"CoreGate.hpp\"", derivedHeader);
             Assert.Contains("class DerivedGate : public BaseGate", derivedHeader);
             Assert.Contains("BaseGate::Tick()", derivedSource);
-            Assert.Contains("new HelperNode()", derivedSource);
+            Assert.Contains("HelperNode()", derivedSource);
             Assert.Contains("CoreGate::Shared", derivedSource);
         }
 
@@ -533,6 +533,40 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures nullable primitive values inside interpolated strings lower through native formatting instead of pointer-style ToString calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNullablePrimitiveValueInsideInterpolatedString_UsesNativeFormatting() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    class AnchorData {
+                        public float? LeftDistance { get; set; }
+                    }
+
+                    AnchorData anchorData;
+
+                    public string Describe() {
+                        var values = new List<string>();
+                        if (anchorData.LeftDistance.HasValue) {
+                            values.Add($"Left ({anchorData.LeftDistance.Value:F1}px)");
+                        }
+
+                        return string.Join(", ", values);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("std::to_string(", sourceOutput);
+            Assert.DoesNotContain("anchorData.LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("anchorData->LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures nullable-target ternaries wrap scalar and null branches in the native nullable runtime type.
         /// </summary>
         [Fact]
@@ -887,6 +921,423 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures managed MemoryStream constructions lower to the runtime MemoryStream type instead of leaking source namespaces.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMemoryStreamConstruction_UsesRuntimeMemoryStreamType() {
+            string source = """
+                using System.IO;
+
+                public static class AssetSerializer {
+                    public static Stream FromBytes(byte[] data) {
+                        return new MemoryStream(data, false);
+                    }
+
+                    public static Stream Empty() {
+                        return new MemoryStream();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AssetSerializer.cpp"));
+
+            Assert.Contains("new MemoryStream(data, false)", sourceOutput);
+            Assert.Contains("new MemoryStream()", sourceOutput);
+            Assert.DoesNotContain("new System.IO.MemoryStream", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures using declarations that construct MemoryStream still lower to the runtime MemoryStream type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUsingDeclarationMemoryStreamConstruction_UsesRuntimeMemoryStreamType() {
+            string source = """
+                using System.IO;
+
+                public static class AssetSerializer {
+                    public static Stream FromBytes(byte[] data) {
+                        using var stream = new MemoryStream(data, false);
+                        return stream;
+                    }
+
+                    public static byte[] EmptyBytes() {
+                        using var stream = new MemoryStream();
+                        return stream.ToArray();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AssetSerializer.cpp"));
+
+            Assert.Contains("MemoryStream *stream = new MemoryStream(data, false);", sourceOutput);
+            Assert.Contains("MemoryStream *stream = new MemoryStream();", sourceOutput);
+            Assert.DoesNotContain("new System.IO.MemoryStream", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures fully-qualified MemoryStream constructions still lower through the runtime type mapping.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedMemoryStreamConstruction_UsesRuntimeMemoryStreamType() {
+            string source = """
+                using System.IO;
+
+                public class StreamGate {
+                    public Stream Open(byte[] data) {
+                        return new System.IO.MemoryStream(data, false);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "StreamGate.cpp"));
+
+            Assert.Contains("return new MemoryStream(data, false);", sourceOutput);
+            Assert.DoesNotContain("System.IO.MemoryStream", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated generic element types drop source namespaces when rendered inside native collection constructions.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericPointerConstruction_NormalizesQualifiedLeafTypeNames() {
+            string source = """
+                using System.Collections.Generic;
+
+                namespace helengine {
+                    public class ComboBoxItemVisual {
+                    }
+
+                    public class ComboBoxGate {
+                        public List<ComboBoxItemVisual> Build(int count) {
+                            return new List<ComboBoxItemVisual>(count);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ComboBoxGate.cpp"));
+
+            Assert.Contains("return new List<::ComboBoxItemVisual*>(count);", sourceOutput);
+            Assert.DoesNotContain("helengine.ComboBoxItemVisual", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures interface auto-properties remain publicly accessible in generated output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterfaceAutoProperties_EmitsPublicMembers() {
+            string source = """
+                public interface ICamera {
+                    ushort LayerMask { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "ICamera.hpp"));
+
+            Assert.Contains("public:", header);
+            Assert.Contains("uint16_t LayerMask;", header);
+        }
+
+        /// <summary>
+        /// Ensures string-to-null comparisons lower through the native string helper instead of invalid pointer-style comparisons.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringNullComparison_UsesNativeStringHelper() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class StringGate {
+                    public bool HasNull(List<string> items, int index) {
+                        return items[index] == null;
+                    }
+
+                    public bool HasValue(List<string> items, int index) {
+                        return items[index] != null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "StringGate.cpp"));
+
+            Assert.Contains("return String::IsNullOrEmpty((*items)[index]);", sourceOutput);
+            Assert.Contains("return !String::IsNullOrEmpty((*items)[index]);", sourceOutput);
+            Assert.DoesNotContain("== nullptr", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("!= nullptr", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures Type.Name remains string-valued inside interpolated strings instead of lowering through an invalid ToString member chain.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTypeNameInterpolation_UsesNativeTypeNameStringValue() {
+            string source = """
+                using System;
+
+                public class TypeGate {
+                    public string Describe(Type value) {
+                        return $"Type '{value.Name}'";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TypeGate.cpp"));
+
+            Assert.Contains("value->Name", sourceOutput);
+            Assert.DoesNotContain("value->Name->ToString()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures target-typed collection expressions passed to IReadOnlyList parameters lower to a native list allocation instead of raw bracket syntax.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCollectionExpressionArgumentForList_UsesNativeListConstruction() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ContentManager {
+                    const string WildcardExtension = "*";
+
+                    public void RegisterBuiltInProcessors() {
+                        RegisterProcessor([WildcardExtension]);
+                    }
+
+                    void RegisterProcessor(IReadOnlyList<string> extensions) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+
+            Assert.Contains("this->RegisterProcessor(new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures collection expressions passed to generic method parameters still lower using the resolved parameter target type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCollectionExpressionArgumentForGenericMethodList_UsesNativeListConstruction() {
+            string source = """
+                using System.Collections.Generic;
+
+                public interface IContentProcessor<T> {
+                }
+
+                public class TextContent {
+                }
+
+                public class TextContentProcessor : IContentProcessor<TextContent> {
+                }
+
+                public class ContentManager {
+                    const string WildcardExtension = "*";
+
+                    public void RegisterBuiltInProcessors() {
+                        RegisterProcessor(TextContentProcessorId, new TextContentProcessor(), [WildcardExtension]);
+                    }
+
+                    const string TextContentProcessorId = "text";
+
+                    void RegisterProcessor<T>(string processorId, IContentProcessor<T> processor, IReadOnlyList<string> extensions) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+
+            Assert.Contains("this->RegisterProcessor(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures concrete object creation stays on the explicitly constructed generated class even when the invocation expects a generic interface type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConcreteGeneratedObjectCreationPassedToGenericInterfaceCall_UsesConcreteClassName() {
+            string source = """
+                public interface IContentProcessor<T> {
+                }
+
+                public class TextContent {
+                }
+
+                public class TextContentProcessor : IContentProcessor<TextContent> {
+                }
+
+                public class ContentManager {
+                    void RegisterProcessor<T>(IContentProcessor<T> processor) {
+                    }
+
+                    public void RegisterBuiltInProcessors() {
+                        RegisterProcessor(new TextContentProcessor());
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+
+            Assert.Contains("RegisterProcessor(new ::TextContentProcessor())", sourceOutput);
+            Assert.DoesNotContain("new IContentProcessor_1<TextContent>()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures concrete classes implementing generic interfaces inherit the generated generic interface specialization in emitted headers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericInterfaceImplementation_EmitsGenericInheritanceClause() {
+            string source = """
+                public interface IContentProcessor {
+                }
+
+                public interface IContentProcessor<T> : IContentProcessor {
+                }
+
+                public class TextContent {
+                }
+
+                public class TextContentProcessor : IContentProcessor<TextContent> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TextContentProcessor.hpp"));
+
+            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<TextContent>", headerOutput);
+            Assert.Contains("#include \"IContentProcessor_1.hpp\"", headerOutput);
+            Assert.Contains("#include \"TextContent.hpp\"", headerOutput);
+            Assert.DoesNotContain("class TextContentProcessor : public IContentProcessor\n", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated value types can inherit the native generic equatable runtime contract without a header-shape mismatch.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericEquatableImplementation_UsesGenericRuntimeContract() {
+            string source = """
+                public struct float3 : System.IEquatable<float3> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "float3.hpp"));
+            string runtimeHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_equatable.hpp"));
+
+            Assert.Contains("class float3 : public IEquatable<float3>", headerOutput);
+            Assert.Contains("template <typename T>", runtimeHeaderOutput);
+            Assert.Contains("class IEquatable", runtimeHeaderOutput);
+        }
+
+        /// <summary>
+        /// Ensures the real content-manager built-in processor registration shape lowers concrete processors and implicit-array extensions correctly.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBuiltInProcessorRegistrationShape_UsesConcreteProcessorAndNativeListArgument() {
+            string source = """
+                using System.Collections.Generic;
+
+                public interface IContentProcessor {
+                }
+
+                public interface IContentProcessor<T> : IContentProcessor {
+                }
+
+                public class TextContent {
+                }
+
+                public class RawByteContent {
+                }
+
+                public class TextContentProcessor : IContentProcessor<TextContent> {
+                }
+
+                public class RawByteContentProcessor : IContentProcessor<RawByteContent> {
+                }
+
+                public class ContentManager {
+                    const string TextContentProcessorId = "core.text-content";
+                    const string RawByteContentProcessorId = "core.raw-byte-content";
+                    const string WildcardExtension = "*";
+
+                    void RegisterProcessor<T>(string processorId, IContentProcessor<T> processor, IReadOnlyList<string> extensions = null) {
+                    }
+
+                    public void RegisterBuiltInProcessors() {
+                        RegisterProcessor(TextContentProcessorId, new TextContentProcessor(), new[] { WildcardExtension });
+                        RegisterProcessor(RawByteContentProcessorId, new RawByteContentProcessor(), new[] { WildcardExtension });
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+            string textProcessorHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextContentProcessor.hpp"));
+
+            Assert.Contains("TextContentProcessor()", sourceOutput);
+            Assert.Contains("RawByteContentProcessor()", sourceOutput);
+            Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<TextContent>", textProcessorHeader);
+        }
+
+        /// <summary>
+        /// Ensures source-only generated object creation adds the generated include needed by the emitted C++ body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBodyOnlyGeneratedObjectCreation_EmitsSourceInclude() {
+            string source = """
+                public class HelperNode {
+                }
+
+                public class GraphHost {
+                    public void Build() {
+                        HelperNode node = new HelperNode();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GraphHost.cpp"));
+
+            Assert.Contains("#include \"HelperNode.hpp\"", sourceOutput);
+            Assert.Contains("HelperNode()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures generated types nested inside expression-side generic construction are globally qualified when a member name would otherwise collide.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericConstructionInBody_QualifiesNestedGeneratedTypes() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ContentManager {
+                }
+
+                public class Core {
+                    public ContentManager ContentManager { get; set; }
+
+                    public void Build() {
+                        Dictionary<string, ContentManager> map = new Dictionary<string, ContentManager>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Core.cpp"));
+
+            Assert.Contains("new Dictionary<std::string, ::ContentManager*>", sourceOutput);
+        }
+
+        /// <summary>
         /// Ensures nameof lowers inside generic processor methods that include interface implementation and type constraints.
         /// </summary>
         [Fact]
@@ -1039,6 +1490,27 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures string null checks lower through a runtime helper that exists on the emitted native string surface.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringNullCheck_EmitsRuntimeIsNullOrEmptyHelper() {
+            string source = """
+                public class Widget {
+                    public bool IsMissing(string value) {
+                        return value == null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_string.hpp"));
+
+            Assert.Contains("String::IsNullOrEmpty(value)", sourceOutput);
+            Assert.Contains("static bool IsNullOrEmpty", runtimeHeader);
+        }
+
+        /// <summary>
         /// Ensures StringComparer static members lower through a native comparer runtime token instead of synthetic type leakage.
         /// </summary>
         [Fact]
@@ -1094,6 +1566,182 @@ namespace cs2.cpp.tests {
             Assert.Contains("Math::Max(static_cast<double>(this->Font->LineHeight), 1.0)", sourceOutput);
             Assert.DoesNotContain("0.15d", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("1d", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer-backed managed collection indexing lowers through native collection indexers instead of raw pointer arithmetic.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerBackedListIndexing_UsesDereferencedIndexerAccess() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    public List<string> Copy(IReadOnlyList<string> items) {
+                        List<string> values = new List<string>(items.Count);
+                        for (int i = 0; i < items.Count; i++) {
+                            values.Add(items[i]);
+                        }
+
+                        return values;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("for (int32_t i = 0; i < items->Count(); i++)", sourceOutput);
+            Assert.Contains("values->Add((*items)[i])", sourceOutput);
+            Assert.DoesNotContain("for (const int32_t i = 0;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("values->Add(items[i])", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic list construction preserves generated pointer element types when creating runtime lists.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedTypeListConstruction_UsesPointerGenericArguments() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Item {
+                }
+
+                public class Widget {
+                    readonly List<Item> items;
+
+                    public Widget(int count) {
+                        items = new List<Item>(count);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<::Item*>* items;", headerOutput);
+            Assert.Contains("new List<::Item*>(count)", sourceOutput);
+            Assert.DoesNotContain("new List<Item>(count)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ArgumentOutOfRangeException runtime support includes the managed parameter-name and message overload shape.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArgumentOutOfRangeExceptionParamAndMessage_UsesRuntimeOverload() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    public void Validate(int value) {
+                        if (value < 0) {
+                            throw new ArgumentOutOfRangeException(nameof(value), "Value must be non-negative.");
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new ArgumentOutOfRangeException(\"value\", \"Value must be non-negative.\")", sourceOutput);
+            Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArgumentExceptionMessageAndParameter_UsesRuntimeOverload() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    public void Validate(string items) {
+                        if (items == null) {
+                            throw new ArgumentException("Items must be provided.", nameof(items));
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new ArgumentException(\"Items must be provided.\", \"items\")", sourceOutput);
+            Assert.Contains("ArgumentException(const std::string& message, const std::string& parameterName)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures managed array helper and allocation patterns lower through the native Array runtime surface.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedArrayHelpers_UsesNativeArrayRuntimeShapes() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public class ContentProcessorRegistration {
+                    readonly string[] ExtensionsValue;
+
+                    public ContentProcessorRegistration(IReadOnlyList<string> extensions) {
+                        ExtensionsValue = extensions == null ? Array.Empty<string>() : NormalizeExtensions(extensions);
+                    }
+
+                    string[] NormalizeExtensions(IReadOnlyList<string> sourceExtensions) {
+                        string[] normalized = new string[sourceExtensions.Count];
+                        normalized[0] = sourceExtensions[0];
+                        return normalized;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentProcessorRegistration.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "array.hpp"));
+
+            Assert.Contains("Array<std::string>::Empty()", sourceOutput);
+            Assert.Contains("new Array<std::string>(sourceExtensions->Count())", sourceOutput);
+            Assert.Contains("(*normalized)[0] = (*sourceExtensions)[0];", sourceOutput);
+            Assert.Contains("static Array<T>* Empty()", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures local declarations qualify generated types when a member with the same identifier exists in class scope.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLocalGeneratedTypeMatchingMemberName_QualifiesLocalTypeReference() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ContentManager {
+                }
+
+                public class Core {
+                    public ContentManager ContentManager { get; set; }
+
+                    Dictionary<string, ContentManager> managers;
+
+                    public ContentManager Get(string root) {
+                        if (managers.TryGetValue(root, out ContentManager contentManager)) {
+                            return contentManager;
+                        }
+
+                        contentManager = new ContentManager();
+                        return contentManager;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Core.cpp"));
+
+            Assert.Contains("::ContentManager* contentManager;", sourceOutput);
+            Assert.Contains("contentManager = new ::ContentManager()", sourceOutput);
         }
 
         /// <summary>
@@ -1169,6 +1817,63 @@ namespace cs2.cpp.tests {
             Assert.Contains("registrationsByExtension->TryGetValue(extension, registration)", sourceOutput);
             Assert.DoesNotContain("for (let ", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain(" out_", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures list construction, indexing, and for-loop locals emit valid C++ shapes for pointer-backed managed collections.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerBackedListLoop_UsesPointerSafeConstructionIndexingAndMutableCounter() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ComboBoxItemVisual {
+                }
+
+                public class Widget {
+                    List<ComboBoxItemVisual> itemVisuals;
+
+                    public void Reset(List<ComboBoxItemVisual> items) {
+                        itemVisuals = new List<ComboBoxItemVisual>(items.Count);
+
+                        for (int i = 0; i < items.Count; i++) {
+                            itemVisuals.Add(items[i]);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("new List<::ComboBoxItemVisual*>(items->Count())", sourceOutput);
+            Assert.Contains("for (int32_t i = 0; i < items->Count(); i++)", sourceOutput);
+            Assert.Contains("this->itemVisuals->Add((*items)[i]);", sourceOutput);
+            Assert.DoesNotContain("for (const int32_t i = 0;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("itemVisuals->Add(items[i])", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ArgumentOutOfRangeException exposes the managed parameter-name and message overload required by generated throws.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArgumentOutOfRangeExceptionParameterAndMessage_UsesRuntimeOverload() {
+            string source = """
+                public class Widget {
+                    public void Validate(int size) {
+                        if (size < 0) {
+                            throw new System.ArgumentOutOfRangeException("size", "ComboBox size must be positive.");
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new ArgumentOutOfRangeException(\"size\", \"ComboBox size must be positive.\")", sourceOutput);
+            Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
         }
 
         /// <summary>

@@ -213,6 +213,10 @@ namespace cs2.cpp {
                 return generatedClass.GetEmittedTypeName();
             }
 
+            if (!string.IsNullOrWhiteSpace(typeName) && typeName.Contains('.', StringComparison.Ordinal)) {
+                return NormalizeLeafTypeName(typeName);
+            }
+
             return typeName;
         }
 

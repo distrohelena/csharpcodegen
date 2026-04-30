@@ -23,6 +23,10 @@ public:
     explicit ArgumentException(const std::string& message)
         : Exception(message) {
     }
+
+    ArgumentException(const std::string& message, const std::string& parameterName)
+        : Exception(message + " Parameter name: " + parameterName) {
+    }
 };
 
 class ArgumentNullException : public ArgumentException {
@@ -44,6 +48,10 @@ public:
 
     explicit ArgumentOutOfRangeException(const std::string& parameterName)
         : ArgumentException("Specified argument was out of range. Parameter name: " + parameterName) {
+    }
+
+    ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)
+        : ArgumentException(message + " Parameter name: " + parameterName) {
     }
 };
 

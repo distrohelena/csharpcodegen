@@ -37,6 +37,7 @@ namespace cs2.cpp {
                 Make("NativeStack", "runtime/native_stack.hpp", "HE_CPP_REQ_NATIVE_STACK", "Managed-style stack abstraction support for lightweight LIFO state."),
                 Make("NativeDictionary", "runtime/native_dictionary.hpp", "HE_CPP_REQ_NATIVE_DICTIONARY", "Managed-style dictionary abstraction support."),
                 Make("NativeTuple", "runtime/native_tuple.hpp", "HE_CPP_REQ_NATIVE_TUPLE", "Lightweight managed tuple support for transpiled value-tuple data flow."),
+                Make("NativeEnum", "runtime/native_enum.hpp", "HE_CPP_REQ_NATIVE_ENUM", "Managed enum placeholder contract support for transpiled enum metadata edges."),
                 Make("NativeDisposable", "runtime/native_disposable.hpp", "HE_CPP_REQ_NATIVE_DISPOSABLE", "Managed-style disposable contract support."),
                 Make("NativeEquatable", "runtime/native_equatable.hpp", "HE_CPP_REQ_NATIVE_EQUATABLE", "Managed-style equatable contract support."),
                 Make("NativeEvent", "runtime/native_event.hpp", "HE_CPP_REQ_NATIVE_EVENT", "Managed-style event contract support for transpiled event members."),

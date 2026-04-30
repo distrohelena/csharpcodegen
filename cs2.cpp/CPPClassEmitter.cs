@@ -1,4 +1,5 @@
 using cs2.core;
+using Microsoft.CodeAnalysis;
 using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
@@ -72,6 +73,8 @@ namespace cs2.cpp {
                     referencedTypes.Add(extension);
                 }
             }
+
+            AddSemanticInheritanceTypeReferences(conversionClass, referencedTypes, excludedTypeNames);
 
             foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
                 if (!excludedTypeNames.Contains(referencedClass)) {
@@ -405,6 +408,13 @@ namespace cs2.cpp {
                 string.Equals(referencedTypeName, "Nullable", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeNullable");
                 return "runtime/native_nullable";
+            }
+
+            if (string.Equals(referencedClass, "Enum", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Enum", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Enum", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeEnum");
+                return "runtime/native_enum";
             }
 
             if (string.Equals(referencedClass, "IDisposable", StringComparison.Ordinal) ||
@@ -828,7 +838,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, headerWriter);
 
             string emittedTypeName = conversionClass.GetEmittedTypeName();
-            string inheritance = CPPUtils.GetInheritance(program, conversionClass);
+            string inheritance = GetInheritanceClause(conversionClass);
             if (string.IsNullOrWhiteSpace(inheritance)) {
                 headerWriter.WriteLine($"class {emittedTypeName}");
             } else {
@@ -836,6 +846,12 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("{");
+
+            if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
+                WriteInterfaceSection(conversionClass, headerWriter, sourceWriter);
+                headerWriter.WriteLine("};");
+                return;
+            }
 
             bool wroteAnySection = false;
             wroteAnySection |= WriteAccessSection(conversionClass, MemberAccessType.Public, headerWriter, sourceWriter);
@@ -847,6 +863,116 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("};");
+        }
+
+        string GetInheritanceClause(ConversionClass conversionClass) {
+            if (conversionClass.TypeSymbol is INamedTypeSymbol typeSymbol) {
+                List<string> inheritanceParts = new List<string>();
+
+                if (typeSymbol.TypeKind != TypeKind.Interface &&
+                    typeSymbol.BaseType != null &&
+                    typeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
+                    typeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
+                    inheritanceParts.Add($"public {RenderInheritanceType(typeSymbol.BaseType)}");
+                }
+
+                foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
+                    inheritanceParts.Add($"public {RenderInheritanceType(interfaceSymbol)}");
+                }
+
+                if (inheritanceParts.Count > 0) {
+                    return string.Join(", ", inheritanceParts.Distinct(StringComparer.Ordinal));
+                }
+            }
+
+            return CPPUtils.GetInheritance(program, conversionClass);
+        }
+
+        void AddSemanticInheritanceTypeReferences(
+            ConversionClass conversionClass,
+            HashSet<string> referencedTypes,
+            HashSet<string> excludedTypeNames) {
+            if (conversionClass.TypeSymbol is not INamedTypeSymbol typeSymbol) {
+                return;
+            }
+
+            if (typeSymbol.TypeKind != TypeKind.Interface &&
+                typeSymbol.BaseType != null &&
+                typeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
+                typeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
+                AddInheritanceTypeReference(typeSymbol.BaseType, referencedTypes, excludedTypeNames);
+            }
+
+            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
+                AddInheritanceTypeReference(interfaceSymbol, referencedTypes, excludedTypeNames);
+            }
+        }
+
+        void AddInheritanceTypeReference(
+            INamedTypeSymbol typeSymbol,
+            HashSet<string> referencedTypes,
+            HashSet<string> excludedTypeNames) {
+            string typeName = program.FindGeneratedClass(typeSymbol.Name, typeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+                ?? NormalizeReferencedClassName(typeSymbol.Name);
+            if (!excludedTypeNames.Contains(typeName)) {
+                referencedTypes.Add(typeName);
+            }
+
+            foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
+                VariableType argumentType = VariableUtil.GetVarType(typeArgument);
+                string argumentTypeName = NormalizeReferencedClassName(argumentType.TypeName);
+                if (!string.IsNullOrWhiteSpace(argumentTypeName) && !excludedTypeNames.Contains(argumentTypeName)) {
+                    referencedTypes.Add(argumentTypeName);
+                }
+            }
+        }
+
+        string RenderInheritanceType(INamedTypeSymbol typeSymbol) {
+            string emittedTypeName = program.FindGeneratedClass(typeSymbol.Name, typeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+                ?? NormalizeReferencedClassName(typeSymbol.Name);
+
+            if (typeSymbol.TypeArguments.Length == 0) {
+                return emittedTypeName;
+            }
+
+            List<string> renderedArguments = new List<string>();
+            foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
+                renderedArguments.Add(VariableUtil.GetVarType(typeArgument).ToCPPString(program));
+            }
+
+            return $"{emittedTypeName}<{string.Join(", ", renderedArguments)}>";
+        }
+
+        /// <summary>
+        /// Emits interface members as a single public section because the current backend lowers interface properties as directly accessible members.
+        /// </summary>
+        /// <param name="conversionClass">The interface declaration being emitted.</param>
+        /// <param name="headerWriter">Writer that receives the header declaration.</param>
+        /// <param name="sourceWriter">Writer that receives source definitions for computed members.</param>
+        void WriteInterfaceSection(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            headerWriter.WriteLine("public:");
+
+            List<Action> writers = new List<Action>();
+
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                if (IsComputedProperty(variable)) {
+                    writers.Add(() => WriteComputedProperty(conversionClass, variable, headerWriter, sourceWriter));
+                    continue;
+                }
+
+                writers.Add(() => WriteField(conversionClass, variable, headerWriter));
+            }
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                writers.Add(() => WriteFunction(conversionClass, function, headerWriter, sourceWriter));
+            }
+
+            for (int index = 0; index < writers.Count; index++) {
+                writers[index]();
+                if (index != writers.Count - 1) {
+                    headerWriter.WriteLine();
+                }
+            }
         }
 
         /// <summary>

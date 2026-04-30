@@ -807,13 +807,58 @@ namespace cs2.cpp {
             }
 
             int diagnosticCount = GetDiagnosticCount();
+            VariableType sourceType = null;
+            VariableType cppType = sourceType;
+            bool hasConvertedType = false;
+            string objectCreationTypeName = objectCreation.Type.ToString();
+            ITypeSymbol objectCreationTypeSymbol = semantic.GetTypeInfo(objectCreation.Type).Type ?? semantic.GetTypeInfo(objectCreation.Type).ConvertedType;
+            int generatedTypeArity = objectCreationTypeSymbol is INamedTypeSymbol namedObjectCreationTypeSymbol
+                ? namedObjectCreationTypeSymbol.TypeArguments.Length
+                : 0;
+            ConversionClass explicitGeneratedClass = context.Program.FindGeneratedClass(objectCreationTypeName, generatedTypeArity);
+
+            if (IsNativeExceptionTypeName(objectCreationTypeName)) {
+                sourceType = VariableUtil.GetVarType(NormalizeNativeExceptionTypeName(objectCreationTypeName));
+            } else if (explicitGeneratedClass != null) {
+                sourceType = VariableUtil.GetVarType(objectCreation.Type, semantic);
+            } else {
+                if (objectCreationTypeSymbol != null) {
+                    sourceType = VariableUtil.GetVarType(objectCreationTypeSymbol.ToDisplayString());
+                } else if (TryGetExpressionTypeSymbol(semantic, objectCreation, out ITypeSymbol createdTypeSymbol)) {
+                    sourceType = VariableUtil.GetVarType(createdTypeSymbol.ToDisplayString());
+                }
+            }
+
+            if (sourceType != null) {
+                CPPTypeData cppTypeData;
+                cppType = ConvertToCPPType(sourceType, out cppTypeData);
+                hasConvertedType = cppType != null;
+                RegisterGeneratedTypeReferences(context, sourceType);
+            }
+
             if (!IsValueRuntimeTypeName(objectCreation.Type.ToString())) {
                 lines.Add("new ");
             }
 
-            int startDepth = context.DepthClass;
-            ExpressionResult typeResult = ProcessExpression(semantic, context, objectCreation.Type, lines);
-            context.PopClass(startDepth);
+            if (explicitGeneratedClass != null) {
+                lines.Add(QualifyRenderedCppTypeName(explicitGeneratedClass.GetEmittedTypeName(), context));
+            } else if (hasConvertedType) {
+                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
+            } else if (TryMapObjectCreationRuntimeTypeName(
+                objectCreationTypeName,
+                objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
+                out string runtimeObjectTypeName,
+                out string runtimeRequirementName)) {
+                if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
+                    codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
+                }
+
+                lines.Add(runtimeObjectTypeName);
+            } else {
+                int startDepth = context.DepthClass;
+                ProcessExpression(semantic, context, objectCreation.Type, lines);
+                context.PopClass(startDepth);
+            }
 
             lines.Add("(");
             if (objectCreation.ArgumentList != null) {
@@ -831,7 +876,26 @@ namespace cs2.cpp {
             }
 
             lines.Add(")");
-            return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, typeResult.Type);
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
+        }
+
+        static bool TryMapObjectCreationRuntimeTypeName(
+            string shortTypeName,
+            string qualifiedTypeName,
+            out string runtimeTypeName,
+            out string runtimeRequirementName) {
+            runtimeTypeName = string.Empty;
+            runtimeRequirementName = string.Empty;
+
+            if (string.Equals(shortTypeName, "MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.IO.MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.IO.MemoryStream", StringComparison.Ordinal)) {
+                runtimeTypeName = "MemoryStream";
+                runtimeRequirementName = "MemoryStream";
+                return true;
+            }
+
+            return false;
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
@@ -1055,6 +1119,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
             }
 
+            if (TryProcessNativeArrayInvocation(semantic, context, invocationExpression, lines, out VariableType nativeArrayType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, nativeArrayType);
+            }
+
             if (TryProcessNativeStringInvocation(semantic, context, invocationExpression, lines, out VariableType nativeStringType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, nativeStringType);
             }
@@ -1105,6 +1173,43 @@ namespace cs2.cpp {
             return result;
         }
 
+        bool TryProcessNativeArrayInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("object");
+
+            IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            VariableType elementType;
+            if (methodSymbol != null &&
+                methodSymbol.IsStatic &&
+                string.Equals(methodSymbol.Name, "Empty", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 1 &&
+                string.Equals(methodSymbol.ContainingType?.Name, "Array", StringComparison.Ordinal)) {
+                elementType = VariableUtil.GetVarType(methodSymbol.TypeArguments[0]);
+            } else if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
+                string.Equals(memberAccess.Expression.ToString(), "Array", StringComparison.Ordinal) &&
+                memberAccess.Name is GenericNameSyntax genericName &&
+                string.Equals(genericName.Identifier.Text, "Empty", StringComparison.Ordinal) &&
+                genericName.TypeArgumentList.Arguments.Count == 1) {
+                elementType = VariableUtil.GetVarType(genericName.TypeArgumentList.Arguments[0], semantic);
+            } else {
+                return false;
+            }
+
+            codeConverter?.RegisterRuntimeRequirement("NativeArray");
+            string elementTypeName = GetCppTypeToken(elementType, context.Program);
+
+            lines.Add($"Array<{elementTypeName}>::Empty()");
+
+            VariableType arrayType = new VariableType(VariableDataType.Array, "Array");
+            arrayType.GenericArgs.Add(elementType);
+            resultType = arrayType;
+            return true;
+        }
+
         bool TryProcessEventInvocation(
             SemanticModel semantic,
             LayerContext context,
@@ -1149,7 +1254,10 @@ namespace cs2.cpp {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(variableType, out typeData);
             string pointerSuffix = typeData.IsPointer ? "*" : string.Empty;
-            beforeLines.Add($"{cppType.ToCPPString(context.Program)}{pointerSuffix} {singleVariableDesignation.Identifier.Text};\n");
+            RegisterGeneratedTypeReferences(context, variableType);
+            string typeName = QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context);
+
+            beforeLines.Add($"{typeName}{pointerSuffix} {singleVariableDesignation.Identifier.Text};\n");
         }
 
         bool TryProcessNativeStringInvocation(
@@ -1309,18 +1417,18 @@ namespace cs2.cpp {
             SemanticModel semantic,
             ExpressionSyntax receiverExpression,
             IMethodSymbol toStringMethodSymbol) {
+            if (receiverExpression is MemberAccessExpressionSyntax nullableValueAccess &&
+                string.Equals(nullableValueAccess.Name.Identifier.Text, "Value", StringComparison.Ordinal) &&
+                TryResolveNullableUnderlyingType(semantic, nullableValueAccess.Expression, out ITypeSymbol nullableUnderlyingType)) {
+                return nullableUnderlyingType;
+            }
+
             if (toStringMethodSymbol?.Name == "ToString" && toStringMethodSymbol.ContainingType != null) {
                 return toStringMethodSymbol.ContainingType;
             }
 
             if (TryGetExpressionTypeSymbol(semantic, receiverExpression, out ITypeSymbol receiverTypeSymbol)) {
                 return receiverTypeSymbol;
-            }
-
-            if (receiverExpression is MemberAccessExpressionSyntax nullableValueAccess &&
-                string.Equals(nullableValueAccess.Name.Identifier.Text, "Value", StringComparison.Ordinal) &&
-                TryResolveNullableUnderlyingType(semantic, nullableValueAccess.Expression, out ITypeSymbol nullableUnderlyingType)) {
-                return nullableUnderlyingType;
             }
 
             return null;
@@ -1483,7 +1591,30 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
             }
 
+            if (TryProcessStringNullComparison(semantic, context, binary, lines)) {
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+            }
+
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
+
+            string rightText = string.Concat(right).Trim();
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binary.Left).ConvertedType ?? semantic.GetTypeInfo(binary.Left).Type;
+            if ((binary.IsKind(SyntaxKind.EqualsExpression) || binary.IsKind(SyntaxKind.NotEqualsExpression)) &&
+                string.Equals(rightText, "nullptr", StringComparison.Ordinal) &&
+                ((result.Type != null && result.Type.Type == VariableDataType.String) ||
+                 leftTypeSymbol?.SpecialType == SpecialType.System_String)) {
+                RegisterRuntimeRequirement("NativeString");
+
+                if (binary.IsKind(SyntaxKind.NotEqualsExpression)) {
+                    lines.Add("!");
+                }
+
+                lines.Add("String::IsNullOrEmpty(");
+                lines.AddRange(left);
+                lines.Add(")");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+            }
+
             lines.AddRange(left);
 
             lines.Add($" {op.ToStringOperator()} ");
@@ -1519,6 +1650,102 @@ namespace cs2.cpp {
 
             lines.Add(binary.IsKind(SyntaxKind.NotEqualsExpression) ? "true" : "false");
             return true;
+        }
+
+        bool TryProcessStringNullComparison(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binary,
+            List<string> lines) {
+            if (!binary.IsKind(SyntaxKind.NotEqualsExpression) &&
+                !binary.IsKind(SyntaxKind.EqualsExpression)) {
+                return false;
+            }
+
+            ExpressionSyntax stringSide = null;
+            if (binary.Left is LiteralExpressionSyntax leftLiteral &&
+                leftLiteral.IsKind(SyntaxKind.NullLiteralExpression)) {
+                stringSide = binary.Right;
+            } else if (binary.Right is LiteralExpressionSyntax rightLiteral &&
+                rightLiteral.IsKind(SyntaxKind.NullLiteralExpression)) {
+                stringSide = binary.Left;
+            }
+
+            if (stringSide == null) {
+                return false;
+            }
+
+            List<string> stringLines = new List<string>();
+            int startString = context.DepthClass;
+            ExpressionResult stringResult = ProcessExpression(semantic, context, stringSide, stringLines);
+            context.PopClass(startString);
+
+            if (!IsManagedStringExpression(semantic, stringSide, stringResult)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeString");
+
+            if (binary.IsKind(SyntaxKind.NotEqualsExpression)) {
+                lines.Add("!");
+            }
+
+            lines.Add("String::IsNullOrEmpty(");
+            lines.AddRange(stringLines);
+            lines.Add(")");
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether a lowered expression should be treated as a managed string for native comparison helpers.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to inspect the expression.</param>
+        /// <param name="expression">Source expression being evaluated.</param>
+        /// <param name="expressionResult">Lowered expression metadata produced by the active lowering path.</param>
+        /// <returns><c>true</c> when the expression represents a managed string value; otherwise, <c>false</c>.</returns>
+        static bool IsManagedStringExpression(
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            ExpressionResult expressionResult) {
+            VariableType expressionType = expressionResult.Type;
+            if (expressionType?.Type == VariableDataType.String ||
+                string.Equals(expressionType?.TypeName, "std::string", StringComparison.Ordinal) ||
+                string.Equals(expressionType?.TypeName, "string", StringComparison.Ordinal) ||
+                string.Equals(expressionType?.TypeName, "String", StringComparison.Ordinal)) {
+                return true;
+            }
+
+            if (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol stringTypeSymbol) &&
+                stringTypeSymbol.SpecialType == SpecialType.System_String) {
+                return true;
+            }
+
+            if (expression is not ElementAccessExpressionSyntax elementAccess) {
+                return false;
+            }
+
+            TypeInfo receiverTypeInfo = semantic.GetTypeInfo(elementAccess.Expression);
+            ITypeSymbol receiverTypeSymbol = receiverTypeInfo.ConvertedType ?? receiverTypeInfo.Type;
+            if (receiverTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
+                return arrayTypeSymbol.ElementType.SpecialType == SpecialType.System_String;
+            }
+
+            if (receiverTypeSymbol is not INamedTypeSymbol namedTypeSymbol ||
+                namedTypeSymbol.TypeArguments.Length == 0) {
+                return false;
+            }
+
+            ITypeSymbol elementTypeSymbol = namedTypeSymbol.TypeArguments[0];
+            if (elementTypeSymbol.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            string receiverName = namedTypeSymbol.Name;
+            string receiverDisplayName = namedTypeSymbol.ToDisplayString();
+            return string.Equals(receiverName, "List", StringComparison.Ordinal) ||
+                string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal);
         }
 
         static bool IsEventExpression(SemanticModel semantic, ExpressionSyntax expression) {
@@ -1578,8 +1805,7 @@ namespace cs2.cpp {
             int count = generic.TypeArgumentList.Arguments.Count;
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
-                VariableType type = VariableUtil.GetVarType(genType, semantic);
-                lines.Add(type.ToCPPString(context.Program));
+                lines.Add(RenderConvertedGenericArgumentType(semantic, context, genType));
 
                 if (i < count - 1) {
                     lines.Add(",");
@@ -1591,20 +1817,12 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessImplicitArrayCreationExpression(SemanticModel semantic, LayerContext context, ImplicitArrayCreationExpressionSyntax implicitArray, List<string> lines) {
-            // Start the array literal
-            lines.Add("[");
-
-            // Process each expression in the initializer
-            for (int i = 0; i < implicitArray.Initializer.Expressions.Count; i++) {
-                ProcessExpression(semantic, context, implicitArray.Initializer.Expressions[i], lines);
-
-                // Add a comma separator if it's not the last element
-                if (i < implicitArray.Initializer.Expressions.Count - 1) {
-                    lines.Add(", ");
-                }
+            if (TryProcessArrayInitializerTargetType(semantic, context, implicitArray, implicitArray.Initializer.Expressions, lines)) {
+                return;
             }
 
-            // Close the array literal
+            lines.Add("[");
+            AppendExpressionList(semantic, context, implicitArray.Initializer.Expressions, lines);
             lines.Add("]");
         }
 
@@ -1679,15 +1897,11 @@ namespace cs2.cpp {
 
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
             if (arrayCreation.Initializer != null) {
-                lines.Add("{ ");
-                for (int i = 0; i < arrayCreation.Initializer.Expressions.Count; i++) {
-                    ProcessExpression(semantic, context, arrayCreation.Initializer.Expressions[i], lines);
-
-                    if (i < arrayCreation.Initializer.Expressions.Count - 1) {
-                        lines.Add(", ");
-                    }
+                if (!TryProcessArrayInitializerTargetType(semantic, context, arrayCreation, arrayCreation.Initializer.Expressions, lines)) {
+                    lines.Add("{ ");
+                    AppendExpressionList(semantic, context, arrayCreation.Initializer.Expressions, lines);
+                    lines.Add(" }");
                 }
-                lines.Add(" }");
             } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines)) {
             } else if (arrayCreation.Type.RankSpecifiers.Any()) {
                 lines.Add("new Array(");
@@ -1700,6 +1914,53 @@ namespace cs2.cpp {
             }
 
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
+        }
+
+        bool TryProcessArrayInitializerTargetType(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax arrayExpression,
+            SeparatedSyntaxList<ExpressionSyntax> expressions,
+            List<string> lines) {
+            TypeInfo targetTypeInfo = semantic.GetTypeInfo(arrayExpression);
+            ITypeSymbol? targetTypeSymbol = targetTypeInfo.ConvertedType ?? targetTypeInfo.Type;
+
+            if (targetTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
+                string arrayElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(arrayTypeSymbol.ElementType), context.Program);
+                lines.Add($"new Array<{arrayElementTypeName}>({{ ");
+                AppendExpressionList(semantic, context, expressions, lines);
+                lines.Add(" })");
+                return true;
+            }
+
+            VariableType targetVariableType = targetTypeSymbol != null
+                ? VariableUtil.GetVarType(targetTypeSymbol)
+                : VariableUtil.GetVarType("object");
+
+            if (targetVariableType.Type != VariableDataType.List) {
+                return false;
+            }
+
+            CPPTypeData targetTypeData;
+            VariableType cppTargetType = ConvertToCPPType(targetVariableType, out targetTypeData);
+            lines.Add($"new {cppTargetType.ToCPPString(context.Program)}({{ ");
+            AppendExpressionList(semantic, context, expressions, lines);
+            lines.Add(" })");
+            return true;
+        }
+
+        void AppendExpressionList(
+            SemanticModel semantic,
+            LayerContext context,
+            SeparatedSyntaxList<ExpressionSyntax> expressions,
+            List<string> lines) {
+            for (int i = 0; i < expressions.Count; i++) {
+                ProcessExpression(semantic, context, expressions[i], lines);
+
+                if (i < expressions.Count - 1) {
+                    lines.Add(", ");
+                }
+            }
         }
 
         /// <summary>
@@ -1715,11 +1976,44 @@ namespace cs2.cpp {
             LayerContext context,
             CollectionExpressionSyntax collectionExpression,
             List<string> lines) {
+            TypeInfo targetTypeInfo = semantic.GetTypeInfo(collectionExpression);
+            ITypeSymbol targetTypeSymbol = targetTypeInfo.ConvertedType ?? targetTypeInfo.Type;
+
+            if (targetTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
+                string arrayElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(arrayTypeSymbol.ElementType), context.Program);
+                lines.Add($"new Array<{arrayElementTypeName}>(");
+                AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
+                lines.Add(")");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(targetTypeSymbol));
+            }
+
+            VariableType targetVariableType = targetTypeSymbol != null
+                ? VariableUtil.GetVarType(targetTypeSymbol)
+                : VariableUtil.GetVarType("object");
+
+            if (targetVariableType.Type == VariableDataType.List) {
+                CPPTypeData targetTypeData;
+                VariableType cppTargetType = ConvertToCPPType(targetVariableType, out targetTypeData);
+                lines.Add($"new {cppTargetType.ToCPPString(context.Program)}(");
+                AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
+                lines.Add(")");
+                return new ExpressionResult(true, VariablePath.Unknown, cppTargetType);
+            }
+
+            AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
+            return new ExpressionResult(true, VariablePath.Unknown, null);
+        }
+
+        void AppendCollectionExpressionInitializerList(
+            SemanticModel semantic,
+            LayerContext context,
+            CollectionExpressionSyntax collectionExpression,
+            List<string> lines) {
             lines.Add("{ ");
 
             for (int i = 0; i < collectionExpression.Elements.Count; i++) {
                 if (collectionExpression.Elements[i] is not ExpressionElementSyntax expressionElement) {
-                    return new ExpressionResult(false);
+                    continue;
                 }
 
                 ProcessExpression(semantic, context, expressionElement.Expression, lines);
@@ -1729,7 +2023,6 @@ namespace cs2.cpp {
             }
 
             lines.Add(" }");
-            return new ExpressionResult(true, VariablePath.Unknown, null);
         }
 
         protected override ExpressionResult ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
@@ -1888,11 +2181,31 @@ namespace cs2.cpp {
                 return $"std::string(1, {expressionText})";
             }
 
+            if (IsNativeTypeNamePropertyAccess(semantic, interpolation.Expression)) {
+                return expressionText;
+            }
+
             if (IsNativeInterpolationType(expressionType.Type)) {
                 return $"std::to_string({expressionText})";
             }
 
+            if (interpolation.Expression is MemberAccessExpressionSyntax nullableValueAccess &&
+                string.Equals(nullableValueAccess.Name.Identifier.Text, "Value", StringComparison.Ordinal) &&
+                TryResolveNullableUnderlyingType(semantic, nullableValueAccess.Expression, out ITypeSymbol nullableUnderlyingType) &&
+                IsNativeInterpolationType(VariableUtil.GetVarType(nullableUnderlyingType).Type)) {
+                return $"std::to_string({expressionText})";
+            }
+
             return $"{expressionText}->ToString()";
+        }
+
+        bool IsNativeTypeNamePropertyAccess(SemanticModel semantic, ExpressionSyntax expression) {
+            if (expression is not MemberAccessExpressionSyntax memberAccess ||
+                !string.Equals(memberAccess.Name.Identifier.Text, "Name", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            return true;
         }
 
         VariableType ResolveInterpolationType(SemanticModel semantic, ExpressionSyntax expression) {
@@ -1904,6 +2217,16 @@ namespace cs2.cpp {
             }
 
             return VariableUtil.GetVarType("string");
+        }
+
+        string GetCppTypeToken(VariableType sourceType, ConversionProgram program) {
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            if (typeData.IsPointer && cppType.Type != VariableDataType.Array) {
+                return $"{cppType.ToCPPString(program)}*";
+            }
+
+            return cppType.ToCPPString(program);
         }
 
         bool IsNativeInterpolationType(VariableDataType dataType) {
@@ -1956,10 +2279,19 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
+            bool shouldDereferenceElementAccess = ShouldDereferenceElementAccessExpression(semantic, elementAccess.Expression);
+            if (shouldDereferenceElementAccess) {
+                lines.Add("(*");
+            }
+
             // Process the expression being accessed (e.g., array or object)
             int startClass = context.DepthClass;
             ProcessExpression(semantic, context, elementAccess.Expression, lines);
             List<ConversionClass> saved = context.SavePopClass(startClass);
+
+            if (shouldDereferenceElementAccess) {
+                lines.Add(")");
+            }
 
             // Add the opening bracket
             lines.Add("[");
@@ -2663,6 +2995,14 @@ namespace cs2.cpp {
                             return new VariableType(parsedType.Type, "StringReader");
                         }
 
+                        if (string.Equals(parsedType.TypeName, "MemoryStream", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.IO.MemoryStream", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("MemoryStream");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = true;
+                            return new VariableType(parsedType.Type, "MemoryStream");
+                        }
+
                         if (string.Equals(parsedType.TypeName, "StreamReader", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.IO.StreamReader", StringComparison.Ordinal)) {
                             codeConverter?.RegisterRuntimeRequirement("StreamReader");
@@ -3164,6 +3504,20 @@ namespace cs2.cpp {
                 string.Equals(typeName, "global::System.NotSupportedException", StringComparison.Ordinal);
         }
 
+        static string NormalizeNativeExceptionTypeName(string typeName) {
+            int globalSeparatorIndex = typeName.LastIndexOf("::", StringComparison.Ordinal);
+            if (globalSeparatorIndex >= 0) {
+                return typeName[(globalSeparatorIndex + 2)..];
+            }
+
+            int namespaceSeparatorIndex = typeName.LastIndexOf('.');
+            if (namespaceSeparatorIndex >= 0) {
+                return typeName[(namespaceSeparatorIndex + 1)..];
+            }
+
+            return typeName;
+        }
+
         /// <summary>
         /// Determines whether a type-name string refers to the managed StringReader runtime value.
         /// </summary>
@@ -3319,6 +3673,11 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (expression is ElementAccessExpressionSyntax elementAccess &&
+                TryResolveElementAccessTypeSymbol(semantic, elementAccess, out typeSymbol)) {
+                return true;
+            }
+
             ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
             if (symbol is IAliasSymbol aliasSymbol) {
                 symbol = aliasSymbol.Target;
@@ -3363,6 +3722,37 @@ namespace cs2.cpp {
             return false;
         }
 
+        static bool TryResolveElementAccessTypeSymbol(
+            SemanticModel semantic,
+            ElementAccessExpressionSyntax elementAccess,
+            out ITypeSymbol typeSymbol) {
+            typeSymbol = null;
+
+            TypeInfo receiverTypeInfo = semantic.GetTypeInfo(elementAccess.Expression);
+            ITypeSymbol receiverTypeSymbol = receiverTypeInfo.ConvertedType ?? receiverTypeInfo.Type;
+            if (receiverTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
+                typeSymbol = arrayTypeSymbol.ElementType;
+                return typeSymbol != null;
+            }
+
+            if (receiverTypeSymbol is not INamedTypeSymbol namedTypeSymbol ||
+                namedTypeSymbol.TypeArguments.Length == 0) {
+                return false;
+            }
+
+            string receiverName = namedTypeSymbol.Name;
+            string receiverDisplayName = namedTypeSymbol.ToDisplayString();
+            if (string.Equals(receiverName, "List", StringComparison.Ordinal) ||
+                string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal)) {
+                typeSymbol = namedTypeSymbol.TypeArguments[0];
+                return typeSymbol != null;
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Creates a converted generic type shell whose generic arguments have already been normalized for C++ emission.
         /// </summary>
@@ -3394,6 +3784,30 @@ namespace cs2.cpp {
             }
 
             return new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+        }
+
+        string RenderConvertedGenericArgumentType(SemanticModel semantic, LayerContext context, TypeSyntax typeSyntax) {
+            VariableType sourceType = VariableUtil.GetVarType(typeSyntax, semantic);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+
+            if (typeData.IsPointer && cppType.Type != VariableDataType.Array) {
+                return $"{cppType.ToCPPString(context.Program)}*";
+            }
+
+            return cppType.ToCPPString(context.Program);
+        }
+
+        static bool ShouldDereferenceElementAccessExpression(SemanticModel semantic, ExpressionSyntax expression) {
+            if (!TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol typeSymbol)) {
+                return false;
+            }
+
+            if (typeSymbol.SpecialType == SpecialType.System_String) {
+                return false;
+            }
+
+            return typeSymbol is IArrayTypeSymbol || IsCountableCollectionTypeSymbol(typeSymbol);
         }
 
         bool IsSystemObjectType(SemanticModel semantic, TypeSyntax typeSyntax) {
@@ -3429,11 +3843,14 @@ namespace cs2.cpp {
 
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
+            RegisterGeneratedTypeReferences(context, varType);
 
             FunctionStack fnStack = context.GetCurrentFunction();
 
             string pointer = typeData.IsPointer ? " *" : " ";
-            List<string> newLines = [$"{cppType.ToCPPString(context.Program)}{pointer}"];
+            string declarationTypeName = QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context);
+
+            List<string> newLines = [$"{declarationTypeName}{pointer}"];
 
             FunctionStack? fn = context.GetCurrentFunction();
             bool isConstant = true;
@@ -3481,10 +3898,72 @@ namespace cs2.cpp {
 
             context.PopClass(start);
 
-            if (isConstant && typeData.IsNativeType) {
+            if (isConstant && typeData.IsNativeType && declaration.Parent is not ForStatementSyntax) {
                 lines.Add("const ");
             }
             lines.AddRange(newLines);
+        }
+
+        void RegisterGeneratedTypeReferences(LayerContext context, VariableType variableType) {
+            if (context == null || variableType == null) {
+                return;
+            }
+
+            RegisterGeneratedTypeReference(context, variableType.TypeName, variableType.GenericArgs.Count);
+
+            if (variableType.GenericArgs == null) {
+                return;
+            }
+
+            foreach (VariableType genericArgument in variableType.GenericArgs) {
+                RegisterGeneratedTypeReferences(context, genericArgument);
+            }
+        }
+
+        void RegisterGeneratedTypeReference(LayerContext context, string typeName, int genericArgCount) {
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return;
+            }
+
+            string normalizedTypeName = typeName;
+            int lastDotIndex = normalizedTypeName.LastIndexOf('.');
+            if (lastDotIndex >= 0 && lastDotIndex < normalizedTypeName.Length - 1) {
+                normalizedTypeName = normalizedTypeName[(lastDotIndex + 1)..];
+            }
+
+            int nestedSeparatorIndex = normalizedTypeName.LastIndexOf('+');
+            if (nestedSeparatorIndex >= 0 && nestedSeparatorIndex < normalizedTypeName.Length - 1) {
+                normalizedTypeName = normalizedTypeName[(nestedSeparatorIndex + 1)..];
+            }
+
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(normalizedTypeName, genericArgCount);
+            if (generatedClass == null) {
+                return;
+            }
+
+            ConversionClass currentClass = context.GetCurrentClass();
+            if (currentClass == null || currentClass.ReferencedClasses.Contains(generatedClass.Name)) {
+                return;
+            }
+
+            currentClass.ReferencedClasses.Add(generatedClass.Name);
+        }
+
+        string QualifyRenderedCppTypeName(string renderedTypeName, LayerContext context) {
+            if (string.IsNullOrWhiteSpace(renderedTypeName) || context?.Program?.Classes == null) {
+                return renderedTypeName;
+            }
+
+            string qualifiedTypeName = renderedTypeName;
+            foreach (ConversionClass generatedClass in context.Program.Classes) {
+                string generatedTypeName = generatedClass.GetEmittedTypeName();
+                qualifiedTypeName = Regex.Replace(
+                    qualifiedTypeName,
+                    $@"(?<!:)\b{Regex.Escape(generatedTypeName)}\b",
+                    $"::{generatedTypeName}");
+            }
+
+            return qualifiedTypeName;
         }
 
         /// <summary>
@@ -3686,6 +4165,14 @@ namespace cs2.cpp {
             }
 
             VariableType elementType = VariableUtil.GetVarType(arrayCreation.Type.ElementType, semantic);
+            if (arrayCreation.Type.RankSpecifiers.Count == 1) {
+                string elementTypeName = GetCppTypeToken(elementType, context.Program);
+                lines.Add($"new Array<{elementTypeName}>(");
+                ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                lines.Add(")");
+                return true;
+            }
+
             CPPTypeData elementTypeData;
             VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
 

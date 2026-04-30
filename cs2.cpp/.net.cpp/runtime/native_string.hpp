@@ -20,6 +20,15 @@ public:
     inline static const std::string Empty = std::string();
 
     /// <summary>
+    /// Determines whether the supplied string is empty.
+    /// </summary>
+    /// <param name="value">String value to inspect.</param>
+    /// <returns>True when the string contains no characters; otherwise false.</returns>
+    static bool IsNullOrEmpty(const std::string& value) {
+        return value.empty();
+    }
+
+    /// <summary>
     /// Determines whether the supplied string is null, empty, or consists only of whitespace characters.
     /// </summary>
     /// <param name="value">String value to inspect.</param>
