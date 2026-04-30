@@ -937,7 +937,7 @@ namespace cs2.cpp {
 
             List<string> renderedArguments = new List<string>();
             foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
-                renderedArguments.Add(VariableUtil.GetVarType(typeArgument).ToCPPString(program));
+                renderedArguments.Add(ConvertType(VariableUtil.GetVarType(typeArgument)));
             }
 
             return $"{emittedTypeName}<{string.Join(", ", renderedArguments)}>";
@@ -1000,6 +1000,11 @@ namespace cs2.cpp {
         bool WriteAccessSection(ConversionClass conversionClass, MemberAccessType accessType, TextWriter headerWriter, TextWriter sourceWriter) {
             List<Action> writers = new List<Action>();
 
+            if (accessType == MemberAccessType.Public &&
+                ShouldEmitImplicitValueTypeDefaultConstructor(conversionClass)) {
+                writers.Add(() => WriteImplicitValueTypeDefaultConstructor(conversionClass, headerWriter, sourceWriter));
+            }
+
             foreach (ConversionVariable variable in conversionClass.Variables.Where(variable => variable.AccessType == accessType)) {
                 if (IsComputedProperty(variable)) {
                     writers.Add(() => WriteComputedProperty(conversionClass, variable, headerWriter, sourceWriter));
@@ -1027,6 +1032,48 @@ namespace cs2.cpp {
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether the emitter should synthesize the implicit parameterless constructor that C# value types always expose.
+        /// </summary>
+        /// <param name="conversionClass">The converted type to inspect.</param>
+        /// <returns><c>true</c> when the value type needs an emitted parameterless constructor; otherwise <c>false</c>.</returns>
+        bool ShouldEmitImplicitValueTypeDefaultConstructor(ConversionClass conversionClass) {
+            if (conversionClass?.TypeSymbol?.IsValueType != true ||
+                conversionClass.DeclarationType == MemberDeclarationType.Enum) {
+                return false;
+            }
+
+            return !conversionClass.Functions.Any(function => function.IsConstructor && function.InParameters.Count == 0);
+        }
+
+        /// <summary>
+        /// Emits the implicit parameterless constructor required for C# value-type default initialization.
+        /// </summary>
+        /// <param name="conversionClass">The value type that needs the constructor.</param>
+        /// <param name="headerWriter">Writer that receives the declaration.</param>
+        /// <param name="sourceWriter">Writer that receives the definition.</param>
+        void WriteImplicitValueTypeDefaultConstructor(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            string emittedTypeName = conversionClass.GetEmittedTypeName();
+            headerWriter.WriteLine($"    {emittedTypeName}();");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{emittedTypeName}()");
+
+            List<string> initializers = conversionClass.Variables
+                .Where(variable => !variable.IsStatic && !IsComputedProperty(variable))
+                .Select(variable => $"{variable.Name}()")
+                .ToList();
+            if (initializers.Count > 0) {
+                sourceWriter.Write(" : ");
+                sourceWriter.Write(string.Join(", ", initializers));
+            }
+
+            sourceWriter.WriteLine();
+            sourceWriter.WriteLine("{");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
         }
 
         /// <summary>

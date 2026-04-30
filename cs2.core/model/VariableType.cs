@@ -5,6 +5,8 @@ namespace cs2.core {
         public List<VariableType> Args { get; set; }
         public List<VariableType> GenericArgs { get; set; }
         public bool IsNullable { get; set; }
+        public bool IsEnum { get; set; }
+        public bool IsGenericParameter { get; set; }
 
         public VariableType(
             VariableDataType type = VariableDataType.Unknown,
@@ -34,6 +36,8 @@ namespace cs2.core {
             Args = source.Args.ToList();
             GenericArgs = source.GenericArgs.ToList();
             IsNullable = source.IsNullable;
+            IsEnum = source.IsEnum;
+            IsGenericParameter = source.IsGenericParameter;
         }
 
         public override string ToString() {

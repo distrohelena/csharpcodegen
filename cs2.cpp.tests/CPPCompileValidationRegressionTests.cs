@@ -1154,7 +1154,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
 
-            Assert.Contains("this->RegisterProcessor(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
             Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -1186,7 +1186,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
 
-            Assert.Contains("RegisterProcessor(new ::TextContentProcessor())", sourceOutput);
+            Assert.Contains("RegisterProcessor<TextContent*>(new ::TextContentProcessor())", sourceOutput);
             Assert.DoesNotContain("new IContentProcessor_1<TextContent>()", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -1212,7 +1212,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TextContentProcessor.hpp"));
 
-            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<TextContent>", headerOutput);
+            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<::TextContent*>", headerOutput);
             Assert.Contains("#include \"IContentProcessor_1.hpp\"", headerOutput);
             Assert.Contains("#include \"TextContent.hpp\"", headerOutput);
             Assert.DoesNotContain("class TextContentProcessor : public IContentProcessor\n", headerOutput, StringComparison.Ordinal);
@@ -1232,9 +1232,125 @@ namespace cs2.cpp.tests {
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "float3.hpp"));
             string runtimeHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_equatable.hpp"));
 
-            Assert.Contains("class float3 : public IEquatable<float3>", headerOutput);
+            Assert.Contains("class float3 : public IEquatable<::float3>", headerOutput);
             Assert.Contains("template <typename T>", runtimeHeaderOutput);
             Assert.Contains("class IEquatable", runtimeHeaderOutput);
+        }
+
+        /// <summary>
+        /// Ensures generated struct-like value types keep direct member access and stack-style construction instead of leaking pointer semantics.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedStructValueMembers_UsesDirectAccessAndStackConstruction() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+
+                    public float3(float x, float y, float z) {
+                        X = x;
+                        Y = y;
+                        Z = z;
+                    }
+                }
+
+                public struct int2 {
+                    public int X;
+                    public int Y;
+
+                    public int2(int x, int y) {
+                        X = x;
+                        Y = y;
+                    }
+                }
+
+                public struct byte4 {
+                    public byte X;
+                    public byte Y;
+                    public byte Z;
+                    public byte W;
+
+                    public byte4(byte x, byte y, byte z, byte w) {
+                        X = x;
+                        Y = y;
+                        Z = z;
+                        W = w;
+                    }
+                }
+
+                public class ThemeColors {
+                    public byte4 TextOnAccent;
+                }
+
+                public static class ThemeManager {
+                    public static ThemeColors Colors;
+                }
+
+                public class RenderManager {
+                    public int2 MainWindowSize;
+                }
+
+                public class CoreLike {
+                    public static CoreLike Instance;
+                    public RenderManager RenderManager3D;
+                }
+
+                public class Entity {
+                    public float3 Position;
+                }
+
+                public class Widget {
+                    Entity Parent;
+                    byte4 ButtonTextColor;
+
+                    public void Init() {
+                        var windowSize = CoreLike.Instance.RenderManager3D.MainWindowSize;
+                        var pos = Parent.Position;
+                        pos.X = windowSize.X;
+                        ButtonTextColor = ThemeManager.Colors.TextOnAccent;
+                        Parent.Position = new float3(pos.X, pos.Y, 0.1f);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("::int2 windowSize = CoreLike::Instance->RenderManager3D->MainWindowSize;", sourceOutput);
+            Assert.Contains("::float3 pos = this->Parent->Position;", sourceOutput);
+            Assert.Contains("pos.X = windowSize.X;", sourceOutput);
+            Assert.Contains("this->ButtonTextColor = ThemeManager::Colors->TextOnAccent;", sourceOutput);
+            Assert.Contains("this->Parent->Position = ::float3(pos.X, pos.Y, 0.1f);", sourceOutput);
+            Assert.DoesNotContain("::int2 *windowSize", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("windowSize->X", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("pos->X", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->Parent->Position = new ::float3", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated C# structs expose the implicit parameterless constructor needed for default value initialization in consuming types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedStructWithoutParameterlessConstructor_EmitsImplicitDefaultConstructor() {
+            string source = """
+                public struct int2 {
+                    public int X;
+                    public int Y;
+
+                    public int2(int x, int y) {
+                        X = x;
+                        Y = y;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "int2.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "int2.cpp"));
+
+            Assert.Contains("int2();", headerOutput);
+            Assert.Contains("int2::int2() : X(), Y()", sourceOutput);
         }
 
         /// <summary>
@@ -1268,6 +1384,9 @@ namespace cs2.cpp.tests {
                     const string RawByteContentProcessorId = "core.raw-byte-content";
                     const string WildcardExtension = "*";
 
+                    void RegisterProcessor(ContentProcessorRegistration registration) {
+                    }
+
                     void RegisterProcessor<T>(string processorId, IContentProcessor<T> processor, IReadOnlyList<string> extensions = null) {
                     }
 
@@ -1282,10 +1401,10 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
             string textProcessorHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextContentProcessor.hpp"));
 
-            Assert.Contains("TextContentProcessor()", sourceOutput);
-            Assert.Contains("RawByteContentProcessor()", sourceOutput);
+            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("RegisterProcessor<RawByteContent*>(RawByteContentProcessorId, new ::RawByteContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
             Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<TextContent>", textProcessorHeader);
+            Assert.Contains("class TextContentProcessor : public IContentProcessor_1<::TextContent*>", textProcessorHeader);
         }
 
         /// <summary>
@@ -1335,6 +1454,360 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Core.cpp"));
 
             Assert.Contains("new Dictionary<std::string, ::ContentManager*>", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures named tuple debug-info aggregation lowers through native ValueTuple construction, tuple item storage members, and a valid catch-all handler.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDebugInfoNamedTupleAggregation_UsesNativeTupleAndCatchAllLowering() {
+            string source = """
+                using System.Collections.Generic;
+
+                public interface IDebugInfoProvider {
+                    string Category { get; }
+                    void AppendInfo(List<(string Key, string Value)> items);
+                }
+
+                public static class DebugInfoRegistry {
+                    static readonly List<IDebugInfoProvider> providers = new List<IDebugInfoProvider>();
+
+                    public static List<(string Category, string Key, string Value)> Snapshot() {
+                        var result = new List<(string, string, string)>();
+                        for (int i = 0; i < providers.Count; i++) {
+                            var p = providers[i];
+                            var items = new List<(string Key, string Value)>();
+                            try {
+                                p.AppendInfo(items);
+                            } catch {
+                            }
+
+                            for (int j = 0; j < items.Count; j++) {
+                                var it = items[j];
+                                result.Add((p.Category, it.Key, it.Value));
+                            }
+                        }
+
+                        return result;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugInfoRegistry.cpp"));
+
+            Assert.Contains("new List<ValueTuple<std::string, std::string, std::string>*>();", sourceOutput);
+            Assert.Contains("new List<ValueTuple<std::string, std::string>*>();", sourceOutput);
+            Assert.Contains("catch (...)", sourceOutput);
+            Assert.Contains("::IDebugInfoProvider *p = (*providers)[i];", sourceOutput);
+            Assert.Contains("ValueTuple<std::string, std::string> *it = (*items)[j];", sourceOutput);
+            Assert.Contains("result->Add(", sourceOutput);
+            Assert.Contains("ValueTuple<std::string, std::string, std::string>", sourceOutput);
+            Assert.Contains("new ValueTuple<std::string, std::string, std::string>(p->Category, it->Item1, it->Item2)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures declaration-pattern guards over generic reference constraints lower to typed native cast checks.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericDeclarationPattern_EmitsTypedNativeCastGuard() {
+            string source = """
+                public class Asset {
+                }
+
+                public class Stream {
+                }
+
+                public static class AssetSerializer {
+                    public static Asset Deserialize(Stream stream) {
+                        return null;
+                    }
+                }
+
+                public class AssetContentProcessor<TAsset> where TAsset : Asset {
+                    public TAsset Read(Stream stream) {
+                        Asset asset = AssetSerializer.Deserialize(stream);
+                        if (asset is TAsset typedAsset) {
+                            return typedAsset;
+                        }
+
+                        return null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AssetContentProcessor_1.cpp"));
+
+            Assert.Contains("TAsset* typedAsset = he_cpp_try_cast<TAsset>(asset);", sourceOutput);
+            Assert.Contains("if (typedAsset != nullptr)", sourceOutput);
+            Assert.DoesNotContain("if ()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures serializer-style optional arguments and enum locals lower without pointer leakage.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOptionalArgumentsAndEnumLocals_UsesValueSemanticsAndDefaultArguments() {
+            string source = """
+                public enum EngineBinaryEndianness {
+                    LittleEndian,
+                    BigEndian
+                }
+
+                public enum EditorAssetBinaryValueKind {
+                    TextureAsset = 1
+                }
+
+                public class Stream {
+                }
+
+                public class EngineBinaryReader {
+                    public static EngineBinaryReader Create(Stream stream, EngineBinaryEndianness endianness, bool leaveOpen = true) {
+                        return null;
+                    }
+                }
+
+                public class EngineBinaryHeader {
+                    public EngineBinaryHeader(EngineBinaryEndianness endianness, byte version, ushort formatId, ushort recordKind, ushort valueKind) {
+                    }
+                }
+
+                public static class Serializer {
+                    public static void Deserialize(Stream stream, EngineBinaryEndianness endianness) {
+                        EngineBinaryReader reader = EngineBinaryReader.Create(stream, endianness);
+                        EditorAssetBinaryValueKind valueKind = EditorAssetBinaryValueKind.TextureAsset;
+                        EngineBinaryHeader header = new EngineBinaryHeader(endianness, 2, 1, 7, (ushort)valueKind);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.Contains("EngineBinaryReader::Create(stream, endianness, true)", sourceOutput);
+            Assert.Contains("::EditorAssetBinaryValueKind valueKind = EditorAssetBinaryValueKind::TextureAsset;", sourceOutput);
+            Assert.DoesNotContain("::EditorAssetBinaryValueKind *valueKind", sourceOutput);
+            Assert.Contains("new ::EngineBinaryHeader(endianness, 2, 1, 7, static_cast<uint16_t>(valueKind))", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures serializer-style type checks and callback method groups lower through native casts and delegate wrappers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSerializerTypeChecksAndArrayCallbacks_UsesNativeCppShapes() {
+            string source = """
+                using System;
+
+                public class Asset {
+                }
+
+                public class TextureAsset : Asset {
+                }
+
+                public class ModelAsset : Asset {
+                }
+
+                public class Reader {
+                    public T[] ReadArray<T>(Func<Reader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class Writer {
+                    public void WriteArray<T>(T[] values, Action<Writer, T> writeElement) {
+                    }
+                }
+
+                public static class Serializer {
+                    public static int GetValueKind(Asset asset) {
+                        if (asset is TextureAsset) {
+                            return 1;
+                        } else if (asset is ModelAsset) {
+                            return 2;
+                        }
+
+                        return 0;
+                    }
+
+                    public static void WriteAsset(Writer writer, Asset asset) {
+                        if (asset is TextureAsset textureAsset) {
+                            WriteTexture(writer, textureAsset);
+                            return;
+                        } else if (asset is ModelAsset modelAsset) {
+                            WriteModel(writer, modelAsset);
+                            return;
+                        }
+                    }
+
+                    public static int[] ReadInts(Reader reader) {
+                        return reader.ReadArray(ReadInt);
+                    }
+
+                    public static void WriteInts(Writer writer, int[] values) {
+                        writer.WriteArray(values, WriteInt);
+                    }
+
+                    static int ReadInt(Reader reader) {
+                        return 0;
+                    }
+
+                    static void WriteTexture(Writer writer, TextureAsset asset) {
+                    }
+
+                    static void WriteModel(Writer writer, ModelAsset asset) {
+                    }
+
+                    static void WriteInt(Writer writer, int value) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.Contains("he_cpp_try_cast<TextureAsset>(asset) != nullptr", sourceOutput);
+            Assert.Contains("else", sourceOutput);
+            Assert.Contains("ModelAsset* modelAsset = he_cpp_try_cast<ModelAsset>(asset);", sourceOutput);
+            Assert.Contains("reader->ReadArray(new Func<Reader*, int32_t>(&Serializer::ReadInt))", sourceOutput);
+            Assert.Contains("writer->WriteArray<int32_t>(values, new Action<Writer*, int32_t>(&Serializer::WriteInt))", sourceOutput);
+            Assert.DoesNotContain("instanceof", sourceOutput);
+            Assert.DoesNotContain("else     ModelAsset*", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures arrays of generated reference types preserve pointer element semantics through native array helpers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReferenceTypeArrayReadWriteHelpers_UsesPointerElementArrays() {
+            string source = """
+                using System;
+
+                public class Reader {
+                    public T[] ReadArray<T>(Func<Reader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class Writer {
+                    public void WriteArray<T>(T[] values, Action<Writer, T> writeElement) {
+                    }
+                }
+
+                public class Node {
+                }
+
+                public class GraphAsset {
+                    public Node[] Items;
+                }
+
+                public static class Serializer {
+                    public static Node ReadNode(Reader reader) {
+                        return new Node();
+                    }
+
+                    public static void WriteNode(Writer writer, Node value) {
+                    }
+
+                    public static GraphAsset ReadGraph(Reader reader) {
+                        return new GraphAsset {
+                            Items = reader.ReadArray(ReadNode) ?? Array.Empty<Node>()
+                        };
+                    }
+
+                    public static void WriteGraph(Writer writer, GraphAsset asset) {
+                        writer.WriteArray(asset.Items, WriteNode);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string graphHeader = File.ReadAllText(Path.Combine(output.OutputPath, "GraphAsset.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.Contains("Array<::Node*>* Items;", graphHeader);
+            Assert.Contains("reader->ReadArray(new Func<Reader*, Node*>(&Serializer::ReadNode))", sourceOutput);
+            Assert.Contains("Array<Node*>::Empty()", sourceOutput);
+            Assert.Contains("writer->WriteArray<Node*>(asset->Items, new Action<Writer*, Node*>(&Serializer::WriteNode))", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures collection-expression arguments targeting list-family interfaces lower through the native list runtime instead of synthetic arrays.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCollectionExpressionArgumentForReadOnlyList_UsesNativeListConstruction() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class TextContent {
+                }
+
+                public interface IContentProcessor<T> {
+                }
+
+                public class TextContentProcessor : IContentProcessor<TextContent> {
+                }
+
+                public class Widget {
+                    public void RegisterProcessor<T>(
+                        string processorId,
+                        IContentProcessor<T> processor,
+                        IReadOnlyList<string> extensions = null) {
+                    }
+
+                    public void RegisterBuiltInProcessors() {
+                        RegisterProcessor("core.text-content", new TextContentProcessor(), ["*"]);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("new List<std::string>({ \"*\" })", sourceOutput);
+            Assert.DoesNotContain("new Array<std::string>", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures null-coalescing array expressions lower to valid native C++ instead of leaking the C# coalesce operator.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayNullCoalescing_UsesNativeNullGuardExpression() {
+            string source = """
+                using System;
+
+                public struct Float3 {
+                }
+
+                public class Reader {
+                    public T[] ReadArray<T>(Func<Reader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class ModelAsset {
+                    public Float3[] Positions;
+                }
+
+                public static class Serializer {
+                    public static Float3 ReadFloat3(Reader reader) {
+                        return default;
+                    }
+
+                    public static ModelAsset ReadModelAsset(Reader reader) {
+                        return new ModelAsset {
+                            Positions = reader.ReadArray(ReadFloat3) ?? Array.Empty<Float3>()
+                        };
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+
+            Assert.DoesNotContain("??", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Array<Float3>::Empty()", sourceOutput);
+            Assert.Contains("__coalesce", sourceOutput);
         }
 
         /// <summary>

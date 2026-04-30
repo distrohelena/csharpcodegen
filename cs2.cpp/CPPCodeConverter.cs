@@ -23,6 +23,7 @@ namespace cs2.cpp {
         public CPPBuildUsageReport BuildUsageReport { get; private set; }
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
+        internal ConversionProgram Program => program;
 
         protected override string[] PreProcessorSymbols { get { return preprocessorSymbols; } }
         internal bool IncludeProjectPreprocessorSymbols => includeProjectPreprocessorSymbols;
@@ -121,7 +122,7 @@ namespace cs2.cpp {
             Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
 
-            string rootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, ".net.cpp");
+            string rootPath = ResolveRuntimeTemplateDirectory();
             CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
 
             writeClasses(outputFolder, BuildUsageReport);
@@ -181,6 +182,81 @@ namespace cs2.cpp {
             //}
 
             //writeOutput(writer);
+        }
+
+        /// <summary>
+        /// Resolves the runtime template directory used to seed generated C++ outputs, falling back from the process entry assembly to the converter assembly when tests run under testhost.
+        /// </summary>
+        /// <returns>The full path to the runtime template directory.</returns>
+        static string ResolveRuntimeTemplateDirectory() {
+            List<string> candidateSearchRoots = new List<string>();
+
+            Assembly entryAssembly = Assembly.GetEntryAssembly();
+            if (entryAssembly != null && !string.IsNullOrWhiteSpace(entryAssembly.Location)) {
+                string entryAssemblyDirectory = Path.GetDirectoryName(entryAssembly.Location);
+                if (!string.IsNullOrWhiteSpace(entryAssemblyDirectory)) {
+                    candidateSearchRoots.Add(entryAssemblyDirectory);
+                }
+            }
+
+            string converterAssemblyDirectory = Path.GetDirectoryName(typeof(CPPCodeConverter).Assembly.Location);
+            if (!string.IsNullOrWhiteSpace(converterAssemblyDirectory)) {
+                candidateSearchRoots.Add(converterAssemblyDirectory);
+            }
+
+            if (!string.IsNullOrWhiteSpace(AppContext.BaseDirectory)) {
+                candidateSearchRoots.Add(AppContext.BaseDirectory);
+            }
+
+            foreach (string candidateSearchRoot in candidateSearchRoots) {
+                string resolvedDirectory = FindRuntimeTemplateDirectory(candidateSearchRoot);
+                if (!string.IsNullOrWhiteSpace(resolvedDirectory)) {
+                    return resolvedDirectory;
+                }
+            }
+
+            return Path.Combine(candidateSearchRoots.FirstOrDefault() ?? AppContext.BaseDirectory, ".net.cpp");
+        }
+
+        /// <summary>
+        /// Walks upward from a search root until a runtime template directory with real template content is found.
+        /// </summary>
+        /// <param name="searchRoot">Starting directory used to probe for the runtime template folder.</param>
+        /// <returns>The resolved runtime template directory when found; otherwise an empty string.</returns>
+        static string FindRuntimeTemplateDirectory(string searchRoot) {
+            if (string.IsNullOrWhiteSpace(searchRoot)) {
+                return string.Empty;
+            }
+
+            for (DirectoryInfo currentDirectory = new DirectoryInfo(searchRoot);
+                currentDirectory != null;
+                currentDirectory = currentDirectory.Parent) {
+                string candidateRoot = Path.Combine(currentDirectory.FullName, ".net.cpp");
+                if (HasRuntimeTemplateContent(candidateRoot)) {
+                    return candidateRoot;
+                }
+
+                string siblingProjectCandidateRoot = Path.Combine(currentDirectory.FullName, "cs2.cpp", ".net.cpp");
+                if (HasRuntimeTemplateContent(siblingProjectCandidateRoot)) {
+                    return siblingProjectCandidateRoot;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Determines whether a runtime template directory contains the expected seed files instead of an empty staging folder.
+        /// </summary>
+        /// <param name="candidateRoot">Directory to inspect.</param>
+        /// <returns><c>true</c> when the directory contains the runtime template sentinels required for output seeding; otherwise <c>false</c>.</returns>
+        static bool HasRuntimeTemplateContent(string candidateRoot) {
+            if (!Directory.Exists(candidateRoot)) {
+                return false;
+            }
+
+            return File.Exists(Path.Combine(candidateRoot, "system", "console.cpp")) &&
+                File.Exists(Path.Combine(candidateRoot, "runtime", "native_string.hpp"));
         }
 
         /// <summary>

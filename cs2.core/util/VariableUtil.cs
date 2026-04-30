@@ -31,6 +31,10 @@ namespace cs2.core {
             foreach (var element in tupleType.Elements) {
                 VariableType elementType = GetVarType(element.Type, semantic);
                 tupleWrapper.GenericArgs.Add(elementType);
+
+                if (!string.IsNullOrWhiteSpace(element.Identifier.Text)) {
+                    tupleWrapper.Args.Add(new VariableType(VariableDataType.Unknown, element.Identifier.Text));
+                }
             }
 
             return tupleWrapper;
@@ -95,6 +99,18 @@ namespace cs2.core {
                 return tupleType;
             }
 
+            if (normalizedTypeName.StartsWith("(", StringComparison.Ordinal) &&
+                normalizedTypeName.EndsWith(")", StringComparison.Ordinal)) {
+                string tupleArgumentText = normalizedTypeName[1..^1];
+                VariableType tupleType = new VariableType(VariableDataType.Tuple);
+
+                foreach (string tupleElement in SplitTupleElementList(tupleArgumentText)) {
+                    tupleType.GenericArgs.Add(GetVarType(StripTupleElementName(tupleElement)));
+                }
+
+                return tupleType;
+            }
+
             if (normalizedTypeName.Length > 1 &&
                 normalizedTypeName.EndsWith("?", StringComparison.Ordinal) &&
                 !string.Equals(normalizedTypeName, "?", StringComparison.Ordinal)) {
@@ -152,6 +168,8 @@ namespace cs2.core {
             List<string> genericArguments = new List<string>();
             int startIndex = 0;
             int genericDepth = 0;
+            int tupleDepth = 0;
+            int arrayDepth = 0;
 
             for (int index = 0; index < genericArgumentText.Length; index++) {
                 char currentCharacter = genericArgumentText[index];
@@ -166,7 +184,27 @@ namespace cs2.core {
                     continue;
                 }
 
-                if (currentCharacter == ',' && genericDepth == 0) {
+                if (currentCharacter == '(') {
+                    tupleDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ')') {
+                    tupleDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == '[') {
+                    arrayDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ']') {
+                    arrayDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ',' && genericDepth == 0 && tupleDepth == 0 && arrayDepth == 0) {
                     genericArguments.Add(genericArgumentText[startIndex..index].Trim());
                     startIndex = index + 1;
                 }
@@ -180,8 +218,117 @@ namespace cs2.core {
             return genericArguments;
         }
 
+        static IEnumerable<string> SplitTupleElementList(string tupleElementText) {
+            List<string> tupleElements = new List<string>();
+            int startIndex = 0;
+            int genericDepth = 0;
+            int tupleDepth = 0;
+            int arrayDepth = 0;
+
+            for (int index = 0; index < tupleElementText.Length; index++) {
+                char currentCharacter = tupleElementText[index];
+
+                if (currentCharacter == '<') {
+                    genericDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '>') {
+                    genericDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == '(') {
+                    tupleDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ')') {
+                    tupleDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == '[') {
+                    arrayDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ']') {
+                    arrayDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ',' && genericDepth == 0 && tupleDepth == 0 && arrayDepth == 0) {
+                    tupleElements.Add(tupleElementText[startIndex..index].Trim());
+                    startIndex = index + 1;
+                }
+            }
+
+            tupleElements.Add(tupleElementText[startIndex..].Trim());
+            return tupleElements;
+        }
+
+        static string StripTupleElementName(string tupleElement) {
+            int genericDepth = 0;
+            int tupleDepth = 0;
+            int arrayDepth = 0;
+
+            for (int index = tupleElement.Length - 1; index >= 0; index--) {
+                char currentCharacter = tupleElement[index];
+
+                if (currentCharacter == '>') {
+                    genericDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '<') {
+                    genericDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ')') {
+                    tupleDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '(') {
+                    tupleDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ']') {
+                    arrayDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '[') {
+                    arrayDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == ' ' && genericDepth == 0 && tupleDepth == 0 && arrayDepth == 0) {
+                    return tupleElement[..index].Trim();
+                }
+            }
+
+            return tupleElement.Trim();
+        }
+
         public static VariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
             var typeInfo = semantic.GetTypeInfo(type);
+            ITypeSymbol resolvedTypeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+
+            if (resolvedTypeSymbol is ITypeParameterSymbol typeParameterSymbol) {
+                VariableType genericParameterType = new VariableType(GetVarDataType(typeParameterSymbol.Name), typeParameterSymbol.Name);
+                genericParameterType.IsGenericParameter = true;
+                return genericParameterType;
+            }
+
+            if (resolvedTypeSymbol?.TypeKind == TypeKind.Enum) {
+                VariableType enumType = new VariableType(GetVarDataType(resolvedTypeSymbol.Name), resolvedTypeSymbol.Name);
+                enumType.IsEnum = true;
+                return enumType;
+            }
 
             if (type is IdentifierNameSyntax) {
                 IdentifierNameSyntax identifier = (IdentifierNameSyntax)type;
@@ -328,10 +475,22 @@ namespace cs2.core {
             }
 
             if (typeSymbol is ITypeParameterSymbol parameterSymbol) {
-                return new VariableType(VariableDataType.Object, parameterSymbol.Name);
+                VariableType genericParameterType = new VariableType(VariableDataType.Object, parameterSymbol.Name);
+                genericParameterType.IsGenericParameter = true;
+                return genericParameterType;
             }
 
             if (typeSymbol is INamedTypeSymbol namedTypeSymbol) {
+                if (namedTypeSymbol.IsTupleType) {
+                    VariableType tupleType = new VariableType(VariableDataType.Tuple);
+                    foreach (IFieldSymbol tupleElement in namedTypeSymbol.TupleElements) {
+                        tupleType.GenericArgs.Add(GetVarType(tupleElement.Type));
+                        tupleType.Args.Add(new VariableType(VariableDataType.Unknown, tupleElement.Name));
+                    }
+
+                    return tupleType;
+                }
+
                 if (namedTypeSymbol.Name == "Nullable" &&
                     namedTypeSymbol.ContainingNamespace?.ToDisplayString() == "System" &&
                     namedTypeSymbol.TypeArguments.Length == 1) {
@@ -409,6 +568,10 @@ namespace cs2.core {
                 }
 
                 VariableType baseType = new VariableType(dataType, typeName);
+                if (namedTypeSymbol.TypeKind == TypeKind.Enum) {
+                    baseType.IsEnum = true;
+                }
+
                 if (namedTypeSymbol.IsGenericType) {
                     foreach (var typeArgument in namedTypeSymbol.TypeArguments) {
                         baseType.GenericArgs.Add(GetVarType(typeArgument));
