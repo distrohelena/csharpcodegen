@@ -967,7 +967,7 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                writers.Add(() => WriteField(conversionClass, variable, headerWriter));
+                writers.Add(() => WriteField(conversionClass, variable, headerWriter, sourceWriter));
             }
 
             foreach (ConversionFunction function in conversionClass.Functions) {
@@ -1023,7 +1023,7 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                writers.Add(() => WriteField(conversionClass, variable, headerWriter));
+                writers.Add(() => WriteField(conversionClass, variable, headerWriter, sourceWriter));
             }
 
             foreach (ConversionFunction function in conversionClass.Functions.Where(function => function.AccessType == accessType)) {
@@ -1113,10 +1113,70 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="variable">The variable to emit.</param>
         /// <param name="headerWriter">Writer that receives the field declaration.</param>
-        void WriteField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter) {
+        void WriteField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
             string typeName = ConvertType(variable.VarType, conversionClass);
             headerWriter.WriteLine($"    {staticKeyword}{typeName} {variable.Name};");
+
+            if (variable.IsStatic) {
+                WriteStaticFieldDefinition(conversionClass, variable, sourceWriter);
+            }
+        }
+
+        /// <summary>
+        /// Writes one out-of-class definition for a static field so generated translation units satisfy native linkage.
+        /// </summary>
+        /// <param name="conversionClass">Owning class that declares the static field.</param>
+        /// <param name="variable">Static variable to define.</param>
+        /// <param name="sourceWriter">Writer that receives the source definition.</param>
+        void WriteStaticFieldDefinition(ConversionClass conversionClass, ConversionVariable variable, TextWriter sourceWriter) {
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+
+            string typeName = ConvertType(variable.VarType, conversionClass);
+            sourceWriter.Write($"{typeName} {GetQualifiedClassName(conversionClass)}::{variable.Name}");
+
+            if (TryWriteStaticFieldInitializer(conversionClass, variable, sourceWriter)) {
+                sourceWriter.WriteLine(";");
+            } else {
+                sourceWriter.WriteLine(";");
+            }
+
+            sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Attempts to emit a native initializer for a static field definition using the lowered assignment expression when available.
+        /// </summary>
+        /// <param name="conversionClass">Owning class that provides semantic lowering context.</param>
+        /// <param name="variable">Static field whose initializer should be written.</param>
+        /// <param name="sourceWriter">Writer that receives the initializer text.</param>
+        /// <returns><c>true</c> when an initializer was emitted; otherwise <c>false</c>.</returns>
+        bool TryWriteStaticFieldInitializer(ConversionClass conversionClass, ConversionVariable variable, TextWriter sourceWriter) {
+            if (variable.AssignmentExpression != null) {
+                List<string> initializerLines = new List<string>();
+                LayerContext context = new CPPLayerContext(program);
+                int start = context.DepthClass;
+                context.AddClass(conversionClass);
+                ExpressionResult result = processor.ProcessExpression(conversionClass.Semantic, context, variable.AssignmentExpression, initializerLines);
+                context.PopClass(start);
+
+                if ((result.BeforeLines == null || result.BeforeLines.Count == 0) &&
+                    (result.AfterLines == null || result.AfterLines.Count == 0) &&
+                    initializerLines.Count > 0) {
+                    sourceWriter.Write(" = ");
+                    sourceWriter.Write(string.Concat(initializerLines));
+                    return true;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(variable.Assignment) ||
+                string.Equals(variable.VarType?.TypeName, "Event", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            sourceWriter.Write(" = ");
+            sourceWriter.Write(variable.Assignment);
+            return true;
         }
 
         /// <summary>

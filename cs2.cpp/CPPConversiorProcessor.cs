@@ -5851,6 +5851,14 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(shortTypeName, "RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Text.RegularExpressions.RegexOptions", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Text.RegularExpressions.RegexOptions", StringComparison.Ordinal)) {
+                runtimeTypeName = "RegexOptions";
+                runtimeRequirementName = "Regex";
+                return true;
+            }
+
             return false;
         }
 
