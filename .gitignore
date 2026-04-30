@@ -7,3 +7,4 @@ node/
 node.zip
 */dist/*
 cs2.ts/.net.ts/dist
+.worktrees/
