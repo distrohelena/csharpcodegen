@@ -5,7 +5,9 @@
 /// </summary>
 class StringComparer {
 public:
+    static const StringComparer Ordinal;
     static const StringComparer OrdinalIgnoreCase;
 };
 
+inline const StringComparer StringComparer::Ordinal = StringComparer();
 inline const StringComparer StringComparer::OrdinalIgnoreCase = StringComparer();

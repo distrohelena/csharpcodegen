@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 
@@ -30,11 +31,38 @@ public:
         return &EmptyArray;
     }
 
+    static void Copy(const Array<T>* source, Array<T>* destination, int32_t length) {
+        if (source == nullptr || destination == nullptr || length <= 0) {
+            return;
+        }
+
+        int32_t copyLength = std::min(length, std::min(source->Length, destination->Length));
+        for (int32_t index = 0; index < copyLength; index++) {
+            (*destination)[index] = (*source)[index];
+        }
+    }
+
     T& operator[](int32_t index) {
         return Data[index];
     }
 
     const T& operator[](int32_t index) const {
         return Data[index];
+    }
+
+    T* begin() {
+        return Data;
+    }
+
+    T* end() {
+        return Data + Length;
+    }
+
+    const T* begin() const {
+        return Data;
+    }
+
+    const T* end() const {
+        return Data + Length;
     }
 };

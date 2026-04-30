@@ -4,6 +4,8 @@
 #include "stream.hpp"
 #include "seek-origin.hpp"
 #include "file-mode.hpp"
+#include "file-access.hpp"
+#include "file-share.hpp"
 #include <cstdio>  // For std::FILE*
 #include <string>
 #include "file-mode.hpp"
@@ -18,6 +20,9 @@ private:
 
 public:
     FileStream(const char* path, FileMode mode);
+    FileStream(const char* path, FileMode mode, FileAccess access, FileShare share);
+    FileStream(const std::string& path, FileMode mode);
+    FileStream(const std::string& path, FileMode mode, FileAccess access, FileShare share);
     ~FileStream() override;
 
     size_t Read(uint8_t* buffer, size_t offset, size_t count) override;

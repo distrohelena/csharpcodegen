@@ -1,4 +1,5 @@
 #include "binary-reader.hpp"
+#include <algorithm>
 #include <cstring>  // For memcpy
 
 BinaryReader::BinaryReader(Stream& s, bool isLittleEndian)
@@ -23,9 +24,8 @@ T BinaryReader::Read() {
         std::memcpy(&value, buffer, sizeof(T));
     }
     else {
-        for (size_t i = 0; i < sizeof(T); ++i) {
-            value |= static_cast<T>(buffer[i]) << (8 * (sizeof(T) - 1 - i));
-        }
+        std::reverse(buffer, buffer + sizeof(T));
+        std::memcpy(&value, buffer, sizeof(T));
     }
 
     return value;

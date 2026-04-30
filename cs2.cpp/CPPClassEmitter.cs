@@ -354,6 +354,11 @@ namespace cs2.cpp {
                 sourceWriter.WriteLine($"#include \"{requirement.IncludePath}\"");
             }
 
+            if (conversionClass.Functions.Any(function => !function.HasBody) &&
+                emittedIncludePaths.Add("runtime/native_exceptions.hpp")) {
+                sourceWriter.WriteLine("#include \"runtime/native_exceptions.hpp\"");
+            }
+
             sourceWriter.WriteLine();
         }
 
@@ -850,6 +855,7 @@ namespace cs2.cpp {
             if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
                 WriteInterfaceSection(conversionClass, headerWriter, sourceWriter);
                 headerWriter.WriteLine("};");
+                WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
                 return;
             }
 
@@ -863,6 +869,7 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("};");
+            WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
         }
 
         string GetInheritanceClause(ConversionClass conversionClass) {
@@ -964,6 +971,11 @@ namespace cs2.cpp {
             }
 
             foreach (ConversionFunction function in conversionClass.Functions) {
+                if (IsFreeOperatorFunction(function)) {
+                    writers.Add(() => WriteFriendOperatorDeclaration(conversionClass, function, headerWriter));
+                    continue;
+                }
+
                 writers.Add(() => WriteFunction(conversionClass, function, headerWriter, sourceWriter));
             }
 
@@ -1015,6 +1027,11 @@ namespace cs2.cpp {
             }
 
             foreach (ConversionFunction function in conversionClass.Functions.Where(function => function.AccessType == accessType)) {
+                if (IsFreeOperatorFunction(function)) {
+                    writers.Add(() => WriteFriendOperatorDeclaration(conversionClass, function, headerWriter));
+                    continue;
+                }
+
                 writers.Add(() => WriteFunction(conversionClass, function, headerWriter, sourceWriter));
             }
 
@@ -1171,6 +1188,19 @@ namespace cs2.cpp {
             WriteFunctionDefinition(conversionClass, function, sourceWriter);
         }
 
+        void WriteFreeOperatorFunctions(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            List<ConversionFunction> freeOperatorFunctions = conversionClass.Functions
+                .Where(IsFreeOperatorFunction)
+                .ToList();
+            if (freeOperatorFunctions.Count == 0) {
+                return;
+            }
+
+            foreach (ConversionFunction function in freeOperatorFunctions) {
+                WriteFreeFunctionDefinition(conversionClass, function, sourceWriter);
+            }
+        }
+
         /// <summary>
         /// Writes a function declaration into the class header.
         /// </summary>
@@ -1217,10 +1247,38 @@ namespace cs2.cpp {
 
             if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
+            } else {
+                sourceWriter.WriteLine("throw new NotSupportedException(\"Method has no generated body.\");");
             }
 
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        void WriteFreeFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            WriteFunctionTemplateDeclaration(function, sourceWriter, string.Empty);
+            sourceWriter.Write($"{GetReturnType(conversionClass, function)} {GetFunctionName(conversionClass, function)}(");
+            WriteParameters(conversionClass, function, sourceWriter);
+            sourceWriter.WriteLine(")");
+            sourceWriter.WriteLine("{");
+
+            if (function.HasBody) {
+                function.WriteLines(processor, program, conversionClass, sourceWriter);
+            } else {
+                sourceWriter.WriteLine("throw new NotSupportedException(\"Method has no generated body.\");");
+            }
+
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
+        }
+
+        void WriteFriendOperatorDeclaration(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter) {
+            WriteFunctionTemplateDeclaration(function, headerWriter, "    ");
+            headerWriter.Write("    friend ");
+            headerWriter.Write($"{GetReturnType(conversionClass, function)} {GetFunctionName(conversionClass, function)}(");
+            WriteParameters(conversionClass, function, headerWriter);
+            headerWriter.WriteLine(");");
         }
 
         /// <summary>
@@ -1272,6 +1330,13 @@ namespace cs2.cpp {
             }
 
             return function.Name;
+        }
+
+        static bool IsFreeOperatorFunction(ConversionFunction function) {
+            return function != null &&
+                function.IsStatic &&
+                !function.IsConstructor &&
+                function.Name.StartsWith("operator", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1510,6 +1575,8 @@ namespace cs2.cpp {
                 string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "FileNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "DirectoryNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "NotSupportedException", StringComparison.Ordinal);
         }
     }

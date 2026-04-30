@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 enum class MidpointRounding {
     ToEven,
@@ -11,6 +12,8 @@ enum class MidpointRounding {
 
 class Math {
 public:
+    inline static constexpr double PI = 3.14159265358979323846;
+
     template <typename TValue>
     static TValue Clamp(TValue value, TValue minValue, TValue maxValue) {
         return std::clamp(value, minValue, maxValue);
@@ -26,9 +29,26 @@ public:
         return std::max(left, right);
     }
 
+    template <typename TLeft, typename TRight>
+    static std::common_type_t<TLeft, TRight> Max(TLeft left, TRight right) {
+        using TResult = std::common_type_t<TLeft, TRight>;
+        return std::max(static_cast<TResult>(left), static_cast<TResult>(right));
+    }
+
     template <typename TValue>
     static TValue Min(TValue left, TValue right) {
         return std::min(left, right);
+    }
+
+    template <typename TLeft, typename TRight>
+    static std::common_type_t<TLeft, TRight> Min(TLeft left, TRight right) {
+        using TResult = std::common_type_t<TLeft, TRight>;
+        return std::min(static_cast<TResult>(left), static_cast<TResult>(right));
+    }
+
+    template <typename TValue>
+    static double Abs(TValue value) {
+        return std::fabs(static_cast<double>(value));
     }
 
     template <typename TValue>
@@ -88,9 +108,24 @@ public:
         return static_cast<float>(Math::Max(left, right));
     }
 
+    template <typename TLeft, typename TRight>
+    static float Max(TLeft left, TRight right) {
+        return static_cast<float>(Math::Max(left, right));
+    }
+
     template <typename TValue>
     static float Min(TValue left, TValue right) {
         return static_cast<float>(Math::Min(left, right));
+    }
+
+    template <typename TLeft, typename TRight>
+    static float Min(TLeft left, TRight right) {
+        return static_cast<float>(Math::Min(left, right));
+    }
+
+    template <typename TValue>
+    static float Abs(TValue value) {
+        return static_cast<float>(Math::Abs(value));
     }
 
     template <typename TValue>

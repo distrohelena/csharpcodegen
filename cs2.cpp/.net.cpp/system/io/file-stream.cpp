@@ -2,6 +2,9 @@
 #include <stdexcept>  // For exceptions
 #include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
+#if defined(_WIN32)
+#include <io.h>
+#endif
 
 // Helper function to get file mode as C-style string
 const char* GetFileMode(FileMode mode) {
@@ -20,10 +23,22 @@ const char* GetFileMode(FileMode mode) {
 FileStream::FileStream(const char* path, FileMode mode) : file(nullptr), position(0), length(0) {
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
-        throw std::runtime_error("Failed to open file: " + path);
+        throw std::runtime_error(std::string("Failed to open file: ") + path);
     }
 
     UpdateLength();
+}
+
+FileStream::FileStream(const char* path, FileMode mode, FileAccess, FileShare)
+    : FileStream(path, mode) {
+}
+
+FileStream::FileStream(const std::string& path, FileMode mode)
+    : FileStream(path.c_str(), mode) {
+}
+
+FileStream::FileStream(const std::string& path, FileMode mode, FileAccess access, FileShare share)
+    : FileStream(path.c_str(), mode, access, share) {
 }
 
 // Destructor

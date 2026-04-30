@@ -254,6 +254,39 @@ namespace cs2.core {
             }
         }
 
+        private static void ProcessOperatorDeclaration(SemanticModel semantic, OperatorDeclarationSyntax operatorDeclaration, ConversionContext context) {
+            bool isStatic;
+            bool isOverride;
+            MemberAccessType access;
+            MemberDeclarationType type;
+            MemberUtil.GetModifiers(operatorDeclaration.Modifiers, out isStatic, out isOverride, out access, out type);
+
+            ConversionFunction func = context.StartFn();
+            func.IsStatic = true;
+            func.AccessType = access;
+            func.Name = $"operator{operatorDeclaration.OperatorToken.Text}";
+            func.DeclarationType = type;
+            func.ReturnType = VariableUtil.GetVarType(operatorDeclaration.ReturnType, semantic);
+            if (func.ReturnType.Type == VariableDataType.Void) {
+                func.ReturnType = null;
+            }
+
+            foreach (ParameterSyntax parameter in operatorDeclaration.ParameterList.Parameters) {
+                ConversionVariable variable = new ConversionVariable();
+                variable.Name = parameter.Identifier.ToString();
+                variable.VarType = VariableUtil.GetVarType(parameter.Type!, semantic);
+                func.InParameters.Add(variable);
+            }
+
+            if (operatorDeclaration.Body != null) {
+                func.RawBlock = operatorDeclaration.Body;
+                PreProcessExpression(semantic, context, operatorDeclaration.Body);
+            } else if (operatorDeclaration.ExpressionBody != null) {
+                func.ArrowExpression = operatorDeclaration.ExpressionBody;
+                PreProcessExpression(semantic, context, operatorDeclaration.ExpressionBody);
+            }
+        }
+
         private static void ProcessDelegateDeclaration(SemanticModel semantic, DelegateDeclarationSyntax delegateDecl, ConversionContext context) {
             string name = delegateDecl.Identifier.ToString();
 
@@ -333,31 +366,32 @@ namespace cs2.core {
 
         private static void ProcessField(SemanticModel semantic, FieldDeclarationSyntax fMember, ConversionContext context) {
             VariableDeclarationSyntax declaration = fMember.Declaration;
-            VariableDeclaratorSyntax firstVar = declaration.Variables[0];
-
             bool isStatic;
             bool isOverride;
             MemberAccessType access;
             MemberDeclarationType type;
             MemberUtil.GetModifiers(fMember.Modifiers, out isStatic, out isOverride, out access, out type);
 
-            ConversionVariable variable = context.StartVar();
-            variable.Name = firstVar.Identifier.ToString();
-            variable.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
+            VariableType fieldType = VariableUtil.GetVarType(declaration.Type, semantic);
+            foreach (VariableDeclaratorSyntax variableDeclarator in declaration.Variables) {
+                ConversionVariable variable = context.StartVar();
+                variable.Name = variableDeclarator.Identifier.ToString();
+                variable.VarType = new VariableType(fieldType);
 
-            variable.IsStatic = isStatic;
-            variable.AccessType = access;
-            variable.IsOverride = isOverride;
-            variable.DeclarationType = type;
+                variable.IsStatic = isStatic;
+                variable.AccessType = access;
+                variable.IsOverride = isOverride;
+                variable.DeclarationType = type;
 
-            if (firstVar.Initializer != null) {
-                variable.AssignmentExpression = firstVar.Initializer.Value;
-                if (firstVar.Initializer.Value is LiteralExpressionSyntax literal) {
-                    variable.Assignment = ProcessLiteralExpression(literal, context);
+                if (variableDeclarator.Initializer != null) {
+                    variable.AssignmentExpression = variableDeclarator.Initializer.Value;
+                    if (variableDeclarator.Initializer.Value is LiteralExpressionSyntax literal) {
+                        variable.Assignment = ProcessLiteralExpression(literal, context);
+                    }
                 }
-            }
 
-            variable.SetDefaultAssignment();
+                variable.SetDefaultAssignment();
+            }
         }
 
         private static void ProcessProperty(SemanticModel semantic, PropertyDeclarationSyntax pMember, ConversionContext context) {
@@ -515,6 +549,8 @@ namespace cs2.core {
                 ProcessDelegateDeclaration(semantic, del, context);
             } else if (exp is MethodDeclarationSyntax method) {
                 ProcessMethodDeclaration(semantic, method, context);
+            } else if (exp is OperatorDeclarationSyntax operatorDeclaration) {
+                ProcessOperatorDeclaration(semantic, operatorDeclaration, context);
             } else if (exp is ConstructorDeclarationSyntax constructor) {
                 ProcessConstructorDeclaration(semantic, constructor, context);
             } else if (exp is FieldDeclarationSyntax field) {

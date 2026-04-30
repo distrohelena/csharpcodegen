@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 /// <summary>
@@ -39,5 +40,16 @@ public:
     /// <returns>True when the value is positive infinity; otherwise false.</returns>
     static bool IsPositiveInfinity(double value) {
         return std::isinf(value) && value > 0.0;
+    }
+
+    /// <summary>
+    /// Produces a stable integer hash code for a primitive value using the native standard hash surface.
+    /// </summary>
+    /// <typeparam name="T">Primitive value type to hash.</typeparam>
+    /// <param name="value">Value whose hash code should be produced.</param>
+    /// <returns>Signed 32-bit hash code for the supplied value.</returns>
+    template <typename T>
+    static int32_t GetHashCode(const T& value) {
+        return static_cast<int32_t>(std::hash<T>{}(value));
     }
 };

@@ -24,6 +24,10 @@ public:
         return this->find(key) != this->end();
     }
 
+    bool Remove(const TKey& key) {
+        return this->erase(key) > 0;
+    }
+
     bool TryGetValue(const TKey& key, TValue& value) const {
         auto iterator = this->find(key);
         if (iterator == this->end()) {

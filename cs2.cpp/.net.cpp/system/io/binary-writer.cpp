@@ -1,4 +1,5 @@
 #include "binary-writer.hpp"
+#include <algorithm>
 #include <cstring>  // For memcpy
 
 BinaryWriter::BinaryWriter(Stream& s, bool isLittleEndian)
@@ -14,13 +15,9 @@ void BinaryWriter::Write(T value) {
     static_assert(std::is_arithmetic_v<T>, "Only arithmetic types are supported.");
     uint8_t buffer[sizeof(T)];
 
-    if (littleEndian) {
-        std::memcpy(buffer, &value, sizeof(T));
-    }
-    else {
-        for (size_t i = 0; i < sizeof(T); ++i) {
-            buffer[i] = (value >> (8 * (sizeof(T) - 1 - i))) & 0xFF;
-        }
+    std::memcpy(buffer, &value, sizeof(T));
+    if (!littleEndian) {
+        std::reverse(buffer, buffer + sizeof(T));
     }
 
     stream.Write(buffer, 0, sizeof(T));

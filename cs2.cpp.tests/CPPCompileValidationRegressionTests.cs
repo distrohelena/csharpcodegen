@@ -817,7 +817,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("const std::string info = \"Anchored to: \";", sourceOutput);
-            Assert.Contains("return info + String::Join(\", \", values);", sourceOutput);
+            Assert.Contains("return info + String::JoinArray(\", \", values->ToArray());", sourceOutput);
             Assert.DoesNotContain("const std::string info[]", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Boolean::Join", sourceOutput, StringComparison.Ordinal);
         }
@@ -1700,13 +1700,17 @@ namespace cs2.cpp.tests {
                 """;
 
             ConversionOutput output = RunConversion(source);
+            string readerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
+            string writerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Writer.cpp"));
 
             Assert.Contains("he_cpp_try_cast<TextureAsset>(asset) != nullptr", sourceOutput);
             Assert.Contains("else", sourceOutput);
             Assert.Contains("ModelAsset* modelAsset = he_cpp_try_cast<ModelAsset>(asset);", sourceOutput);
             Assert.Contains("reader->ReadArray(new Func<Reader*, int32_t>(&Serializer::ReadInt))", sourceOutput);
             Assert.Contains("writer->WriteArray<int32_t>(values, new Action<Writer*, int32_t>(&Serializer::WriteInt))", sourceOutput);
+            Assert.Contains("(*readElement)(this)", readerOutput);
+            Assert.Contains("(*writeElement)(this, (*values)[i])", writerOutput);
             Assert.DoesNotContain("instanceof", sourceOutput);
             Assert.DoesNotContain("else     ModelAsset*", sourceOutput);
         }
@@ -2330,6 +2334,28 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures string coalesce expressions lower without pointer-style temporaries or raw question-mark operators.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringCoalesce_EmitsDirectStringValue() {
+            string source = """
+                public class Widget {
+                    public string Normalize(string message) {
+                        string text = message ?? string.Empty;
+                        return text;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("const std::string text = message;", sourceOutput);
+            Assert.DoesNotContain("object*", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("??", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures managed collection Count properties lower to callable native Count() helpers instead of member-field syntax.
         /// </summary>
         [Fact]
@@ -2352,6 +2378,61 @@ namespace cs2.cpp.tests {
             Assert.Contains("items->Count()", sourceOutput);
             Assert.DoesNotContain("items->Count >", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("items->Count == ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures managed list Capacity property access and assignment lower to native helper calls instead of unsupported pseudo-fields.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedListCapacityProperty_UsesNativeCapacityHelpers() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    readonly List<string> items = new List<string>(4);
+
+                    public string Grow(int desired) {
+                        if (items.Capacity < desired) {
+                            items.Capacity = desired;
+                        }
+
+                        return $"Capacity: {items.Capacity}";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("items->Capacity()", sourceOutput);
+            Assert.Contains("items->SetCapacity(desired)", sourceOutput);
+            Assert.Contains("std::to_string(this->items->Capacity())", sourceOutput);
+            Assert.DoesNotContain("items->Capacity = ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures multi-local declarations and collection-expression array locals lower into valid native declarations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMultiLocalDeclarationAndArrayCollectionLocal_UsesSplitDeclarationsAndNativeArrayPointers() {
+            string source = """
+                public class Widget {
+                    public int Sum(int width, int height) {
+                        float cx = width * 0.5f, cy = height * 0.5f;
+                        int[] values = [1, 2, 3];
+                        return (int)(cx + cy + values.Length);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("const float cx = width * 0.5f;", sourceOutput);
+            Assert.Contains("const float cy = height * 0.5f;", sourceOutput);
+            Assert.Contains("Array<int32_t> *values = new Array<int32_t>({ 1, 2, 3 })", sourceOutput);
+            Assert.DoesNotContain("cx, =", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t values[] = new Array", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2700,6 +2781,80 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures constant string expressions used for <c>.Length</c> lower to integer literals instead of invalid C-string member access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConstantStringLengthMemberAccess_EmitsIntegerLiteralLength() {
+            string source = """
+                public class Widget {
+                    public string Extract(string text) {
+                        return text.Substring("defined(".Length, text.Length - "defined(".Length - 1);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("String::Substring(text, 8, static_cast<int32_t>(text.size()) - 8 - 1)", sourceOutput);
+            Assert.DoesNotContain("\"defined(\".size()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures numeric <c>var</c> locals infer float types when Roslyn recovery is weak across arithmetic and conditional expressions.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNumericVarInferenceFallback_EmitsFloatLocals() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    public float Build(float fieldOfView, float aspectRatio, float nearPlaneDistance, float farPlaneDistance) {
+                        var yScale = 1.0f / (float)Math.Tan((double)fieldOfView * 0.5f);
+                        var xScale = yScale / aspectRatio;
+                        var negFarRange = float.IsPositiveInfinity(farPlaneDistance) ? -1.0f : farPlaneDistance / (nearPlaneDistance - farPlaneDistance);
+                        return xScale + yScale + negFarRange;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("float yScale = 1.0f / static_cast<float>(Math::Tan(static_cast<double>(fieldOfView) * 0.5f));", sourceOutput);
+            Assert.Contains("float xScale = yScale / aspectRatio;", sourceOutput);
+            Assert.Contains("float negFarRange = Number::IsPositiveInfinity(farPlaneDistance) ? -1.0f : farPlaneDistance / (nearPlaneDistance - farPlaneDistance);", sourceOutput);
+            Assert.DoesNotContain("int32_t yScale", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("object *negFarRange", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures primitive instance <c>GetHashCode</c> calls lower through the numeric runtime instead of invalid native member calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveGetHashCode_UsesNumberRuntimeHashing() {
+            string source = """
+                public struct Widget {
+                    public float X;
+                    public float Y;
+
+                    public override int GetHashCode() {
+                        int hash = X.GetHashCode();
+                        hash = (hash * 397) ^ Y.GetHashCode();
+                        return hash;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("int32_t hash = Number::GetHashCode(this->X);", sourceOutput);
+            Assert.Contains("hash = (hash * 397) ^ Number::GetHashCode(this->Y);", sourceOutput);
+            Assert.DoesNotContain(".GetHashCode()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures dictionary key iteration and TryGetValue out parameters lower to native C++ iteration and reference calls.
         /// </summary>
         [Fact]
@@ -2731,6 +2886,36 @@ namespace cs2.cpp.tests {
             Assert.Contains("registrationsByExtension->TryGetValue(extension, registration)", sourceOutput);
             Assert.DoesNotContain("for (let ", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain(" out_", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures locals later supplied to out parameters stay mutable so native declarations do not gain invalid const qualifiers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDeclaredOutLocal_DoesNotEmitConstDeclaration() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    bool TryResolve(
+                        IReadOnlyDictionary<string, string> registrationsByExtension,
+                        string fileName) {
+                        string extension;
+                        if (!registrationsByExtension.TryGetValue(fileName, out extension)) {
+                            return false;
+                        }
+
+                        return extension != string.Empty;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("std::string extension;", sourceOutput);
+            Assert.DoesNotContain("const std::string extension;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("registrationsByExtension->TryGetValue(fileName, extension)", sourceOutput);
         }
 
         /// <summary>
@@ -2886,9 +3071,13 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithKeyboardStateValuePatterns_UsesThisPrefixesHexMasksAndBoxedValueCasts() {
             string source = """
+                public enum Keys {
+                    A,
+                    B
+                }
+
                 public struct KeyboardState {
-                    uint _keys0;
-                    uint _keys1;
+                    uint _keys0, _keys1;
 
                     public static bool operator ==(KeyboardState a, KeyboardState b) {
                         return a._keys0 == b._keys0 && a._keys1 == b._keys1;
@@ -2910,16 +3099,31 @@ namespace cs2.cpp.tests {
                         uint mask = (uint)1 << (((int)key) & 0x1f);
                         _keys1 &= ~mask;
                     }
+
+                    public int Count(Keys[] keys) {
+                        int count = 0;
+                        foreach (Keys key in keys) {
+                            count++;
+                        }
+
+                        return count;
+                    }
                 }
                 """;
 
             ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "KeyboardState.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "KeyboardState.cpp"));
 
-            Assert.Contains("return obj != nullptr && this == (*static_cast<KeyboardState*>(obj));", sourceOutput);
+            Assert.Contains("bool operator==(", headerOutput);
+            Assert.Contains("bool operator!=(", headerOutput);
+            Assert.Contains("uint32_t _keys0;", headerOutput);
+            Assert.Contains("uint32_t _keys1;", headerOutput);
+            Assert.Contains("return obj != nullptr && (*this) == (*static_cast<KeyboardState*>(obj));", sourceOutput);
             Assert.Contains("return static_cast<int32_t>((this->_keys0 ^ this->_keys1));", sourceOutput);
             Assert.Contains("((static_cast<int32_t>(key)) & 0x1f)", sourceOutput);
             Assert.Contains("this->_keys1 &= ~mask;", sourceOutput);
+            Assert.Contains("for (const auto& key : *keys)", sourceOutput);
             Assert.DoesNotContain("0x1.0f", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("return  &&", sourceOutput, StringComparison.Ordinal);
         }

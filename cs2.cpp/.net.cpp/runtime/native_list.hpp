@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "array.hpp"
@@ -10,7 +11,20 @@
 template<typename T>
 class List : public std::vector<T> {
 public:
-    using std::vector<T>::vector;
+    List()
+        : std::vector<T>() {
+    }
+
+    explicit List(int32_t capacity)
+        : std::vector<T>() {
+        if (capacity > 0) {
+            this->reserve(static_cast<size_t>(capacity));
+        }
+    }
+
+    List(std::initializer_list<T> values)
+        : std::vector<T>(values) {
+    }
 
     explicit List(const Array<T>* values) {
         if (values == nullptr || values->Length <= 0 || values->Data == nullptr) {
@@ -31,6 +45,10 @@ public:
         this->clear();
     }
 
+    bool Contains(const T& value) const {
+        return std::find(this->begin(), this->end(), value) != this->end();
+    }
+
     bool Remove(const T& value) {
         typename std::vector<T>::iterator iterator = std::find(this->begin(), this->end(), value);
         if (iterator == this->end()) {
@@ -43,6 +61,41 @@ public:
 
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
+    }
+
+    int32_t Capacity() const {
+        return static_cast<int32_t>(this->capacity());
+    }
+
+    void SetCapacity(int32_t capacity) {
+        if (capacity <= 0) {
+            return;
+        }
+
+        if (capacity > Capacity()) {
+            this->reserve(static_cast<size_t>(capacity));
+        }
+    }
+
+    void Insert(int32_t index, const T& value) {
+        if (index < 0) {
+            index = 0;
+        }
+
+        if (index >= Count()) {
+            this->push_back(value);
+            return;
+        }
+
+        this->insert(this->begin() + index, value);
+    }
+
+    void RemoveAt(int32_t index) {
+        if (index < 0 || index >= Count()) {
+            return;
+        }
+
+        this->erase(this->begin() + index);
     }
 
     Array<T>* ToArray() const {

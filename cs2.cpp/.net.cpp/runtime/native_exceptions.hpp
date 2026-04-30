@@ -77,6 +77,32 @@ public:
     }
 };
 
+class FileNotFoundException : public Exception {
+public:
+    FileNotFoundException()
+        : Exception("Unable to find the specified file.") {
+    }
+
+    explicit FileNotFoundException(const std::string& message)
+        : Exception(message) {
+    }
+
+    FileNotFoundException(const std::string& message, const std::string& fileName)
+        : Exception(message + " File name: " + fileName) {
+    }
+};
+
+class DirectoryNotFoundException : public Exception {
+public:
+    DirectoryNotFoundException()
+        : Exception("Unable to find the specified directory.") {
+    }
+
+    explicit DirectoryNotFoundException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
 class NotSupportedException : public Exception {
 public:
     NotSupportedException()

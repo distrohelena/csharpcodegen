@@ -454,6 +454,21 @@ namespace cs2.cpp {
                     }
                 }
 
+                bool hasNonGenericSibling = reachabilityPlan.Types.Any(candidate =>
+                    !candidate.IsNative &&
+                    string.Equals(candidate.Name, cl.Name, StringComparison.Ordinal) &&
+                    (candidate.GenericArgs == null || candidate.GenericArgs.Count == 0));
+
+                if (cl.GenericArgs != null && cl.GenericArgs.Count > 0 && !hasNonGenericSibling) {
+                    string compatibilityHeaderPath = Path.Combine(folder, cl.Name + ".hpp");
+                    using (StreamWriter compatibilityHeaderWriter = new StreamWriter(compatibilityHeaderPath, false)) {
+                        compatibilityHeaderWriter.WriteLine("#pragma once");
+                        compatibilityHeaderWriter.WriteLine($"#include \"{cl.GetEmittedTypeName()}.hpp\"");
+                    }
+
+                    TrackEmittedFile(compatibilityHeaderPath);
+                }
+
                 TrackEmittedFile(headerPath);
                 TrackEmittedFile(codePath);
                 Report.EmittedTypeCount++;

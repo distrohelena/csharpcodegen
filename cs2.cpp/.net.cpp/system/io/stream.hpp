@@ -3,6 +3,7 @@
 
 #include <cstdint>  // For uint8_t
 #include <stdexcept>
+#include "../../runtime/array.hpp"
 #include "../../runtime/native_span.hpp"
 #include "seek-origin.hpp"  // Assuming this exists like in your TypeScript
 
@@ -74,6 +75,22 @@ public:
     virtual void Dispose() {}
     virtual void Close() {}
     virtual void Flush() {}
+
+    virtual void CopyTo(Stream* destination) {
+        if (destination == nullptr) {
+            return;
+        }
+
+        Array<uint8_t> buffer(81920);
+        while (true) {
+            size_t bytesRead = Read(buffer.Data, 0, static_cast<size_t>(buffer.Length));
+            if (bytesRead == 0) {
+                break;
+            }
+
+            destination->Write(buffer.Data, 0, bytesRead);
+        }
+    }
 };
 
 #endif // STREAM_HPP
