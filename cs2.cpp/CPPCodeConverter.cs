@@ -111,43 +111,44 @@ namespace cs2.cpp {
                 { "ASSEMBLY_DESCRIPTION", targetFramework }
             };
 
-            if (Directory.Exists(outputFolder)) {
-                //Directory.Delete(outputFolder, true);
+            CPPDeploymentBuildLayout layout = ResolveDeploymentBuildLayout(outputFolder);
+            string resolvedOutputFolder = layout.GeneratedSourceRoot;
+
+            if (layout.GeneratedSourceRoot != outputFolder && Directory.Exists(resolvedOutputFolder)) {
+                Directory.Delete(resolvedOutputFolder, true);
             }
 
-            Directory.CreateDirectory(outputFolder);
+            Directory.CreateDirectory(resolvedOutputFolder);
 
             BuildUsageReport = ResolveBuildUsageReport();
             Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
 
             string rootPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, ".net.cpp");
-            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
+            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(resolvedOutputFolder), replacements);
 
-            writeClasses(outputFolder, BuildUsageReport);
-            PruneDisabledFeatureRuntimeFiles(outputFolder);
+            writeClasses(resolvedOutputFolder, BuildUsageReport);
+            PruneDisabledFeatureRuntimeFiles(resolvedOutputFolder);
 
-            string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
+            string configPath = CPPGeneratedConfigWriter.Write(resolvedOutputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
 
-            foreach (string manifestFile in CPPFeatureManifestWriter.Write(outputFolder, BuildUsageReport)) {
+            foreach (string manifestFile in CPPFeatureManifestWriter.Write(resolvedOutputFolder, BuildUsageReport)) {
                 TrackEmittedFile(manifestFile);
             }
 
-            foreach (string harnessFile in CPPCompileHarnessWriter.Write(outputFolder, Options)) {
+            foreach (string harnessFile in CPPCompileHarnessWriter.Write(resolvedOutputFolder, Options)) {
                 TrackEmittedFile(harnessFile);
             }
 
-            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder);
+            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(resolvedOutputFolder, layout);
             TrackEmittedFile(windowsHandoffPath);
 
             if (Options.WriteConversionReport) {
-                string reportPath = Path.Combine(outputFolder, CPPConversionReportWriter.DefaultFileName);
+                string reportPath = Path.Combine(resolvedOutputFolder, CPPConversionReportWriter.DefaultFileName);
                 TrackEmittedFile(reportPath);
-                CPPConversionReportWriter.Write(outputFolder, Report, Options);
+                CPPConversionReportWriter.Write(resolvedOutputFolder, Report, Options);
             }
-
-            MirrorWindowsHandoffOutput(outputFolder);
 
             //string outputFile = Path.Combine(outputFolder, fileName);
             //string outputDir = Path.GetDirectoryName(outputFile)!;
@@ -181,6 +182,19 @@ namespace cs2.cpp {
             //}
 
             //writeOutput(writer);
+        }
+
+        /// <summary>
+        /// Resolves the active deployment-root layout for the current conversion run.
+        /// </summary>
+        /// <param name="outputFolder">The caller-provided fallback output folder.</param>
+        /// <returns>The resolved deployment-root layout.</returns>
+        CPPDeploymentBuildLayout ResolveDeploymentBuildLayout(string outputFolder) {
+            if (!string.IsNullOrWhiteSpace(Options.DeploymentRoot) && !string.IsNullOrWhiteSpace(Options.TargetId)) {
+                return CPPDeploymentBuildLayoutFactory.Create(Options);
+            }
+
+            return new CPPDeploymentBuildLayout(outputFolder, outputFolder, outputFolder, outputFolder);
         }
 
         /// <summary>
