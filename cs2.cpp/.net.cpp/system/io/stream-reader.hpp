@@ -6,13 +6,7 @@
 #include <string>
 
 #include "stream.hpp"
-
-class Encoding {
-public:
-    static const Encoding UTF8;
-};
-
-inline const Encoding Encoding::UTF8 = Encoding();
+#include "../text/encoding.hpp"
 
 class StreamReader {
 private:

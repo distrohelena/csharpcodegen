@@ -190,10 +190,10 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns>The first materialized match result.</returns>
-    Match MatchOne(const std::string& input) const {
+    auto MatchOne(const std::string& input) const -> ::Match {
         std::smatch searchResult;
         if (!std::regex_search(input, searchResult, compiledPattern)) {
-            return Match();
+            return ::Match();
         }
 
         return CreateMatch(searchResult);
@@ -204,7 +204,7 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns>The first materialized match result.</returns>
-    Match Match(const std::string& input) const {
+    auto Match(const std::string& input) const -> ::Match {
         return MatchOne(input);
     }
 
@@ -335,8 +335,8 @@ private:
     /// </summary>
     /// <param name="searchResult">Native search result.</param>
     /// <returns>The materialized match value.</returns>
-    Match CreateMatch(const std::smatch& searchResult) const {
-        Match match;
+    auto CreateMatch(const std::smatch& searchResult) const -> ::Match {
+        ::Match match;
         match.Success = searchResult.ready() && !searchResult.empty();
 
         if (!match.Success) {

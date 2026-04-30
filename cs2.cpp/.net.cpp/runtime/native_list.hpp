@@ -14,6 +14,10 @@ public:
         this->push_back(value);
     }
 
+    void Clear() {
+        this->clear();
+    }
+
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
     }

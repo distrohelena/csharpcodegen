@@ -2,6 +2,7 @@
 #define STREAM_HPP
 
 #include <cstdint>  // For uint8_t
+#include <stdexcept>
 #include "../../runtime/native_span.hpp"
 #include "seek-origin.hpp"  // Assuming this exists like in your TypeScript
 

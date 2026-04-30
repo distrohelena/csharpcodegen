@@ -3,7 +3,14 @@
 #include <cstring>    // For std::memcpy
 
 // Constructor
-MemoryStream::MemoryStream() : buffer(), position(0) {}
+MemoryStream::MemoryStream() : buffer(), position(0), writable(true) {}
+
+MemoryStream::MemoryStream(Array<uint8_t>* data, bool writable)
+    : buffer(), position(0), writable(writable) {
+    if (data != nullptr && data->Length > 0 && data->Data != nullptr) {
+        buffer.assign(data->Data, data->Data + data->Length);
+    }
+}
 
 // Read data into a buffer
 size_t MemoryStream::Read(uint8_t* outBuffer, size_t offset, size_t count) {
@@ -55,7 +62,7 @@ void MemoryStream::SetLength(size_t length) {
 
 // Properties
 bool MemoryStream::CanRead() const { return true; }
-bool MemoryStream::CanWrite() const { return true; }
+bool MemoryStream::CanWrite() const { return writable; }
 bool MemoryStream::CanSeek() const { return true; }
 
 size_t MemoryStream::Length() const { return buffer.size(); }
@@ -80,4 +87,13 @@ void MemoryStream::InternalWriteByte(uint8_t byte) {
 // Read a single byte
 int MemoryStream::InternalReadByte() {
     return (position < buffer.size()) ? buffer[position++] : -1;
+}
+
+Array<uint8_t>* MemoryStream::ToArray() {
+    Array<uint8_t>* data = new Array<uint8_t>(static_cast<int32_t>(buffer.size()));
+    if (data->Length > 0 && data->Data != nullptr) {
+        std::memcpy(data->Data, buffer.data(), buffer.size());
+    }
+
+    return data;
 }

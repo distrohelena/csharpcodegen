@@ -43,6 +43,8 @@ namespace cs2.cpp {
                 Make("NativeDateTime", "runtime/native_datetime.hpp", "HE_CPP_REQ_NATIVE_DATETIME", "Lightweight managed DateTime and TimeSpan support for engine timing and timestamps."),
                 Make("NativeType", "runtime/native_type.hpp", "HE_CPP_REQ_NATIVE_TYPE", "Lightweight managed type-token support without reflection."),
                 Make("NativeCast", "runtime/native_cast.hpp", "HE_CPP_REQ_NATIVE_CAST", "Runtime-assisted safe cast support for declaration-pattern lowering."),
+                Make("NativeExceptions", "runtime/native_exceptions.hpp", "HE_CPP_REQ_NATIVE_EXCEPTIONS", "Managed exception surface support for common runtime argument and state failures."),
+                Make("StringComparer", "system/string_comparer.hpp", "HE_CPP_REQ_STRING_COMPARER", "Managed string comparer tokens used by generated dictionary construction."),
                 Make("StringBuilder", "system/text/string-builder.hpp", "HE_CPP_REQ_STRING_BUILDER", "Lightweight string builder support for append-heavy managed text composition.", CPPFeatureKind.DebugOverlay, CPPFeatureKind.Shaders),
                 Make("Regex", "system/text/regular_expressions/regex.hpp", "HE_CPP_REQ_REGEX", "Lightweight regex, match, and named-group support for transpiled managed text parsing.", CPPFeatureKind.Shaders),
                 Make("BinaryReader", "system/io/binary-reader.hpp", "HE_CPP_REQ_BINARY_READER", "Binary reader support for serialized engine data."),
@@ -52,7 +54,12 @@ namespace cs2.cpp {
                 Make("StringReader", "system/io/string-reader.hpp", "HE_CPP_REQ_STRING_READER", "String reader support for line-based text iteration without heap-heavy stream wrappers.", CPPFeatureKind.Shaders),
                 Make("MemoryStream", "system/io/memory-stream.hpp", "HE_CPP_REQ_MEMORY_STREAM", "Memory stream abstraction support for transient in-memory IO."),
                 Make("FileStream", "system/io/file-stream.hpp", "HE_CPP_REQ_FILE_STREAM", "File stream abstraction support for host-backed runtime IO."),
-                Make("File", "system/io/file.hpp", "HE_CPP_REQ_FILE", "File abstraction support for host-backed IO.")
+                Make("File", "system/io/file.hpp", "HE_CPP_REQ_FILE", "File abstraction support for host-backed IO."),
+                Make("Path", "system/io/path.hpp", "HE_CPP_REQ_PATH", "Path abstraction support for host-backed path normalization and resolution."),
+                Make("Debug", "system/diagnostics/debug.hpp", "HE_CPP_REQ_DEBUG", "Managed debug output surface support for System.Diagnostics.Debug."),
+                Make("Encoding", "system/text/encoding.hpp", "HE_CPP_REQ_ENCODING", "Managed Encoding surface support for UTF-8 oriented text readers and writers."),
+                Make("BinaryPrimitives", "system/binary_primitives.hpp", "HE_CPP_REQ_BINARY_PRIMITIVES", "Managed BinaryPrimitives support for fixed-width endian-aware scalar serialization."),
+                Make("Math", "system/math.hpp", "HE_CPP_REQ_MATH", "Managed Math and MidpointRounding support backed by standard C++ math facilities.")
             };
         }
 

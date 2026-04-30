@@ -102,6 +102,227 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures System.IO.File resolves to the built-in runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemIoFileUsage_UsesRuntimeFileHeader() {
+            string source = """
+                using System.IO;
+
+                public class ContentManager {
+                    public FileStream Open(string fullPath) {
+                        return File.OpenRead(fullPath);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+
+            Assert.DoesNotContain("#include \"File.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/io/file.hpp\"", sourceOutput);
+            Assert.Contains("File::OpenRead(fullPath)", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "File");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "file.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.IO.Path resolves to the built-in runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemIoPathUsage_UsesRuntimePathHeader() {
+            string source = """
+                using System.IO;
+
+                public class ContentManager {
+                    public string Normalize(string rootDirectory, string assetPath) {
+                        if (Path.IsPathRooted(assetPath)) {
+                            return Path.GetFullPath(assetPath);
+                        }
+
+                        return Path.Combine(Path.GetFullPath(rootDirectory), Path.GetFileName(assetPath));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+
+            Assert.DoesNotContain("#include \"Path.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/io/path.hpp\"", sourceOutput);
+            Assert.Contains("Path::IsPathRooted(assetPath)", output.GeneratedText);
+            Assert.Contains("Path::GetFullPath(assetPath)", output.GeneratedText);
+            Assert.Contains("Path::Combine(Path::GetFullPath(rootDirectory), Path::GetFileName(assetPath))", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "Path");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "path.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Math and MidpointRounding resolve to the built-in runtime math header instead of missing generated headers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemMathUsage_UsesRuntimeMathHeader() {
+            string source = """
+                using System;
+
+                public class LayoutMath {
+                    public int Snap(double value) {
+                        int size = Math.Max(1, (int)Math.Ceiling(value));
+                        return (int)Math.Round(size / 2.0, MidpointRounding.AwayFromZero);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.cpp"));
+
+            Assert.DoesNotContain("#include \"Math.hpp\"", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"MidpointRounding.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/math.hpp\"", sourceOutput);
+            Assert.Contains("Math::Max(1, static_cast<int32_t>(Math::Ceiling(value)))", output.GeneratedText);
+            Assert.Contains("MidpointRounding::AwayFromZero", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "Math");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "math.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Text.Encoding resolves to the lightweight runtime header instead of a synthetic generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEncodingUsage_UsesRuntimeEncodingHeader() {
+            string source = """
+                using System.Text;
+
+                public class TextGate {
+                    public Encoding GetUtf8() {
+                        return Encoding.UTF8;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "TextGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TextGate.cpp"));
+
+            Assert.Contains("#include \"system/text/encoding.hpp\"", header);
+            Assert.DoesNotContain("#include \"Encoding.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("return Encoding::UTF8;", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "Encoding");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "text", "encoding.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Buffers.Binary.BinaryPrimitives resolves to the lightweight runtime header instead of a synthetic generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBinaryPrimitivesUsage_UsesRuntimeBinaryPrimitivesHeader() {
+            string source = """
+                using System.Buffers.Binary;
+
+                public class BinaryGate {
+                    public ushort Read(byte[] buffer) {
+                        return BinaryPrimitives.ReadUInt16LittleEndian(buffer);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "BinaryGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BinaryGate.cpp"));
+
+            Assert.DoesNotContain("#include \"BinaryPrimitives.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/binary_primitives.hpp\"", sourceOutput);
+            Assert.Contains("BinaryPrimitives::ReadUInt16LittleEndian", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "BinaryPrimitives");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "binary_primitives.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures managed argument and operation exceptions resolve through the lightweight runtime exception header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedExceptions_UsesRuntimeExceptionHeader() {
+            string source = """
+                using System;
+
+                public class GuardGate {
+                    public void Validate(object value) {
+                        if (value == null) {
+                            throw new ArgumentNullException(nameof(value));
+                        }
+
+                        throw new InvalidOperationException("bad");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.cpp"));
+
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", header);
+            Assert.Contains("throw new ArgumentNullException(\"value\");", sourceOutput);
+            Assert.Contains("throw new InvalidOperationException(\"bad\");", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "NativeExceptions");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures MemoryStream resolves to the runtime surface that supports byte-array constructors and ToArray output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMemoryStreamArrayCtorAndToArray_UsesRuntimeMemoryStreamSurface() {
+            string source = """
+                using System.IO;
+
+                public static class MemoryGate {
+                    public static byte[] Roundtrip(byte[] data) {
+                        using var readStream = new MemoryStream(data, false);
+                        using var writeStream = new MemoryStream();
+                        return writeStream.ToArray();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "MemoryGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MemoryGate.cpp"));
+
+            Assert.Contains("#include \"system/io/memory-stream.hpp\"", header);
+            Assert.Contains("new MemoryStream(data, false)", sourceOutput);
+            Assert.Contains("writeStream->ToArray()", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "MemoryStream");
+        }
+
+        /// <summary>
+        /// Ensures System.MathF resolves through the shared runtime math header instead of a synthetic generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemMathFUsage_UsesRuntimeMathHeader() {
+            string source = """
+                using System;
+
+                public class LayoutMath {
+                    public float Snap(float width, float height) {
+                        return MathF.Round(MathF.Min(width, height) * 0.15f);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.cpp"));
+
+            Assert.DoesNotContain("#include \"MathF.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/math.hpp\"", sourceOutput);
+            Assert.Contains("MathF::Round(MathF::Min(width, height) * 0.15f)", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "Math");
+        }
+
+        /// <summary>
         /// Ensures System.IO.MemoryStream resolves to the built-in runtime header instead of a missing generated header.
         /// </summary>
         [Fact]
@@ -419,6 +640,26 @@ namespace cs2.cpp.tests {
             Assert.Contains("Nullable<float> LeftDistance", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeNullable");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_nullable.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures shorthand nullable value syntax does not leak a synthetic primitive nullable header include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNullableValueTypeShorthand_DoesNotEmitPrimitiveNullableHeader() {
+            string source = """
+                public class AnchorData {
+                    public float? LeftDistance { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "AnchorData.hpp"));
+
+            Assert.Contains("#include \"runtime/native_nullable.hpp\"", header);
+            Assert.DoesNotContain("#include \"float?.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("Nullable<float> LeftDistance", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "NativeNullable");
         }
 
         /// <summary>

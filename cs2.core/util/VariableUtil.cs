@@ -95,6 +95,14 @@ namespace cs2.core {
                 return tupleType;
             }
 
+            if (normalizedTypeName.Length > 1 &&
+                normalizedTypeName.EndsWith("?", StringComparison.Ordinal) &&
+                !string.Equals(normalizedTypeName, "?", StringComparison.Ordinal)) {
+                VariableType nullableBaseType = GetVarType(normalizedTypeName[..^1]);
+                nullableBaseType.IsNullable = true;
+                return nullableBaseType;
+            }
+
             int genericStart = FindTopLevelGenericStart(normalizedTypeName);
             if (genericStart >= 0 && normalizedTypeName.EndsWith(">", StringComparison.Ordinal)) {
                 string genericBaseName = normalizedTypeName[..genericStart].Trim();

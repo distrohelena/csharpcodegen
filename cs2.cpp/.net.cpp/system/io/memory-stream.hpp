@@ -2,6 +2,7 @@
 #define MEMORY_STREAM_HPP
 
 #include "stream.hpp"
+#include "../../runtime/array.hpp"
 #include <vector>
 #include <cstddef>  // For size_t
 #include <cstdint>  // For uint8_t
@@ -10,10 +11,12 @@ class MemoryStream : public Stream {
 private:
     std::vector<uint8_t> buffer;
     size_t position = 0;
+    bool writable = true;
 
 public:
     // Constructor & Destructor
     MemoryStream();
+    MemoryStream(Array<uint8_t>* data, bool writable);
     ~MemoryStream() override = default;
 
     // Stream Implementation
@@ -35,6 +38,7 @@ public:
     void InternalReserve(size_t count) override;
     void InternalWriteByte(uint8_t byte) override;
     int InternalReadByte() override;
+    Array<uint8_t>* ToArray();
 
     // Stream Management
     void Flush() override {}

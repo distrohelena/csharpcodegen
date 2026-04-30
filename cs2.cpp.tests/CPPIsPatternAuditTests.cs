@@ -30,11 +30,13 @@ namespace cs2.cpp.tests {
                 }
                 """;
 
-            string output = RunConversion(source, out JsonDocument report);
+            ConversionOutput output = RunConversion(source);
 
-            AssertNoDiagnostic(report, "IsPatternExpression");
-            Assert.Contains("TextureAsset* textureAsset = he_cpp_try_cast<TextureAsset>(asset);", output);
-            Assert.Contains("if (textureAsset != nullptr)", output);
+            AssertNoDiagnostic(output.Report, "IsPatternExpression");
+            Assert.Contains("TextureAsset* textureAsset = he_cpp_try_cast<TextureAsset>(asset);", output.GeneratedText);
+            Assert.Contains("if (textureAsset != nullptr)", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "NativeCast");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_cast.hpp")));
         }
 
         /// <summary>
@@ -43,7 +45,7 @@ namespace cs2.cpp.tests {
         /// <param name="source">C# source file content to convert.</param>
         /// <param name="report">Parsed conversion report produced by the converter.</param>
         /// <returns>Concatenated generated file contents.</returns>
-        static string RunConversion(string source, out JsonDocument report) {
+        static ConversionOutput RunConversion(string source) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-ispattern-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string sourcePath = Path.Combine(rootPath, "Fixture.cs");
@@ -63,8 +65,8 @@ namespace cs2.cpp.tests {
             converter.WriteOutput(outputPath);
 
             string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
-            report = JsonDocument.Parse(File.ReadAllText(reportPath));
-            return ReadGeneratedOutput(outputPath);
+            JsonDocument report = JsonDocument.Parse(File.ReadAllText(reportPath));
+            return new ConversionOutput(outputPath, ReadGeneratedOutput(outputPath), report);
         }
 
         /// <summary>
@@ -110,5 +112,28 @@ namespace cs2.cpp.tests {
                 Assert.NotEqual(syntaxKind, actualSyntaxKind);
             }
         }
+
+        /// <summary>
+        /// Ensures the conversion report registered the expected runtime requirement.
+        /// </summary>
+        /// <param name="report">Parsed conversion report.</param>
+        /// <param name="requirementName">Stable runtime requirement name that must be present.</param>
+        static void AssertRuntimeRequirement(JsonDocument report, string requirementName) {
+            foreach (JsonElement requirement in report.RootElement.GetProperty("registeredRuntimeRequirements").EnumerateArray()) {
+                if (string.Equals(requirement.GetString(), requirementName, StringComparison.Ordinal)) {
+                    return;
+                }
+            }
+
+            Assert.Fail($"Expected runtime requirement '{requirementName}' to be registered.");
+        }
+
+        /// <summary>
+        /// Captures generated output artifacts for declaration-pattern lowering tests.
+        /// </summary>
+        /// <param name="OutputPath">Generated converter output directory.</param>
+        /// <param name="GeneratedText">Concatenated generated text.</param>
+        /// <param name="Report">Parsed conversion report.</param>
+        record ConversionOutput(string OutputPath, string GeneratedText, JsonDocument Report);
     }
 }

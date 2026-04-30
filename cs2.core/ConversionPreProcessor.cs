@@ -548,10 +548,15 @@ namespace cs2.core {
                 PreProcessIdentifierNameSyntax(semantic, context, identifier);
             } else if (exp is ReturnStatementSyntax ret) {
                 PreProcessReturnStatementSyntax(semantic, context, ret);
+            } else if (exp is ThrowStatementSyntax throwStatement) {
+                if (throwStatement.Expression != null) {
+                    PreProcessExpression(semantic, context, throwStatement.Expression);
+                }
+            } else if (exp is ThrowExpressionSyntax throwExpression) {
+                PreProcessExpression(semantic, context, throwExpression.Expression);
             } else if (exp is TryStatementSyntax tryStatement) {
                 PreProcessTryStatementSyntax(semantic, context, tryStatement);
             } else if (exp is BinaryExpressionSyntax ||
-                        exp is ThrowStatementSyntax ||
                         exp is SwitchStatementSyntax ||
                         exp is LockStatementSyntax ||
                         exp is PostfixUnaryExpressionSyntax ||
@@ -630,7 +635,92 @@ namespace cs2.core {
         protected static ExpressionResult PreProcessMemberAccessExpressionSyntax(SemanticModel semantic, ConversionContext context, MemberAccessExpressionSyntax memberAccess) {
             PreProcessExpression(semantic, context, memberAccess.Expression);
 
+            ISymbol? symbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is INamedTypeSymbol namedTypeSymbol) {
+                AddReferencedClass(context.CurrentClass, namedTypeSymbol.ToDisplayString());
+            }
+
+            if (symbol is IFieldSymbol fieldSymbol && fieldSymbol.IsStatic && fieldSymbol.ContainingType != null) {
+                AddReferencedClass(context.CurrentClass, fieldSymbol.ContainingType.ToDisplayString());
+            } else if (symbol is IPropertySymbol propertySymbol && propertySymbol.IsStatic && propertySymbol.ContainingType != null) {
+                AddReferencedClass(context.CurrentClass, propertySymbol.ContainingType.ToDisplayString());
+            } else if (symbol is IMethodSymbol methodSymbol && methodSymbol.IsStatic && methodSymbol.ContainingType != null) {
+                AddReferencedClass(context.CurrentClass, methodSymbol.ContainingType.ToDisplayString());
+            } else if (TryResolveReferencedStaticType(semantic, memberAccess.Expression, out string referencedStaticTypeName)) {
+                AddReferencedClass(context.CurrentClass, referencedStaticTypeName);
+            }
+
+            ISymbol? receiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+            if (receiverSymbol is IAliasSymbol receiverAliasSymbol) {
+                receiverSymbol = receiverAliasSymbol.Target;
+            }
+
+            if (receiverSymbol == null && memberAccess.Expression is MemberAccessExpressionSyntax nestedMemberAccess) {
+                receiverSymbol = semantic.GetSymbolInfo(nestedMemberAccess.Name).Symbol;
+                if (receiverSymbol is IAliasSymbol nestedReceiverAliasSymbol) {
+                    receiverSymbol = nestedReceiverAliasSymbol.Target;
+                }
+            }
+
+            if (receiverSymbol is IFieldSymbol receiverFieldSymbol &&
+                receiverFieldSymbol.IsStatic &&
+                receiverFieldSymbol.ContainingType != null) {
+                AddReferencedClass(context.CurrentClass, receiverFieldSymbol.ContainingType.ToDisplayString());
+            } else if (receiverSymbol is IPropertySymbol receiverPropertySymbol &&
+                receiverPropertySymbol.IsStatic &&
+                receiverPropertySymbol.ContainingType != null) {
+                AddReferencedClass(context.CurrentClass, receiverPropertySymbol.ContainingType.ToDisplayString());
+            }
+
             return PreProcessExpression(semantic, context, memberAccess.Name);
+        }
+
+        /// <summary>
+        /// Registers a referenced class on the current conversion class when the discovered type name is non-empty.
+        /// </summary>
+        /// <param name="conversionClass">Class that owns the currently preprocessed member body.</param>
+        /// <param name="typeName">Referenced type name to register.</param>
+        static void AddReferencedClass(ConversionClass conversionClass, string typeName) {
+            if (conversionClass == null || string.IsNullOrWhiteSpace(typeName)) {
+                return;
+            }
+
+            if (!conversionClass.ReferencedClasses.Contains(typeName)) {
+                conversionClass.ReferencedClasses.Add(typeName);
+            }
+        }
+
+        /// <summary>
+        /// Resolves a static type reference from a member-access receiver so the emitted class can track body-only type dependencies.
+        /// </summary>
+        /// <param name="semantic">Semantic model that resolves symbols for the current syntax tree.</param>
+        /// <param name="expression">Receiver expression that may name a static type.</param>
+        /// <param name="typeName">Resolved static type name when successful.</param>
+        /// <returns><c>true</c> when the receiver resolves to a concrete named type; otherwise <c>false</c>.</returns>
+        static bool TryResolveReferencedStaticType(SemanticModel semantic, ExpressionSyntax expression, out string typeName) {
+            typeName = string.Empty;
+
+            ISymbol? expressionSymbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (expressionSymbol is IAliasSymbol aliasSymbol) {
+                expressionSymbol = aliasSymbol.Target;
+            }
+
+            if (expressionSymbol is INamedTypeSymbol namedTypeSymbol) {
+                typeName = namedTypeSymbol.ToDisplayString();
+                return !string.IsNullOrWhiteSpace(typeName);
+            }
+
+            ITypeSymbol expressionType = semantic.GetTypeInfo(expression).Type;
+            if (expressionType is INamedTypeSymbol fallbackNamedTypeSymbol) {
+                typeName = fallbackNamedTypeSymbol.ToDisplayString();
+                return !string.IsNullOrWhiteSpace(typeName);
+            }
+
+            return false;
         }
 
         protected static void PreProcessObjectCreationExpressionSyntax(SemanticModel semantic, ConversionContext context, ObjectCreationExpressionSyntax objectCreationExpression) {

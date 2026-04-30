@@ -112,7 +112,7 @@ namespace cs2.cpp {
             };
 
             if (Directory.Exists(outputFolder)) {
-                //Directory.Delete(outputFolder, true);
+                Directory.Delete(outputFolder, true);
             }
 
             Directory.CreateDirectory(outputFolder);

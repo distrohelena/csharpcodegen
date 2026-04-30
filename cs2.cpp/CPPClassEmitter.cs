@@ -1,4 +1,5 @@
 using cs2.core;
+using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
     /// <summary>
@@ -38,14 +39,17 @@ namespace cs2.cpp {
             }
 
             WriteHeaderPreamble(conversionClass, headerWriter);
-            WriteSourcePreamble(conversionClass, sourceWriter);
 
             if (conversionClass.DeclarationType == MemberDeclarationType.Enum) {
+                WriteSourcePreamble(conversionClass, sourceWriter);
                 WriteEnum(conversionClass, headerWriter);
                 return;
             }
 
-            WriteClass(conversionClass, headerWriter, sourceWriter);
+            StringWriter deferredSourceWriter = new StringWriter();
+            WriteClass(conversionClass, headerWriter, deferredSourceWriter);
+            WriteSourcePreamble(conversionClass, sourceWriter);
+            sourceWriter.Write(deferredSourceWriter.ToString());
         }
 
         /// <summary>
@@ -139,6 +143,7 @@ namespace cs2.cpp {
 
             if (variableType.IsNullable) {
                 referencedTypes.Add("Nullable");
+                return;
             }
 
             string referencedTypeName = variableType.GenericArgs.Count > 0
@@ -321,6 +326,31 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives the source preamble.</param>
         void WriteSourcePreamble(ConversionClass conversionClass, TextWriter sourceWriter) {
             sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedTypeName()}.hpp\"");
+
+            HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
+            foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
+                string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+                if (excludedTypeNames.Contains(referencedClass) || excludedTypeNames.Contains(normalizedReferencedClass)) {
+                    continue;
+                }
+
+                string includePath = ResolveIncludePath(referencedClass);
+                if (string.IsNullOrWhiteSpace(includePath) || !emittedIncludePaths.Add(includePath)) {
+                    continue;
+                }
+
+                sourceWriter.WriteLine($"#include \"{includePath}.hpp\"");
+            }
+
+            foreach (CPPRuntimeRequirementDefinition requirement in processor.RuntimeRequirementRegistrar.RegisteredRequirements.OrderBy(requirement => requirement.IncludePath, StringComparer.Ordinal)) {
+                if (string.IsNullOrWhiteSpace(requirement.IncludePath) || !emittedIncludePaths.Add(requirement.IncludePath)) {
+                    continue;
+                }
+
+                sourceWriter.WriteLine($"#include \"{requirement.IncludePath}\"");
+            }
+
             sourceWriter.WriteLine();
         }
 
@@ -337,6 +367,11 @@ namespace cs2.cpp {
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
             VariableType referencedType = VariableUtil.GetVarType(referencedClass);
             string referencedTypeName = referencedType.TypeName;
+
+            if (referencedType.IsNullable) {
+                processor?.RegisterRuntimeRequirement("NativeNullable");
+                return "runtime/native_nullable";
+            }
 
             if (string.Equals(referencedClass, "Array", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.Array", StringComparison.Ordinal) ||
@@ -425,6 +460,34 @@ namespace cs2.cpp {
                 return "system/text/string-builder";
             }
 
+            if (string.Equals(referencedClass, "StringComparer", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.StringComparer", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "StringComparer", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "StringComparer", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("StringComparer");
+                return "system/string_comparer";
+            }
+
+            if (string.Equals(referencedClass, "StringComparison", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.StringComparison", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "StringComparison", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "StringComparison", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeString");
+                return "runtime/native_string";
+            }
+
+            if (string.Equals(referencedClass, "Math", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Math", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Math", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Math", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "MidpointRounding", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.MidpointRounding", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "MidpointRounding", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "MidpointRounding", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Math");
+                return "system/math";
+            }
+
             if (string.Equals(referencedClass, "Regex", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "Match", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "MatchCollection", StringComparison.Ordinal) ||
@@ -483,6 +546,13 @@ namespace cs2.cpp {
                 return "runtime/native_event";
             }
 
+            if (string.Equals(referencedClass, "Debug", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Diagnostics.Debug", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Debug", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Debug", StringComparison.Ordinal)) {
+                return "system/diagnostics/debug";
+            }
+
             if (string.Equals(referencedClass, "Action", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.Action", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "Action", StringComparison.Ordinal) ||
@@ -504,23 +574,6 @@ namespace cs2.cpp {
                 string.Equals(referencedClass, "System.UIntPtr", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "UIntPtr", StringComparison.Ordinal)) {
                 return string.Empty;
-            }
-
-            string includePath = TryResolveIncludePath(referencedClass);
-            if (!string.IsNullOrWhiteSpace(includePath) &&
-                !string.Equals(includePath, referencedClass, StringComparison.Ordinal)) {
-                return includePath;
-            }
-
-            if (!string.Equals(normalizedReferencedClass, referencedClass, StringComparison.Ordinal)) {
-                includePath = TryResolveIncludePath(normalizedReferencedClass);
-                if (!string.IsNullOrWhiteSpace(includePath)) {
-                    return includePath;
-                }
-
-                if (!string.IsNullOrWhiteSpace(includePath)) {
-                    return includePath;
-                }
             }
 
             if (string.Equals(normalizedReferencedClass, "Stream", StringComparison.Ordinal) &&
@@ -551,6 +604,41 @@ namespace cs2.cpp {
                 !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "FileStream")) {
                 processor?.RegisterRuntimeRequirement("FileStream");
                 return "system/io/file-stream";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "File", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "File")) {
+                processor?.RegisterRuntimeRequirement("File");
+                return "system/io/file";
+            }
+
+            if (string.Equals(normalizedReferencedClass, "Path", StringComparison.Ordinal) &&
+                !program.Classes.Any(candidate => !candidate.IsNative && candidate.Name == "Path")) {
+                processor?.RegisterRuntimeRequirement("Path");
+                return "system/io/path";
+            }
+
+            if (IsNativeExceptionTypeName(normalizedReferencedClass)) {
+                processor?.RegisterRuntimeRequirement("NativeExceptions");
+                return "runtime/native_exceptions";
+            }
+
+            string includePath = TryResolveIncludePath(referencedClass);
+            if (!string.IsNullOrWhiteSpace(includePath) &&
+                !string.Equals(includePath, referencedClass, StringComparison.Ordinal) &&
+                !string.Equals(includePath, normalizedReferencedClass, StringComparison.Ordinal)) {
+                return includePath;
+            }
+
+            if (!string.Equals(normalizedReferencedClass, referencedClass, StringComparison.Ordinal)) {
+                includePath = TryResolveIncludePath(normalizedReferencedClass);
+                if (!string.IsNullOrWhiteSpace(includePath)) {
+                    return includePath;
+                }
+
+                if (!string.IsNullOrWhiteSpace(includePath)) {
+                    return includePath;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(includePath)) {
@@ -594,6 +682,26 @@ namespace cs2.cpp {
 
             if (string.Equals(variableType.TypeName, "StringReader", StringComparison.Ordinal)) {
                 return "system/io/string-reader";
+            }
+
+            if (string.Equals(variableType.TypeName, "Encoding", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Encoding");
+                return "system/text/encoding";
+            }
+
+            if (string.Equals(variableType.TypeName, "MathF", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Math");
+                return "system/math";
+            }
+
+            if (string.Equals(variableType.TypeName, "BinaryPrimitives", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("BinaryPrimitives");
+                return "system/binary_primitives";
+            }
+
+            if (IsNativeExceptionTypeName(variableType.TypeName)) {
+                processor?.RegisterRuntimeRequirement("NativeExceptions");
+                return "runtime/native_exceptions";
             }
 
             if (string.Equals(variableType.TypeName, "Regex", StringComparison.Ordinal) ||
@@ -772,7 +880,7 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                writers.Add(() => WriteField(variable, headerWriter));
+                writers.Add(() => WriteField(conversionClass, variable, headerWriter));
             }
 
             foreach (ConversionFunction function in conversionClass.Functions.Where(function => function.AccessType == accessType)) {
@@ -815,9 +923,9 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="variable">The variable to emit.</param>
         /// <param name="headerWriter">Writer that receives the field declaration.</param>
-        void WriteField(ConversionVariable variable, TextWriter headerWriter) {
+        void WriteField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter) {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
-            string typeName = ConvertType(variable.VarType);
+            string typeName = ConvertType(variable.VarType, conversionClass);
             headerWriter.WriteLine($"    {staticKeyword}{typeName} {variable.Name};");
         }
 
@@ -905,11 +1013,11 @@ namespace cs2.cpp {
             }
 
             if (!function.IsConstructor) {
-                headerWriter.Write($"{GetReturnType(function)} ");
+                headerWriter.Write($"{GetReturnType(conversionClass, function)} ");
             }
 
             headerWriter.Write($"{GetFunctionName(conversionClass, function)}(");
-            WriteParameters(function, headerWriter);
+            WriteParameters(conversionClass, function, headerWriter);
             headerWriter.WriteLine(");");
         }
 
@@ -924,12 +1032,14 @@ namespace cs2.cpp {
             WriteFunctionTemplateDeclaration(function, sourceWriter, string.Empty);
 
             if (!function.IsConstructor) {
-                sourceWriter.Write($"{GetReturnType(function)} ");
+                sourceWriter.Write($"{GetReturnType(conversionClass, function)} ");
             }
 
             sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}(");
-            WriteParameters(function, sourceWriter);
-            sourceWriter.WriteLine(")");
+            WriteParameters(conversionClass, function, sourceWriter);
+            sourceWriter.Write(")");
+            WriteConstructorInitializer(conversionClass, function, sourceWriter);
+            sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
 
             if (function.HasBody) {
@@ -961,10 +1071,10 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="function">The function whose parameters will be written.</param>
         /// <param name="writer">Writer that receives the parameter list.</param>
-        void WriteParameters(ConversionFunction function, TextWriter writer) {
+        void WriteParameters(ConversionClass conversionClass, ConversionFunction function, TextWriter writer) {
             for (int index = 0; index < function.InParameters.Count; index++) {
                 ConversionVariable parameter = function.InParameters[index];
-                writer.Write($"{ConvertType(parameter.VarType)} {parameter.Name}");
+                writer.Write($"{ConvertType(parameter.VarType, conversionClass, function)} {parameter.Name}");
 
                 if (index != function.InParameters.Count - 1) {
                     writer.Write(", ");
@@ -1000,32 +1110,229 @@ namespace cs2.cpp {
             return $"{emittedTypeName}<{string.Join(", ", conversionClass.GenericArgs)}>";
         }
 
+        void WriteConstructorInitializer(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
+            if (!function.IsConstructor || function.ConstructorInitializer == null) {
+                return;
+            }
+
+            string initializerTarget;
+            if (string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "base", StringComparison.Ordinal)) {
+                string baseTypeName = conversionClass.Extensions?.FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(baseTypeName)) {
+                    return;
+                }
+
+                ConversionClass baseClass = program.FindGeneratedClass(baseTypeName, 0);
+                if (baseClass != null) {
+                    initializerTarget = baseClass.GetEmittedTypeName();
+                } else {
+                    initializerTarget = NormalizeReferencedClassName(baseTypeName);
+                }
+            } else {
+                initializerTarget = conversionClass.GetEmittedTypeName();
+            }
+
+            sourceWriter.Write(" : ");
+            sourceWriter.Write(initializerTarget);
+            sourceWriter.Write("(");
+
+            if (function.ConstructorInitializer.ArgumentList != null) {
+                for (int index = 0; index < function.ConstructorInitializer.ArgumentList.Arguments.Count; index++) {
+                    sourceWriter.Write(function.ConstructorInitializer.ArgumentList.Arguments[index].Expression.ToString());
+                    if (index < function.ConstructorInitializer.ArgumentList.Arguments.Count - 1) {
+                        sourceWriter.Write(", ");
+                    }
+                }
+            }
+
+            sourceWriter.Write(")");
+        }
+
         /// <summary>
         /// Resolves the emitted return type for a function.
         /// </summary>
         /// <param name="function">The function being emitted.</param>
         /// <returns>The emitted C++ return type token.</returns>
-        string GetReturnType(ConversionFunction function) {
+        string GetReturnType(ConversionClass conversionClass, ConversionFunction function) {
             if (function.ReturnType == null) {
                 return "void";
             }
 
-            return ConvertType(function.ReturnType);
+            return ConvertType(function.ReturnType, conversionClass, function);
         }
 
-        string ConvertType(VariableType variableType) {
+        string ConvertType(VariableType variableType, ConversionClass conversionClass = null, ConversionFunction function = null) {
             if (variableType.Type == VariableDataType.Unknown && !variableType.IsNullable) {
-                return variableType.ToCPPString(program);
+                return GetScopedTypeName(variableType, conversionClass, function);
             }
 
             VariableType cppType = processor.ConvertToCPPType(variableType, out CPPTypeData typeData);
-            string cppTypeName = cppType.ToCPPString(program);
+            string cppTypeName = GetScopedTypeName(cppType, conversionClass, function);
+            if (IsGeneratedEnumType(variableType)) {
+                return cppTypeName;
+            }
 
             if (typeData.IsPointer) {
                 return cppTypeName + "*";
             }
 
             return cppTypeName;
+        }
+
+        /// <summary>
+        /// Determines whether the referenced type resolves to a generated enum declaration that must retain value semantics.
+        /// </summary>
+        /// <param name="variableType">The type being emitted.</param>
+        /// <returns><c>true</c> when the type resolves to a generated enum; otherwise, <c>false</c>.</returns>
+        bool IsGeneratedEnumType(VariableType variableType) {
+            if (variableType == null) {
+                return false;
+            }
+
+            ConversionClass generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
+            if (generatedClass == null && !string.IsNullOrWhiteSpace(variableType.TypeName)) {
+                string normalizedTypeName = NormalizeReferencedClassName(variableType.TypeName);
+                generatedClass = program.FindGeneratedClass(normalizedTypeName, variableType.GenericArgs.Count);
+            }
+
+            return generatedClass?.DeclarationType == MemberDeclarationType.Enum;
+        }
+
+        string GetScopedTypeName(VariableType variableType, ConversionClass conversionClass, ConversionFunction function) {
+            string renderedTypeName = variableType.ToCPPString(program);
+            if (IsParameterlessActionType(variableType, renderedTypeName)) {
+                return "Action<>";
+            }
+
+            if (variableType.GenericArgs == null || variableType.GenericArgs.Count == 0) {
+                return QualifyTypeName(renderedTypeName, variableType, conversionClass, function);
+            }
+
+            int genericSeparatorIndex = renderedTypeName.IndexOf('<');
+            string topLevelTypeName = genericSeparatorIndex >= 0
+                ? renderedTypeName[..genericSeparatorIndex]
+                : renderedTypeName;
+
+            string qualifiedTopLevelTypeName = QualifyTypeName(topLevelTypeName, variableType, conversionClass, function);
+            string genericArguments = string.Join(", ", variableType.GenericArgs.Select(argument => GetScopedTypeName(argument, conversionClass, function)));
+            return QualifyRenderedTypeName($"{qualifiedTopLevelTypeName}<{genericArguments}>", conversionClass, function);
+        }
+
+        string QualifyRenderedTypeName(string renderedTypeName, ConversionClass conversionClass, ConversionFunction function) {
+            if (string.IsNullOrWhiteSpace(renderedTypeName)) {
+                return renderedTypeName;
+            }
+
+            IEnumerable<string> excludedTypeNames = Enumerable.Empty<string>();
+            if (conversionClass?.GenericArgs != null) {
+                excludedTypeNames = excludedTypeNames.Concat(conversionClass.GenericArgs);
+            }
+
+            if (function?.GenericParameters != null) {
+                excludedTypeNames = excludedTypeNames.Concat(function.GenericParameters);
+            }
+
+            string qualifiedTypeName = renderedTypeName;
+            foreach (string generatedTypeName in program.Classes
+                .Where(candidate => !candidate.IsNative)
+                .Select(candidate => candidate.GetEmittedTypeName())
+                .Distinct(StringComparer.Ordinal)
+                .OrderByDescending(static candidate => candidate.Length)) {
+                if (excludedTypeNames.Any(candidate => string.Equals(candidate, generatedTypeName, StringComparison.Ordinal))) {
+                    continue;
+                }
+
+                qualifiedTypeName = Regex.Replace(
+                    qualifiedTypeName,
+                    $@"(?<![:\w]){Regex.Escape(generatedTypeName)}(?!\w)",
+                    $"::{generatedTypeName}");
+            }
+
+            return qualifiedTypeName;
+        }
+
+        string QualifyTypeName(string typeName, VariableType variableType, ConversionClass conversionClass, ConversionFunction function) {
+            if (string.IsNullOrWhiteSpace(typeName) ||
+                string.Equals(typeName, "void", StringComparison.Ordinal) ||
+                string.Equals(typeName, "bool", StringComparison.Ordinal) ||
+                string.Equals(typeName, "char", StringComparison.Ordinal) ||
+                string.Equals(typeName, "float", StringComparison.Ordinal) ||
+                string.Equals(typeName, "double", StringComparison.Ordinal) ||
+                string.Equals(typeName, "int8_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "uint8_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "int16_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "uint16_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "int32_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "uint32_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "int64_t", StringComparison.Ordinal) ||
+                string.Equals(typeName, "uint64_t", StringComparison.Ordinal) ||
+                typeName.Contains("::", StringComparison.Ordinal) ||
+                IsGenericTypeParameter(typeName, conversionClass, function)) {
+                return typeName;
+            }
+
+            if (!IsGeneratedTypeName(typeName, variableType) &&
+                !IsScopedRuntimeTypeName(typeName)) {
+                return typeName;
+            }
+
+            return $"::{typeName}";
+        }
+
+        bool IsGenericTypeParameter(string typeName, ConversionClass conversionClass, ConversionFunction function) {
+            if (conversionClass?.GenericArgs != null && conversionClass.GenericArgs.Any(argument => string.Equals(argument, typeName, StringComparison.Ordinal))) {
+                return true;
+            }
+
+            if (function?.GenericParameters != null && function.GenericParameters.Any(argument => string.Equals(argument, typeName, StringComparison.Ordinal))) {
+                return true;
+            }
+
+            return false;
+        }
+
+        bool IsGeneratedTypeName(string typeName, VariableType variableType) {
+            int genericArity = variableType.GenericArgs?.Count ?? 0;
+            if (program.FindGeneratedClass(typeName, genericArity) != null) {
+                return true;
+            }
+
+            return program.Classes.Any(candidate =>
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), typeName, StringComparison.Ordinal));
+        }
+
+        static bool IsParameterlessActionType(VariableType variableType, string renderedTypeName) {
+            if (variableType == null) {
+                return false;
+            }
+
+            if (variableType.GenericArgs != null && variableType.GenericArgs.Count > 0) {
+                return false;
+            }
+
+            return string.Equals(renderedTypeName, "Action", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "Action", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Action", StringComparison.Ordinal);
+        }
+
+        static bool IsScopedRuntimeTypeName(string typeName) {
+            return string.Equals(typeName, "Stream", StringComparison.Ordinal) ||
+                string.Equals(typeName, "FileStream", StringComparison.Ordinal) ||
+                string.Equals(typeName, "MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Event", StringComparison.Ordinal) ||
+                string.Equals(typeName, "MathF", StringComparison.Ordinal) ||
+                IsNativeExceptionTypeName(typeName);
+        }
+
+        static bool IsNativeExceptionTypeName(string typeName) {
+            return string.Equals(typeName, "Exception", StringComparison.Ordinal) ||
+                string.Equals(typeName, "ArgumentException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "ArgumentNullException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "NotSupportedException", StringComparison.Ordinal);
         }
     }
 }

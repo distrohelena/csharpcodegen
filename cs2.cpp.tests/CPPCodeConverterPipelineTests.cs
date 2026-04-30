@@ -46,6 +46,24 @@ public class CPPCodeConverterPipelineTests {
     }
 
     /// <summary>
+    /// Ensures the generated output folder is fully cleared before a new emission pass so stale files cannot survive between builds.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_ClearsStaleFilesBeforeEmission() {
+        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), CreateTestOptions());
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputFolder);
+        File.WriteAllText(Path.Combine(outputFolder, "AssetContentProcessor.cpp"), "stale");
+        File.WriteAllText(Path.Combine(outputFolder, "BinaryContentProcessor.cpp"), "stale");
+
+        converter.WriteOutput(outputFolder);
+
+        Assert.False(File.Exists(Path.Combine(outputFolder, "AssetContentProcessor.cpp")));
+        Assert.False(File.Exists(Path.Combine(outputFolder, "BinaryContentProcessor.cpp")));
+        Assert.True(File.Exists(Path.Combine(outputFolder, CPPGeneratedConfigWriter.DefaultFileName)));
+    }
+
+    /// <summary>
     /// Ensures per-run report state is cleared before a new conversion pipeline execution begins.
     /// </summary>
     [Fact]
