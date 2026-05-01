@@ -410,6 +410,12 @@ namespace cs2.core {
             variable.VarType = VariableUtil.GetVarType(pMember.Type, semantic);
             variable.IsOverride = isOverride;
             variable.DeclarationType = type;
+            if (pMember.Initializer != null) {
+                variable.AssignmentExpression = pMember.Initializer.Value;
+                if (pMember.Initializer.Value is LiteralExpressionSyntax literal) {
+                    variable.Assignment = literal.Token.ValueText;
+                }
+            }
 
             if (pMember.AccessorList == null) {
                 if (pMember.ExpressionBody != null) {
@@ -422,15 +428,19 @@ namespace cs2.core {
                     // check if this accessor is a set accessor
                     if (accessor.Kind() == SyntaxKind.GetAccessorDeclaration) {
                         variable.IsGet = true;
-                        if (accessor.Body == null) {
-                        } else {
+                        if (accessor.Body != null) {
                             variable.GetBlock = accessor.Body;
+                        } else if (accessor.ExpressionBody != null) {
+                            variable.ArrowExpression = accessor.ExpressionBody.Expression;
+                            PreProcessExpression(semantic, context, accessor.ExpressionBody.Expression);
                         }
                     } else if (accessor.Kind() == SyntaxKind.SetAccessorDeclaration) {
                         variable.IsSet = true;
-                        if (accessor.Body == null) {
-                        } else {
+                        if (accessor.Body != null) {
                             variable.SetBlock = accessor.Body;
+                        } else if (accessor.ExpressionBody != null) {
+                            variable.SetBlock = SyntaxFactory.Block(SyntaxFactory.ExpressionStatement(accessor.ExpressionBody.Expression));
+                            PreProcessExpression(semantic, context, accessor.ExpressionBody.Expression);
                         }
                     }
                 }

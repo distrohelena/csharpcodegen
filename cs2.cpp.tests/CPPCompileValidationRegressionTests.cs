@@ -540,6 +540,33 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures accessor-bodied properties preserve their getter implementation instead of falling back to unsupported native stubs.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAccessorExpressionBodiedProperty_EmitsGetterBody() {
+            string source = """
+                public class Registration {
+                    string processorIdValue;
+
+                    public Registration(string processorId) {
+                        processorIdValue = processorId;
+                    }
+
+                    public string ProcessorId {
+                        get => processorIdValue;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Registration.cpp"));
+
+            Assert.Contains("std::string Registration::get_ProcessorId()", sourceOutput);
+            Assert.Contains("return this->processorIdValue;", sourceOutput);
+            Assert.DoesNotContain("Method has no generated body.", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures inherited computed properties still lower to getter calls instead of colliding with generated type names.
         /// </summary>
         [Fact]
@@ -2183,6 +2210,48 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("BitConverter->", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Encoding::UTF8::", sourceOutput, StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "bit_converter.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures constructor arguments with side effects are hoisted into temporaries so emitted C++ preserves C# left-to-right evaluation order.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSideEffectingConstructorArguments_HoistsArgumentsIntoTemporaries() {
+            string source = """
+                public struct Vec4 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                    public float W;
+
+                    public Vec4(float x, float y, float z, float w) {
+                        X = x;
+                        Y = y;
+                        Z = z;
+                        W = w;
+                    }
+                }
+
+                public class Reader {
+                    public float ReadSingle() {
+                        return 0;
+                    }
+                }
+
+                public class SceneLoader {
+                    public Vec4 Load(Reader reader) {
+                        return new Vec4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SceneLoader.cpp"));
+
+            Assert.Contains("([&]() {", sourceOutput);
+            Assert.Contains("auto __ctor_arg_", sourceOutput);
+            Assert.Contains("return ::Vec4(", sourceOutput);
+            Assert.DoesNotContain("::Vec4(reader->ReadSingle(), reader->ReadSingle(), reader->ReadSingle(), reader->ReadSingle())", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

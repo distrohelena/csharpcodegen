@@ -851,6 +851,42 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Determines whether a constructor argument must be stabilized into a temporary to preserve C# left-to-right evaluation.
+        /// </summary>
+        /// <param name="expression">Argument expression being evaluated for constructor emission.</param>
+        /// <returns><c>true</c> when the argument may observe different behavior under native argument reordering; otherwise <c>false</c>.</returns>
+        static bool RequiresStableConstructorArgumentEvaluation(ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            foreach (SyntaxNode node in expression.DescendantNodesAndSelf()) {
+                if (node is InvocationExpressionSyntax ||
+                    node is ObjectCreationExpressionSyntax ||
+                    node is ElementAccessExpressionSyntax ||
+                    node is AssignmentExpressionSyntax ||
+                    node is AwaitExpressionSyntax ||
+                    node is ConditionalAccessExpressionSyntax) {
+                    return true;
+                }
+
+                if (node is PrefixUnaryExpressionSyntax prefixUnary &&
+                    (prefixUnary.IsKind(SyntaxKind.PreIncrementExpression) ||
+                     prefixUnary.IsKind(SyntaxKind.PreDecrementExpression))) {
+                    return true;
+                }
+
+                if (node is PostfixUnaryExpressionSyntax postfixUnary &&
+                    (postfixUnary.IsKind(SyntaxKind.PostIncrementExpression) ||
+                     postfixUnary.IsKind(SyntaxKind.PostDecrementExpression))) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Lowers a C# object initializer into a temporary object construction expression followed by member assignments.
         /// </summary>
         /// <param name="semantic">Semantic model for the current document.</param>
@@ -1002,25 +1038,6 @@ namespace cs2.cpp {
             bool emitHeapAllocation = !hasConvertedType
                 ? !IsValueRuntimeTypeName(objectCreation.Type.ToString())
                 : cppTypeData.IsPointer;
-            if (emitHeapAllocation) {
-                lines.Add("new ");
-            }
-
-            if (explicitGeneratedClass != null && hasConvertedType) {
-                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
-            } else if (explicitGeneratedClass != null) {
-                lines.Add(QualifyRenderedCppTypeName(explicitGeneratedClass.GetEmittedTypeName(), context));
-            } else if (hasConvertedType) {
-                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
-            } else if (hasRuntimeObjectTypeMapping) {
-                lines.Add(runtimeObjectTypeName);
-            } else {
-                int startDepth = context.DepthClass;
-                ProcessExpression(semantic, context, objectCreation.Type, lines);
-                context.PopClass(startDepth);
-            }
-
-            lines.Add("(");
             IMethodSymbol constructorSymbol = ResolveObjectCreationConstructorSymbol(semantic, objectCreation);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
                 ? constructorSymbol.Parameters
@@ -1028,6 +1045,85 @@ namespace cs2.cpp {
             int explicitArgumentCount = objectCreation.ArgumentList?.Arguments.Count ?? 0;
             bool hasOptionalConstructorArguments = constructorParameterSymbols.Length > explicitArgumentCount &&
                 constructorParameterSymbols.Skip(explicitArgumentCount).Any(parameter => parameter.HasExplicitDefaultValue);
+            bool requiresStableArgumentEvaluation = explicitArgumentCount > 1 &&
+                objectCreation.ArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
+
+            if (requiresStableArgumentEvaluation) {
+                lines.Add("([&]() {\n");
+
+                List<string> temporaryArgumentNames = new List<string>();
+                for (int i = 0; i < explicitArgumentCount; i++) {
+                    ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
+                    string temporaryName = "__ctor_arg_" + Guid.NewGuid().ToString("N")[..8];
+                    List<string> argumentExpressionLines = new List<string>();
+
+                    int startArg = context.DepthClass;
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
+                    context.PopClass(startArg);
+
+                    if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                        lines.AddRange(argumentResult.BeforeLines);
+                    }
+
+                    IParameterSymbol parameterSymbol = i < constructorParameterSymbols.Length
+                        ? constructorParameterSymbols[i]
+                        : null;
+                    List<string> loweredArgumentLines = new List<string>();
+                    AppendInvocationArgument(
+                        semantic,
+                        context,
+                        arg.Expression,
+                        argumentExpressionLines,
+                        parameterSymbol,
+                        loweredArgumentLines);
+
+                    lines.Add("auto ");
+                    lines.Add(temporaryName);
+                    lines.Add(" = ");
+                    lines.AddRange(loweredArgumentLines);
+                    lines.Add(";\n");
+                    temporaryArgumentNames.Add(temporaryName);
+                }
+
+                lines.Add("return ");
+                AppendObjectCreationTypePrefix(
+                    semantic,
+                    context,
+                    objectCreation,
+                    lines,
+                    emitHeapAllocation,
+                    hasConvertedType,
+                    explicitGeneratedClass,
+                    cppType,
+                    hasRuntimeObjectTypeMapping,
+                    runtimeObjectTypeName);
+                lines.Add("(");
+                for (int i = 0; i < temporaryArgumentNames.Count; i++) {
+                    lines.Add(temporaryArgumentNames[i]);
+                    if (i != temporaryArgumentNames.Count - 1 ||
+                        (i == temporaryArgumentNames.Count - 1 && hasOptionalConstructorArguments)) {
+                        lines.Add(", ");
+                    }
+                }
+
+                AppendOptionalInvocationArguments(constructorParameterSymbols, explicitArgumentCount, lines);
+                lines.Add(");\n");
+                lines.Add("})()");
+                return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
+            }
+
+            AppendObjectCreationTypePrefix(
+                semantic,
+                context,
+                objectCreation,
+                lines,
+                emitHeapAllocation,
+                hasConvertedType,
+                explicitGeneratedClass,
+                cppType,
+                hasRuntimeObjectTypeMapping,
+                runtimeObjectTypeName);
+            lines.Add("(");
             List<string> argumentLines = new List<string>();
             if (objectCreation.ArgumentList != null) {
                 for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
@@ -1060,6 +1156,36 @@ namespace cs2.cpp {
             lines.AddRange(argumentLines);
             lines.Add(")");
             return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
+        }
+
+        void AppendObjectCreationTypePrefix(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            List<string> lines,
+            bool emitHeapAllocation,
+            bool hasConvertedType,
+            ConversionClass explicitGeneratedClass,
+            VariableType cppType,
+            bool hasRuntimeObjectTypeMapping,
+            string runtimeObjectTypeName) {
+            if (emitHeapAllocation) {
+                lines.Add("new ");
+            }
+
+            if (explicitGeneratedClass != null && hasConvertedType) {
+                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
+            } else if (explicitGeneratedClass != null) {
+                lines.Add(QualifyRenderedCppTypeName(explicitGeneratedClass.GetEmittedTypeName(), context));
+            } else if (hasConvertedType) {
+                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
+            } else if (hasRuntimeObjectTypeMapping) {
+                lines.Add(runtimeObjectTypeName);
+            } else {
+                int startDepth = context.DepthClass;
+                ProcessExpression(semantic, context, objectCreation.Type, lines);
+                context.PopClass(startDepth);
+            }
         }
 
         bool TryProcessStringObjectCreation(
@@ -1217,6 +1343,17 @@ namespace cs2.cpp {
                 string.Equals(eventArgsMemberIdentifier.Identifier.Text, "Empty", StringComparison.Ordinal)) {
                 lines.Add("nullptr");
                 return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType("object"));
+            }
+
+            if (memberAccess.Expression is IdentifierNameSyntax appContextIdentifier &&
+                string.Equals(appContextIdentifier.Identifier.Text, "AppContext", StringComparison.Ordinal) &&
+                memberAccess.Name is IdentifierNameSyntax appContextMemberIdentifier &&
+                string.Equals(appContextMemberIdentifier.Identifier.Text, "BaseDirectory", StringComparison.Ordinal)) {
+                RegisterRuntimeRequirement("AppContext");
+                lines.Add("AppContext");
+                lines.Add("::");
+                lines.Add("BaseDirectory");
+                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType("string"));
             }
 
             ISymbol staticMemberSymbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
@@ -3343,12 +3480,12 @@ namespace cs2.cpp {
                 return nullableUnderlyingType;
             }
 
-            if (toStringMethodSymbol?.Name == "ToString" && toStringMethodSymbol.ContainingType != null) {
-                return toStringMethodSymbol.ContainingType;
-            }
-
             if (TryGetExpressionTypeSymbol(semantic, receiverExpression, out ITypeSymbol receiverTypeSymbol)) {
                 return receiverTypeSymbol;
+            }
+
+            if (toStringMethodSymbol?.Name == "ToString" && toStringMethodSymbol.ContainingType != null) {
+                return toStringMethodSymbol.ContainingType;
             }
 
             return null;

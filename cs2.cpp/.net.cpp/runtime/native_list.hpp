@@ -63,8 +63,16 @@ public:
         return static_cast<int32_t>(this->size());
     }
 
+    int32_t get_Count() const {
+        return Count();
+    }
+
     int32_t Capacity() const {
         return static_cast<int32_t>(this->capacity());
+    }
+
+    int32_t get_Capacity() const {
+        return Capacity();
     }
 
     void SetCapacity(int32_t capacity) {
@@ -75,6 +83,10 @@ public:
         if (capacity > Capacity()) {
             this->reserve(static_cast<size_t>(capacity));
         }
+    }
+
+    void set_Capacity(int32_t capacity) {
+        SetCapacity(capacity);
     }
 
     void Insert(int32_t index, const T& value) {

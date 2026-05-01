@@ -66,3 +66,23 @@ public:
         return Data + Length;
     }
 };
+
+template<typename T>
+T* begin(Array<T>* values) {
+    return values == nullptr ? nullptr : values->begin();
+}
+
+template<typename T>
+T* end(Array<T>* values) {
+    return values == nullptr ? nullptr : values->end();
+}
+
+template<typename T>
+const T* begin(const Array<T>* values) {
+    return values == nullptr ? nullptr : values->begin();
+}
+
+template<typename T>
+const T* end(const Array<T>* values) {
+    return values == nullptr ? nullptr : values->end();
+}

@@ -60,6 +60,9 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the header preamble.</param>
         void WriteHeaderPreamble(ConversionClass conversionClass, TextWriter headerWriter) {
             headerWriter.WriteLine("#pragma once");
+            headerWriter.WriteLine("#ifdef DrawText");
+            headerWriter.WriteLine("#undef DrawText");
+            headerWriter.WriteLine("#endif");
             headerWriter.WriteLine("#include <cstdint>");
             headerWriter.WriteLine();
 
@@ -328,6 +331,9 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The type being emitted.</param>
         /// <param name="sourceWriter">Writer that receives the source preamble.</param>
         void WriteSourcePreamble(ConversionClass conversionClass, TextWriter sourceWriter) {
+            sourceWriter.WriteLine("#ifdef DrawText");
+            sourceWriter.WriteLine("#undef DrawText");
+            sourceWriter.WriteLine("#endif");
             sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedTypeName()}.hpp\"");
 
             HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
@@ -1442,6 +1448,9 @@ namespace cs2.cpp {
                 LayerContext context = new CPPLayerContext(program);
                 int start = context.DepthClass;
                 context.AddClass(conversionClass);
+                context.AddFunction(new FunctionStack(new ConversionFunction {
+                    IsStatic = true
+                }));
                 ExpressionResult result = processor.ProcessExpression(conversionClass.Semantic, context, variable.AssignmentExpression, initializerLines);
                 context.PopClass(start);
 
@@ -1473,8 +1482,12 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives accessor definitions.</param>
         void WriteComputedProperty(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
             if (variable.IsGet) {
-                ConversionFunction getter = CreateGetter(variable);
-                WriteFunction(conversionClass, getter, headerWriter, sourceWriter);
+                if (variable.ArrowExpression != null && variable.GetBlock == null) {
+                    WriteExpressionBodiedGetter(conversionClass, variable, headerWriter, sourceWriter);
+                } else {
+                    ConversionFunction getter = CreateGetter(variable);
+                    WriteFunction(conversionClass, getter, headerWriter, sourceWriter);
+                }
             }
 
             if (variable.IsGet && variable.IsSet) {
@@ -1485,6 +1498,45 @@ namespace cs2.cpp {
                 ConversionFunction setter = CreateSetter(variable);
                 WriteFunction(conversionClass, setter, headerWriter, sourceWriter);
             }
+        }
+
+        /// <summary>
+        /// Emits a getter backed by the original Roslyn expression so semantic binding stays attached to the source syntax tree.
+        /// </summary>
+        /// <param name="conversionClass">The class that owns the getter.</param>
+        /// <param name="variable">The source property definition.</param>
+        /// <param name="headerWriter">Writer that receives the getter declaration.</param>
+        /// <param name="sourceWriter">Writer that receives the getter definition.</param>
+        void WriteExpressionBodiedGetter(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
+            string staticKeyword = variable.IsStatic ? "static " : string.Empty;
+            string typeName = ConvertType(variable.VarType, conversionClass);
+            headerWriter.WriteLine($"    {staticKeyword}{typeName} get_{variable.Name}();");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
+            sourceWriter.WriteLine("{");
+
+            List<string> expressionLines = new List<string>();
+            LayerContext context = new CPPLayerContext(program);
+            int start = context.DepthClass;
+            context.AddClass(conversionClass);
+            if (variable.IsStatic) {
+                context.AddFunction(new FunctionStack(new ConversionFunction {
+                    IsStatic = true
+                }));
+            }
+
+            ExpressionResult expressionResult = processor.ProcessExpression(conversionClass.Semantic, context, variable.ArrowExpression, expressionLines);
+            context.PopClass(start);
+
+            if (!expressionResult.Processed) {
+                sourceWriter.WriteLine("throw new NotSupportedException(\"Property getter could not be lowered.\");");
+            } else {
+                sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
+            }
+
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
         }
 
         /// <summary>

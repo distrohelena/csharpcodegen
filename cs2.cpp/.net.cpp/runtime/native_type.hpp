@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 /// <summary>
 /// Represents a lightweight managed type token used by transpiled code on constrained native targets.
 /// </summary>
@@ -11,6 +13,10 @@ public:
     /// <param name="name">Stable source-side type name associated with the token.</param>
     constexpr explicit Type(const char* name)
         : Name(name) {
+    }
+
+    std::string get_Name() const {
+        return Name == nullptr ? std::string() : std::string(Name);
     }
 
     /// <summary>

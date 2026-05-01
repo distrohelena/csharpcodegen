@@ -186,6 +186,39 @@ public class CPPClassEmitterTests {
     }
 
     /// <summary>
+    /// Ensures auto-property initializers are preserved in generated constructors so managed default values survive export.
+    /// </summary>
+    [Fact]
+    public void EmitAutoPropertyInitializer_InitializesBackingFieldInConstructor() {
+        CPPClassEmitter emitter = CreateEmitter();
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "CoreInitializationOptions",
+            DeclarationType = MemberDeclarationType.Class
+        };
+
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "ContentRootPath",
+            AccessType = MemberAccessType.Public,
+            IsGet = true,
+            IsSet = true,
+            VarType = new VariableType(typeName: "string"),
+            Assignment = "AppContext.BaseDirectory"
+        });
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "UpdateOrderLayers",
+            AccessType = MemberAccessType.Public,
+            IsGet = true,
+            IsSet = true,
+            VarType = new VariableType(typeName: "byte"),
+            Assignment = "4"
+        });
+
+        (_, string source) = Emit(emitter, conversionClass);
+
+        Assert.Contains("CoreInitializationOptions::CoreInitializationOptions() : ContentRootPath(AppContext::BaseDirectory), UpdateOrderLayers(4)", source);
+    }
+
+    /// <summary>
     /// Creates the emitter under test with the current C++ processor and runtime program model.
     /// </summary>
     /// <returns>The class emitter to exercise.</returns>

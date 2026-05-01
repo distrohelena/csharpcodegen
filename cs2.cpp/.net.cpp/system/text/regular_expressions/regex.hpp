@@ -89,14 +89,14 @@ public:
     /// Resolves one named group capture.
     /// </summary>
     /// <param name="name">Group name to resolve.</param>
-    /// <returns>A stable pointer to the matching group when present; otherwise, a pointer to an empty group.</returns>
-    const Group* operator[](const std::string& name) const {
+    /// <returns>A stable reference to the matching group when present; otherwise, the shared empty group.</returns>
+    const Group& operator[](const std::string& name) const {
         std::unordered_map<std::string, Group>::const_iterator iterator = groups.find(name);
         if (iterator == groups.end()) {
-            return &emptyGroup;
+            return emptyGroup;
         }
 
-        return &iterator->second;
+        return iterator->second;
     }
 };
 
