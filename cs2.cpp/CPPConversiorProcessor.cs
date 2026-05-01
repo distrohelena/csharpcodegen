@@ -506,6 +506,10 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryProcessComputedPropertyAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
             context.PopClass(startDepth);
@@ -534,8 +538,29 @@ namespace cs2.cpp {
                 nsSymbol = aliasSymbol.Target;
             }
 
+            if (nsSymbol is IMethodSymbol accessorMethodSymbol &&
+                accessorMethodSymbol.AssociatedSymbol is IPropertySymbol associatedPropertySymbol) {
+                nsSymbol = associatedPropertySymbol;
+            }
+
+            if ((nsSymbol == null || nsSymbol is not IPropertySymbol && nsSymbol is not IFieldSymbol && nsSymbol is not IMethodSymbol) &&
+                identifier.Parent is MemberAccessExpressionSyntax parentMemberAccess &&
+                ReferenceEquals(parentMemberAccess.Name, identifier)) {
+                ITypeSymbol? receiverTypeSymbol = semantic.GetTypeInfo(parentMemberAccess.Expression).ConvertedType ?? semantic.GetTypeInfo(parentMemberAccess.Expression).Type;
+                if (receiverTypeSymbol != null) {
+                    nsSymbol = receiverTypeSymbol.GetMembers(name)
+                        .FirstOrDefault(member => member is IPropertySymbol || member is IFieldSymbol || member is IMethodSymbol);
+                }
+            }
+
             if (nsSymbol is IMethodSymbol methodSymbol) {
                 isMethod = true;
+            }
+
+            string propertyGetterCallName = string.Empty;
+            if (nsSymbol is IPropertySymbol propertySymbol &&
+                TryBuildPropertyGetterCall(identifier, propertySymbol, out string resolvedGetterCallName)) {
+                propertyGetterCallName = resolvedGetterCallName;
             }
 
             VariablePath varPath = VariablePath.Unknown;
@@ -663,7 +688,9 @@ namespace cs2.cpp {
             if (currentClass == null) {
                 lines.Add(name);
             } else {
-                bool isClassVar = (classVar != null &&
+                bool isResolvedPropertyAccessor = !string.IsNullOrEmpty(propertyGetterCallName) &&
+                    nsSymbol is IPropertySymbol;
+                bool isClassVar = ((classVar != null || isResolvedPropertyAccessor) &&
                     functionInVar == null &&
                     matchingVars.Count == 0) ||
                     (classFn != null &&
@@ -680,8 +707,8 @@ namespace cs2.cpp {
 
                     if (identifierSymbol is IFieldSymbol fieldSymbol) {
                         isStaticClassMember = fieldSymbol.IsStatic;
-                    } else if (identifierSymbol is IPropertySymbol propertySymbol) {
-                        isStaticClassMember = propertySymbol.IsStatic;
+                    } else if (identifierSymbol is IPropertySymbol identifierPropertySymbol) {
+                        isStaticClassMember = identifierPropertySymbol.IsStatic;
                     }
 
                     if (!isStaticClassMember &&
@@ -716,7 +743,9 @@ namespace cs2.cpp {
                         lines.Add($"&{currentClass.GetEmittedTypeName()}::");
                     }
 
-                    if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
+                    if (!string.IsNullOrEmpty(propertyGetterCallName)) {
+                        lines.Add(propertyGetterCallName);
+                    } else if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(name);
                     } else {
                         lines.Add(varOnClass.Remap);
@@ -751,6 +780,14 @@ namespace cs2.cpp {
                 ExpressionResult res = new ExpressionResult(true, varPath, classVar.VarType);
                 res.Class = cl;
                 res.Variable = classVar;
+                return res;
+            } else if (!string.IsNullOrEmpty(propertyGetterCallName) &&
+                nsSymbol is IPropertySymbol resolvedPropertySymbol) {
+                VariableType propertyType = VariableUtil.GetVarType(resolvedPropertySymbol.Type);
+                ConversionClass cl = context.Program.Classes.Find(c => c.Name == propertyType.GetTypeScriptType(context.Program));
+                context.AddClass(cl);
+                ExpressionResult res = new ExpressionResult(true, varPath, propertyType);
+                res.Class = cl;
                 return res;
             } else if (staticClass != null) {
                 context.AddClass(staticClass);
@@ -1188,20 +1225,13 @@ namespace cs2.cpp {
                 }
 
                 if (!useStaticAccess) {
-                    memberSymbol = semantic.GetSymbolInfo(memberAccess).Symbol;
-                    if (memberSymbol == null) {
-                        memberSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
-                    }
-
-                    if (memberSymbol is IAliasSymbol aliasSymbol) {
-                        memberSymbol = aliasSymbol.Target;
-                    }
+                    memberSymbol = ResolveMemberAccessSymbol(semantic, memberAccess);
 
                     if (memberSymbol is INamespaceSymbol || memberSymbol is INamedTypeSymbol) {
                         useStaticAccess = true;
                     } else if (memberSymbol is IFieldSymbol fieldSymbol && fieldSymbol.IsStatic) {
                         useStaticAccess = true;
-                    } else if (memberSymbol is IPropertySymbol propertySymbol && propertySymbol.IsStatic) {
+                    } else if (memberSymbol is IPropertySymbol memberStaticPropertySymbol && memberStaticPropertySymbol.IsStatic) {
                         useStaticAccess = true;
                     } else if (memberSymbol is IMethodSymbol methodSymbol && methodSymbol.IsStatic) {
                         useStaticAccess = true;
@@ -1227,20 +1257,16 @@ namespace cs2.cpp {
                      UsesDirectMemberAccess(semantic, elementAccessExpression.Expression)) ||
                     UsesDirectMemberAccess(memberSymbol);
 
-                // shit is this static access, pointer access or direct access
-                switch (useStaticAccess ? VariablePath.Static : result.VarPath) {
-                    case VariablePath.Static:
-                        lines.Add("::");
-                        break;
-                    default: {
-                            lines.Add(useDirectMemberAccess ? "." : "->");
-
-                            if (result.Variable != null) {
-                                int xx = -1;
-                        }
-                    }
-                        break;
+                if (memberSymbol is IPropertySymbol propertySymbol &&
+                    TryBuildPropertyGetterCall(memberAccess, propertySymbol, out string propertyGetterCallName)) {
+                    AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
+                    lines.Add(propertyGetterCallName);
+                    VariableType propertyType = VariableUtil.GetVarType(propertySymbol.Type);
+                    VariablePath propertyPath = ResolveMemberAccessResultPath(useStaticAccess, result.VarPath, memberSymbol);
+                    return new ExpressionResult(true, propertyPath, propertyType);
                 }
+
+                AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
 
                 if (!useStaticAccess &&
                     ShouldEmitNativeCountCall(semantic, memberAccess, memberSymbol)) {
@@ -1260,6 +1286,145 @@ namespace cs2.cpp {
                 return new ExpressionResult(memberNameResult.Processed, resolvedMemberPath, resolvedMemberType, memberNameResult.BeforeLines, memberNameResult.AfterLines);
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
+        }
+
+        bool TryProcessComputedPropertyAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                !TryGetAssignedPropertySymbol(semantic, assignment.Left, out IPropertySymbol propertySymbol) ||
+                !RequiresPropertyAccessorLowering(propertySymbol) ||
+                propertySymbol.SetMethod == null) {
+                return false;
+            }
+
+            if (assignment.Left is IdentifierNameSyntax) {
+                if (propertySymbol.IsStatic) {
+                    lines.Add(GetContainingTypeAccessName(context, propertySymbol.ContainingType));
+                    lines.Add("::");
+                } else {
+                    lines.Add("this->");
+                }
+            } else if (assignment.Left is MemberAccessExpressionSyntax memberAccess) {
+                int startDepth = context.Class.Count;
+                ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+                context.PopClass(startDepth);
+
+                bool useStaticAccess = receiverResult.VarPath == VariablePath.Static || memberAccess.Expression is BaseExpressionSyntax;
+                if (!useStaticAccess) {
+                    ISymbol? receiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+                    if (receiverSymbol is IAliasSymbol receiverAliasSymbol) {
+                        receiverSymbol = receiverAliasSymbol.Target;
+                    }
+
+                    if (receiverSymbol is INamespaceSymbol || receiverSymbol is INamedTypeSymbol) {
+                        useStaticAccess = true;
+                    }
+                }
+
+                bool useDirectMemberAccess = UsesDirectMemberAccess(receiverResult) ||
+                    UsesDirectMemberAccess(semantic, memberAccess.Expression) ||
+                    TryResolveTrackedExpressionVariableType(context, memberAccess.Expression, out VariableType trackedReceiverType) &&
+                    IsDirectMemberAccessType(trackedReceiverType) ||
+                    (memberAccess.Expression is ElementAccessExpressionSyntax elementAccessExpression &&
+                     UsesDirectMemberAccess(semantic, elementAccessExpression.Expression));
+                AppendMemberAccessSeparator(lines, useStaticAccess, receiverResult.VarPath, useDirectMemberAccess);
+            } else {
+                return false;
+            }
+
+            lines.Add($"set_{propertySymbol.Name}(");
+            int rightStartDepth = context.Class.Count;
+            ProcessExpression(semantic, context, assignment.Right, lines);
+            context.PopClass(rightStartDepth);
+            lines.Add(")");
+            return true;
+        }
+
+        static bool TryGetAssignedPropertySymbol(SemanticModel semantic, ExpressionSyntax expression, out IPropertySymbol propertySymbol) {
+            propertySymbol = null;
+
+            ISymbol? symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (expression is MemberAccessExpressionSyntax memberAccessExpression) {
+                symbol = ResolveMemberAccessSymbol(semantic, memberAccessExpression);
+            }
+
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is not IPropertySymbol resolvedPropertySymbol) {
+                return false;
+            }
+
+            propertySymbol = resolvedPropertySymbol;
+            return true;
+        }
+
+        string GetContainingTypeAccessName(LayerContext context, INamedTypeSymbol containingTypeSymbol) {
+            if (containingTypeSymbol == null) {
+                return string.Empty;
+            }
+
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(containingTypeSymbol.Name, containingTypeSymbol.TypeArguments.Length);
+            if (generatedClass != null) {
+                return generatedClass.GetEmittedTypeName();
+            }
+
+            return containingTypeSymbol.Name;
+        }
+
+        static void AppendMemberAccessSeparator(List<string> lines, bool useStaticAccess, VariablePath receiverPath, bool useDirectMemberAccess) {
+            switch (useStaticAccess ? VariablePath.Static : receiverPath) {
+                case VariablePath.Static:
+                    lines.Add("::");
+                    break;
+                default:
+                    lines.Add(useDirectMemberAccess ? "." : "->");
+                    break;
+            }
+        }
+
+        static ISymbol ResolveMemberAccessSymbol(SemanticModel semantic, MemberAccessExpressionSyntax memberAccess) {
+            ISymbol? primarySymbol = semantic.GetSymbolInfo(memberAccess).Symbol;
+            if (primarySymbol is IAliasSymbol primaryAliasSymbol) {
+                primarySymbol = primaryAliasSymbol.Target;
+            }
+
+            if (primarySymbol is IMethodSymbol primaryAccessorMethodSymbol &&
+                primaryAccessorMethodSymbol.AssociatedSymbol is IPropertySymbol primaryAssociatedPropertySymbol) {
+                primarySymbol = primaryAssociatedPropertySymbol;
+            }
+
+            if (primarySymbol is IFieldSymbol ||
+                primarySymbol is IPropertySymbol ||
+                primarySymbol is IMethodSymbol ||
+                primarySymbol is IEventSymbol) {
+                return primarySymbol;
+            }
+
+            ISymbol? nameSymbol = semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+            if (nameSymbol is IAliasSymbol nameAliasSymbol) {
+                nameSymbol = nameAliasSymbol.Target;
+            }
+
+            if (nameSymbol is IMethodSymbol nameAccessorMethodSymbol &&
+                nameAccessorMethodSymbol.AssociatedSymbol is IPropertySymbol nameAssociatedPropertySymbol) {
+                nameSymbol = nameAssociatedPropertySymbol;
+            }
+
+            if (nameSymbol != null) {
+                return nameSymbol;
+            }
+
+            ITypeSymbol? receiverTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).ConvertedType ?? semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (receiverTypeSymbol != null) {
+                ISymbol receiverMemberSymbol = receiverTypeSymbol.GetMembers(memberAccess.Name.Identifier.Text)
+                    .FirstOrDefault(member => member is IPropertySymbol || member is IFieldSymbol || member is IMethodSymbol);
+                if (receiverMemberSymbol != null) {
+                    return receiverMemberSymbol;
+                }
+            }
+
+            return primarySymbol;
         }
 
         bool TryProcessRuntimeGetTypeNameMemberAccess(
@@ -7782,6 +7947,129 @@ namespace cs2.cpp {
             }
 
             return inferredOutTypeSymbol;
+        }
+
+        static bool TryBuildPropertyGetterCall(
+            SyntaxNode accessNode,
+            IPropertySymbol propertySymbol,
+            out string getterCallName) {
+            getterCallName = string.Empty;
+
+            if (accessNode == null ||
+                propertySymbol == null ||
+                propertySymbol.IsIndexer ||
+                propertySymbol.GetMethod == null ||
+                !RequiresPropertyAccessorLowering(propertySymbol) ||
+                IsPropertyWriteContext(accessNode)) {
+                return false;
+            }
+
+            foreach (SyntaxReference syntaxReference in propertySymbol.DeclaringSyntaxReferences) {
+                if (syntaxReference.GetSyntax() is not PropertyDeclarationSyntax propertyDeclaration) {
+                    continue;
+                }
+
+                if (propertyDeclaration.ExpressionBody != null) {
+                    getterCallName = $"get_{propertySymbol.Name}()";
+                    return true;
+                }
+
+                if (propertyDeclaration.AccessorList == null) {
+                    getterCallName = $"get_{propertySymbol.Name}()";
+                    return true;
+                }
+
+                foreach (AccessorDeclarationSyntax accessorDeclaration in propertyDeclaration.AccessorList.Accessors) {
+                    if (accessorDeclaration.Kind() == SyntaxKind.GetAccessorDeclaration &&
+                        (accessorDeclaration.Body != null || accessorDeclaration.ExpressionBody != null)) {
+                        getterCallName = $"get_{propertySymbol.Name}()";
+                        return true;
+                    }
+                }
+            }
+
+            if (propertySymbol.ContainingType?.TypeKind == TypeKind.Interface ||
+                propertySymbol.IsAbstract) {
+                getterCallName = $"get_{propertySymbol.Name}()";
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool RequiresPropertyAccessorLowering(IPropertySymbol propertySymbol) {
+            if (propertySymbol == null ||
+                propertySymbol.IsIndexer) {
+                return false;
+            }
+
+            if (propertySymbol.ContainingType?.TypeKind == TypeKind.Interface ||
+                propertySymbol.IsAbstract) {
+                return true;
+            }
+
+            foreach (SyntaxReference syntaxReference in propertySymbol.DeclaringSyntaxReferences) {
+                if (syntaxReference.GetSyntax() is not PropertyDeclarationSyntax propertyDeclaration) {
+                    continue;
+                }
+
+                if (propertyDeclaration.ExpressionBody != null) {
+                    return true;
+                }
+
+                if (propertyDeclaration.AccessorList == null) {
+                    continue;
+                }
+
+                foreach (AccessorDeclarationSyntax accessorDeclaration in propertyDeclaration.AccessorList.Accessors) {
+                    if (accessorDeclaration.Body != null ||
+                        accessorDeclaration.ExpressionBody != null) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        static bool IsPropertyWriteContext(SyntaxNode accessNode) {
+            if (accessNode?.Parent is AssignmentExpressionSyntax directAssignmentExpression &&
+                ReferenceEquals(directAssignmentExpression.Left, accessNode)) {
+                return true;
+            }
+
+            if (accessNode?.Parent is MemberAccessExpressionSyntax memberAccess) {
+                if (memberAccess.Parent is AssignmentExpressionSyntax memberAssignmentExpression &&
+                    ReferenceEquals(memberAssignmentExpression.Left, memberAccess)) {
+                        return true;
+                }
+
+                if (memberAccess.Parent is PrefixUnaryExpressionSyntax memberPrefixUnaryExpression &&
+                    (memberPrefixUnaryExpression.IsKind(SyntaxKind.PreIncrementExpression) ||
+                     memberPrefixUnaryExpression.IsKind(SyntaxKind.PreDecrementExpression))) {
+                    return true;
+                }
+
+                if (memberAccess.Parent is PostfixUnaryExpressionSyntax memberPostfixUnaryExpression &&
+                    (memberPostfixUnaryExpression.IsKind(SyntaxKind.PostIncrementExpression) ||
+                     memberPostfixUnaryExpression.IsKind(SyntaxKind.PostDecrementExpression))) {
+                    return true;
+                }
+            }
+
+            if (accessNode?.Parent is PrefixUnaryExpressionSyntax directPrefixUnaryExpression &&
+                (directPrefixUnaryExpression.IsKind(SyntaxKind.PreIncrementExpression) ||
+                 directPrefixUnaryExpression.IsKind(SyntaxKind.PreDecrementExpression))) {
+                return true;
+            }
+
+            if (accessNode?.Parent is PostfixUnaryExpressionSyntax directPostfixUnaryExpression &&
+                (directPostfixUnaryExpression.IsKind(SyntaxKind.PostIncrementExpression) ||
+                 directPostfixUnaryExpression.IsKind(SyntaxKind.PostDecrementExpression))) {
+                return true;
+            }
+
+            return false;
         }
 
         public override void ProcessArrowExpressionClause(SemanticModel semantic, LayerContext context, ArrowExpressionClauseSyntax arrowExpression, List<string> lines) {

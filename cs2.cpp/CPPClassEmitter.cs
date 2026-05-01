@@ -910,7 +910,7 @@ namespace cs2.cpp {
                 AddInheritanceTypeReference(typeSymbol.BaseType, referencedTypes, excludedTypeNames);
             }
 
-            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
+            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
                 AddInheritanceTypeReference(interfaceSymbol, referencedTypes, excludedTypeNames);
             }
         }
@@ -951,7 +951,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Emits interface members as a single public section because the current backend lowers interface properties as directly accessible members.
+        /// Emits interface members as a single public section with accessor-based properties and pure virtual functions.
         /// </summary>
         /// <param name="conversionClass">The interface declaration being emitted.</param>
         /// <param name="headerWriter">Writer that receives the header declaration.</param>
@@ -962,7 +962,7 @@ namespace cs2.cpp {
             List<Action> writers = new List<Action>();
 
             foreach (ConversionVariable variable in conversionClass.Variables) {
-                if (IsComputedProperty(variable)) {
+                if (variable.IsGet || variable.IsSet) {
                     writers.Add(() => WriteComputedProperty(conversionClass, variable, headerWriter, sourceWriter));
                     continue;
                 }
@@ -1023,6 +1023,11 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                if (variable.IsGet || variable.IsSet) {
+                    writers.Add(() => WriteStorageBackedProperty(conversionClass, variable, headerWriter, sourceWriter));
+                    continue;
+                }
+
                 writers.Add(() => WriteField(conversionClass, variable, headerWriter, sourceWriter));
             }
 
@@ -1033,6 +1038,12 @@ namespace cs2.cpp {
                 }
 
                 writers.Add(() => WriteFunction(conversionClass, function, headerWriter, sourceWriter));
+            }
+
+            if (accessType == MemberAccessType.Public) {
+                HashSet<string> plannedAccessorNames = BuildPlannedPropertyAccessorNames(conversionClass);
+                AddInterfacePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
+                AddBasePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
             }
 
             if (writers.Count == 0) {
@@ -1049,6 +1060,233 @@ namespace cs2.cpp {
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Adds bridge accessors for interface properties implemented through another base so the generated C++ type is no longer abstract.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class being emitted.</param>
+        /// <param name="writers">Writer list that receives any needed bridge emitters.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void AddInterfacePropertyBridgeWriters(ConversionClass conversionClass, HashSet<string> plannedAccessorNames, List<Action> writers, TextWriter headerWriter, TextWriter sourceWriter) {
+            if (conversionClass.DeclarationType == MemberDeclarationType.Interface ||
+                conversionClass.TypeSymbol is not INamedTypeSymbol typeSymbol) {
+                return;
+            }
+
+            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
+                foreach (ISymbol member in interfaceSymbol.GetMembers()) {
+                    if (member is not IPropertySymbol interfacePropertySymbol) {
+                        continue;
+                    }
+
+                    if (FindInterfacePropertyImplementation(typeSymbol, interfacePropertySymbol) is not IPropertySymbol implementationPropertySymbol ||
+                        SymbolEqualityComparer.Default.Equals(implementationPropertySymbol.ContainingType, typeSymbol)) {
+                        continue;
+                    }
+
+                    if (interfacePropertySymbol.GetMethod != null &&
+                        plannedAccessorNames.Add($"get_{interfacePropertySymbol.Name}")) {
+                        writers.Add(() => WriteInterfacePropertyBridgeGetter(conversionClass, interfacePropertySymbol, implementationPropertySymbol, headerWriter, sourceWriter));
+                    }
+
+                    if (interfacePropertySymbol.SetMethod != null &&
+                        plannedAccessorNames.Add($"set_{interfacePropertySymbol.Name}")) {
+                        writers.Add(() => WriteInterfacePropertyBridgeSetter(conversionClass, interfacePropertySymbol, implementationPropertySymbol, headerWriter, sourceWriter));
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds bridge accessors for inherited base-class properties so multiple-inheritance interface contracts can resolve to a concrete final overrider.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class being emitted.</param>
+        /// <param name="writers">Writer list that receives any needed bridge emitters.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void AddBasePropertyBridgeWriters(ConversionClass conversionClass, HashSet<string> plannedAccessorNames, List<Action> writers, TextWriter headerWriter, TextWriter sourceWriter) {
+            for (INamedTypeSymbol baseTypeSymbol = conversionClass.TypeSymbol?.BaseType; baseTypeSymbol != null; baseTypeSymbol = baseTypeSymbol.BaseType) {
+                ConversionClass baseConversionClass = program.FindGeneratedClass(baseTypeSymbol.Name, baseTypeSymbol.TypeArguments.Length);
+                if (baseConversionClass == null) {
+                    continue;
+                }
+
+                foreach (ConversionVariable baseVariable in baseConversionClass.Variables.Where(variable => variable.AccessType == MemberAccessType.Public && (variable.IsGet || variable.IsSet))) {
+                    if (baseVariable.IsGet &&
+                        plannedAccessorNames.Add($"get_{baseVariable.Name}")) {
+                        writers.Add(() => WriteBasePropertyBridgeGetter(conversionClass, baseConversionClass, baseVariable, headerWriter, sourceWriter));
+                    }
+
+                    if (baseVariable.IsSet &&
+                        plannedAccessorNames.Add($"set_{baseVariable.Name}")) {
+                        writers.Add(() => WriteBasePropertyBridgeSetter(conversionClass, baseConversionClass, baseVariable, headerWriter, sourceWriter));
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Builds the set of property accessor names that the current class already emits directly.
+        /// </summary>
+        /// <param name="conversionClass">Class being inspected before bridge emission.</param>
+        /// <returns>A mutable set seeded with the accessors already owned by the class.</returns>
+        static HashSet<string> BuildPlannedPropertyAccessorNames(ConversionClass conversionClass) {
+            HashSet<string> plannedAccessorNames = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                plannedAccessorNames.Add(function.Name);
+            }
+
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                if (variable.IsGet) {
+                    plannedAccessorNames.Add($"get_{variable.Name}");
+                }
+
+                if (variable.IsSet) {
+                    plannedAccessorNames.Add($"set_{variable.Name}");
+                }
+            }
+
+            return plannedAccessorNames;
+        }
+
+        /// <summary>
+        /// Resolves the property symbol that actually satisfies an interface property, falling back to base-type name matching when Roslyn does not surface the inherited implementation directly.
+        /// </summary>
+        /// <param name="typeSymbol">Concrete type that implements the interface.</param>
+        /// <param name="interfacePropertySymbol">Interface property contract.</param>
+        /// <returns>The implementing property symbol when one can be resolved; otherwise <c>null</c>.</returns>
+        static IPropertySymbol FindInterfacePropertyImplementation(INamedTypeSymbol typeSymbol, IPropertySymbol interfacePropertySymbol) {
+            if (typeSymbol.FindImplementationForInterfaceMember(interfacePropertySymbol) is IPropertySymbol directImplementationPropertySymbol) {
+                return directImplementationPropertySymbol;
+            }
+
+            for (INamedTypeSymbol currentTypeSymbol = typeSymbol.BaseType; currentTypeSymbol != null; currentTypeSymbol = currentTypeSymbol.BaseType) {
+                IPropertySymbol inheritedPropertySymbol = currentTypeSymbol.GetMembers(interfacePropertySymbol.Name)
+                    .OfType<IPropertySymbol>()
+                    .FirstOrDefault();
+                if (inheritedPropertySymbol != null) {
+                    return inheritedPropertySymbol;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines whether the current class already emits the requested property accessor directly.
+        /// </summary>
+        /// <param name="conversionClass">The class being inspected.</param>
+        /// <param name="propertyName">Source property name.</param>
+        /// <param name="isGetter"><c>true</c> to check for a getter; otherwise checks for a setter.</param>
+        /// <returns><c>true</c> when the accessor is already emitted on the class itself.</returns>
+        /// <summary>
+        /// Emits a bridge getter that forwards an interface contract to the actual implementation on another base.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class receiving the bridge.</param>
+        /// <param name="interfacePropertySymbol">Interface property contract.</param>
+        /// <param name="implementationPropertySymbol">Resolved implementation symbol supplied by another base.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void WriteInterfacePropertyBridgeGetter(ConversionClass conversionClass, IPropertySymbol interfacePropertySymbol, IPropertySymbol implementationPropertySymbol, TextWriter headerWriter, TextWriter sourceWriter) {
+            string typeName = ConvertType(VariableUtil.GetVarType(interfacePropertySymbol.Type), conversionClass);
+            string accessorName = $"get_{interfacePropertySymbol.Name}";
+            string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationPropertySymbol.ContainingType);
+
+            headerWriter.WriteLine($"    {typeName} {accessorName}();");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::{accessorName}()");
+            sourceWriter.WriteLine("{");
+            sourceWriter.WriteLine($"return {qualifier}get_{implementationPropertySymbol.Name}();");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Emits a bridge setter that forwards an interface contract to the actual implementation on another base.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class receiving the bridge.</param>
+        /// <param name="interfacePropertySymbol">Interface property contract.</param>
+        /// <param name="implementationPropertySymbol">Resolved implementation symbol supplied by another base.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void WriteInterfacePropertyBridgeSetter(ConversionClass conversionClass, IPropertySymbol interfacePropertySymbol, IPropertySymbol implementationPropertySymbol, TextWriter headerWriter, TextWriter sourceWriter) {
+            string typeName = ConvertType(VariableUtil.GetVarType(interfacePropertySymbol.Type), conversionClass);
+            string accessorName = $"set_{interfacePropertySymbol.Name}";
+            string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationPropertySymbol.ContainingType);
+
+            headerWriter.WriteLine($"    void {accessorName}({typeName} value);");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::{accessorName}({typeName} value)");
+            sourceWriter.WriteLine("{");
+            sourceWriter.WriteLine($"{qualifier}set_{implementationPropertySymbol.Name}(value);");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Emits a bridge getter that forwards to an inherited base-class accessor with the same property contract.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class receiving the bridge.</param>
+        /// <param name="baseConversionClass">Base class that already owns the accessor implementation.</param>
+        /// <param name="baseVariable">Base property model being forwarded.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void WriteBasePropertyBridgeGetter(ConversionClass conversionClass, ConversionClass baseConversionClass, ConversionVariable baseVariable, TextWriter headerWriter, TextWriter sourceWriter) {
+            string typeName = ConvertType(baseVariable.VarType, conversionClass);
+            string accessorName = $"get_{baseVariable.Name}";
+
+            headerWriter.WriteLine($"    {typeName} {accessorName}();");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::{accessorName}()");
+            sourceWriter.WriteLine("{");
+            sourceWriter.WriteLine($"return this->{baseConversionClass.GetEmittedTypeName()}::{accessorName}();");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Emits a bridge setter that forwards to an inherited base-class accessor with the same property contract.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class receiving the bridge.</param>
+        /// <param name="baseConversionClass">Base class that already owns the accessor implementation.</param>
+        /// <param name="baseVariable">Base property model being forwarded.</param>
+        /// <param name="headerWriter">Writer that receives declarations.</param>
+        /// <param name="sourceWriter">Writer that receives definitions.</param>
+        void WriteBasePropertyBridgeSetter(ConversionClass conversionClass, ConversionClass baseConversionClass, ConversionVariable baseVariable, TextWriter headerWriter, TextWriter sourceWriter) {
+            string typeName = ConvertType(baseVariable.VarType, conversionClass);
+            string accessorName = $"set_{baseVariable.Name}";
+
+            headerWriter.WriteLine($"    void {accessorName}({typeName} value);");
+
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::{accessorName}({typeName} value)");
+            sourceWriter.WriteLine("{");
+            sourceWriter.WriteLine($"this->{baseConversionClass.GetEmittedTypeName()}::{accessorName}(value);");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Builds the qualified call prefix used by an interface bridge to forward into another base implementation.
+        /// </summary>
+        /// <param name="conversionClass">Concrete class that owns the bridge.</param>
+        /// <param name="containingTypeSymbol">Type that already implements the interface member.</param>
+        /// <returns>C++ call prefix ending in <c>::</c> or <c>-></c>.</returns>
+        string GetInterfaceBridgeQualifier(ConversionClass conversionClass, INamedTypeSymbol containingTypeSymbol) {
+            if (containingTypeSymbol == null ||
+                SymbolEqualityComparer.Default.Equals(conversionClass.TypeSymbol, containingTypeSymbol)) {
+                return "this->";
+            }
+
+            string containingTypeName = program.FindGeneratedClass(containingTypeSymbol.Name, containingTypeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+                ?? containingTypeSymbol.Name;
+            return $"this->{containingTypeName}::";
         }
 
         /// <summary>
@@ -1250,6 +1488,48 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Emits an auto-property as native storage plus generated getter and setter methods so class implementations satisfy interface-style contracts.
+        /// </summary>
+        /// <param name="conversionClass">The class that owns the property.</param>
+        /// <param name="variable">The property model to emit.</param>
+        /// <param name="headerWriter">Writer that receives the field and accessor declarations.</param>
+        /// <param name="sourceWriter">Writer that receives the accessor definitions.</param>
+        void WriteStorageBackedProperty(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
+            WriteField(conversionClass, variable, headerWriter, sourceWriter);
+
+            if (variable.IsGet || variable.IsSet) {
+                headerWriter.WriteLine();
+            }
+
+            string staticKeyword = variable.IsStatic ? "static " : string.Empty;
+            string typeName = ConvertType(variable.VarType, conversionClass);
+
+            if (variable.IsGet) {
+                headerWriter.WriteLine($"    {staticKeyword}{typeName} get_{variable.Name}();");
+                WriteTemplateDeclaration(conversionClass, sourceWriter);
+                sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
+                sourceWriter.WriteLine("{");
+                sourceWriter.WriteLine(variable.IsStatic
+                    ? $"return {GetQualifiedClassName(conversionClass)}::{variable.Name};"
+                    : $"return this->{variable.Name};");
+                sourceWriter.WriteLine("}");
+                sourceWriter.WriteLine();
+            }
+
+            if (variable.IsSet) {
+                headerWriter.WriteLine($"    {staticKeyword}void set_{variable.Name}({typeName} value);");
+                WriteTemplateDeclaration(conversionClass, sourceWriter);
+                sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::set_{variable.Name}({typeName} value)");
+                sourceWriter.WriteLine("{");
+                sourceWriter.WriteLine(variable.IsStatic
+                    ? $"{GetQualifiedClassName(conversionClass)}::{variable.Name} = value;"
+                    : $"this->{variable.Name} = value;");
+                sourceWriter.WriteLine("}");
+                sourceWriter.WriteLine();
+            }
+        }
+
+        /// <summary>
         /// Creates a getter function model from a property definition.
         /// </summary>
         /// <param name="variable">The source property model.</param>
@@ -1258,6 +1538,8 @@ namespace cs2.cpp {
             return new ConversionFunction {
                 Name = $"get_{variable.Name}",
                 AccessType = variable.AccessType,
+                DeclarationType = variable.DeclarationType,
+                IsStatic = variable.IsStatic,
                 ReturnType = new VariableType(variable.VarType),
                 RawBlock = variable.GetBlock
             };
@@ -1272,6 +1554,8 @@ namespace cs2.cpp {
             ConversionFunction setter = new ConversionFunction {
                 Name = $"set_{variable.Name}",
                 AccessType = variable.AccessType,
+                DeclarationType = variable.DeclarationType,
+                IsStatic = variable.IsStatic,
                 RawBlock = variable.SetBlock
             };
 
@@ -1318,6 +1602,10 @@ namespace cs2.cpp {
             WriteFunctionTemplateDeclaration(function, headerWriter, "    ");
             headerWriter.Write("    ");
 
+            if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
+                headerWriter.Write("virtual ");
+            }
+
             if (function.IsStatic) {
                 headerWriter.Write("static ");
             }
@@ -1328,7 +1616,7 @@ namespace cs2.cpp {
 
             headerWriter.Write($"{GetFunctionName(conversionClass, function)}(");
             WriteParameters(conversionClass, function, headerWriter);
-            headerWriter.WriteLine(");");
+            headerWriter.WriteLine(ShouldEmitPureVirtualDeclaration(conversionClass, function) ? ") = 0;" : ");");
         }
 
         /// <summary>
@@ -1338,6 +1626,10 @@ namespace cs2.cpp {
         /// <param name="function">The function to define.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
+            if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
+                return;
+            }
+
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             WriteFunctionTemplateDeclaration(function, sourceWriter, string.Empty);
 
@@ -1360,6 +1652,11 @@ namespace cs2.cpp {
 
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        static bool ShouldEmitPureVirtualDeclaration(ConversionClass conversionClass, ConversionFunction function) {
+            return conversionClass.DeclarationType == MemberDeclarationType.Interface &&
+                !function.IsStatic;
         }
 
         void WriteFreeFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {

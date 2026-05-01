@@ -412,6 +412,7 @@ namespace cs2.core {
 
             if (pMember.AccessorList == null) {
                 if (pMember.ExpressionBody != null) {
+                    variable.IsGet = true;
                     variable.ArrowExpression = pMember.ExpressionBody.Expression;
                 }
             } else {
@@ -419,14 +420,14 @@ namespace cs2.core {
                 foreach (var accessor in pMember.AccessorList.Accessors) {
                     // check if this accessor is a set accessor
                     if (accessor.Kind() == SyntaxKind.GetAccessorDeclaration) {
+                        variable.IsGet = true;
                         if (accessor.Body == null) {
-                            variable.IsGet = true;
                         } else {
                             variable.GetBlock = accessor.Body;
                         }
                     } else if (accessor.Kind() == SyntaxKind.SetAccessorDeclaration) {
+                        variable.IsSet = true;
                         if (accessor.Body == null) {
-                            variable.IsSet = true;
                         } else {
                             variable.SetBlock = accessor.Body;
                         }

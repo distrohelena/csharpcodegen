@@ -399,17 +399,23 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures static generated property chains keep the owning generated type as a header dependency and emit static access.
+        /// Ensures static computed property chains keep the owning generated type as a header dependency and emit static getter access.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStaticGeneratedPropertyChain_EmitsOwnerIncludeAndStaticAccess() {
+        public void WriteOutput_WithStaticGeneratedPropertyChain_EmitsOwnerIncludeAndStaticGetterAccess() {
             string source = """
                 public class ThemeColors {
                     public string TextOnAccent;
                 }
 
                 public static class ThemeManager {
-                    public static ThemeColors Colors;
+                    static ThemeColors colors;
+
+                    public static ThemeColors Colors {
+                        get {
+                            return colors;
+                        }
+                    }
                 }
 
                 public class Widget {
@@ -425,7 +431,171 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("#include \"ThemeManager.hpp\"", sourceOutput);
-            Assert.Contains("ThemeManager::Colors->TextOnAccent", sourceOutput);
+            Assert.Contains("ThemeManager::get_Colors()->TextOnAccent", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures expression-bodied instance properties lower to getter calls instead of uninitialized backing fields.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExpressionBodiedPropertyReceiver_UsesGetterCall() {
+            string source = """
+                public class Stream {
+                    public int ReadByte() {
+                        return 1;
+                    }
+                }
+
+                public class Reader {
+                    protected Stream BaseStream;
+
+                    protected Stream Stream => BaseStream;
+
+                    public int Read() {
+                        return Stream.ReadByte();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
+
+            Assert.Contains("::Stream* get_Stream();", headerOutput);
+            Assert.DoesNotContain("\n    ::Stream* Stream;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Stream* Reader::get_Stream()", sourceOutput);
+            Assert.Contains("return this->get_Stream()->ReadByte();", sourceOutput);
+            Assert.DoesNotContain("return this->Stream->ReadByte();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures getter-bodied instance properties also lower to getter calls instead of native storage fields.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGetterBodiedPropertyReceiver_UsesGetterCall() {
+            string source = """
+                public class RenderQueue {
+                    public int Count() {
+                        return 1;
+                    }
+                }
+
+                public class Camera {
+                    RenderQueue renderQueue;
+
+                    public RenderQueue RenderQueue {
+                        get {
+                            return renderQueue;
+                        }
+                    }
+
+                    public int Read() {
+                        return RenderQueue.Count();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Camera.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Camera.cpp"));
+
+            Assert.Contains("::RenderQueue* get_RenderQueue();", headerOutput);
+            Assert.DoesNotContain("\n    ::RenderQueue* RenderQueue;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::RenderQueue* Camera::get_RenderQueue()", sourceOutput);
+            Assert.Contains("return this->get_RenderQueue()->Count();", sourceOutput);
+            Assert.DoesNotContain("return this->RenderQueue->Count();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inherited computed properties still lower to getter calls instead of colliding with generated type names.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInheritedPropertyReceiver_UsesGetterCall() {
+            string source = """
+                public class Stream {
+                    public void Write(byte[] buffer) {
+                    }
+                }
+
+                public class WriterBase {
+                    protected Stream BaseStream;
+
+                    protected Stream Stream => BaseStream;
+                }
+
+                public class Writer : WriterBase {
+                    public void WriteBuffer(byte[] buffer) {
+                        Stream.Write(buffer);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Writer.cpp"));
+
+            Assert.Contains("this->get_Stream()->Write(buffer);", sourceOutput);
+            Assert.DoesNotContain("Stream::Write(buffer);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures computed property member access lowers through generated getter and setter calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithComputedPropertyMemberAccess_UsesGetterAndSetterCalls() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+
+                    public float3(float x, float y, float z) {
+                        X = x;
+                        Y = y;
+                        Z = z;
+                    }
+                }
+
+                public class Entity {
+                    float3 position;
+                    bool enabled;
+
+                    public bool Enabled {
+                        get {
+                            return enabled;
+                        }
+                        set {
+                            enabled = value;
+                        }
+                    }
+
+                    public float3 Position {
+                        get {
+                            return position;
+                        }
+                        set {
+                            position = value;
+                        }
+                    }
+                }
+
+                public class Widget {
+                    Entity target;
+
+                    public void Sync(float3 value) {
+                        if (target.Enabled) {
+                            target.Position = value;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("if (this->target->get_Enabled())", sourceOutput);
+            Assert.Contains("this->target->set_Position(value);", sourceOutput);
+            Assert.DoesNotContain("this->target->Enabled", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->target->Position =", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1062,10 +1232,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures interface auto-properties remain publicly accessible in generated output.
+        /// Ensures interface auto-properties emit accessor declarations instead of invalid storage members.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithInterfaceAutoProperties_EmitsPublicMembers() {
+        public void WriteOutput_WithInterfaceAutoProperties_EmitsAccessors() {
             string source = """
                 public interface ICamera {
                     ushort LayerMask { get; set; }
@@ -1076,7 +1246,125 @@ namespace cs2.cpp.tests {
             string header = File.ReadAllText(Path.Combine(output.OutputPath, "ICamera.hpp"));
 
             Assert.Contains("public:", header);
+            Assert.Contains("virtual uint16_t get_LayerMask() = 0;", header);
+            Assert.Contains("virtual void set_LayerMask(uint16_t value) = 0;", header);
+            Assert.DoesNotContain("uint16_t LayerMask;", header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures class auto-properties still emit backing storage while also generating accessors that satisfy implemented interfaces.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithClassAutoPropertyImplementingInterface_EmitsStorageAndAccessors() {
+            string source = """
+                public interface ICamera {
+                    ushort LayerMask { get; set; }
+                }
+
+                public class Camera : ICamera {
+                    public ushort LayerMask { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Camera.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Camera.cpp"));
+
             Assert.Contains("uint16_t LayerMask;", header);
+            Assert.Contains("uint16_t get_LayerMask();", header);
+            Assert.Contains("void set_LayerMask(uint16_t value);", header);
+            Assert.Contains("uint16_t Camera::get_LayerMask()", sourceOutput);
+            Assert.Contains("return this->LayerMask;", sourceOutput);
+            Assert.Contains("void Camera::set_LayerMask(uint16_t value)", sourceOutput);
+            Assert.Contains("this->LayerMask = value;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures concrete classes emit interface-property bridges when the implementation lives on another base class.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterfacePropertyImplementedByDifferentBase_EmitsBridgeAccessor() {
+            string source = """
+                public class Entity {
+                }
+
+                public interface IDrawable {
+                    Entity Parent { get; }
+                }
+
+                public class Component {
+                    public Entity Parent { get; set; }
+                }
+
+                public class Sprite : Component, IDrawable {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Sprite.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Sprite.cpp"));
+
+            Assert.Contains("::Entity* get_Parent();", header);
+            Assert.Contains("::Entity* Sprite::get_Parent()", sourceOutput);
+            Assert.Contains("return this->Component::get_Parent();", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures interface-property bridges also emit for transitive interface hierarchies.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTransitiveInterfacePropertyImplementation_EmitsBridgeAccessor() {
+            string source = """
+                public class Entity {
+                }
+
+                public interface IDrawable {
+                    Entity Parent { get; }
+                }
+
+                public interface IRoundedRectDrawable : IDrawable {
+                }
+
+                public class Component {
+                    public Entity Parent { get; set; }
+                }
+
+                public class RoundedRectComponent : Component, IRoundedRectDrawable {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "RoundedRectComponent.hpp"));
+
+            Assert.Contains("::Entity* get_Parent();", header);
+        }
+
+        /// <summary>
+        /// Ensures reads through interface-typed receivers lower to accessor calls instead of invalid field access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterfaceTypedPropertyReceiver_UsesGetterCall() {
+            string source = """
+                public struct float4 {
+                    public float X;
+                }
+
+                public interface ICamera {
+                    float4 Viewport { get; }
+                }
+
+                public class Widget {
+                    public float Read(ICamera camera) {
+                        return camera.Viewport.X;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("return camera->get_Viewport().X;", sourceOutput);
+            Assert.DoesNotContain("camera->Viewport", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
