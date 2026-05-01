@@ -1013,8 +1013,8 @@ namespace cs2.cpp {
             List<Action> writers = new List<Action>();
 
             if (accessType == MemberAccessType.Public &&
-                ShouldEmitImplicitValueTypeDefaultConstructor(conversionClass)) {
-                writers.Add(() => WriteImplicitValueTypeDefaultConstructor(conversionClass, headerWriter, sourceWriter));
+                ShouldEmitImplicitDefaultConstructor(conversionClass)) {
+                writers.Add(() => WriteImplicitDefaultConstructor(conversionClass, headerWriter, sourceWriter));
             }
 
             foreach (ConversionVariable variable in conversionClass.Variables.Where(variable => variable.AccessType == accessType)) {
@@ -1056,13 +1056,19 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="conversionClass">The converted type to inspect.</param>
         /// <returns><c>true</c> when the value type needs an emitted parameterless constructor; otherwise <c>false</c>.</returns>
-        bool ShouldEmitImplicitValueTypeDefaultConstructor(ConversionClass conversionClass) {
-            if (conversionClass?.TypeSymbol?.IsValueType != true ||
-                conversionClass.DeclarationType == MemberDeclarationType.Enum) {
+        bool ShouldEmitImplicitDefaultConstructor(ConversionClass conversionClass) {
+            if (conversionClass == null ||
+                conversionClass.DeclarationType == MemberDeclarationType.Enum ||
+                conversionClass.DeclarationType == MemberDeclarationType.Interface) {
                 return false;
             }
 
-            return !conversionClass.Functions.Any(function => function.IsConstructor && function.InParameters.Count == 0);
+            if (conversionClass.TypeSymbol?.IsValueType == true) {
+                return !conversionClass.Functions.Any(function => function.IsConstructor && function.InParameters.Count == 0);
+            }
+
+            return !conversionClass.Functions.Any(function => function.IsConstructor) &&
+                   GetInstanceFieldInitializers(conversionClass).Count > 0;
         }
 
         /// <summary>
@@ -1071,17 +1077,14 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The value type that needs the constructor.</param>
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
-        void WriteImplicitValueTypeDefaultConstructor(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+        void WriteImplicitDefaultConstructor(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
             string emittedTypeName = conversionClass.GetEmittedTypeName();
             headerWriter.WriteLine($"    {emittedTypeName}();");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{emittedTypeName}()");
 
-            List<string> initializers = conversionClass.Variables
-                .Where(variable => !variable.IsStatic && !IsComputedProperty(variable))
-                .Select(variable => $"{variable.Name}()")
-                .ToList();
+            List<string> initializers = GetInstanceFieldInitializers(conversionClass);
             if (initializers.Count > 0) {
                 sourceWriter.Write(" : ");
                 sourceWriter.Write(string.Join(", ", initializers));
@@ -1106,6 +1109,50 @@ namespace cs2.cpp {
             return variable.GetBlock != null ||
                    variable.SetBlock != null ||
                    variable.ArrowExpression != null;
+        }
+
+        List<string> GetInstanceFieldInitializers(ConversionClass conversionClass) {
+            return conversionClass.Variables
+                .Where(variable => !variable.IsStatic && !IsComputedProperty(variable))
+                .Select(variable => $"{variable.Name}({GetFieldInitializerExpression(conversionClass, variable)})")
+                .ToList();
+        }
+
+        string GetFieldInitializerExpression(ConversionClass conversionClass, ConversionVariable variable) {
+            if (TryLowerInlineFieldInitializer(conversionClass, variable, out string loweredInitializer)) {
+                return loweredInitializer;
+            }
+
+            return string.Empty;
+        }
+
+        bool TryLowerInlineFieldInitializer(ConversionClass conversionClass, ConversionVariable variable, out string loweredInitializer) {
+            loweredInitializer = string.Empty;
+
+            if (variable.AssignmentExpression != null) {
+                List<string> initializerLines = new List<string>();
+                LayerContext context = new CPPLayerContext(program);
+                int start = context.DepthClass;
+                context.AddClass(conversionClass);
+                ExpressionResult result = processor.ProcessExpression(conversionClass.Semantic, context, variable.AssignmentExpression, initializerLines);
+                context.PopClass(start);
+
+                if ((result.BeforeLines == null || result.BeforeLines.Count == 0) &&
+                    (result.AfterLines == null || result.AfterLines.Count == 0) &&
+                    initializerLines.Count > 0) {
+                    loweredInitializer = string.Concat(initializerLines);
+                    return true;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(variable.Assignment) ||
+                string.Equals(variable.Assignment, "null", StringComparison.Ordinal) ||
+                string.Equals(variable.VarType?.TypeName, "Event", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            loweredInitializer = variable.Assignment;
+            return true;
         }
 
         /// <summary>
@@ -1414,41 +1461,59 @@ namespace cs2.cpp {
         }
 
         void WriteConstructorInitializer(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
-            if (!function.IsConstructor || function.ConstructorInitializer == null) {
+            if (!function.IsConstructor) {
                 return;
             }
 
-            string initializerTarget;
-            if (string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "base", StringComparison.Ordinal)) {
-                string baseTypeName = conversionClass.Extensions?.FirstOrDefault();
-                if (string.IsNullOrWhiteSpace(baseTypeName)) {
-                    return;
+            List<string> initializerSegments = new List<string>();
+
+            bool delegatesToThis = false;
+            if (function.ConstructorInitializer != null) {
+                string initializerTarget;
+                delegatesToThis = string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "this", StringComparison.Ordinal);
+                if (string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "base", StringComparison.Ordinal)) {
+                    string baseTypeName = conversionClass.Extensions?.FirstOrDefault();
+                    if (string.IsNullOrWhiteSpace(baseTypeName)) {
+                        return;
+                    }
+
+                    ConversionClass baseClass = program.FindGeneratedClass(baseTypeName, 0);
+                    if (baseClass != null) {
+                        initializerTarget = baseClass.GetEmittedTypeName();
+                    } else {
+                        initializerTarget = NormalizeReferencedClassName(baseTypeName);
+                    }
+                } else {
+                    initializerTarget = conversionClass.GetEmittedTypeName();
                 }
 
-                ConversionClass baseClass = program.FindGeneratedClass(baseTypeName, 0);
-                if (baseClass != null) {
-                    initializerTarget = baseClass.GetEmittedTypeName();
-                } else {
-                    initializerTarget = NormalizeReferencedClassName(baseTypeName);
+                StringWriter initializerWriter = new StringWriter();
+                initializerWriter.Write(initializerTarget);
+                initializerWriter.Write("(");
+
+                if (function.ConstructorInitializer.ArgumentList != null) {
+                    for (int index = 0; index < function.ConstructorInitializer.ArgumentList.Arguments.Count; index++) {
+                        initializerWriter.Write(function.ConstructorInitializer.ArgumentList.Arguments[index].Expression.ToString());
+                        if (index < function.ConstructorInitializer.ArgumentList.Arguments.Count - 1) {
+                            initializerWriter.Write(", ");
+                        }
+                    }
                 }
-            } else {
-                initializerTarget = conversionClass.GetEmittedTypeName();
+
+                initializerWriter.Write(")");
+                initializerSegments.Add(initializerWriter.ToString());
+            }
+
+            if (!delegatesToThis) {
+                initializerSegments.AddRange(GetInstanceFieldInitializers(conversionClass));
+            }
+
+            if (initializerSegments.Count == 0) {
+                return;
             }
 
             sourceWriter.Write(" : ");
-            sourceWriter.Write(initializerTarget);
-            sourceWriter.Write("(");
-
-            if (function.ConstructorInitializer.ArgumentList != null) {
-                for (int index = 0; index < function.ConstructorInitializer.ArgumentList.Arguments.Count; index++) {
-                    sourceWriter.Write(function.ConstructorInitializer.ArgumentList.Arguments[index].Expression.ToString());
-                    if (index < function.ConstructorInitializer.ArgumentList.Arguments.Count - 1) {
-                        sourceWriter.Write(", ");
-                    }
-                }
-            }
-
-            sourceWriter.Write(")");
+            sourceWriter.Write(string.Join(", ", initializerSegments));
         }
 
         /// <summary>

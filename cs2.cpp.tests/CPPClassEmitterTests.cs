@@ -125,6 +125,67 @@ public class CPPClassEmitterTests {
     }
 
     /// <summary>
+    /// Ensures emitted constructors value-initialize instance fields so generated classes preserve C# default field semantics.
+    /// </summary>
+    [Fact]
+    public void EmitConstructor_InitializesInstanceFields() {
+        CPPClassEmitter emitter = CreateEmitter();
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "InputManager",
+            DeclarationType = MemberDeclarationType.Class
+        };
+
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "Highlighted",
+            AccessType = MemberAccessType.Private,
+            VarType = new VariableType(typeName: "IInteractable2D")
+        });
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "hasCapturedInput",
+            AccessType = MemberAccessType.Private,
+            VarType = new VariableType(typeName: "bool")
+        });
+
+        conversionClass.Functions.Add(new ConversionFunction {
+            Name = "InputManager",
+            IsConstructor = true,
+            AccessType = MemberAccessType.Public
+        });
+
+        (_, string source) = Emit(emitter, conversionClass);
+
+        Assert.Contains("InputManager::InputManager() : Highlighted(), hasCapturedInput(false)", source);
+    }
+
+    /// <summary>
+    /// Ensures classes without an explicit constructor still emit a safe parameterless constructor when instance fields need initialization.
+    /// </summary>
+    [Fact]
+    public void EmitClassWithoutConstructors_SynthesizesDefaultFieldInitializingConstructor() {
+        CPPClassEmitter emitter = CreateEmitter();
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "InputManager",
+            DeclarationType = MemberDeclarationType.Class
+        };
+
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "Highlighted",
+            AccessType = MemberAccessType.Private,
+            VarType = new VariableType(typeName: "IInteractable2D")
+        });
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "hasCapturedInput",
+            AccessType = MemberAccessType.Private,
+            VarType = new VariableType(typeName: "bool")
+        });
+
+        (string header, string source) = Emit(emitter, conversionClass);
+
+        Assert.Contains("InputManager();", header);
+        Assert.Contains("InputManager::InputManager() : Highlighted(), hasCapturedInput(false)", source);
+    }
+
+    /// <summary>
     /// Creates the emitter under test with the current C++ processor and runtime program model.
     /// </summary>
     /// <returns>The class emitter to exercise.</returns>
