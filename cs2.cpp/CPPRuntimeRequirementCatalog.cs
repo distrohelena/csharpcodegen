@@ -61,6 +61,7 @@ namespace cs2.cpp {
                 Make("Path", "system/io/path.hpp", "HE_CPP_REQ_PATH", "Path abstraction support for host-backed path normalization and resolution."),
                 Make("AppContext", "system/app_context.hpp", "HE_CPP_REQ_APP_CONTEXT", "Managed AppContext support for executable-base-directory initialization."),
                 Make("Debug", "system/diagnostics/debug.hpp", "HE_CPP_REQ_DEBUG", "Managed debug output surface support for System.Diagnostics.Debug."),
+                Make("Stopwatch", "system/diagnostics/stopwatch.hpp", "HE_CPP_REQ_STOPWATCH", "Managed Stopwatch timing support for lightweight runtime profiling."),
                 Make("Encoding", "system/text/encoding.hpp", "HE_CPP_REQ_ENCODING", "Managed Encoding surface support for UTF-8 oriented text readers and writers."),
                 Make("SHA256", "system/security/cryptography/sha256.hpp", "HE_CPP_REQ_SHA256", "Managed SHA256 helper surface for deterministic content hashing."),
                 Make("Number", "system/number.hpp", "HE_CPP_REQ_NUMBER", "Managed numeric helper surface for primitive TryParse and infinity checks."),

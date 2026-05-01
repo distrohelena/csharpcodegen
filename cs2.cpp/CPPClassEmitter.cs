@@ -574,6 +574,14 @@ namespace cs2.cpp {
                 return "system/diagnostics/debug";
             }
 
+            if (string.Equals(referencedClass, "Stopwatch", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Diagnostics.Stopwatch", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Stopwatch", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Stopwatch", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Stopwatch");
+                return "system/diagnostics/stopwatch";
+            }
+
             if (string.Equals(referencedClass, "Action", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.Action", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "Action", StringComparison.Ordinal) ||

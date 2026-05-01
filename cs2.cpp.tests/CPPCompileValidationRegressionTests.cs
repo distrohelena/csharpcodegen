@@ -708,6 +708,28 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures System.Diagnostics.Stopwatch resolves to the native stopwatch runtime header instead of a synthetic generated include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemDiagnosticsStopwatch_UsesRuntimeStopwatchHeader() {
+            string source = """
+                public static class Widget {
+                    public static double Measure() {
+                        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                        stopwatch.Stop();
+                        return stopwatch.Elapsed.TotalMilliseconds;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string generatedText = output.GeneratedText;
+
+            Assert.Contains("#include \"system/diagnostics/stopwatch.hpp\"", generatedText);
+            Assert.DoesNotContain("#include \"Stopwatch.hpp\"", generatedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures nullable member access lowers through direct value access instead of pointer access.
         /// </summary>
         [Fact]

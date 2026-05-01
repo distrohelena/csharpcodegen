@@ -903,7 +903,7 @@ namespace cs2.cpp {
             List<string> lines) {
             string objectName = "__object_" + Guid.NewGuid().ToString("N")[..8];
 
-            lines.Add("([&]() {\n");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
             lines.Add("auto ");
             lines.Add(objectName);
             lines.Add(" = ");
@@ -1049,7 +1049,7 @@ namespace cs2.cpp {
                 objectCreation.ArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
 
             if (requiresStableArgumentEvaluation) {
-                lines.Add("([&]() {\n");
+                lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
 
                 List<string> temporaryArgumentNames = new List<string>();
                 for (int i = 0; i < explicitArgumentCount; i++) {
@@ -3891,7 +3891,7 @@ namespace cs2.cpp {
             string typeName = QualifyRenderedCppTypeName(cppResultType.ToCPPString(context.Program), context);
             string pointerSuffix = resultTypeData.IsPointer ? "*" : string.Empty;
 
-            lines.Add("([&]() {\n");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
             if (leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0) {
                 lines.AddRange(leftResult.BeforeLines);
             }
@@ -3914,6 +3914,15 @@ namespace cs2.cpp {
 
             result = new ExpressionResult(true, VariablePath.Unknown, cppResultType);
             return true;
+        }
+
+        /// <summary>
+        /// Returns the lambda capture list used by generated immediate-invocation wrappers.
+        /// Non-local lambdas cannot use capture-default syntax, so static/namespace-scope
+        /// initializers must emit an empty capture list.
+        /// </summary>
+        string GetObjectConstructionLambdaCaptureList(LayerContext context) {
+            return context?.GetCurrentFunction() != null ? "[&]" : "[]";
         }
 
         bool TryResolvePreferredCoalesceVariableType(
@@ -6361,6 +6370,14 @@ namespace cs2.cpp {
                 string.Equals(qualifiedTypeName, "global::System.Diagnostics.Debug", StringComparison.Ordinal)) {
                 runtimeTypeName = "System::Diagnostics::Debug";
                 runtimeRequirementName = "Debug";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "Stopwatch", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Diagnostics.Stopwatch", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Diagnostics.Stopwatch", StringComparison.Ordinal)) {
+                runtimeTypeName = "System::Diagnostics::Stopwatch";
+                runtimeRequirementName = "Stopwatch";
                 return true;
             }
 
