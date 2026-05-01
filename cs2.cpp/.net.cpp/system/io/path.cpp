@@ -14,6 +14,10 @@ std::string Path::Combine(const std::string& left, const std::string& right) {
     return (std::filesystem::path(left) / right).lexically_normal().string();
 }
 
+std::string Path::Combine(const std::string& first, const std::string& second, const std::string& third) {
+    return Combine(Combine(first, second), third);
+}
+
 std::string Path::GetDirectoryName(const std::string& path) {
     if (path.empty()) {
         return std::string();

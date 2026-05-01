@@ -136,6 +136,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures abstract and virtual members stay polymorphic in generated C++ so native hosts can provide backend subclasses.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAbstractAndOverrideMethods_EmitsVirtualAndOverrideDeclarations() {
+            string source = """
+                public abstract class Keyboard {
+                    public abstract int GetState();
+
+                    public virtual void SetActive(bool isActive) {
+                    }
+                }
+
+                public class KeyboardWindows : Keyboard {
+                    public override int GetState() {
+                        return 1;
+                    }
+
+                    public override void SetActive(bool isActive) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string baseHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Keyboard.hpp"));
+            string derivedHeader = File.ReadAllText(Path.Combine(output.OutputPath, "KeyboardWindows.hpp"));
+
+            Assert.Contains("virtual int32_t GetState() = 0;", baseHeader);
+            Assert.Contains("virtual void SetActive(bool isActive);", baseHeader);
+            Assert.Contains("int32_t GetState();", derivedHeader);
+            Assert.Contains("void SetActive(bool isActive);", derivedHeader);
+        }
+
+        /// <summary>
         /// Ensures cyclic generated pointer references emit forward declarations so headers stay compilable without depending on include order.
         /// </summary>
         [Fact]
@@ -1368,6 +1401,47 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures interface properties on indexed receivers lower through getter calls for both inferred locals and direct element access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithIndexedInterfacePropertyReceiver_UsesGetterCalls() {
+            string source = """
+                using System.Collections.Generic;
+
+                public struct float4 {
+                    public float X;
+                }
+
+                public interface ICamera {
+                    float4 Viewport { get; }
+                    byte CameraDrawOrder { get; }
+                }
+
+                public class Widget {
+                    public float Read(List<ICamera> cameras, int index) {
+                        var camera = cameras[index];
+                        var viewport = camera.Viewport;
+                        if (cameras[index].CameraDrawOrder > 0) {
+                            return viewport.X + cameras[index].Viewport.X;
+                        }
+
+                        return viewport.X;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("::ICamera *camera = (*cameras)[index];", sourceOutput);
+            Assert.Contains("::float4 viewport = camera->get_Viewport();", sourceOutput);
+            Assert.Contains("(*cameras)[index]->get_CameraDrawOrder()", sourceOutput);
+            Assert.Contains("(*cameras)[index]->get_Viewport().X", sourceOutput);
+            Assert.DoesNotContain("camera->Viewport", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("->CameraDrawOrder", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures string-to-null comparisons lower through the native string helper instead of invalid pointer-style comparisons.
         /// </summary>
         [Fact]
@@ -1827,7 +1901,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("ValueTuple<std::string, std::string> *it = (*items)[j];", sourceOutput);
             Assert.Contains("result->Add(", sourceOutput);
             Assert.Contains("ValueTuple<std::string, std::string, std::string>", sourceOutput);
-            Assert.Contains("new ValueTuple<std::string, std::string, std::string>(p->Category, it->Item1, it->Item2)", sourceOutput);
+            Assert.Contains("new ValueTuple<std::string, std::string, std::string>(p->get_Category(), it->Item1, it->Item2)", sourceOutput);
         }
 
         /// <summary>
@@ -2459,7 +2533,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Serializer.cpp"));
 
             Assert.Contains("Array<::Node*>* Items;", graphHeader);
-            Assert.Contains("reader->ReadArray(new Func<Reader*, Node*>(&Serializer::ReadNode))", sourceOutput);
+            Assert.Contains("reader->ReadArray<Node*>(new Func<Reader*, Node*>(&Serializer::ReadNode))", sourceOutput);
             Assert.Contains("Array<Node*>::Empty()", sourceOutput);
             Assert.Contains("writer->WriteArray<Node*>(asset->Items, new Action<Writer*, Node*>(&Serializer::WriteNode))", sourceOutput);
         }
@@ -3414,6 +3488,224 @@ namespace cs2.cpp.tests {
             Assert.Contains("for (const auto& key : *keys)", sourceOutput);
             Assert.DoesNotContain("0x1.0f", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("return  &&", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic object creation keeps the concrete generated type instead of collapsing to the interface target type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericProcessorObjectCreation_UsesConcreteGeneratedType() {
+            string source = """
+                public class Stream {
+                }
+
+                public class Asset {
+                }
+
+                public class ModelAsset : Asset {
+                }
+
+                public interface IContentProcessor<T> {
+                    T Read(Stream stream);
+                }
+
+                public class AssetContentProcessor<TAsset> : IContentProcessor<TAsset> where TAsset : Asset {
+                    public TAsset Read(Stream stream) {
+                        return default;
+                    }
+                }
+
+                public static class Gate {
+                    public static IContentProcessor<ModelAsset> Build() {
+                        return new AssetContentProcessor<ModelAsset>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("new ::AssetContentProcessor_1<::ModelAsset*>()", output.GeneratedText);
+            Assert.DoesNotContain("new ::IContentProcessor_1<::ModelAsset*>()", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer coalesce lowering keeps concrete array types instead of degrading to object.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithByteArrayCoalesce_UsesNativeArrayPointerType() {
+            string source = """
+                using System;
+
+                public class SceneRecord {
+                    public byte[] Payload { get; set; } = Array.Empty<byte>();
+                }
+
+                public class Gate {
+                    public byte[] Read(SceneRecord record) {
+                        return record.Payload ?? Array.Empty<byte>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("Array<uint8_t>* __coalesce_", output.GeneratedText);
+            Assert.DoesNotContain("object* __coalesce_", output.GeneratedText, StringComparison.Ordinal);
+            Assert.DoesNotContain(" ?? ", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures object initializers route assignments through generated setters even for auto-properties backed by value types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAutoPropertyObjectInitializer_UsesSetterCalls() {
+            string source = """
+                public struct Bounds {
+                    public float X;
+                }
+
+                public class Camera {
+                    public byte LayerMask { get; set; }
+
+                    public Bounds Viewport { get; set; }
+                }
+
+                public class Gate {
+                    public Camera Create(Bounds viewport) {
+                        return new Camera {
+                            LayerMask = 1,
+                            Viewport = viewport
+                        };
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("set_LayerMask(1);", output.GeneratedText);
+            Assert.Contains("set_Viewport(viewport);", output.GeneratedText);
+        }
+
+        /// <summary>
+        /// Ensures array-backed IReadOnlyList returns are wrapped as native lists so generated signatures remain compilable.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayBackedReadOnlyListReturn_WrapsNativeList() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Gate {
+                    readonly string[] values = [];
+
+                    public IReadOnlyList<string> Values {
+                        get {
+                            return values;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("return new List<std::string>(", output.GeneratedText);
+            Assert.Contains("values", output.GeneratedText);
+        }
+
+        /// <summary>
+        /// Ensures value-type compound assignments expand to explicit binary assignments when only operator overloads are available.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeCompoundAssignment_ExpandsBinaryAssignment() {
+            string source = """
+                public struct Rotation {
+                    public static Rotation operator *(Rotation left, Rotation right) {
+                        return left;
+                    }
+
+                    public static Rotation operator +(Rotation left, Rotation right) {
+                        return left;
+                    }
+                }
+
+                public class Gate {
+                    public Rotation Parent;
+
+                    public Rotation Mix(Rotation value) {
+                        Rotation current = value;
+                        current *= Parent;
+                        current += Parent;
+                        return current;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("current = current * this->Parent;", output.GeneratedText);
+            Assert.Contains("current = current + this->Parent;", output.GeneratedText);
+            Assert.DoesNotContain("current *= this->Parent;", output.GeneratedText, StringComparison.Ordinal);
+            Assert.DoesNotContain("current += this->Parent;", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures Path separator characters convert to native one-character strings instead of pointer-style ToString calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPathSeparatorToString_EmitsNativeCharString() {
+            string source = """
+                using System.IO;
+
+                public class Gate {
+                    public string Read() {
+                        return Path.DirectorySeparatorChar.ToString();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("std::string(1, Path::DirectorySeparatorChar)", output.GeneratedText);
+            Assert.DoesNotContain("Path::DirectorySeparatorChar->ToString()", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic declaration-pattern casts do not add an extra pointer layer when the generic argument already lowers as a pointer type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericReferencePatternVariable_DoesNotEmitDoublePointer() {
+            string source = """
+                public class Asset {
+                }
+
+                public class Stream {
+                }
+
+                public static class AssetSerializer {
+                    public static Asset Deserialize(Stream stream) {
+                        return null;
+                    }
+                }
+
+                public interface IContentProcessor<T> {
+                    T Read(Stream stream);
+                }
+
+                public class AssetContentProcessor<TAsset> : IContentProcessor<TAsset> where TAsset : Asset {
+                    public TAsset Read(Stream stream) {
+                        Asset asset = AssetSerializer.Deserialize(stream);
+                        if (asset is TAsset typedAsset) {
+                            return typedAsset;
+                        }
+
+                        return default;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("TAsset typedAsset = he_cpp_try_cast<TAsset>(asset);", output.GeneratedText);
+            Assert.DoesNotContain("TAsset* typedAsset = he_cpp_try_cast<TAsset>(asset);", output.GeneratedText, StringComparison.Ordinal);
         }
 
         /// <summary>

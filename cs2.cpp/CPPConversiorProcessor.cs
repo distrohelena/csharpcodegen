@@ -510,6 +510,10 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryProcessValueTypeCompoundAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
             context.PopClass(startDepth);
@@ -877,6 +881,10 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                if (TryAppendObjectInitializerSetterAssignment(semantic, context, objectCreation, objectName, memberAccessOperator, assignment, lines)) {
+                    continue;
+                }
+
                 lines.Add(objectName);
                 lines.Add(memberAccessOperator);
                 AppendObjectInitializerTarget(semantic, context, assignment.Left, lines);
@@ -956,14 +964,25 @@ namespace cs2.cpp {
             bool hasConvertedType = false;
             CPPTypeData cppTypeData = default;
             string objectCreationTypeName = objectCreation.Type.ToString();
-            ITypeSymbol objectCreationTypeSymbol = semantic.GetTypeInfo(objectCreation.Type).Type ?? semantic.GetTypeInfo(objectCreation.Type).ConvertedType;
+            ITypeSymbol objectCreationTypeSymbol = ResolveObjectCreationTypeSymbol(semantic, objectCreation);
             int generatedTypeArity = objectCreationTypeSymbol is INamedTypeSymbol namedObjectCreationTypeSymbol
                 ? namedObjectCreationTypeSymbol.TypeArguments.Length
                 : 0;
             ConversionClass explicitGeneratedClass = context.Program.FindGeneratedClass(objectCreationTypeName, generatedTypeArity);
+            bool hasRuntimeObjectTypeMapping = TryMapObjectCreationRuntimeTypeName(
+                objectCreationTypeName,
+                objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
+                out string runtimeObjectTypeName,
+                out string runtimeRequirementName);
 
             if (IsNativeExceptionTypeName(objectCreationTypeName)) {
                 sourceType = VariableUtil.GetVarType(NormalizeNativeExceptionTypeName(objectCreationTypeName));
+            } else if (hasRuntimeObjectTypeMapping) {
+                if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
+                    codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
+                }
+
+                sourceType = VariableUtil.GetVarType(runtimeObjectTypeName);
             } else if (explicitGeneratedClass != null) {
                 sourceType = VariableUtil.GetVarType(objectCreation.Type, semantic);
             } else {
@@ -993,15 +1012,7 @@ namespace cs2.cpp {
                 lines.Add(QualifyRenderedCppTypeName(explicitGeneratedClass.GetEmittedTypeName(), context));
             } else if (hasConvertedType) {
                 lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
-            } else if (TryMapObjectCreationRuntimeTypeName(
-                objectCreationTypeName,
-                objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
-                out string runtimeObjectTypeName,
-                out string runtimeRequirementName)) {
-                if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
-                    codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
-                }
-
+            } else if (hasRuntimeObjectTypeMapping) {
                 lines.Add(runtimeObjectTypeName);
             } else {
                 int startDepth = context.DepthClass;
@@ -1079,6 +1090,41 @@ namespace cs2.cpp {
             return true;
         }
 
+        static ITypeSymbol ResolveObjectCreationTypeSymbol(SemanticModel semantic, ObjectCreationExpressionSyntax objectCreation) {
+            if (semantic?.GetOperation(objectCreation) is IObjectCreationOperation objectCreationOperation) {
+                if (!IsWeakRecoveredTypeSymbol(objectCreationOperation.Constructor?.ContainingType)) {
+                    return objectCreationOperation.Constructor.ContainingType;
+                }
+
+                if (!IsWeakRecoveredTypeSymbol(objectCreationOperation.Type)) {
+                    return objectCreationOperation.Type;
+                }
+            }
+
+            TypeInfo typeInfo = semantic.GetTypeInfo(objectCreation.Type);
+            if (!IsWeakRecoveredTypeSymbol(typeInfo.Type)) {
+                return typeInfo.Type;
+            }
+
+            ISymbol typeSymbol = semantic.GetSymbolInfo(objectCreation.Type).Symbol;
+            if (typeSymbol is IAliasSymbol aliasSymbol) {
+                typeSymbol = aliasSymbol.Target;
+            }
+
+            if (typeSymbol is INamedTypeSymbol namedTypeSymbol &&
+                !IsWeakRecoveredTypeSymbol(namedTypeSymbol)) {
+                return namedTypeSymbol;
+            }
+
+            if (!IsWeakRecoveredTypeSymbol(typeInfo.ConvertedType)) {
+                return typeInfo.ConvertedType;
+            }
+
+            return TryGetExpressionTypeSymbol(semantic, objectCreation, out ITypeSymbol createdTypeSymbol)
+                ? createdTypeSymbol
+                : null;
+        }
+
         IMethodSymbol ResolveObjectCreationConstructorSymbol(SemanticModel semantic, ObjectCreationExpressionSyntax objectCreation) {
             int argumentCount = objectCreation.ArgumentList?.Arguments.Count ?? 0;
 
@@ -1105,6 +1151,8 @@ namespace cs2.cpp {
             runtimeRequirementName = string.Empty;
 
             if (string.Equals(shortTypeName, "MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(shortTypeName, "System.IO.MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(shortTypeName, "global::System.IO.MemoryStream", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "System.IO.MemoryStream", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "global::System.IO.MemoryStream", StringComparison.Ordinal)) {
                 runtimeTypeName = "MemoryStream";
@@ -1266,6 +1314,14 @@ namespace cs2.cpp {
                     return new ExpressionResult(true, propertyPath, propertyType);
                 }
 
+                if (memberAccess.Name is IdentifierNameSyntax memberIdentifier &&
+                    TryResolveGeneratedPropertyGetter(context, semantic, memberAccess.Expression, memberIdentifier.Identifier.Text, out VariableType generatedPropertyType)) {
+                    AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
+                    lines.Add($"get_{memberIdentifier.Identifier.Text}()");
+                    VariablePath propertyPath = useStaticAccess ? VariablePath.Unknown : result.VarPath;
+                    return new ExpressionResult(true, propertyPath, generatedPropertyType);
+                }
+
                 AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
 
                 if (!useStaticAccess &&
@@ -1289,15 +1345,22 @@ namespace cs2.cpp {
         }
 
         bool TryProcessComputedPropertyAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
-            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
-                !TryGetAssignedPropertySymbol(semantic, assignment.Left, out IPropertySymbol propertySymbol) ||
-                !RequiresPropertyAccessorLowering(propertySymbol) ||
-                propertySymbol.SetMethod == null) {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)) {
+                return false;
+            }
+
+            IPropertySymbol propertySymbol = null;
+            string propertyName = string.Empty;
+            bool useSymbolBackedProperty = TryGetAssignedPropertySymbol(semantic, assignment.Left, out propertySymbol) &&
+                propertySymbol.SetMethod != null;
+            if (useSymbolBackedProperty) {
+                propertyName = propertySymbol.Name;
+            } else if (!TryResolveGeneratedAssignedPropertyName(context, semantic, assignment.Left, out propertyName)) {
                 return false;
             }
 
             if (assignment.Left is IdentifierNameSyntax) {
-                if (propertySymbol.IsStatic) {
+                if (useSymbolBackedProperty && propertySymbol.IsStatic) {
                     lines.Add(GetContainingTypeAccessName(context, propertySymbol.ContainingType));
                     lines.Add("::");
                 } else {
@@ -1331,11 +1394,63 @@ namespace cs2.cpp {
                 return false;
             }
 
-            lines.Add($"set_{propertySymbol.Name}(");
+            lines.Add($"set_{propertyName}(");
             int rightStartDepth = context.Class.Count;
             ProcessExpression(semantic, context, assignment.Right, lines);
             context.PopClass(rightStartDepth);
             lines.Add(")");
+            return true;
+        }
+
+        bool TryProcessValueTypeCompoundAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (assignment == null ||
+                assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression)) {
+                return false;
+            }
+
+            ISymbol assignmentSymbol = semantic.GetSymbolInfo(assignment.Left).Symbol;
+            if (assignmentSymbol is IAliasSymbol aliasSymbol) {
+                assignmentSymbol = aliasSymbol.Target;
+            }
+
+            if (assignmentSymbol is IEventSymbol) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, assignment.Left, out ITypeSymbol leftTypeSymbol) ||
+                IsWeakRecoveredTypeSymbol(leftTypeSymbol)) {
+                return false;
+            }
+
+            VariableType leftVariableType = VariableUtil.GetVarType(leftTypeSymbol);
+            VariableType leftCppType = ConvertToCPPType(leftVariableType, out CPPTypeData leftTypeData);
+            if (leftCppType == null ||
+                leftTypeData.IsPointer ||
+                leftTypeData.IsNativeType) {
+                return false;
+            }
+
+            string operatorToken = assignment.OperatorToken.Text;
+            if (operatorToken.Length < 2 ||
+                !operatorToken.EndsWith("=", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            string binaryOperator = operatorToken[..^1];
+            string leftText = RenderExpressionText(semantic, context, assignment.Left);
+            if (string.IsNullOrWhiteSpace(leftText)) {
+                return false;
+            }
+
+            lines.Add(leftText);
+            lines.Add(" = ");
+            lines.Add(leftText);
+            lines.Add($" {binaryOperator} ");
+
+            int rightStartDepth = context.Class.Count;
+            ProcessExpression(semantic, context, assignment.Right, lines);
+            context.PopClass(rightStartDepth);
             return true;
         }
 
@@ -1416,6 +1531,12 @@ namespace cs2.cpp {
             }
 
             ITypeSymbol? receiverTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).ConvertedType ?? semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (IsWeakRecoveredTypeSymbol(receiverTypeSymbol) &&
+                TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol recoveredReceiverTypeSymbol) &&
+                !IsWeakRecoveredTypeSymbol(recoveredReceiverTypeSymbol)) {
+                receiverTypeSymbol = recoveredReceiverTypeSymbol;
+            }
+
             if (receiverTypeSymbol != null) {
                 ISymbol receiverMemberSymbol = receiverTypeSymbol.GetMembers(memberAccess.Name.Identifier.Text)
                     .FirstOrDefault(member => member is IPropertySymbol || member is IFieldSymbol || member is IMethodSymbol);
@@ -2273,6 +2394,12 @@ namespace cs2.cpp {
             out ITypeSymbol elementTypeSymbol) {
             elementTypeSymbol = null;
 
+            TypeInfo expressionTypeInfo = semantic.GetTypeInfo(expression);
+            if (expressionTypeInfo.Type is IArrayTypeSymbol naturalArrayTypeSymbol) {
+                elementTypeSymbol = naturalArrayTypeSymbol.ElementType;
+                return elementTypeSymbol != null;
+            }
+
             if (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol expressionTypeSymbol) &&
                 expressionTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
                 elementTypeSymbol = arrayTypeSymbol.ElementType;
@@ -2984,9 +3111,19 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (TryResolvePathSeparatorToStringInvocation(memberAccess.Expression, out string pathSeparatorMemberName)) {
+                lines.Add($"std::string(1, Path::{pathSeparatorMemberName})");
+                return true;
+            }
+
             if (memberAccess.Expression is ObjectCreationExpressionSyntax guidObjectCreation &&
                 IsGuidObjectCreation(guidObjectCreation, semantic)) {
                 lines.Add("std::string(\"00000000-0000-0000-0000-000000000000\")");
+                return true;
+            }
+
+            if (TryResolveStaticPathSeparatorMemberName(semantic, memberAccess.Expression, out string staticPathSeparatorMemberName)) {
+                lines.Add($"std::string(1, Path::{staticPathSeparatorMemberName})");
                 return true;
             }
 
@@ -3037,6 +3174,66 @@ namespace cs2.cpp {
             }
 
             lines.Add($"std::to_string({receiverText})");
+            return true;
+        }
+
+        static bool TryResolvePathSeparatorToStringInvocation(ExpressionSyntax expression, out string memberName) {
+            memberName = string.Empty;
+
+            if (expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Expression is not IdentifierNameSyntax identifierName ||
+                memberAccess.Name is not IdentifierNameSyntax memberIdentifier) {
+                return false;
+            }
+
+            if (!string.Equals(identifierName.Identifier.Text, "Path", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (!string.Equals(memberIdentifier.Identifier.Text, "DirectorySeparatorChar", StringComparison.Ordinal) &&
+                !string.Equals(memberIdentifier.Identifier.Text, "AltDirectorySeparatorChar", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            memberName = memberIdentifier.Identifier.Text;
+            return true;
+        }
+
+        static bool TryResolveStaticPathSeparatorMemberName(
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            out string memberName) {
+            memberName = string.Empty;
+
+            if (expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            if (memberAccess.Expression is IdentifierNameSyntax identifierName &&
+                string.Equals(identifierName.Identifier.Text, "Path", StringComparison.Ordinal) &&
+                memberAccess.Name is IdentifierNameSyntax memberIdentifier &&
+                (string.Equals(memberIdentifier.Identifier.Text, "DirectorySeparatorChar", StringComparison.Ordinal) ||
+                 string.Equals(memberIdentifier.Identifier.Text, "AltDirectorySeparatorChar", StringComparison.Ordinal))) {
+                memberName = memberIdentifier.Identifier.Text;
+                return true;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is not IPropertySymbol propertySymbol ||
+                propertySymbol.ContainingType?.ToDisplayString() != "System.IO.Path") {
+                return false;
+            }
+
+            if (!string.Equals(propertySymbol.Name, "DirectorySeparatorChar", StringComparison.Ordinal) &&
+                !string.Equals(propertySymbol.Name, "AltDirectorySeparatorChar", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            memberName = propertySymbol.Name;
             return true;
         }
 
@@ -3512,17 +3709,16 @@ namespace cs2.cpp {
             out ExpressionResult result) {
             result = new ExpressionResult(false);
 
-            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binary).ConvertedType ?? semantic.GetTypeInfo(binary).Type;
-            if (resultTypeSymbol == null) {
-                return false;
+            if (!TryGetExpressionTypeSymbol(semantic, binary, out ITypeSymbol resultTypeSymbol) ||
+                IsWeakRecoveredTypeSymbol(resultTypeSymbol)) {
+                if (!TryResolvePreferredCoalesceTypeSymbol(semantic, binary, out resultTypeSymbol)) {
+                    return false;
+                }
             }
 
             VariableType resultSourceType = VariableUtil.GetVarType(resultTypeSymbol);
             CPPTypeData resultTypeData;
             VariableType cppResultType = ConvertToCPPType(resultSourceType, out resultTypeData);
-            if (!resultTypeData.IsPointer) {
-                return false;
-            }
 
             List<string> leftLines = new List<string>();
             int startLeft = context.DepthClass;
@@ -3540,6 +3736,18 @@ namespace cs2.cpp {
             if (!rightResult.Processed) {
                 result = rightResult;
                 return true;
+            }
+
+            if (IsWeakVariableType(resultSourceType) ||
+                !resultTypeData.IsPointer) {
+                if (TryResolvePreferredCoalesceVariableType(leftResult.Type, rightResult.Type, out VariableType preferredResultType)) {
+                    resultSourceType = preferredResultType;
+                    cppResultType = ConvertToCPPType(resultSourceType, out resultTypeData);
+                }
+            }
+
+            if (!resultTypeData.IsPointer) {
+                return false;
             }
 
             string tempName = "__coalesce_" + Guid.NewGuid().ToString("N")[..8];
@@ -3569,6 +3777,68 @@ namespace cs2.cpp {
 
             result = new ExpressionResult(true, VariablePath.Unknown, cppResultType);
             return true;
+        }
+
+        bool TryResolvePreferredCoalesceVariableType(
+            VariableType leftType,
+            VariableType rightType,
+            out VariableType resultType) {
+            resultType = null;
+
+            if (TryResolvePointerCompatibleCoalesceType(leftType, out resultType)) {
+                return true;
+            }
+
+            return TryResolvePointerCompatibleCoalesceType(rightType, out resultType);
+        }
+
+        bool TryResolvePointerCompatibleCoalesceType(VariableType candidateType, out VariableType resultType) {
+            resultType = null;
+            if (IsWeakVariableType(candidateType)) {
+                return false;
+            }
+
+            VariableType convertedType = ConvertToCPPType(candidateType, out CPPTypeData typeData);
+            if (!typeData.IsPointer) {
+                return false;
+            }
+
+            resultType = candidateType;
+            return convertedType != null;
+        }
+
+        static bool TryResolvePreferredCoalesceTypeSymbol(
+            SemanticModel semantic,
+            BinaryExpressionSyntax binary,
+            out ITypeSymbol resultTypeSymbol) {
+            resultTypeSymbol = null;
+
+            if (TryResolvePreferredCoalesceOperandTypeSymbol(semantic, binary.Left, out resultTypeSymbol)) {
+                return true;
+            }
+
+            return TryResolvePreferredCoalesceOperandTypeSymbol(semantic, binary.Right, out resultTypeSymbol);
+        }
+
+        static bool TryResolvePreferredCoalesceOperandTypeSymbol(
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            out ITypeSymbol resultTypeSymbol) {
+            resultTypeSymbol = null;
+
+            TypeInfo typeInfo = semantic.GetTypeInfo(expression);
+            if (!IsWeakRecoveredTypeSymbol(typeInfo.Type)) {
+                resultTypeSymbol = typeInfo.Type;
+                return true;
+            }
+
+            if (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol expressionTypeSymbol) &&
+                !IsWeakRecoveredTypeSymbol(expressionTypeSymbol)) {
+                resultTypeSymbol = expressionTypeSymbol;
+                return true;
+            }
+
+            return false;
         }
 
         bool TryProcessStringCoalesceExpression(
@@ -5146,6 +5416,9 @@ namespace cs2.cpp {
             }
 
             string declaredTypeName = cppDeclaredType.ToCPPString(context.Program);
+            string declaredVariableTypeName = declaredType.IsGenericParameter
+                ? declaredTypeName
+                : $"{declaredTypeName}*";
             string variableName = designation.Identifier.Text;
             string sourceExpression = string.Join(string.Empty, conditionExpressionLines);
 
@@ -5160,7 +5433,7 @@ namespace cs2.cpp {
                 currentFunction.Stack.Add(conversionVariable);
             }
 
-            lines.Add($"    {declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
+            lines.Add($"    {declaredVariableTypeName} {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
             lines.Add($"    if ({variableName} != nullptr)\n");
             lines.Add("    {\n");
 
@@ -5691,8 +5964,7 @@ namespace cs2.cpp {
             if (!TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol typeSymbol)) {
                 return expression is MemberAccessExpressionSyntax memberAccess &&
                     TryResolveMemberAccessResultTypeSymbol(semantic, memberAccess, out ITypeSymbol memberResultTypeSymbol) &&
-                    (memberResultTypeSymbol.IsValueType ||
-                     IsDirectMemberAccessType(VariableUtil.GetVarType(memberResultTypeSymbol)));
+                    IsDirectMemberAccessType(VariableUtil.GetVarType(memberResultTypeSymbol));
             }
 
             if (IsWeakRecoveredTypeSymbol(typeSymbol) &&
@@ -5701,8 +5973,7 @@ namespace cs2.cpp {
                 typeSymbol = recoveredMemberResultTypeSymbol;
             }
 
-            return typeSymbol.IsValueType ||
-                IsDirectMemberAccessType(VariableUtil.GetVarType(typeSymbol));
+            return IsDirectMemberAccessType(VariableUtil.GetVarType(typeSymbol));
         }
 
         static bool TryResolveMemberAccessResultTypeSymbol(
@@ -5711,10 +5982,7 @@ namespace cs2.cpp {
             out ITypeSymbol typeSymbol) {
             typeSymbol = null;
 
-            ISymbol memberSymbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
-            if (memberSymbol is IAliasSymbol aliasSymbol) {
-                memberSymbol = aliasSymbol.Target;
-            }
+            ISymbol memberSymbol = ResolveMemberAccessSymbol(semantic, memberAccess);
 
             switch (memberSymbol) {
                 case IFieldSymbol fieldSymbol:
@@ -7832,6 +8100,11 @@ namespace cs2.cpp {
                 lines.AddRange(result.BeforeLines);
             }
 
+            if (TryAppendArrayAsListReturnValue(semantic, context, ret, returnLines, lines)) {
+                context.PopClass(start);
+                return;
+            }
+
             if (result.AfterLines == null || result.AfterLines.Count == 0) {
                 lines.Add("return ");
                 lines.AddRange(returnLines);
@@ -7845,6 +8118,55 @@ namespace cs2.cpp {
             }
 
             context.PopClass(start);
+        }
+
+        bool TryAppendArrayAsListReturnValue(
+            SemanticModel semantic,
+            LayerContext context,
+            ReturnStatementSyntax ret,
+            List<string> returnLines,
+            List<string> lines) {
+            ITypeSymbol returnTypeSymbol = ResolveEnclosingReturnTypeSymbol(semantic, ret);
+            if (!IsListFamilyTypeSymbol(returnTypeSymbol) ||
+                !TryResolveArrayElementTypeSymbol(semantic, ret.Expression, out ITypeSymbol arrayElementTypeSymbol)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeList");
+            string elementTypeName = GetCppTypeToken(VariableUtil.GetVarType(arrayElementTypeSymbol), context.Program);
+            lines.Add($"return new List<{elementTypeName}>(");
+            lines.AddRange(returnLines);
+            lines.Add(");");
+            return true;
+        }
+
+        static ITypeSymbol ResolveEnclosingReturnTypeSymbol(SemanticModel semantic, SyntaxNode node) {
+            ISymbol enclosingSymbol = semantic?.GetEnclosingSymbol(node?.SpanStart ?? 0);
+            if (enclosingSymbol is IMethodSymbol methodSymbol) {
+                if (methodSymbol.AssociatedSymbol is IPropertySymbol propertySymbol) {
+                    return propertySymbol.Type;
+                }
+
+                return methodSymbol.ReturnType;
+            }
+
+            if (enclosingSymbol is IPropertySymbol directPropertySymbol) {
+                return directPropertySymbol.Type;
+            }
+
+            for (SyntaxNode currentNode = node?.Parent; currentNode != null; currentNode = currentNode.Parent) {
+                if (currentNode is PropertyDeclarationSyntax propertyDeclaration) {
+                    TypeInfo propertyTypeInfo = semantic.GetTypeInfo(propertyDeclaration.Type);
+                    return propertyTypeInfo.Type ?? propertyTypeInfo.ConvertedType;
+                }
+
+                if (currentNode is MethodDeclarationSyntax methodDeclaration) {
+                    TypeInfo methodTypeInfo = semantic.GetTypeInfo(methodDeclaration.ReturnType);
+                    return methodTypeInfo.Type ?? methodTypeInfo.ConvertedType;
+                }
+            }
+
+            return null;
         }
 
         protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
@@ -7995,6 +8317,193 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        bool TryResolveGeneratedPropertyGetter(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            string propertyName,
+            out VariableType propertyType) {
+            propertyType = null;
+
+            if (!TryResolveGeneratedReceiverClass(context, semantic, receiverExpression, out ConversionClass receiverClass)) {
+                return false;
+            }
+
+            ConversionVariable propertyVariable = receiverClass.Variables.LastOrDefault(candidate => candidate.Name == propertyName && candidate.IsGet);
+            if (propertyVariable?.VarType != null) {
+                propertyType = new VariableType(propertyVariable.VarType);
+                return true;
+            }
+
+            if (!TryResolveGeneratedPropertyAccessor(receiverClass, propertyName, "get_", out ConversionFunction accessorFunction) ||
+                accessorFunction.ReturnType == null) {
+                return false;
+            }
+
+            propertyType = new VariableType(accessorFunction.ReturnType);
+            return true;
+        }
+
+        bool TryResolveGeneratedAssignedPropertyName(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax assignmentLeft,
+            out string propertyName) {
+            propertyName = string.Empty;
+
+            if (assignmentLeft is IdentifierNameSyntax identifierName &&
+                TryResolveGeneratedPropertySetter(context, semantic, assignmentLeft, identifierName.Identifier.Text)) {
+                propertyName = identifierName.Identifier.Text;
+                return true;
+            }
+
+            if (assignmentLeft is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is IdentifierNameSyntax memberIdentifier &&
+                TryResolveGeneratedPropertySetter(context, semantic, memberAccess.Expression, memberIdentifier.Identifier.Text)) {
+                propertyName = memberIdentifier.Identifier.Text;
+                return true;
+            }
+
+            return false;
+        }
+
+        bool TryAppendObjectInitializerSetterAssignment(
+            SemanticModel semantic,
+            LayerContext context,
+            ObjectCreationExpressionSyntax objectCreation,
+            string objectName,
+            string memberAccessOperator,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            string propertyName = string.Empty;
+
+            if (TryGetAssignedPropertySymbol(semantic, assignment.Left, out IPropertySymbol propertySymbol) &&
+                propertySymbol.SetMethod != null) {
+                propertyName = propertySymbol.Name;
+            } else if (assignment.Left is IdentifierNameSyntax identifierName &&
+                TryResolveGeneratedPropertySetter(semantic, objectCreation.Type, identifierName.Identifier.Text)) {
+                propertyName = identifierName.Identifier.Text;
+            }
+
+            if (string.IsNullOrWhiteSpace(propertyName)) {
+                return false;
+            }
+
+            lines.Add(objectName);
+            lines.Add(memberAccessOperator);
+            lines.Add($"set_{propertyName}(");
+
+            int startRight = context.DepthClass;
+            ProcessExpression(semantic, context, assignment.Right, lines);
+            context.PopClass(startRight);
+
+            lines.Add(");\n");
+            return true;
+        }
+
+        bool TryResolveGeneratedPropertyAccessor(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            string propertyName,
+            string accessorPrefix,
+            out ConversionFunction accessorFunction) {
+            accessorFunction = null;
+
+            if (!TryResolveGeneratedReceiverClass(context, semantic, receiverExpression, out ConversionClass receiverClass)) {
+                return false;
+            }
+
+            return TryResolveGeneratedPropertyAccessor(receiverClass, propertyName, accessorPrefix, out accessorFunction);
+        }
+
+        bool TryResolveGeneratedPropertyAccessor(
+            SemanticModel semantic,
+            TypeSyntax receiverTypeSyntax,
+            string propertyName,
+            string accessorPrefix,
+            out ConversionFunction accessorFunction) {
+            accessorFunction = null;
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverTypeSyntax).Type ?? semantic.GetTypeInfo(receiverTypeSyntax).ConvertedType;
+            if (receiverTypeSymbol == null) {
+                return false;
+            }
+
+            ConversionClass receiverClass = ResolveGeneratedClass(VariableUtil.GetVarType(receiverTypeSymbol));
+            if (receiverClass == null) {
+                return false;
+            }
+
+            return TryResolveGeneratedPropertyAccessor(receiverClass, propertyName, accessorPrefix, out accessorFunction);
+        }
+
+        static bool TryResolveGeneratedPropertyAccessor(
+            ConversionClass receiverClass,
+            string propertyName,
+            string accessorPrefix,
+            out ConversionFunction accessorFunction) {
+            accessorFunction = receiverClass?.Functions?.LastOrDefault(candidate => candidate.Name == $"{accessorPrefix}{propertyName}");
+            return accessorFunction != null;
+        }
+
+        bool TryResolveGeneratedPropertySetter(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            string propertyName) {
+            if (!TryResolveGeneratedReceiverClass(context, semantic, receiverExpression, out ConversionClass receiverClass)) {
+                return false;
+            }
+
+            if (receiverClass.Variables.Any(candidate => candidate.Name == propertyName && candidate.IsSet)) {
+                return true;
+            }
+
+            return TryResolveGeneratedPropertyAccessor(receiverClass, propertyName, "set_", out _);
+        }
+
+        bool TryResolveGeneratedPropertySetter(
+            SemanticModel semantic,
+            TypeSyntax receiverTypeSyntax,
+            string propertyName) {
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverTypeSyntax).Type ?? semantic.GetTypeInfo(receiverTypeSyntax).ConvertedType;
+            if (receiverTypeSymbol == null) {
+                return false;
+            }
+
+            ConversionClass receiverClass = ResolveGeneratedClass(VariableUtil.GetVarType(receiverTypeSymbol));
+            if (receiverClass == null) {
+                return false;
+            }
+
+            if (receiverClass.Variables.Any(candidate => candidate.Name == propertyName && candidate.IsSet)) {
+                return true;
+            }
+
+            return TryResolveGeneratedPropertyAccessor(receiverClass, propertyName, "set_", out _);
+        }
+
+        bool TryResolveGeneratedReceiverClass(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            out ConversionClass receiverClass) {
+            receiverClass = null;
+
+            VariableType receiverType = null;
+            if (!TryResolveTrackedExpressionVariableType(context, receiverExpression, out receiverType)) {
+                if (!TryGetExpressionTypeSymbol(semantic, receiverExpression, out ITypeSymbol receiverTypeSymbol)) {
+                    return false;
+                }
+
+                receiverType = VariableUtil.GetVarType(receiverTypeSymbol);
+            }
+
+            receiverClass = ResolveGeneratedClass(receiverType);
+            return receiverClass != null;
         }
 
         static bool RequiresPropertyAccessorLowering(IPropertySymbol propertySymbol) {

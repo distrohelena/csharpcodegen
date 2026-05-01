@@ -179,6 +179,7 @@ namespace cs2.core {
 
             ConversionFunction func = context.StartFn();
             func.IsStatic = isStatic;
+            func.IsOverride = isOverride;
             func.AccessType = access;
             func.Name = name;
             func.Remap = mappedName;

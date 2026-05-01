@@ -90,6 +90,16 @@ public:
     }
 
     /// <summary>
+    /// Determines whether a string starts with the supplied character.
+    /// </summary>
+    /// <param name="value">String to inspect.</param>
+    /// <param name="prefix">Prefix character to compare.</param>
+    /// <returns>True when the string starts with the character; otherwise false.</returns>
+    static bool StartsWith(const std::string& value, char prefix) {
+        return !value.empty() && value.front() == prefix;
+    }
+
+    /// <summary>
     /// Determines whether a string ends with the supplied suffix.
     /// </summary>
     /// <param name="value">String to inspect.</param>
@@ -102,6 +112,16 @@ public:
         }
 
         return Equals(value.substr(value.size() - suffix.size()), suffix, comparison);
+    }
+
+    /// <summary>
+    /// Determines whether a string ends with the supplied character.
+    /// </summary>
+    /// <param name="value">String to inspect.</param>
+    /// <param name="suffix">Suffix character to compare.</param>
+    /// <returns>True when the string ends with the character; otherwise false.</returns>
+    static bool EndsWith(const std::string& value, char suffix) {
+        return !value.empty() && value.back() == suffix;
     }
 
     /// <summary>

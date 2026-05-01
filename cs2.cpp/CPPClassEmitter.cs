@@ -1539,6 +1539,7 @@ namespace cs2.cpp {
                 Name = $"get_{variable.Name}",
                 AccessType = variable.AccessType,
                 DeclarationType = variable.DeclarationType,
+                IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
                 ReturnType = new VariableType(variable.VarType),
                 RawBlock = variable.GetBlock
@@ -1555,6 +1556,7 @@ namespace cs2.cpp {
                 Name = $"set_{variable.Name}",
                 AccessType = variable.AccessType,
                 DeclarationType = variable.DeclarationType,
+                IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
                 RawBlock = variable.SetBlock
             };
@@ -1599,10 +1601,12 @@ namespace cs2.cpp {
         /// <param name="function">The function to declare.</param>
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         void WriteFunctionDeclaration(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter) {
+            bool emitPureVirtualDeclaration = ShouldEmitPureVirtualDeclaration(conversionClass, function);
+
             WriteFunctionTemplateDeclaration(function, headerWriter, "    ");
             headerWriter.Write("    ");
 
-            if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
+            if (ShouldEmitVirtualKeyword(conversionClass, function)) {
                 headerWriter.Write("virtual ");
             }
 
@@ -1616,7 +1620,12 @@ namespace cs2.cpp {
 
             headerWriter.Write($"{GetFunctionName(conversionClass, function)}(");
             WriteParameters(conversionClass, function, headerWriter);
-            headerWriter.WriteLine(ShouldEmitPureVirtualDeclaration(conversionClass, function) ? ") = 0;" : ");");
+            if (emitPureVirtualDeclaration) {
+                headerWriter.WriteLine(") = 0;");
+                return;
+            }
+
+            headerWriter.WriteLine(");");
         }
 
         /// <summary>
@@ -1655,8 +1664,24 @@ namespace cs2.cpp {
         }
 
         static bool ShouldEmitPureVirtualDeclaration(ConversionClass conversionClass, ConversionFunction function) {
-            return conversionClass.DeclarationType == MemberDeclarationType.Interface &&
-                !function.IsStatic;
+            if (function.IsStatic) {
+                return false;
+            }
+
+            if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
+                return true;
+            }
+
+            return function.DeclarationType == MemberDeclarationType.Abstract;
+        }
+
+        static bool ShouldEmitVirtualKeyword(ConversionClass conversionClass, ConversionFunction function) {
+            if (function.IsStatic) {
+                return false;
+            }
+
+            return ShouldEmitPureVirtualDeclaration(conversionClass, function) ||
+                function.DeclarationType == MemberDeclarationType.Virtual;
         }
 
         void WriteFreeFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {

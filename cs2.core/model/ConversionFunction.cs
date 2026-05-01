@@ -16,6 +16,7 @@ namespace cs2.core {
         public bool IsStatic { get; set; }
         public bool IsAsync { get; set; }
         public bool IsConstructor { get; set; }
+        public bool IsOverride { get; set; }
 
         public List<ConversionVariable> InParameters { get; set; }
 
