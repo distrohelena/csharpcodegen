@@ -1037,6 +1037,11 @@ namespace cs2.cpp {
             List<Action> writers = new List<Action>();
 
             if (accessType == MemberAccessType.Public &&
+                conversionClass.DeclarationType != MemberDeclarationType.Interface) {
+                writers.Add(() => headerWriter.WriteLine($"    virtual ~{conversionClass.GetEmittedTypeName()}() = default;"));
+            }
+
+            if (accessType == MemberAccessType.Public &&
                 ShouldEmitImplicitDefaultConstructor(conversionClass)) {
                 writers.Add(() => WriteImplicitDefaultConstructor(conversionClass, headerWriter, sourceWriter));
             }

@@ -68,4 +68,13 @@ Features
 #### Why?
 
 #### Installing
-cs2.cpp needs doxygen on your PATH
+cs2.cpp needs doxygen available to the `codegen` CLI.
+
+The CLI resolves doxygen in this order:
+- `CS2_DOXYGEN_PATH`
+- `DOXYGEN_PATH`
+- a bundled `doxygen` next to the CLI executable
+- `PATH`
+- common Windows install locations
+
+If none of those exist, the conversion run will fail with a clear error telling you what to set.

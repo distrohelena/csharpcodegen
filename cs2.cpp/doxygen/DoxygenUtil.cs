@@ -7,6 +7,9 @@ using System.Xml.Linq;
 namespace cs2.cpp.doxygen;
 
 public static class DoxygenUtil {
+    const string DoxygenPathEnvironmentVariable = "CS2_DOXYGEN_PATH";
+    const string LegacyDoxygenPathEnvironmentVariable = "DOXYGEN_PATH";
+
     public static void GenerateDoxygenConfig(string projectDir, string outputDir) {
         var config = $@"INPUT = ""{projectDir}""
 RECURSIVE = YES
@@ -24,21 +27,131 @@ EXCLUDE_PATTERNS = *.*pp_* *.bak";
     }
 
     public static void RunDoxygen(string configPath) {
+        string doxygenPath = ResolveDoxygenPath();
         using var process = new Process {
             StartInfo = new ProcessStartInfo {
-                FileName = "doxygen",
+                FileName = doxygenPath,
                 Arguments = $"\"{configPath}\"",
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             }
         };
 
-        process.Start();
+        if (!process.Start()) {
+            throw new Exception($"Failed to start Doxygen at '{doxygenPath}'.");
+        }
+
+        string output = process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
+        if (!string.IsNullOrWhiteSpace(output)) {
+            Console.WriteLine(output);
+        }
+        if (!string.IsNullOrWhiteSpace(error)) {
+            Console.Error.WriteLine(error);
+        }
+
         if (process.ExitCode != 0)
-            throw new Exception("Doxygen failed to run");
+            throw new Exception($"Doxygen failed to run from '{doxygenPath}' with exit code {process.ExitCode}.");
+    }
+
+    static string ResolveDoxygenPath() {
+        string? resolvedPath =
+            ResolvePathFromEnvironment(DoxygenPathEnvironmentVariable)
+            ?? ResolvePathFromEnvironment(LegacyDoxygenPathEnvironmentVariable)
+            ?? ResolveBundledPath()
+            ?? ResolvePathFromSystemPath()
+            ?? ResolveCommonInstallationPath();
+
+        if (!string.IsNullOrWhiteSpace(resolvedPath)) {
+            return resolvedPath;
+        }
+
+        throw new FileNotFoundException(
+            $"Could not locate the Doxygen executable. Set '{DoxygenPathEnvironmentVariable}' or '{LegacyDoxygenPathEnvironmentVariable}', place doxygen next to the codegen executable, or install doxygen on PATH.");
+    }
+
+    static string? ResolvePathFromEnvironment(string environmentVariableName) {
+        string? candidatePath = Environment.GetEnvironmentVariable(environmentVariableName);
+        if (string.IsNullOrWhiteSpace(candidatePath)) {
+            return null;
+        }
+
+        candidatePath = candidatePath.Trim('"');
+        return File.Exists(candidatePath) ? Path.GetFullPath(candidatePath) : null;
+    }
+
+    static string? ResolveBundledPath() {
+        string baseDirectory = AppContext.BaseDirectory;
+        string[] candidatePaths = OperatingSystem.IsWindows()
+            ? [
+                Path.Combine(baseDirectory, "doxygen.exe"),
+                Path.Combine(baseDirectory, "tools", "doxygen.exe"),
+                Path.Combine(baseDirectory, "doxygen", "bin", "doxygen.exe")
+            ]
+            : [
+                Path.Combine(baseDirectory, "doxygen"),
+                Path.Combine(baseDirectory, "tools", "doxygen"),
+                Path.Combine(baseDirectory, "doxygen", "bin", "doxygen")
+            ];
+
+        for (int index = 0; index < candidatePaths.Length; index++) {
+            if (File.Exists(candidatePaths[index])) {
+                return Path.GetFullPath(candidatePaths[index]);
+            }
+        }
+
+        return null;
+    }
+
+    static string? ResolvePathFromSystemPath() {
+        string? pathEnvironment = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathEnvironment)) {
+            return null;
+        }
+
+        string[] pathEntries = pathEnvironment.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] executableNames = OperatingSystem.IsWindows()
+            ? ["doxygen.exe", "doxygen.cmd", "doxygen.bat", "doxygen"]
+            : ["doxygen"];
+
+        for (int entryIndex = 0; entryIndex < pathEntries.Length; entryIndex++) {
+            string pathEntry = pathEntries[entryIndex];
+            for (int executableIndex = 0; executableIndex < executableNames.Length; executableIndex++) {
+                string candidatePath = Path.Combine(pathEntry, executableNames[executableIndex]);
+                if (File.Exists(candidatePath)) {
+                    return Path.GetFullPath(candidatePath);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    static string? ResolveCommonInstallationPath() {
+        if (!OperatingSystem.IsWindows()) {
+            return null;
+        }
+
+        string? programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        string? programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        string[] roots = [
+            Path.Combine(programFiles ?? string.Empty, "doxygen", "bin", "doxygen.exe"),
+            Path.Combine(programFiles ?? string.Empty, "Doxygen", "bin", "doxygen.exe"),
+            Path.Combine(programFilesX86 ?? string.Empty, "doxygen", "bin", "doxygen.exe"),
+            Path.Combine(programFilesX86 ?? string.Empty, "Doxygen", "bin", "doxygen.exe")
+        ];
+
+        for (int index = 0; index < roots.Length; index++) {
+            if (File.Exists(roots[index])) {
+                return Path.GetFullPath(roots[index]);
+            }
+        }
+
+        return null;
     }
 
     public static Dictionary<string, List<Symbol>> ParseEntireProject(string xmlDir, string projectRoot) {

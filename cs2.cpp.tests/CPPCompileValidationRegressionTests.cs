@@ -136,6 +136,27 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures concrete generated classes remain polymorphic so runtime downcasts can use RTTI safely.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConcreteClass_EmitsVirtualDestructor() {
+            string source = """
+                public class Asset {
+                }
+
+                public class TextureAsset : Asset {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string assetHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Asset.hpp"));
+            string textureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextureAsset.hpp"));
+
+            Assert.Contains("virtual ~Asset() = default;", assetHeader);
+            Assert.Contains("virtual ~TextureAsset() = default;", textureHeader);
+        }
+
+        /// <summary>
         /// Ensures abstract and virtual members stay polymorphic in generated C++ so native hosts can provide backend subclasses.
         /// </summary>
         [Fact]

@@ -35,6 +35,20 @@ public class CPPConversionOptionsTests {
     }
 
     /// <summary>
+    /// Ensures the dedicated GameCube helper selects the correct compiler and platform metadata.
+    /// </summary>
+    [Fact]
+    public void CreateGameCubeDefault_UsesGccAndGameCubeHeadlessProfiles() {
+        CPPConversionOptions options = CPPConversionOptions.CreateGameCubeDefault();
+
+        Assert.Equal(CPPCompilerKind.Gcc, options.CompilerProfile.Kind);
+        Assert.Equal(CPPPlatformKind.GameCubeHeadless, options.PlatformProfile.Kind);
+        Assert.Equal(CPPRuntimeKind.StlLite, options.RuntimeProfile.Kind);
+        Assert.False(options.PlatformProfile.IsLittleEndian);
+        Assert.False(options.PlatformProfile.IsWindowsHost);
+    }
+
+    /// <summary>
     /// Ensures the conversion report can record blocking diagnostics.
     /// </summary>
     [Fact]

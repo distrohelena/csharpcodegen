@@ -43,7 +43,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Creates the default GameCube headless profile.
+        /// Creates the default GameCube headless development profile.
         /// </summary>
         /// <returns>The default GameCube platform profile.</returns>
         public static CPPPlatformProfile CreateGameCubeHeadless() {

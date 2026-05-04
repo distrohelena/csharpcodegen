@@ -445,6 +445,63 @@ namespace cs2.cpp.tests {
         /// <summary>
         /// Ensures System.Collections.Generic.Stack resolves to the lightweight runtime stack header instead of a missing generated header.
         /// </summary>
+
+        /// <summary>
+        /// Ensures StringBuilder string constructors still resolve to the runtime header and preserve pointer-backed invocation semantics.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemTextStringBuilderStringConstructor_UsesRuntimeStringBuilderHeader() {
+            string source = """
+                using System.Text;
+
+                public static class TextComposer {
+                    public static string Compose(string value) {
+                        StringBuilder builder = new StringBuilder(value);
+                        builder.Append('!');
+                        return builder.ToString();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "TextComposer.hpp"));
+
+            Assert.Contains("#include \"system/text/string-builder.hpp\"", header);
+            Assert.DoesNotContain("#include \"StringBuilder.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("StringBuilder *builder = new StringBuilder(value);", output.GeneratedText);
+            Assert.Contains("builder->Append('!')", output.GeneratedText);
+            Assert.Contains("builder->ToString()", output.GeneratedText);
+            AssertRuntimeRequirement(output.Report, "StringBuilder");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "text", "string-builder.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures Guid.NewGuid resolves to the runtime Guid header in the generated source and preserves value-style method chaining.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemGuidNewGuidUsage_UsesRuntimeGuidHeader() {
+            string source = """
+                using System;
+
+                public static class GuidComposer {
+                    public static string Create() {
+                        return Guid.NewGuid().ToString("N");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "GuidComposer.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuidComposer.cpp"));
+
+            Assert.DoesNotContain("#include \"Guid.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/guid.hpp\"", sourceOutput);
+            Assert.Contains("Guid::NewGuid()", output.GeneratedText);
+            Assert.Contains(".ToString(\"N\")", output.GeneratedText);
+            Assert.DoesNotContain("->ToString(\"N\")", output.GeneratedText, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "Guid");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "guid.hpp")));
+        }
         [Fact]
         public void WriteOutput_WithGenericStackUsage_UsesRuntimeStackHeader() {
             string source = """
@@ -852,3 +909,4 @@ namespace cs2.cpp.tests {
         record ConversionOutput(string OutputPath, string GeneratedText, JsonDocument Report);
     }
 }
+
