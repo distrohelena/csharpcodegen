@@ -18,6 +18,15 @@ public:
     }
 
     /// <summary>
+    /// Reinterprets the supplied integer bits as a double-precision floating point value.
+    /// </summary>
+    static double Int64BitsToDouble(int64_t value) {
+        double result = 0.0;
+        std::memcpy(&result, &value, sizeof(result));
+        return result;
+    }
+
+    /// <summary>
     /// Reinterprets the supplied single-precision floating point value as a 32-bit integer bit pattern.
     /// </summary>
     static int32_t SingleToInt32Bits(float value) {

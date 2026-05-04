@@ -62,6 +62,7 @@ namespace cs2.cpp {
                 assemblyName = report.AssemblyName,
                 assemblyVersion = report.AssemblyVersion,
                 targetFramework = report.TargetFramework,
+                presetId = options?.PresetId ?? string.Empty,
                 processedTypeCount = report.ProcessedTypeCount,
                 emittedTypeCount = report.EmittedTypeCount,
                 emittedFileCount = report.EmittedFiles.Count,
@@ -72,7 +73,8 @@ namespace cs2.cpp {
                 activeProfiles = new {
                     compiler = options?.CompilerProfile?.Name ?? string.Empty,
                     platform = options?.PlatformProfile?.Name ?? string.Empty,
-                    runtime = options?.RuntimeProfile?.Name ?? string.Empty
+                    runtime = options?.RuntimeProfile?.Name ?? string.Empty,
+                    restrictions = options?.RestrictionProfile?.Name ?? string.Empty
                 },
                 buildFeatures = new {
                     decisions = orderedFeatureDecisions.Select(decision => new {

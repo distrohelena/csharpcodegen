@@ -59,5 +59,22 @@ namespace cs2.cpp {
                 UseRtti = false
             };
         }
+
+        /// <summary>
+        /// Creates the custom retro runtime profile for low-footprint console builds.
+        /// </summary>
+        /// <returns>The custom retro runtime profile.</returns>
+        public static CPPRuntimeProfile CreateCustomRetro() {
+            return new CPPRuntimeProfile {
+                Kind = CPPRuntimeKind.CustomRetro,
+                Name = "custom-retro",
+                DefineName = "HE_CPP_RUNTIME_CUSTOM_RETRO",
+                UseStdString = false,
+                UseStdVector = false,
+                UseStdUnorderedMap = false,
+                UseExceptions = false,
+                UseRtti = false
+            };
+        }
     }
 }

@@ -434,10 +434,10 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/text/string-builder.hpp\"", header);
             Assert.DoesNotContain("#include \"StringBuilder.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("StringBuilder builder = StringBuilder(256);", output.GeneratedText);
-            Assert.Contains("builder.Append('[')", output.GeneratedText);
-            Assert.Contains("builder.Append(count)", output.GeneratedText);
-            Assert.Contains("builder.ToString()", output.GeneratedText);
+            Assert.Contains("StringBuilder *builder = new StringBuilder(256);", output.GeneratedText);
+            Assert.Contains("builder->Append('[')", output.GeneratedText);
+            Assert.Contains("builder->Append(count)", output.GeneratedText);
+            Assert.Contains("builder->ToString()", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "StringBuilder");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "text", "string-builder.hpp")));
         }
@@ -506,12 +506,11 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/io/string-reader.hpp\"", header);
             Assert.DoesNotContain("#include \"StringReader.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("StringReader reader = StringReader(source);", output.GeneratedText);
-            Assert.Contains("StringReaderLine line = reader.ReadLine();", output.GeneratedText);
-            Assert.Contains("while (line != nullptr)", output.GeneratedText);
-            Assert.Contains("reader.Dispose();", output.GeneratedText);
+            Assert.Contains("StringReader *reader = new StringReader(source);", output.GeneratedText);
+            Assert.Contains("StringReaderLine line = reader->ReadLine();", output.GeneratedText);
+            Assert.Contains("while (!String::IsNullOrEmpty(line))", output.GeneratedText);
+            Assert.Contains("reader->Dispose();", output.GeneratedText);
             Assert.DoesNotContain(".dispose()", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("StringReader *reader", output.GeneratedText, StringComparison.Ordinal);
             AssertRuntimeRequirement(output.Report, "StringReader");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "string-reader.hpp")));
         }
@@ -538,10 +537,9 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/io/stream-reader.hpp\"", header);
             Assert.DoesNotContain("#include \"StreamReader.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("{\n{\nStreamReader reader = StreamReader(stream, Encoding::UTF8, true, 1024, true);", output.GeneratedText);
-            Assert.Contains("return reader.ReadToEnd();", output.GeneratedText);
-            Assert.DoesNotContain("reader.Dispose();", output.GeneratedText, StringComparison.Ordinal);
-            Assert.DoesNotContain("StreamReader *reader", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("StreamReader *reader = new StreamReader(stream, Encoding::UTF8, true, 1024, true);", output.GeneratedText);
+            Assert.Contains("return reader->ReadToEnd();", output.GeneratedText);
+            Assert.DoesNotContain("reader->Dispose();", output.GeneratedText, StringComparison.Ordinal);
             Assert.DoesNotContain("System->Text->Encoding->UTF8", output.GeneratedText, StringComparison.Ordinal);
             AssertRuntimeRequirement(output.Report, "StreamReader");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "stream-reader.hpp")));
@@ -587,7 +585,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("static Regex Pattern;", output.GeneratedText);
             Assert.Contains("MatchCollection matches = Pattern.Matches(source);", output.GeneratedText);
             Assert.Contains("Match match = matches[matchIndex];", output.GeneratedText);
-            Assert.Contains("match.Groups[\"value\"]->Value", output.GeneratedText);
+            Assert.Contains("match.Groups[\"value\"].Value", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "Regex");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "text", "regular_expressions", "regex.hpp")));
         }
@@ -640,7 +638,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"runtime/native_event.hpp\"", header);
             Assert.DoesNotContain("#include \"Event.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("Event* CursorEvent", output.GeneratedText);
+            Assert.Contains("::Event CursorEvent", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeEvent");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_event.hpp")));
         }
@@ -707,7 +705,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/action.hpp\"", header);
             Assert.DoesNotContain("#include \"Action.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("Action<EngineBinaryWriter, T>* writeElement", output.GeneratedText);
+            Assert.Contains("Action<::EngineBinaryWriter*, T>* writeElement", output.GeneratedText);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "action.hpp")));
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "action.tpp")));
         }
@@ -760,7 +758,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/func.hpp\"", header);
             Assert.DoesNotContain("#include \"Func.hpp\"", header, StringComparison.Ordinal);
-            Assert.Contains("Func<Stream, T>* reader", output.GeneratedText);
+            Assert.Contains("Func<Stream*, T>* reader", output.GeneratedText);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "func.hpp")));
         }
 
@@ -782,6 +780,10 @@ namespace cs2.cpp.tests {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = false;
             options.WriteConversionReport = true;
+            options.BuildFeatureProfile
+                .WithMode(CPPFeatureKind.HostFileSystem, CPPFeatureMode.Enabled)
+                .WithMode(CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureMode.Enabled)
+                .WithMode(CPPFeatureKind.TextProcessing, CPPFeatureMode.Enabled);
 
             CPPConversionRules rules = new CPPConversionRules();
             CPPCodeConverter converter = new CPPCodeConverter(rules, options);

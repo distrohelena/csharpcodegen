@@ -102,7 +102,7 @@ public class CPPProgram : ConversionProgram {
     }
 
     private void buildDotNetData() {
-        var tempDir = Path.Combine(Path.GetTempPath(), "cs2.cpp");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cs2.cpp-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
 
         string startFolder = AssemblyUtil.GetStartFolder();
@@ -125,6 +125,10 @@ public class CPPProgram : ConversionProgram {
             for (int i = 0; i < symbolPair.Value.Count; i++) {
                 Symbol symbol = symbolPair.Value[i];
                 CPPKnownClass known = Requirements.FirstOrDefault(c => c.Name == symbol.Name);
+                if (known == null) {
+                    continue;
+                }
+
                 known.Symbol = symbol;
             }
 

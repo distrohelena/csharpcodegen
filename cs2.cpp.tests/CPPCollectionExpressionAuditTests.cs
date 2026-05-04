@@ -22,7 +22,7 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             AssertNoDiagnostic(report, "CollectionExpression");
-            Assert.Contains("int32_t values[] = { 1, 2, 3 }", output);
+            Assert.Contains("Array<int32_t> *values = new Array<int32_t>({ 1, 2, 3 });", output);
         }
 
         /// <summary>
@@ -43,7 +43,7 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             AssertNoDiagnostic(report, "OmittedArraySizeExpression");
-            Assert.Contains("new uint8_t*[length]", output);
+            Assert.Contains("new Array<Array<uint8_t>*>(length)", output);
         }
 
         /// <summary>

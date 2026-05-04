@@ -1,5 +1,7 @@
 #include "path.hpp"
 
+#include "helcpp_config.hpp"
+
 #include <filesystem>
 
 std::string Path::Combine(const std::string& left, const std::string& right) {
@@ -35,11 +37,19 @@ std::string Path::GetFileName(const std::string& path) {
 }
 
 std::string Path::GetFullPath(const std::string& path) {
+#if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
+    if (path.empty()) {
+        return std::string(".");
+    }
+
+    return std::filesystem::path(path).lexically_normal().string();
+#else
     if (path.empty()) {
         return std::filesystem::current_path().string();
     }
 
     return std::filesystem::absolute(std::filesystem::path(path)).lexically_normal().string();
+#endif
 }
 
 bool Path::IsPathRooted(const std::string& path) {

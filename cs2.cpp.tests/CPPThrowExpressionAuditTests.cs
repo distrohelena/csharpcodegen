@@ -24,7 +24,7 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             AssertNoDiagnostic(report, "ThrowExpression");
-            Assert.Contains("(value != nullptr ? value : throw new ArgumentNullException(nameof(value)))", output);
+            Assert.Contains("this->Value = (value != nullptr ? value : throw new ArgumentNullException(\"value\"));", output);
         }
 
         /// <summary>

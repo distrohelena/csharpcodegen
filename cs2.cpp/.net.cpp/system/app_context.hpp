@@ -1,6 +1,8 @@
 #ifndef APP_CONTEXT_HPP
 #define APP_CONTEXT_HPP
 
+#include "helcpp_config.hpp"
+
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -14,7 +16,9 @@
 class AppContext {
 public:
     inline static std::string BaseDirectory = []() {
-#ifdef _WIN32
+#if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
+        return std::string(".");
+#elif defined(_WIN32)
         wchar_t buffer[MAX_PATH];
         DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
         if (length == 0) {

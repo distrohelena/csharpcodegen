@@ -13,11 +13,25 @@ public class CPPConversionOptionsTests {
     public void CreateDefault_UsesApprovedHeadlessCoreProfiles() {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
 
+        Assert.Equal(string.Empty, options.PresetId);
         Assert.Equal(CPPCompilerKind.Msvc, options.CompilerProfile.Kind);
         Assert.Equal(CPPPlatformKind.WindowsHeadless, options.PlatformProfile.Kind);
         Assert.Equal(CPPRuntimeKind.StlLite, options.RuntimeProfile.Kind);
         Assert.True(options.CollectDiagnostics);
         Assert.False(options.FailOnError);
+    }
+
+    /// <summary>
+    /// Ensures the default option surface exposes a permissive restriction profile before a named preset is resolved.
+    /// </summary>
+    [Fact]
+    public void CreateDefault_ExposesEmptyPresetIdAndRestrictionProfile() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+
+        Assert.Equal(string.Empty, options.PresetId);
+        Assert.NotNull(options.RestrictionProfile);
+        Assert.Equal("default", options.RestrictionProfile.Name);
+        Assert.False(options.RestrictionProfile.ForbidShaders);
     }
 
     /// <summary>

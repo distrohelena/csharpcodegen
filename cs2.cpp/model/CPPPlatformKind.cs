@@ -9,6 +9,11 @@ namespace cs2.cpp {
         WindowsHeadless,
 
         /// <summary>
+        /// Headless Nintendo 64 target.
+        /// </summary>
+        Nintendo64Headless,
+
+        /// <summary>
         /// Headless PlayStation 2 target.
         /// </summary>
         PlayStation2Headless,

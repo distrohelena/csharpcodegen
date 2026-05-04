@@ -14,8 +14,8 @@ inline auto he_cpp_try_cast(TSource* source)
 
     if constexpr (std::is_pointer_v<TTarget>) {
         using target_value_type = std::remove_pointer_t<TTarget>;
-        return static_cast<TTarget>(static_cast<target_value_type*>(source));
+        return dynamic_cast<TTarget>(source);
     } else {
-        return static_cast<TTarget*>(source);
+        return dynamic_cast<TTarget*>(source);
     }
 }

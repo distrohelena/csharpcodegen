@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 namespace cs2.cpp {
     public class CPPConversiorProcessor : ConversionProcessor {
         private CPPCodeConverter codeConverter;
+        private int temporaryNameCounter;
 
         public CPPConversiorProcessor(CPPCodeConverter converter) {
             codeConverter = converter;
@@ -16,7 +17,56 @@ namespace cs2.cpp {
         /// <summary>
         /// Gets the runtime requirement registrar for the active conversion run.
         /// </summary>
-        public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar => codeConverter.RuntimeRequirementRegistrar;
+        public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar => codeConverter?.RuntimeRequirementRegistrar;
+
+        /// <summary>
+        /// Begins runtime-helper tracking for the currently emitted type when a converter-backed registrar is available.
+        /// </summary>
+        /// <returns>The active type scope, or an empty scope when no converter-backed registrar is available.</returns>
+        public CPPTypeRuntimeRequirementScope BeginTypeRuntimeRequirementScope() {
+            if (codeConverter?.RuntimeRequirementRegistrar == null) {
+                return new CPPTypeRuntimeRequirementScope();
+            }
+
+            return codeConverter.RuntimeRequirementRegistrar.BeginTypeScope();
+        }
+
+        /// <summary>
+        /// Ends runtime-helper tracking for the currently emitted type when a converter-backed registrar is available.
+        /// </summary>
+        /// <param name="typeScope">Type scope to stop tracking.</param>
+        public void EndTypeRuntimeRequirementScope(CPPTypeRuntimeRequirementScope typeScope) {
+            if (codeConverter?.RuntimeRequirementRegistrar == null) {
+                return;
+            }
+
+            codeConverter.RuntimeRequirementRegistrar.EndTypeScope(typeScope);
+        }
+
+        /// <summary>
+        /// Generates a stable, compiler-safe temporary name for lowered expressions.
+        /// </summary>
+        /// <param name="prefix">Prefix used to describe the temporary.</param>
+        /// <returns>A unique identifier that stays within valid C++ identifier syntax.</returns>
+        string CreateTemporaryName(string prefix) {
+            int uniqueIndex = temporaryNameCounter++;
+            return $"{prefix}_{uniqueIndex:X8}";
+        }
+
+        /// <summary>
+        /// Tries to resolve a runtime requirement definition by name when a converter-backed registrar is available.
+        /// </summary>
+        /// <param name="name">Stable runtime requirement name.</param>
+        /// <param name="definition">Resolved runtime requirement definition when found.</param>
+        /// <returns>True when the requirement was resolved.</returns>
+        public bool TryGetRuntimeRequirementDefinition(string name, out CPPRuntimeRequirementDefinition definition) {
+            definition = null;
+            if (codeConverter?.RuntimeRequirementRegistrar == null) {
+                return false;
+            }
+
+            return codeConverter.RuntimeRequirementRegistrar.TryGet(name, out definition);
+        }
 
         /// <summary>
         /// Registers a named runtime requirement for the active conversion run.
@@ -901,7 +951,7 @@ namespace cs2.cpp {
             ObjectCreationExpressionSyntax objectCreation,
             InitializerExpressionSyntax initializer,
             List<string> lines) {
-            string objectName = "__object_" + Guid.NewGuid().ToString("N")[..8];
+            string objectName = CreateTemporaryName("__object");
 
             lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
             lines.Add("auto ");
@@ -1054,7 +1104,7 @@ namespace cs2.cpp {
                 List<string> temporaryArgumentNames = new List<string>();
                 for (int i = 0; i < explicitArgumentCount; i++) {
                     ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
-                    string temporaryName = "__ctor_arg_" + Guid.NewGuid().ToString("N")[..8];
+                    string temporaryName = CreateTemporaryName("__ctor_arg");
                     List<string> argumentExpressionLines = new List<string>();
 
                     int startArg = context.DepthClass;
@@ -1283,6 +1333,16 @@ namespace cs2.cpp {
                 string.Equals(qualifiedTypeName, "global::System.IO.MemoryStream", StringComparison.Ordinal)) {
                 runtimeTypeName = "MemoryStream";
                 runtimeRequirementName = "MemoryStream";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "Guid", StringComparison.Ordinal) ||
+                string.Equals(shortTypeName, "System.Guid", StringComparison.Ordinal) ||
+                string.Equals(shortTypeName, "global::System.Guid", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Guid", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Guid", StringComparison.Ordinal)) {
+                runtimeTypeName = "Guid";
+                runtimeRequirementName = "Guid";
                 return true;
             }
 
@@ -3887,7 +3947,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            string tempName = "__coalesce_" + Guid.NewGuid().ToString("N")[..8];
+            string tempName = CreateTemporaryName("__coalesce");
             string typeName = QualifyRenderedCppTypeName(cppResultType.ToCPPString(context.Program), context);
             string pointerSuffix = resultTypeData.IsPointer ? "*" : string.Empty;
 
@@ -5321,7 +5381,7 @@ namespace cs2.cpp {
                 ConvertToCPPType(declarationType, out declarationTypeData);
                 disposalUsesPointerAccess = declarationTypeData.IsPointer;
             } else if (usingStatement.Expression != null) {
-                string usingResourceName = "__usingResource_" + Guid.NewGuid().ToString("N")[..8];
+                string usingResourceName = CreateTemporaryName("__usingResource");
                 List<string> resourceLines = new List<string>();
                 int start = context.DepthClass;
                 ExpressionResult resourceResult = ProcessExpression(semantic, context, usingStatement.Expression, resourceLines);
@@ -5369,7 +5429,7 @@ namespace cs2.cpp {
             if (tryStatement.Finally != null) {
                 RegisterRuntimeRequirement("NativeFinally");
 
-                string guardName = "__finallyGuard_" + Guid.NewGuid().ToString("N")[..8];
+                string guardName = CreateTemporaryName("__finallyGuard");
                 lines.Add("{\n");
                 lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
                 ProcessStatement(semantic, context, tryStatement.Finally.Block, lines);
@@ -6357,6 +6417,14 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(shortTypeName, "Guid", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Guid", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Guid", StringComparison.Ordinal)) {
+                runtimeTypeName = "Guid";
+                runtimeRequirementName = "Guid";
+                return true;
+            }
+
             if (string.Equals(shortTypeName, "MathF", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "System.MathF", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "global::System.MathF", StringComparison.Ordinal)) {
@@ -6798,7 +6866,9 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when the type should be emitted as a direct runtime value; otherwise <c>false</c>.</returns>
         static bool IsValueRuntimeTypeName(string typeName) {
             return string.Equals(typeName, "Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Guid", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.Text.RegularExpressions.Regex", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Guid", StringComparison.Ordinal) ||
                 string.Equals(typeName, "global::System.Text.RegularExpressions.Regex", StringComparison.Ordinal);
         }
 
@@ -6852,6 +6922,9 @@ namespace cs2.cpp {
                 string.Equals(typeName, "System.DateTime", StringComparison.Ordinal) ||
                 string.Equals(typeName, "TimeSpan", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Guid", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Guid", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Guid", StringComparison.Ordinal) ||
                 IsRegexRuntimeTypeName(typeName);
         }
 

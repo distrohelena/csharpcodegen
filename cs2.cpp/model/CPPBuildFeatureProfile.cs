@@ -72,6 +72,10 @@ namespace cs2.cpp {
             profile.WithMode(CPPFeatureKind.Text2D, CPPFeatureMode.Auto);
             profile.WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Auto);
             profile.WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Auto);
+            profile.WithMode(CPPFeatureKind.RuntimeJson, CPPFeatureMode.Auto);
+            profile.WithMode(CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureMode.Auto);
+            profile.WithMode(CPPFeatureKind.HostFileSystem, CPPFeatureMode.Auto);
+            profile.WithMode(CPPFeatureKind.TextProcessing, CPPFeatureMode.Auto);
             return profile;
         }
     }

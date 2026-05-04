@@ -39,6 +39,24 @@ namespace helengine.core.shaders.compilation {
     }
 
     /// <summary>
+    /// Ensures the runtime requirement catalog classifies restricted helpers under the expanded feature buckets.
+    /// </summary>
+    [Fact]
+    public void Catalog_MapsRestrictedHelpersToExpandedFeatureBuckets() {
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+
+        Assert.True(catalog.TryGet("NativeType", out CPPRuntimeRequirementDefinition nativeType));
+        Assert.Contains(CPPFeatureKind.ReflectionLikeRuntime, nativeType.OwningFeatures);
+
+        Assert.True(catalog.TryGet("Regex", out CPPRuntimeRequirementDefinition regex));
+        Assert.Contains(CPPFeatureKind.Shaders, regex.OwningFeatures);
+        Assert.Contains(CPPFeatureKind.TextProcessing, regex.OwningFeatures);
+
+        Assert.True(catalog.TryGet("File", out CPPRuntimeRequirementDefinition file));
+        Assert.Contains(CPPFeatureKind.HostFileSystem, file.OwningFeatures);
+    }
+
+    /// <summary>
     /// Runs the converter against a temporary single-file project and returns the output folder.
     /// </summary>
     /// <param name="source">C# source file content to convert.</param>

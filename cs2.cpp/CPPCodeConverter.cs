@@ -33,6 +33,7 @@ namespace cs2.cpp {
             : base(rules) {
             this.CPPRules = rules;
             Options = options ?? CPPConversionOptions.CreateDefault();
+            Options = new CPPConversionPresetCatalog().ApplyTo(Options);
             preprocessorSymbols = BuildPreprocessorSymbols(Options);
             includeProjectPreprocessorSymbols = Options.IncludeProjectDefinedPreprocessorSymbols;
             Report = new CPPConversionReport();
@@ -121,6 +122,10 @@ namespace cs2.cpp {
             BuildUsageReport = ResolveBuildUsageReport();
             Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
+            CPPRestrictionValidationResult restrictionValidation = CPPRestrictionValidator.Validate(BuildUsageReport, RuntimeRequirementRegistrar.RegisteredRequirements, Options.RestrictionProfile);
+            if (!restrictionValidation.IsValid) {
+                throw new InvalidOperationException(restrictionValidation.Diagnostics[0]);
+            }
 
             string rootPath = ResolveRuntimeTemplateDirectory();
             CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
@@ -189,6 +194,15 @@ namespace cs2.cpp {
         /// </summary>
         /// <returns>The full path to the runtime template directory.</returns>
         static string ResolveRuntimeTemplateDirectory() {
+            string? configuredRuntimeRoot = Environment.GetEnvironmentVariable("CS2_RUNTIME_ROOT");
+            if (!string.IsNullOrWhiteSpace(configuredRuntimeRoot)) {
+                string normalizedRuntimeRoot = Path.GetFullPath(configuredRuntimeRoot);
+                string configuredTemplateRoot = ResolveConfiguredRuntimeTemplateDirectory(normalizedRuntimeRoot);
+                if (!string.IsNullOrWhiteSpace(configuredTemplateRoot)) {
+                    return configuredTemplateRoot;
+                }
+            }
+
             List<string> candidateSearchRoots = new List<string>();
 
             Assembly entryAssembly = Assembly.GetEntryAssembly();
@@ -216,6 +230,33 @@ namespace cs2.cpp {
             }
 
             return Path.Combine(candidateSearchRoots.FirstOrDefault() ?? AppContext.BaseDirectory, ".net.cpp");
+        }
+
+        /// <summary>
+        /// Resolves one runtime template directory from a configured runtime root.
+        /// </summary>
+        /// <param name="runtimeRoot">Configured runtime root path.</param>
+        /// <returns>The runtime template directory when found; otherwise an empty string.</returns>
+        static string ResolveConfiguredRuntimeTemplateDirectory(string runtimeRoot) {
+            if (string.IsNullOrWhiteSpace(runtimeRoot)) {
+                return string.Empty;
+            }
+
+            if (HasRuntimeTemplateContent(runtimeRoot)) {
+                return runtimeRoot;
+            }
+
+            string directRuntimeFolder = Path.Combine(runtimeRoot, ".net.cpp");
+            if (HasRuntimeTemplateContent(directRuntimeFolder)) {
+                return directRuntimeFolder;
+            }
+
+            string siblingRuntimeFolder = Path.Combine(runtimeRoot, "cs2.cpp", ".net.cpp");
+            if (HasRuntimeTemplateContent(siblingRuntimeFolder)) {
+                return siblingRuntimeFolder;
+            }
+
+            return string.Empty;
         }
 
         /// <summary>

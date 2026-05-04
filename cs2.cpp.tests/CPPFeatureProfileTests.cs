@@ -29,4 +29,14 @@ public class CPPFeatureProfileTests {
 
         Assert.NotNull(options.BuildFeatureProfile);
     }
+
+    /// <summary>
+    /// Ensures preset-aware options remain unresolved until a named preset is explicitly selected.
+    /// </summary>
+    [Fact]
+    public void CreateDefault_LeavesPresetIdEmptyUntilResolved() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+
+        Assert.Equal(string.Empty, options.PresetId);
+    }
 }
