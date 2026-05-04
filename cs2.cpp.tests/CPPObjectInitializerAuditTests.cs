@@ -31,7 +31,7 @@ namespace cs2.cpp.tests {
 
             AssertNoDiagnostic(report, "ObjectCreationExpression");
             Assert.Contains("auto __object_", output);
-            Assert.Contains("= new AnchorData()", output);
+            Assert.Contains("= new ::AnchorData()", output);
             Assert.Contains("->LeftDistance = left;", output);
             Assert.Contains("->RightDistance = right;", output);
             Assert.DoesNotContain("new AnchorData{ LeftDistance =", output);

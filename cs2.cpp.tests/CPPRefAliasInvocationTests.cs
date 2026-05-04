@@ -30,8 +30,9 @@ public class CPPRefAliasInvocationTests {
         MatchCollection vector1Assignments = Regex.Matches(source, @"vector1 = out_[a-z0-9]+\.value;");
         MatchCollection vector2Assignments = Regex.Matches(source, @"vector2 = out_[a-z0-9]+\.value;");
 
-        Assert.Single(vector1Assignments.Cast<Match>());
-        Assert.Single(vector2Assignments.Cast<Match>());
+        Assert.Empty(vector1Assignments.Cast<Match>());
+        Assert.Empty(vector2Assignments.Cast<Match>());
+        Assert.Contains("Cross(vector1, vector2, vector1);", source);
     }
 
     /// <summary>

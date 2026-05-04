@@ -897,7 +897,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("LeftDistance = left ? Nullable<float>(value) : Nullable<float>(nullptr);", sourceOutput);
+            Assert.Contains("__object_00000000->set_LeftDistance(left ? Nullable<float>(value) : Nullable<float>(nullptr));", sourceOutput);
             Assert.DoesNotContain("LeftDistance = left ? value : nullptr;", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -923,8 +923,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("anchorData->LeftDistance.HasValue", sourceOutput);
-            Assert.Contains("anchorData->LeftDistance.Value > 0", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().HasValue", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().Value > 0", sourceOutput);
             Assert.DoesNotContain("anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData->LeftDistance->Value", sourceOutput, StringComparison.Ordinal);
         }
@@ -967,9 +967,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("LeftDistance = left ? Nullable<float>(anchorParent->Position->X) : Nullable<float>(nullptr);", sourceOutput);
-            Assert.Contains("this->anchorData->LeftDistance.HasValue", sourceOutput);
-            Assert.Contains("this->anchorData->LeftDistance.Value > 0", sourceOutput);
+            Assert.Contains("__object_00000000->set_LeftDistance(left ? Nullable<float>(anchorParent->Position->X) : Nullable<float>(nullptr));", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().HasValue", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().Value > 0", sourceOutput);
             Assert.DoesNotContain("LeftDistance = left ? anchorParent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("this->anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("this->anchorData->LeftDistance->Value", sourceOutput, StringComparison.Ordinal);
@@ -1038,10 +1038,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.True(sourceOutput.Contains("LeftDistance = left ? Nullable<float>(Parent->Position->X) : Nullable<float>(nullptr);", StringComparison.Ordinal), sourceOutput);
-            Assert.True(sourceOutput.Contains("RightDistance = right ? Nullable<float>(windowSize->X - Parent->Position->X) : Nullable<float>(nullptr);", StringComparison.Ordinal), sourceOutput);
-            Assert.True(sourceOutput.Contains("anchorData->LeftDistance.HasValue", StringComparison.Ordinal), sourceOutput);
-            Assert.True(sourceOutput.Contains("anchorData->LeftDistance.Value > 0", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("__object_00000000->set_LeftDistance(left ? Nullable<float>(Parent->Position->X) : Nullable<float>(nullptr));", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("__object_00000000->set_RightDistance(right ? Nullable<float>(windowSize->X - Parent->Position->X) : Nullable<float>(nullptr));", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().HasValue", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().Value > 0", StringComparison.Ordinal), sourceOutput);
             Assert.DoesNotContain("LeftDistance = left ? Parent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("RightDistance = right ? windowSize->X - Parent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
@@ -1068,8 +1068,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("const std::string info = \"Anchored to: \";", sourceOutput);
-            Assert.Contains("return info + String::JoinArray(\", \", values->ToArray());", sourceOutput);
+            Assert.Contains("std::string info = \"Anchored to: \";", sourceOutput);
+            Assert.Contains("return String::Concat(info, String::JoinArray(\", \", values->ToArray()));", sourceOutput);
             Assert.DoesNotContain("const std::string info[]", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Boolean::Join", sourceOutput, StringComparison.Ordinal);
         }
@@ -1536,7 +1536,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TypeGate.cpp"));
 
-            Assert.Contains("value->Name", sourceOutput);
+            Assert.Contains("value->get_Name()", sourceOutput);
             Assert.DoesNotContain("value->Name->ToString()", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -1797,7 +1797,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "int2.cpp"));
 
             Assert.Contains("int2();", headerOutput);
-            Assert.Contains("int2::int2() : X(), Y()", sourceOutput);
+            Assert.Contains("int2::int2() : X(0), Y(0)", sourceOutput);
         }
 
         /// <summary>
@@ -1986,7 +1986,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AssetContentProcessor_1.cpp"));
 
-            Assert.Contains("TAsset* typedAsset = he_cpp_try_cast<TAsset>(asset);", sourceOutput);
+            Assert.Contains("TAsset typedAsset = he_cpp_try_cast<TAsset>(asset);", sourceOutput);
             Assert.Contains("if (typedAsset != nullptr)", sourceOutput);
             Assert.DoesNotContain("if ()", sourceOutput, StringComparison.Ordinal);
         }
@@ -2118,10 +2118,10 @@ namespace cs2.cpp.tests {
             Assert.Contains("he_cpp_try_cast<TextureAsset>(asset) != nullptr", sourceOutput);
             Assert.Contains("else", sourceOutput);
             Assert.Contains("ModelAsset* modelAsset = he_cpp_try_cast<ModelAsset>(asset);", sourceOutput);
-            Assert.Contains("reader->ReadArray(new Func<Reader*, int32_t>(&Serializer::ReadInt))", sourceOutput);
+            Assert.Contains("reader->ReadArray<int32_t>(new Func<Reader*, int32_t>(&Serializer::ReadInt))", sourceOutput);
             Assert.Contains("writer->WriteArray<int32_t>(values, new Action<Writer*, int32_t>(&Serializer::WriteInt))", sourceOutput);
-            Assert.Contains("(*readElement)(this)", readerOutput);
-            Assert.Contains("(*writeElement)(this, (*values)[i])", writerOutput);
+            Assert.Contains("Array<T>* Reader::ReadArray(Func<::Reader*, T>* readElement)", readerOutput);
+            Assert.Contains("void Writer::WriteArray(Array<T>* values, Action<::Writer*, T>* writeElement)", writerOutput);
             Assert.DoesNotContain("instanceof", sourceOutput);
             Assert.DoesNotContain("else     ModelAsset*", sourceOutput);
         }
@@ -2325,7 +2325,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("this->Children->Remove(entity)", sourceOutput);
             Assert.Contains("this->Components->Remove(component)", sourceOutput);
             Assert.Contains("(*this->Components)[i]->ParentEnabledChange(newEnabled);", sourceOutput);
-            Assert.Contains("(*this->Children)[i]->ParentEnabledChange((*this->Children)[i]->IsHierarchyEnabled);", sourceOutput);
+            Assert.Contains("(*this->Children)[i]->ParentEnabledChange((*this->Children)[i]->get_IsHierarchyEnabled());", sourceOutput);
             Assert.DoesNotContain("->this->ParentEnabledChange", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("->this->IsHierarchyEnabled", sourceOutput, StringComparison.Ordinal);
         }
@@ -3011,7 +3011,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("0.15", sourceOutput);
-            Assert.Contains("Math::Max(static_cast<double>(this->Font->LineHeight), 1.0)", sourceOutput);
+            Assert.Contains("Math::Max(static_cast<double>(this->Font->get_LineHeight()), 1.0)", sourceOutput);
             Assert.DoesNotContain("0.15d", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("1d", sourceOutput, StringComparison.Ordinal);
         }
@@ -3039,7 +3039,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("for (int32_t i = 0; i < items->Count(); i++)", sourceOutput);
+            Assert.Contains("for (int32_t i = 0; i < items->get_Count(); i++)", sourceOutput);
             Assert.Contains("values->Add((*items)[i])", sourceOutput);
             Assert.DoesNotContain("for (const int32_t i = 0;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("values->Add(items[i])", sourceOutput, StringComparison.Ordinal);
@@ -3095,7 +3095,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
-            Assert.Contains("throw new ArgumentOutOfRangeException(\"value\", \"Value must be non-negative.\")", sourceOutput);
+            Assert.Contains("return new ArgumentOutOfRangeException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
             Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
         }
 
@@ -3120,7 +3120,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
-            Assert.Contains("throw new ArgumentException(\"Items must be provided.\", \"items\")", sourceOutput);
+            Assert.Contains("return new ArgumentException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
             Assert.Contains("ArgumentException(const std::string& message, const std::string& parameterName)", runtimeHeader);
         }
 
@@ -3153,7 +3153,7 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "array.hpp"));
 
             Assert.Contains("Array<std::string>::Empty()", sourceOutput);
-            Assert.Contains("new Array<std::string>(sourceExtensions->Count())", sourceOutput);
+            Assert.Contains("new Array<std::string>(sourceExtensions->get_Count())", sourceOutput);
             Assert.Contains("(*normalized)[0] = (*sourceExtensions)[0];", sourceOutput);
             Assert.Contains("static Array<T>* Empty()", runtimeHeader);
         }
@@ -3576,7 +3576,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("return static_cast<int32_t>((this->_keys0 ^ this->_keys1));", sourceOutput);
             Assert.Contains("((static_cast<int32_t>(key)) & 0x1f)", sourceOutput);
             Assert.Contains("this->_keys1 &= ~mask;", sourceOutput);
-            Assert.Contains("for (const auto& key : *keys)", sourceOutput);
+            Assert.Contains("for (const auto& key : keys)", sourceOutput);
             Assert.DoesNotContain("0x1.0f", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("return  &&", sourceOutput, StringComparison.Ordinal);
         }

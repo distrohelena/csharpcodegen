@@ -40,17 +40,22 @@ namespace cs2.cpp {
             }
 
             WriteHeaderPreamble(conversionClass, headerWriter);
+            CPPTypeRuntimeRequirementScope typeScope = processor?.BeginTypeRuntimeRequirementScope() ?? new CPPTypeRuntimeRequirementScope();
 
-            if (conversionClass.DeclarationType == MemberDeclarationType.Enum) {
-                WriteSourcePreamble(conversionClass, sourceWriter);
-                WriteEnum(conversionClass, headerWriter);
-                return;
+            try {
+                if (conversionClass.DeclarationType == MemberDeclarationType.Enum) {
+                    WriteSourcePreamble(conversionClass, sourceWriter, typeScope);
+                    WriteEnum(conversionClass, headerWriter);
+                    return;
+                }
+
+                StringWriter deferredSourceWriter = new StringWriter();
+                WriteClass(conversionClass, headerWriter, deferredSourceWriter);
+                WriteSourcePreamble(conversionClass, sourceWriter, typeScope);
+                sourceWriter.Write(deferredSourceWriter.ToString());
+            } finally {
+                processor?.EndTypeRuntimeRequirementScope(typeScope);
             }
-
-            StringWriter deferredSourceWriter = new StringWriter();
-            WriteClass(conversionClass, headerWriter, deferredSourceWriter);
-            WriteSourcePreamble(conversionClass, sourceWriter);
-            sourceWriter.Write(deferredSourceWriter.ToString());
         }
 
         /// <summary>
@@ -330,7 +335,7 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="conversionClass">The type being emitted.</param>
         /// <param name="sourceWriter">Writer that receives the source preamble.</param>
-        void WriteSourcePreamble(ConversionClass conversionClass, TextWriter sourceWriter) {
+        void WriteSourcePreamble(ConversionClass conversionClass, TextWriter sourceWriter, CPPTypeRuntimeRequirementScope typeScope) {
             sourceWriter.WriteLine("#ifdef DrawText");
             sourceWriter.WriteLine("#undef DrawText");
             sourceWriter.WriteLine("#endif");
@@ -352,7 +357,12 @@ namespace cs2.cpp {
                 sourceWriter.WriteLine($"#include \"{includePath}.hpp\"");
             }
 
-            foreach (CPPRuntimeRequirementDefinition requirement in processor.RuntimeRequirementRegistrar.RegisteredRequirements.OrderBy(requirement => requirement.IncludePath, StringComparer.Ordinal)) {
+            foreach (string requirementName in typeScope.GetRegisteredRequirements().OrderBy(name => name, StringComparer.Ordinal)) {
+                if (processor == null ||
+                    !processor.TryGetRuntimeRequirementDefinition(requirementName, out CPPRuntimeRequirementDefinition requirement)) {
+                    continue;
+                }
+
                 if (string.IsNullOrWhiteSpace(requirement.IncludePath) || !emittedIncludePaths.Add(requirement.IncludePath)) {
                     continue;
                 }

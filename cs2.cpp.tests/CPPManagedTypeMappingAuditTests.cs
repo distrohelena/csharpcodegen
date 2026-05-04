@@ -38,8 +38,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
 
             Assert.Contains("std::string", output.GeneratedText);
-            Assert.Contains("List<std::string>", output.GeneratedText);
-            Assert.Contains("Dictionary<std::string, Array<uint8_t>>", output.GeneratedText);
+            Assert.Contains("List<std::string>*", output.GeneratedText);
+            Assert.Contains("Dictionary<std::string, Array<uint8_t>*>*", output.GeneratedText);
             Assert.Contains("bool Enabled;", output.GeneratedText);
             Assert.Contains("uint16_t", output.GeneratedText);
             Assert.Contains("uint32_t", output.GeneratedText);

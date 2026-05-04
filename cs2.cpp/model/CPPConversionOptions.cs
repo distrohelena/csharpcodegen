@@ -6,6 +6,11 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPConversionOptions {
         /// <summary>
+        /// Gets or sets the named preset identifier that supplied the active conversion profiles.
+        /// </summary>
+        public string PresetId { get; set; } = string.Empty;
+
+        /// <summary>
         /// Gets or sets the compiler profile that shapes compiler-specific output.
         /// </summary>
         public CPPCompilerProfile CompilerProfile { get; set; } = CPPCompilerProfile.CreateMsvc();
@@ -49,6 +54,11 @@ namespace cs2.cpp {
         /// Gets or sets the explicit feature profile that controls optional subsystem pruning.
         /// </summary>
         public CPPBuildFeatureProfile BuildFeatureProfile { get; set; } = CPPBuildFeatureProfile.CreateDefault();
+
+        /// <summary>
+        /// Gets or sets the restriction profile that forbids disallowed runtime systems for the active conversion.
+        /// </summary>
+        public CPPRestrictionProfile RestrictionProfile { get; set; } = CPPRestrictionProfile.CreatePermissive("default");
 
         /// <summary>
         /// Gets or sets whether native runtime metadata should be loaded during converter construction.

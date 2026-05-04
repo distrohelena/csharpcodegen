@@ -5,6 +5,7 @@ namespace cs2.cpp {
     public class CPPRuntimeRequirementRegistrar {
         readonly CPPRuntimeRequirementCatalog catalog;
         CPPBuildUsageReport buildUsageReport;
+        CPPTypeRuntimeRequirementScope currentTypeScope;
         readonly Dictionary<string, CPPRuntimeRequirementDefinition> registeredRequirements;
         readonly CPPConversionReport report;
 
@@ -24,6 +25,25 @@ namespace cs2.cpp {
         /// Gets the requirements registered for the active conversion run.
         /// </summary>
         public IReadOnlyCollection<CPPRuntimeRequirementDefinition> RegisteredRequirements => registeredRequirements.Values.ToList();
+
+        /// <summary>
+        /// Begins runtime-helper tracking for a single emitted type.
+        /// </summary>
+        /// <returns>The new per-type runtime requirement scope.</returns>
+        public CPPTypeRuntimeRequirementScope BeginTypeScope() {
+            currentTypeScope = new CPPTypeRuntimeRequirementScope();
+            return currentTypeScope;
+        }
+
+        /// <summary>
+        /// Ends runtime-helper tracking for a single emitted type.
+        /// </summary>
+        /// <param name="typeScope">Scope that should be cleared from active tracking.</param>
+        public void EndTypeScope(CPPTypeRuntimeRequirementScope typeScope) {
+            if (ReferenceEquals(currentTypeScope, typeScope)) {
+                currentTypeScope = null;
+            }
+        }
 
         /// <summary>
         /// Registers the default runtime requirements implied by the selected conversion options.
@@ -58,6 +78,7 @@ namespace cs2.cpp {
         /// </summary>
         public void Reset() {
             registeredRequirements.Clear();
+            currentTypeScope = null;
         }
 
         /// <summary>
@@ -80,6 +101,7 @@ namespace cs2.cpp {
             }
 
             registeredRequirements.TryAdd(definition.Name, definition);
+            currentTypeScope?.Register(definition.Name);
             return true;
         }
 
@@ -90,6 +112,16 @@ namespace cs2.cpp {
         /// <returns>True when the requirement has been registered.</returns>
         public bool IsRegistered(string name) {
             return registeredRequirements.ContainsKey(name);
+        }
+
+        /// <summary>
+        /// Tries to resolve a runtime requirement definition by name.
+        /// </summary>
+        /// <param name="name">Stable runtime requirement name.</param>
+        /// <param name="definition">Resolved runtime requirement definition when present.</param>
+        /// <returns>True when the catalog contains the requirement.</returns>
+        public bool TryGet(string name, out CPPRuntimeRequirementDefinition definition) {
+            return catalog.TryGet(name, out definition);
         }
 
         bool IsRequirementEnabled(CPPRuntimeRequirementDefinition definition) {

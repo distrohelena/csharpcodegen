@@ -48,9 +48,9 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("HelperNode* Node;", output.GeneratedText);
             Assert.Contains("Entity* Owner;", output.GeneratedText);
-            Assert.Contains("float3* Position;", output.GeneratedText);
-            Assert.Contains("List<HelperNode*>", output.GeneratedText);
-            Assert.Contains("HelperNode* GetNode(Entity* owner, float3* position, IHelper* helper);", output.GeneratedText);
+            Assert.Contains("::float3 Position;", output.GeneratedText);
+            Assert.Contains("List<::HelperNode*>*", output.GeneratedText);
+            Assert.Contains("::HelperNode* GetNode(::Entity* owner, ::float3 position, ::IHelper* helper);", output.GeneratedText);
             Assert.Contains("#include \"Entity.hpp\"", gateHeader);
             Assert.Contains("#include \"float3.hpp\"", gateHeader);
             Assert.DoesNotContain("void* Node;", output.GeneratedText, StringComparison.Ordinal);

@@ -16,6 +16,11 @@ namespace cs2.cpp {
             ["helengine.ITextDrawable2D"] = new[] { CPPFeatureKind.Text2D, CPPFeatureKind.Render2D },
             ["helengine.TextComponent"] = new[] { CPPFeatureKind.Text2D, CPPFeatureKind.Render2D },
             ["helengine.DebugOverlayComponent"] = new[] { CPPFeatureKind.DebugOverlay },
+            ["helengine.core.shaders.compilation.ShaderConditionalPreprocessor"] = new[] { CPPFeatureKind.Shaders, CPPFeatureKind.TextProcessing },
+            ["helengine.core.content.RuntimeManifestJsonReader"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.TextProcessing },
+            ["helengine.core.content.RuntimeStartupManifest"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.HostFileSystem },
+            ["helengine.core.content.RuntimeCodeModuleManifest"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.HostFileSystem },
+            ["helengine.core.content.ContentManager"] = new[] { CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureKind.HostFileSystem },
         };
 
         /// <summary>

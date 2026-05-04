@@ -17,6 +17,7 @@ public class CPPHelengineCoreAuditTests {
         string outputFolder = Path.Combine(fixtureRoot, "generated");
 
         CPPConversionOptions options = CreateTestOptions();
+        options.PresetId = "windows-no-shaders";
         options.WriteConversionReport = true;
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
@@ -30,10 +31,12 @@ public class CPPHelengineCoreAuditTests {
 
         Assert.True(File.Exists(reportPath));
         Assert.Equal("FixtureAudit", root.GetProperty("assemblyName").GetString());
+        Assert.Equal("windows-no-shaders", root.GetProperty("presetId").GetString());
         Assert.Equal(1, root.GetProperty("errorCount").GetInt32());
         Assert.Equal("msvc", root.GetProperty("activeProfiles").GetProperty("compiler").GetString());
         Assert.Equal("windows-headless", root.GetProperty("activeProfiles").GetProperty("platform").GetString());
         Assert.Equal("stl-lite", root.GetProperty("activeProfiles").GetProperty("runtime").GetString());
+        Assert.Equal("desktop-no-shaders", root.GetProperty("activeProfiles").GetProperty("restrictions").GetString());
         Assert.Contains(root.GetProperty("diagnosticsByTypeMember").EnumerateArray(), group => group.GetProperty("sourceTypeName").GetString() == "BufferBuilder" && group.GetProperty("sourceMemberName").GetString() == "Fill");
         Assert.DoesNotContain(root.GetProperty("unsupportedSyntaxSummary").EnumerateArray(), summary => summary.GetProperty("syntaxKind").GetString() == "StackAllocArrayCreationExpression");
         Assert.Contains(root.GetProperty("unsupportedSyntaxSummary").EnumerateArray(), summary => summary.GetProperty("syntaxKind").GetString() == "UnsafeStatement" && summary.GetProperty("count").GetInt32() == 1);

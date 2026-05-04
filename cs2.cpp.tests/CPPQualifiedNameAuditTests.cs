@@ -28,8 +28,8 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.Contains("throw new System::ArgumentNullException(nameof(text))", output);
-            Assert.Contains("System::Text::StringBuilder", output);
+            Assert.Contains("throw new ArgumentNullException(\"text\")", output);
+            Assert.Contains("StringBuilder *builder = new StringBuilder()", output);
         }
 
         /// <summary>

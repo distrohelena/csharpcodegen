@@ -69,12 +69,35 @@ namespace helengine.core.scene {
     }
 
     /// <summary>
+    /// Verifies that strict presets fail conversion before output is copied when forbidden runtime JSON systems are reachable.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenPresetForbidsRuntimeJson_FailsBeforeCopyingOutput() {
+        string source = """
+namespace helengine.core.content {
+    public class RuntimeManifestJsonReader {
+    }
+}
+
+namespace helengine.core.runtime {
+    public class RuntimeBootstrap {
+        public helengine.core.content.RuntimeManifestJsonReader Reader;
+    }
+}
+""";
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => RunConversionWithPreset(source, "ps2-lite"));
+        Assert.Contains("ps2-lite", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("RuntimeJson", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Runs the C++ converter against a temporary single-file project and returns the generated output path.
     /// </summary>
     /// <param name="source">C# source file content to convert.</param>
     /// <param name="featureProfile">Resolved feature configuration for the conversion.</param>
     /// <returns>The output directory that contains the generated C++ files.</returns>
-    static string RunConversion(string source, CPPBuildFeatureProfile featureProfile) {
+    static string RunConversion(string source, CPPBuildFeatureProfile featureProfile, string presetId = "") {
         string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-feature-pruning-tests", Guid.NewGuid().ToString("N"));
         string projectPath = Path.Combine(rootPath, "Fixture.csproj");
         string sourcePath = Path.Combine(rootPath, "Fixture.cs");
@@ -87,7 +110,10 @@ namespace helengine.core.scene {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
-        options.BuildFeatureProfile = featureProfile;
+        options.PresetId = presetId ?? string.Empty;
+        if (featureProfile != null && string.IsNullOrWhiteSpace(options.PresetId)) {
+            options.BuildFeatureProfile = featureProfile;
+        }
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);
@@ -96,6 +122,16 @@ namespace helengine.core.scene {
         string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
         using JsonDocument _ = JsonDocument.Parse(File.ReadAllText(reportPath));
         return outputPath;
+    }
+
+    /// <summary>
+    /// Runs the C++ converter against a temporary single-file project using a named preset.
+    /// </summary>
+    /// <param name="source">C# source file content to convert.</param>
+    /// <param name="presetId">Stable preset id to resolve for the conversion.</param>
+    /// <returns>The output directory that contains the generated C++ files.</returns>
+    static string RunConversionWithPreset(string source, string presetId) {
+        return RunConversion(source, new CPPBuildFeatureProfile(), presetId);
     }
 
     /// <summary>

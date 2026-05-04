@@ -41,5 +41,47 @@ namespace cs2.cpp {
                 IsWindowsHost = true
             };
         }
+
+        /// <summary>
+        /// Creates the default GameCube headless profile.
+        /// </summary>
+        /// <returns>The default GameCube platform profile.</returns>
+        public static CPPPlatformProfile CreateGameCubeHeadless() {
+            return new CPPPlatformProfile {
+                Kind = CPPPlatformKind.GameCubeHeadless,
+                Name = "gamecube-headless",
+                DefineName = "HE_CPP_PLATFORM_GAMECUBE",
+                IsLittleEndian = false,
+                IsWindowsHost = false
+            };
+        }
+
+        /// <summary>
+        /// Creates the default PlayStation 2 headless profile.
+        /// </summary>
+        /// <returns>The default PlayStation 2 platform profile.</returns>
+        public static CPPPlatformProfile CreatePlayStation2Headless() {
+            return new CPPPlatformProfile {
+                Kind = CPPPlatformKind.PlayStation2Headless,
+                Name = "ps2-headless",
+                DefineName = "HE_CPP_PLATFORM_PS2",
+                IsLittleEndian = true,
+                IsWindowsHost = false
+            };
+        }
+
+        /// <summary>
+        /// Creates the default Nintendo 64 headless profile.
+        /// </summary>
+        /// <returns>The default Nintendo 64 platform profile.</returns>
+        public static CPPPlatformProfile CreateNintendo64Headless() {
+            return new CPPPlatformProfile {
+                Kind = CPPPlatformKind.Nintendo64Headless,
+                Name = "n64-headless",
+                DefineName = "HE_CPP_PLATFORM_N64",
+                IsLittleEndian = false,
+                IsWindowsHost = false
+            };
+        }
     }
 }

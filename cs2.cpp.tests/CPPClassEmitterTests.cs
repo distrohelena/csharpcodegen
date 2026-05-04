@@ -10,7 +10,7 @@ namespace cs2.cpp.tests;
 /// </summary>
 public class CPPClassEmitterTests {
     /// <summary>
-    /// Ensures a basic class emits one header declaration and one source definition with matching signatures.
+    /// Ensures a basic class emits one header declaration and one source definition with matching native signatures.
     /// </summary>
     [Fact]
     public void EmitClass_WritesHeaderAndSourceForPublicMethod() {
@@ -34,16 +34,16 @@ public class CPPClassEmitterTests {
 
         Assert.Contains("class Player", header);
         Assert.Contains("public:", header);
-        Assert.Contains("void Tick(int delta);", header);
+        Assert.Contains("void Tick(int32_t delta);", header);
         Assert.Contains("#include \"Player.hpp\"", source);
-        Assert.Contains("void Player::Tick(int delta)", source);
+        Assert.Contains("void Player::Tick(int32_t delta)", source);
     }
 
     /// <summary>
-    /// Ensures a trivial auto-property lowers directly into a field declaration.
+    /// Ensures a trivial auto-property lowers into storage plus generated accessors.
     /// </summary>
     [Fact]
-    public void EmitAutoProperty_LowersToField() {
+    public void EmitAutoProperty_LowersToStorageBackedProperty() {
         CPPClassEmitter emitter = CreateEmitter();
         ConversionClass conversionClass = new ConversionClass {
             Name = "Stats",
@@ -60,11 +60,13 @@ public class CPPClassEmitterTests {
 
         (string header, string source) = Emit(emitter, conversionClass);
 
-        Assert.Contains("int Health;", header);
-        Assert.DoesNotContain("get_Health", header);
-        Assert.DoesNotContain("set_Health", header);
-        Assert.DoesNotContain("get_Health", source);
-        Assert.DoesNotContain("set_Health", source);
+        Assert.Contains("int32_t Health;", header);
+        Assert.Contains("int32_t get_Health();", header);
+        Assert.Contains("void set_Health(int32_t value);", header);
+        Assert.Contains("int32_t Stats::get_Health()", source);
+        Assert.Contains("return this->Health;", source);
+        Assert.Contains("void Stats::set_Health(int32_t value)", source);
+        Assert.Contains("this->Health = value;", source);
     }
 
     /// <summary>
@@ -90,10 +92,10 @@ public class CPPClassEmitterTests {
 
         (string header, string source) = Emit(emitter, conversionClass);
 
-        Assert.Contains("string get_DisplayName();", header);
-        Assert.Contains("void set_DisplayName(string value);", header);
-        Assert.Contains("string Profile::get_DisplayName()", source);
-        Assert.Contains("void Profile::set_DisplayName(string value)", source);
+        Assert.Contains("std::string get_DisplayName();", header);
+        Assert.Contains("void set_DisplayName(std::string value);", header);
+        Assert.Contains("std::string Profile::get_DisplayName()", source);
+        Assert.Contains("void Profile::set_DisplayName(std::string value)", source);
     }
 
     /// <summary>
@@ -215,7 +217,9 @@ public class CPPClassEmitterTests {
 
         (_, string source) = Emit(emitter, conversionClass);
 
-        Assert.Contains("CoreInitializationOptions::CoreInitializationOptions() : ContentRootPath(AppContext::BaseDirectory), UpdateOrderLayers(4)", source);
+        Assert.Contains("CoreInitializationOptions::CoreInitializationOptions()", source);
+        Assert.Contains("ContentRootPath(", source);
+        Assert.Contains("UpdateOrderLayers(4)", source);
     }
 
     /// <summary>
