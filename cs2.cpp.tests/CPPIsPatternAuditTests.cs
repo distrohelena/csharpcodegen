@@ -40,6 +40,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures interface declaration-pattern guards still lower through the native cast helper and copy the updated runtime template.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterfaceDeclarationPattern_UsesDynamicCastRuntimeHelper() {
+            string source = """
+                public interface IAnchorBoundsProvider {
+                }
+
+                public class Entity {
+                }
+
+                public class AnchorComponent {
+                    public void Refresh(Entity current) {
+                        if (current is IAnchorBoundsProvider provider) {
+                            Use(provider);
+                        }
+                    }
+
+                    void Use(IAnchorBoundsProvider provider) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            AssertNoDiagnostic(output.Report, "IsPatternExpression");
+            Assert.Contains("IAnchorBoundsProvider* provider = he_cpp_try_cast<IAnchorBoundsProvider>(current);", output.GeneratedText);
+            Assert.Contains("if (provider != nullptr)", output.GeneratedText);
+            Assert.Contains("dynamic_cast", File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_cast.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeCast");
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns all generated textual output.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

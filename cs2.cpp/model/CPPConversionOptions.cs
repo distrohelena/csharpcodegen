@@ -77,5 +77,20 @@ namespace cs2.cpp {
         public static CPPConversionOptions CreateDefault() {
             return new CPPConversionOptions();
         }
+
+        /// <summary>
+        /// Creates the default option set for the first GameCube headless milestone.
+        /// </summary>
+        /// <returns>The default GameCube conversion options.</returns>
+        public static CPPConversionOptions CreateGameCubeDefault() {
+            return new CPPConversionOptions {
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateGameCubeHeadless(),
+                RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+                CollectDiagnostics = true,
+                BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
+                LoadNativeRuntimeMetadata = true
+            };
+        }
     }
 }
