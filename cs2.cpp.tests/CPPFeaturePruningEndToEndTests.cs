@@ -92,6 +92,35 @@ namespace helengine.core.runtime {
     }
 
     /// <summary>
+    /// Verifies that the GameCube core-boot preset writes GameCube config metadata and disables shader-only output.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_WritesGameCubeConfigAndDisablesShaders() {
+        string source = """
+namespace helengine.core.shaders {
+    public class ShaderAsset {
+    }
+}
+
+namespace helengine.core.scene {
+    public class SceneNode {
+    }
+}
+""";
+
+        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string configPath = Path.Combine(outputPath, "helcpp_config.hpp");
+        string config = File.ReadAllText(configPath);
+
+        Assert.Contains("#define HE_CPP_COMPILER_GCC 1", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_GAMECUBE 1", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", config);
+        Assert.Contains("#define HE_CPP_FEATURE_SHADERS 0", config);
+        Assert.Contains("#define HE_CPP_FEATURE_DEBUGOVERLAY 0", config);
+    }
+
+    /// <summary>
     /// Runs the C++ converter against a temporary single-file project and returns the generated output path.
     /// </summary>
     /// <param name="source">C# source file content to convert.</param>

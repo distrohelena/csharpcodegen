@@ -49,6 +49,10 @@ namespace cs2.cpp {
                 return CreatePlayStation2LitePreset();
             }
 
+            if (string.Equals(presetId, "gamecube-core-boot", StringComparison.OrdinalIgnoreCase)) {
+                return CreateGameCubeCoreBootPreset();
+            }
+
             if (string.Equals(presetId, "n64-minimal", StringComparison.OrdinalIgnoreCase)) {
                 return CreateNintendo64MinimalPreset();
             }
@@ -113,6 +117,29 @@ namespace cs2.cpp {
                     ForbidRuntimeJson = true,
                     ForbidReflectionLikeRuntime = true,
                     ForbidRegex = true,
+                    ForbidDebugOnlySystems = true
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates the first GameCube preset used for generated-core boot validation.
+        /// </summary>
+        /// <returns>The resolved GameCube core-boot preset.</returns>
+        static CPPConversionPreset CreateGameCubeCoreBootPreset() {
+            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
+                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
+                .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled);
+
+            return new CPPConversionPreset {
+                Id = "gamecube-core-boot",
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateGameCubeHeadless(),
+                RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+                BuildFeatureProfile = featureProfile,
+                RestrictionProfile = new CPPRestrictionProfile {
+                    Name = "gamecube-core-boot",
+                    ForbidShaders = true,
                     ForbidDebugOnlySystems = true
                 }
             };

@@ -21,4 +21,22 @@ public class CPPConversionPresetCatalogTests {
         Assert.Equal("desktop-no-shaders", preset.RestrictionProfile.Name);
         Assert.True(preset.RestrictionProfile.ForbidShaders);
     }
+
+    /// <summary>
+    /// Ensures the GameCube core-boot preset resolves to the expected compiler, platform, feature, and restriction settings.
+    /// </summary>
+    [Fact]
+    public void Resolve_GameCubeCoreBoot_UsesNamedPresetProfiles() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+
+        Assert.Equal("gamecube-core-boot", preset.Id);
+        Assert.Equal("gcc", preset.CompilerProfile.Name);
+        Assert.Equal("gamecube-headless", preset.PlatformProfile.Name);
+        Assert.Equal("stl-lite", preset.RuntimeProfile.Name);
+        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode(CPPFeatureKind.Shaders));
+        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode(CPPFeatureKind.DebugOverlay));
+        Assert.Equal("gamecube-core-boot", preset.RestrictionProfile.Name);
+        Assert.True(preset.RestrictionProfile.ForbidShaders);
+        Assert.True(preset.RestrictionProfile.ForbidDebugOnlySystems);
+    }
 }
