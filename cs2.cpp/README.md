@@ -44,3 +44,17 @@ The report contains:
 - error, warning, and info counts
 - diagnostics grouped by source type and member
 - unsupported syntax summary counts
+
+## GameCube core-boot generation
+
+Generate GameCube-targeted core output with the named preset:
+
+```bash
+rtk dotnet run --project /mnt/c/dev/helworks/csharpcodegen/codegen/codegen.csproj -- --cpp --project /mnt/c/dev/helworks/helengine/engine/helengine.core/helengine.core.csproj --output /mnt/c/dev/helworks/helengine-gc/tmp/generated-core-gamecube --platform gamecube --compiler gcc --endianness big --preset gamecube-core-boot
+```
+
+Expected artifacts:
+
+- `helengine_core_unity.cpp`
+- `helcpp_config.hpp`
+- `cpp-conversion-report.json`
