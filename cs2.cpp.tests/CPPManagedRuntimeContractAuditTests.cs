@@ -186,6 +186,91 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures managed array length access lowers through the lightweight runtime getter contract.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedArrayLengthAccess_UsesRuntimeArrayGetterContract() {
+            string source = """
+                public class BufferMetrics {
+                    public int Count(byte[] values) {
+                        return values.Length;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BufferMetrics.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "array.hpp"));
+
+            Assert.Contains("values->get_Length()", sourceOutput);
+            Assert.Contains("int32_t get_Length() const", runtimeHeader);
+            AssertRuntimeRequirement(output.Report, "NativeArray");
+        }
+
+        /// <summary>
+        /// Ensures nullable wrappers and TimeSpan expose managed getter members expected by emitted native code.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNullableAndTimeSpanPropertyAccess_UsesManagedGetterContracts() {
+            string source = """
+                using System;
+
+                public class RuntimeValueReader {
+                    public bool Has(float? value) {
+                        return value.HasValue;
+                    }
+
+                    public float Read(float? value) {
+                        return value.Value;
+                    }
+
+                    public double Milliseconds(TimeSpan elapsed) {
+                        return elapsed.TotalMilliseconds;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeValueReader.cpp"));
+            string nullableHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_nullable.hpp"));
+            string dateTimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_datetime.hpp"));
+
+            Assert.Contains("value.get_HasValue()", sourceOutput);
+            Assert.Contains("value.get_Value()", sourceOutput);
+            Assert.Contains("elapsed.get_TotalMilliseconds()", sourceOutput);
+            Assert.Contains("bool get_HasValue() const", nullableHeader);
+            Assert.Contains("T get_Value() const", nullableHeader);
+            Assert.Contains("double get_TotalMilliseconds() const", dateTimeHeader);
+            AssertRuntimeRequirement(output.Report, "NativeNullable");
+            AssertRuntimeRequirement(output.Report, "NativeDateTime");
+        }
+
+        /// <summary>
+        /// Ensures managed StringComparer property access lowers through the lightweight runtime getter contract.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringComparerPropertyAccess_UsesManagedGetterContract() {
+            string source = """
+                using System;
+
+                public class ComparerProvider {
+                    public StringComparer Create() {
+                        return StringComparer.OrdinalIgnoreCase;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ComparerProvider.cpp"));
+            string comparerHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "string_comparer.hpp"));
+
+            Assert.Contains("StringComparer::get_OrdinalIgnoreCase()", sourceOutput);
+            Assert.Contains("static const StringComparer& get_OrdinalIgnoreCase()", comparerHeader);
+            Assert.Contains("static const StringComparer& get_Ordinal()", comparerHeader);
+            AssertRuntimeRequirement(output.Report, "StringComparer");
+        }
+
+        /// <summary>
         /// Ensures System.Math and MidpointRounding resolve to the built-in runtime math header instead of missing generated headers.
         /// </summary>
         [Fact]
@@ -825,6 +910,16 @@ namespace cs2.cpp.tests {
         /// <param name="source">C# source file content to convert.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
         static ConversionOutput RunConversion(string source) {
+            return RunConversion(source, null);
+        }
+
+        /// <summary>
+        /// Runs the C++ converter against a temporary single-file project with optional option mutation.
+        /// </summary>
+        /// <param name="source">C# source file content to convert.</param>
+        /// <param name="configureOptions">Optional callback that can refine the converter options before conversion.</param>
+        /// <returns>Output folder, parsed report, and generated textual output.</returns>
+        static ConversionOutput RunConversion(string source, Action<CPPConversionOptions> configureOptions) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-runtime-contract-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string sourcePath = Path.Combine(rootPath, "Fixture.cs");
@@ -841,6 +936,7 @@ namespace cs2.cpp.tests {
                 .WithMode(CPPFeatureKind.HostFileSystem, CPPFeatureMode.Enabled)
                 .WithMode(CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureMode.Enabled)
                 .WithMode(CPPFeatureKind.TextProcessing, CPPFeatureMode.Enabled);
+            configureOptions?.Invoke(options);
 
             CPPConversionRules rules = new CPPConversionRules();
             CPPCodeConverter converter = new CPPCodeConverter(rules, options);

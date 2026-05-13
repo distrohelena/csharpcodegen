@@ -40,14 +40,43 @@ namespace cs2.core {
             return tupleWrapper;
         }
 
-        private static VariableType HandleQualifiedName(QualifiedNameSyntax qualifiedName) {
+        /// <summary>
+        /// Creates a VariableType and applies Roslyn semantic flags that affect backend lowering.
+        /// </summary>
+        /// <param name="dataType">Abstract source-side variable category.</param>
+        /// <param name="typeName">Source type name associated with the variable shape.</param>
+        /// <param name="typeSymbol">Roslyn type symbol that supplies semantic flags.</param>
+        /// <returns>The initialized VariableType.</returns>
+        static VariableType CreateVariableType(VariableDataType dataType, string typeName, ITypeSymbol typeSymbol) {
+            VariableType variableType = new VariableType(dataType, typeName);
+            ApplyTypeSymbolMetadata(variableType, typeSymbol);
+            return variableType;
+        }
+
+        /// <summary>
+        /// Applies Roslyn semantic flags that affect backend pointer-versus-value lowering.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to update.</param>
+        /// <param name="typeSymbol">Roslyn type symbol that supplies semantic flags.</param>
+        static void ApplyTypeSymbolMetadata(VariableType variableType, ITypeSymbol typeSymbol) {
+            if (variableType == null || typeSymbol == null) {
+                return;
+            }
+
+            variableType.IsValueType = typeSymbol.IsValueType;
+            if (typeSymbol.TypeKind == TypeKind.Enum) {
+                variableType.IsEnum = true;
+            }
+        }
+
+        private static VariableType HandleQualifiedName(QualifiedNameSyntax qualifiedName, ITypeSymbol resolvedTypeSymbol) {
             // Handle qualified name types, e.g., System.Collections.Generic.List
             string fullQualifiedName = GetQualifiedName(qualifiedName);
 
             // Parse the last part as the actual type and treat the previous part as a namespace/module.
             string typeName = qualifiedName.Right.ToString();
 
-            VariableType baseType = new VariableType(GetVarDataType(typeName), typeName);
+            VariableType baseType = CreateVariableType(GetVarDataType(typeName), typeName, resolvedTypeSymbol);
             baseType.TypeName = typeName;
 
             return baseType;
@@ -319,13 +348,13 @@ namespace cs2.core {
             ITypeSymbol resolvedTypeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
 
             if (resolvedTypeSymbol is ITypeParameterSymbol typeParameterSymbol) {
-                VariableType genericParameterType = new VariableType(GetVarDataType(typeParameterSymbol.Name), typeParameterSymbol.Name);
+                VariableType genericParameterType = CreateVariableType(GetVarDataType(typeParameterSymbol.Name), typeParameterSymbol.Name, typeParameterSymbol);
                 genericParameterType.IsGenericParameter = true;
                 return genericParameterType;
             }
 
             if (resolvedTypeSymbol?.TypeKind == TypeKind.Enum) {
-                VariableType enumType = new VariableType(GetVarDataType(resolvedTypeSymbol.Name), resolvedTypeSymbol.Name);
+                VariableType enumType = CreateVariableType(GetVarDataType(resolvedTypeSymbol.Name), resolvedTypeSymbol.Name, resolvedTypeSymbol);
                 enumType.IsEnum = true;
                 return enumType;
             }
@@ -341,9 +370,9 @@ namespace cs2.core {
                         return GetVarType(inferredType);
                     }
                     string typeInfoName = typeInfo.Type?.Name ?? "object";
-                    return new VariableType(GetVarDataType(typeInfoName), typeInfoName);
+                    return CreateVariableType(GetVarDataType(typeInfoName), typeInfoName, resolvedTypeSymbol);
                 } else {
-                    return new VariableType(GetVarDataType(identifierName), identifierName);
+                    return CreateVariableType(GetVarDataType(identifierName), identifierName, resolvedTypeSymbol);
                 }
             } else if (type is GenericNameSyntax) {
                 GenericNameSyntax generic = (GenericNameSyntax)type;
@@ -356,7 +385,7 @@ namespace cs2.core {
                     return nullableBaseType;
                 }
 
-                VariableType baseType = new VariableType(GetVarDataType(identifierName), identifierName);
+                VariableType baseType = CreateVariableType(GetVarDataType(identifierName), identifierName, resolvedTypeSymbol);
 
                 foreach (var genType in generic.TypeArgumentList.Arguments) {
                     baseType.GenericArgs.Add(GetVarType(genType, semantic));
@@ -419,7 +448,7 @@ namespace cs2.core {
                         break;
                     case "object":
                         dataType = VariableDataType.Object;
-                        return new VariableType(dataType, predefinedName);
+                        return CreateVariableType(dataType, predefinedName, resolvedTypeSymbol);
                     default:
                         throw new ArgumentException();
                 }
@@ -429,7 +458,7 @@ namespace cs2.core {
                     predefinedName = clrTypeName;
                 }
 
-                return new VariableType(dataType, predefinedName);
+                return CreateVariableType(dataType, predefinedName, resolvedTypeSymbol);
             } else if (type is ArrayTypeSyntax array) {
                 // Handle array types, including jagged and multidimensional arrays
                 VariableType arrType = HandleArrayType(semantic, array);
@@ -444,7 +473,7 @@ namespace cs2.core {
                 return HandleTupleType(semantic, tuple);
             } else if (type is QualifiedNameSyntax qualifiedName) {
                 // Handle qualified name types
-                return HandleQualifiedName(qualifiedName);
+                return HandleQualifiedName(qualifiedName, resolvedTypeSymbol);
             } else {
                 Debugger.Break();
             }
@@ -567,7 +596,7 @@ namespace cs2.core {
                     }
                 }
 
-                VariableType baseType = new VariableType(dataType, typeName);
+                VariableType baseType = CreateVariableType(dataType, typeName, namedTypeSymbol);
                 if (namedTypeSymbol.TypeKind == TypeKind.Enum) {
                     baseType.IsEnum = true;
                 }
@@ -581,7 +610,7 @@ namespace cs2.core {
                 return baseType;
             }
 
-            return new VariableType(VariableDataType.Object, typeSymbol.Name);
+            return CreateVariableType(VariableDataType.Object, typeSymbol.Name, typeSymbol);
         }
 
         static string GetClrTypeName(SpecialType specialType) {

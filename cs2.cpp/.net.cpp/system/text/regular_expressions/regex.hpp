@@ -59,6 +59,10 @@ public:
     explicit Group(std::string value)
         : Value(std::move(value)) {
     }
+
+    const std::string& get_Value() const {
+        return Value;
+    }
 };
 
 /// <summary>
@@ -85,6 +89,10 @@ public:
     /// <returns>The resolved backing group.</returns>
     const Group* operator->() const {
         return group;
+    }
+
+    const std::string& get_Value() const {
+        return group != nullptr ? group->get_Value() : Value;
     }
 };
 
@@ -141,6 +149,14 @@ public:
     Match()
         : Groups(), Success(false) {
     }
+
+    const GroupCollection& get_Groups() const {
+        return Groups;
+    }
+
+    bool get_Success() const {
+        return Success;
+    }
 };
 
 /// <summary>
@@ -175,6 +191,10 @@ public:
     /// <returns>The resolved match value.</returns>
     Match operator[](int32_t index) const {
         return matches[static_cast<std::size_t>(index)];
+    }
+
+    int32_t get_Count() const {
+        return Count;
     }
 };
 

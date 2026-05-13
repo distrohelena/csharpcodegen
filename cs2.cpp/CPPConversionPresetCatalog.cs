@@ -128,7 +128,6 @@ namespace cs2.cpp {
         /// <returns>The resolved GameCube core-boot preset.</returns>
         static CPPConversionPreset CreateGameCubeCoreBootPreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
                 .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
@@ -139,7 +138,6 @@ namespace cs2.cpp {
                 BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "gamecube-core-boot",
-                    ForbidShaders = true,
                     ForbidDebugOnlySystems = true
                 }
             };

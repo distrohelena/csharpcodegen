@@ -33,4 +33,8 @@ public:
     Span Slice(size_t offset) const {
         return Span(Data + offset, Length - offset);
     }
+
+    int32_t get_Length() const {
+        return static_cast<int32_t>(Length);
+    }
 };

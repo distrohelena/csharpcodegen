@@ -1073,9 +1073,9 @@ namespace cs2.cpp {
                 sourceType = VariableUtil.GetVarType(objectCreation.Type, semantic);
             } else {
                 if (objectCreationTypeSymbol != null) {
-                    sourceType = VariableUtil.GetVarType(objectCreationTypeSymbol.ToDisplayString());
+                    sourceType = VariableUtil.GetVarType(objectCreationTypeSymbol);
                 } else if (TryGetExpressionTypeSymbol(semantic, objectCreation, out ITypeSymbol createdTypeSymbol)) {
-                    sourceType = VariableUtil.GetVarType(createdTypeSymbol.ToDisplayString());
+                    sourceType = VariableUtil.GetVarType(createdTypeSymbol);
                 }
             }
 
@@ -1086,7 +1086,7 @@ namespace cs2.cpp {
             }
 
             bool emitHeapAllocation = !hasConvertedType
-                ? !IsValueRuntimeTypeName(objectCreation.Type.ToString())
+                ? !(IsValueRuntimeTypeName(objectCreation.Type.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
                 : cppTypeData.IsPointer;
             IMethodSymbol constructorSymbol = ResolveObjectCreationConstructorSymbol(semantic, objectCreation);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
@@ -1502,11 +1502,19 @@ namespace cs2.cpp {
                      UsesDirectMemberAccess(semantic, elementAccessExpression.Expression)) ||
                     UsesDirectMemberAccess(memberSymbol);
 
-                if (memberSymbol is IPropertySymbol propertySymbol &&
-                    TryBuildPropertyGetterCall(memberAccess, propertySymbol, out string propertyGetterCallName)) {
+                IPropertySymbol resolvedPropertySymbol = memberSymbol as IPropertySymbol;
+                if (resolvedPropertySymbol == null &&
+                    memberAccess.Name is IdentifierNameSyntax propertyIdentifier &&
+                    TryResolveReceiverPropertySymbol(semantic, memberAccess.Expression, propertyIdentifier.Identifier.Text, out IPropertySymbol fallbackPropertySymbol)) {
+                    resolvedPropertySymbol = fallbackPropertySymbol;
+                    memberSymbol = fallbackPropertySymbol;
+                }
+
+                if (resolvedPropertySymbol != null &&
+                    TryBuildPropertyGetterCall(memberAccess, resolvedPropertySymbol, out string propertyGetterCallName)) {
                     AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
                     lines.Add(propertyGetterCallName);
-                    VariableType propertyType = VariableUtil.GetVarType(propertySymbol.Type);
+                    VariableType propertyType = VariableUtil.GetVarType(resolvedPropertySymbol.Type);
                     VariablePath propertyPath = ResolveMemberAccessResultPath(useStaticAccess, result.VarPath, memberSymbol);
                     return new ExpressionResult(true, propertyPath, propertyType);
                 }
@@ -6092,6 +6100,12 @@ namespace cs2.cpp {
                             codeConverter?.RegisterRuntimeRequirement("NativeEquatable");
                         }
 
+                        if (parsedType.IsEnum || parsedType.IsValueType) {
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType);
+                        }
+
                         if (IsNativeExceptionTypeName(parsedType.TypeName)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeExceptions");
                         }
@@ -6100,7 +6114,9 @@ namespace cs2.cpp {
                         if (generatedClass?.TypeSymbol?.IsValueType == true) {
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
-                            return new VariableType(parsedType.Type, generatedClass.GetEmittedTypeName(), parsedType.Args.ToList(), parsedType.GenericArgs.ToList());
+                            VariableType generatedValueType = new VariableType(parsedType);
+                            generatedValueType.TypeName = generatedClass.GetEmittedTypeName();
+                            return generatedValueType;
                         }
 
                         if (generatedClass != null) {
@@ -8498,7 +8514,7 @@ namespace cs2.cpp {
             return inferredOutTypeSymbol;
         }
 
-        static bool TryBuildPropertyGetterCall(
+        bool TryBuildPropertyGetterCall(
             SyntaxNode accessNode,
             IPropertySymbol propertySymbol,
             out string getterCallName) {
@@ -8508,7 +8524,7 @@ namespace cs2.cpp {
                 propertySymbol == null ||
                 propertySymbol.IsIndexer ||
                 propertySymbol.GetMethod == null ||
-                !RequiresPropertyAccessorLowering(propertySymbol) ||
+                !ShouldLowerPropertyGetter(propertySymbol) ||
                 IsPropertyWriteContext(accessNode)) {
                 return false;
             }
@@ -8543,7 +8559,89 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (!IsGeneratedContainingType(propertySymbol.ContainingType)) {
+                getterCallName = $"get_{propertySymbol.Name}()";
+                return true;
+            }
+
+            if (propertySymbol.DeclaringSyntaxReferences.Length == 0) {
+                getterCallName = $"get_{propertySymbol.Name}()";
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Determines whether one property read must lower through the generated getter instead of direct member access.
+        /// </summary>
+        /// <param name="propertySymbol">Property symbol being lowered.</param>
+        /// <returns><c>true</c> when native output must call the getter; otherwise <c>false</c>.</returns>
+        bool ShouldLowerPropertyGetter(IPropertySymbol propertySymbol) {
+            if (propertySymbol == null ||
+                propertySymbol.IsIndexer ||
+                propertySymbol.GetMethod == null) {
+                return false;
+            }
+
+            if (propertySymbol.ContainingType?.TypeKind == TypeKind.Interface ||
+                propertySymbol.IsAbstract) {
+                return true;
+            }
+
+            if (!IsGeneratedContainingType(propertySymbol.ContainingType)) {
+                return true;
+            }
+
+            return RequiresPropertyAccessorLowering(propertySymbol);
+        }
+
+        /// <summary>
+        /// Determines whether one Roslyn containing type is emitted as part of the current conversion output.
+        /// </summary>
+        /// <param name="containingTypeSymbol">Containing type symbol to inspect.</param>
+        /// <returns><c>true</c> when the type is generated in the current output; otherwise <c>false</c>.</returns>
+        bool IsGeneratedContainingType(INamedTypeSymbol containingTypeSymbol) {
+            if (containingTypeSymbol == null ||
+                codeConverter?.Program == null) {
+                return false;
+            }
+
+            return codeConverter.Program.FindGeneratedClass(containingTypeSymbol.Name, containingTypeSymbol.TypeArguments.Length) != null;
+        }
+
+        /// <summary>
+        /// Attempts to resolve a property symbol directly from the receiver type when semantic binding returns a weaker symbol shape.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to inspect the receiver expression.</param>
+        /// <param name="receiverExpression">Receiver expression that owns the member access.</param>
+        /// <param name="propertyName">Property name to resolve on the receiver type.</param>
+        /// <param name="propertySymbol">Resolved property symbol when one is found.</param>
+        /// <returns><c>true</c> when the receiver type exposes the requested property; otherwise <c>false</c>.</returns>
+        static bool TryResolveReceiverPropertySymbol(
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            string propertyName,
+            out IPropertySymbol propertySymbol) {
+            propertySymbol = null;
+
+            if (semantic == null ||
+                receiverExpression == null ||
+                string.IsNullOrWhiteSpace(propertyName)) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverExpression).ConvertedType ?? semantic.GetTypeInfo(receiverExpression).Type;
+            if (receiverTypeSymbol == null ||
+                IsWeakRecoveredTypeSymbol(receiverTypeSymbol) &&
+                !TryGetExpressionTypeSymbol(semantic, receiverExpression, out receiverTypeSymbol)) {
+                return false;
+            }
+
+            propertySymbol = receiverTypeSymbol.GetMembers(propertyName)
+                .OfType<IPropertySymbol>()
+                .FirstOrDefault();
+            return propertySymbol != null;
         }
 
         bool TryResolveGeneratedPropertyGetter(

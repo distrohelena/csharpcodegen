@@ -118,8 +118,13 @@ namespace cs2.core.Pipeline {
     }
 
     public sealed class DocumentPreprocessingStage : IConversionStage {
+        /// <summary>
+        /// Preprocesses each document in the active project and its project-reference closure.
+        /// </summary>
+        /// <param name="session">The active conversion session.</param>
         public void Execute(ConversionSession session) {
-            foreach (Document document in session.Project.Documents) {
+            foreach (Project project in EnumerateProjects(session.Project)) {
+                foreach (Document document in project.Documents) {
                 Console.WriteLine($"-- Processing: {document.Name}");
 
                 SyntaxTree? syntaxTree = AsyncUtil.RunSync(() => document.GetSyntaxTreeAsync());
@@ -140,6 +145,47 @@ namespace cs2.core.Pipeline {
                 foreach (MemberDeclarationSyntax member in root.Members) {
                     session.Converter.RunPreProcess(semanticModel, member, session.Context);
                 }
+            }
+            }
+        }
+
+        /// <summary>
+        /// Enumerates the active project followed by each transitive project reference once.
+        /// </summary>
+        /// <param name="project">The root project supplied to the conversion session.</param>
+        /// <returns>The ordered project sequence used for document preprocessing.</returns>
+        static IEnumerable<Project> EnumerateProjects(Project project) {
+            if (project == null) {
+                throw new ArgumentNullException(nameof(project));
+            }
+
+            List<Project> orderedProjects = new List<Project>();
+            HashSet<ProjectId> visitedProjectIds = new HashSet<ProjectId>();
+
+            AddProject(project, orderedProjects, visitedProjectIds);
+            return orderedProjects;
+        }
+
+        /// <summary>
+        /// Adds one project and each transitive project reference to the preprocessing sequence.
+        /// </summary>
+        /// <param name="project">The project to append.</param>
+        /// <param name="orderedProjects">The ordered sequence that receives discovered projects.</param>
+        /// <param name="visitedProjectIds">The set of project identifiers already visited.</param>
+        static void AddProject(Project project, List<Project> orderedProjects, HashSet<ProjectId> visitedProjectIds) {
+            if (!visitedProjectIds.Add(project.Id)) {
+                return;
+            }
+
+            orderedProjects.Add(project);
+
+            foreach (ProjectReference projectReference in project.ProjectReferences) {
+                Project referencedProject = project.Solution.GetProject(projectReference.ProjectId);
+                if (referencedProject == null) {
+                    continue;
+                }
+
+                AddProject(referencedProject, orderedProjects, visitedProjectIds);
             }
         }
     }

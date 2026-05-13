@@ -70,6 +70,52 @@ public class CPPClassEmitterTests {
     }
 
     /// <summary>
+    /// Ensures value-type auto-properties emit direct-value storage and accessor signatures instead of pointer forms.
+    /// </summary>
+    [Fact]
+    public void EmitAutoProperty_WithValueType_UsesDirectValueStorageAndAccessors() {
+        CPPClassEmitter emitter = CreateEmitter();
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "AxisRotationComponent",
+            DeclarationType = MemberDeclarationType.Class
+        };
+
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "Axis",
+            AccessType = MemberAccessType.Public,
+            IsGet = true,
+            IsSet = true,
+            VarType = new VariableType(typeName: "float3")
+        });
+
+        (string header, string source) = Emit(emitter, conversionClass);
+
+        Assert.Contains("float3 Axis;", header);
+        Assert.Contains("float3 get_Axis();", header);
+        Assert.Contains("void set_Axis(float3 value);", header);
+        Assert.DoesNotContain("float3* Axis;", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("set_Axis(float3* value)", header, StringComparison.Ordinal);
+        Assert.Contains("float3 AxisRotationComponent::get_Axis()", source);
+        Assert.Contains("void AxisRotationComponent::set_Axis(float3 value)", source);
+    }
+
+    /// <summary>
+    /// Ensures externally supplied value-type metadata keeps direct-value semantics even when no generated class definition exists in the current conversion program.
+    /// </summary>
+    [Fact]
+    public void ConvertToCPPType_WithExternalValueTypeMetadata_UsesDirectValueShape() {
+        CPPConversiorProcessor processor = CppProcessorTestHarness.CreateProcessor();
+        VariableType sourceType = new VariableType(VariableDataType.Object, "float3") {
+            IsValueType = true
+        };
+
+        VariableType convertedType = processor.ConvertToCPPType(sourceType, out CPPTypeData typeData);
+
+        Assert.False(typeData.IsPointer);
+        Assert.Equal("float3", convertedType.TypeName);
+    }
+
+    /// <summary>
     /// Ensures a property with explicit accessor bodies lowers to getter and setter methods instead of a field.
     /// </summary>
     [Fact]

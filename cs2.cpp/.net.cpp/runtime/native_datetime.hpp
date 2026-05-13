@@ -17,6 +17,10 @@ public:
     explicit TimeSpan(double totalMilliseconds)
         : TotalMilliseconds(totalMilliseconds) {
     }
+
+    double get_TotalMilliseconds() const {
+        return TotalMilliseconds;
+    }
 };
 
 /// <summary>

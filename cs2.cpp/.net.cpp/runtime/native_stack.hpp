@@ -24,6 +24,10 @@ public:
         return items.back();
     }
 
+    int32_t get_Count() const {
+        return Count;
+    }
+
 private:
     std::vector<T> items;
 };

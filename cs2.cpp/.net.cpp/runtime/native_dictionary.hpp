@@ -51,4 +51,8 @@ public:
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
     }
+
+    int32_t get_Count() const {
+        return Count();
+    }
 };

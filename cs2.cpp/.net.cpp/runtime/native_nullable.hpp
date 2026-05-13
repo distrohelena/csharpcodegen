@@ -55,6 +55,19 @@ public:
         return *this;
     }
 
+    bool get_HasValue() const {
+        return HasValue;
+    }
+
+    const T& get_Value() const {
+        return Value;
+    }
+
+    void set_Value(const T& value) {
+        HasValue = true;
+        Value = value;
+    }
+
     /// <summary>
     /// Gets whether the wrapper currently contains a value.
     /// </summary>

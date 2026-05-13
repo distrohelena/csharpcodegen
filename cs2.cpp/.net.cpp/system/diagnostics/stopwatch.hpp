@@ -10,11 +10,49 @@ namespace Diagnostics {
 /// </summary>
 class Stopwatch {
 public:
+    class LiveMilliseconds {
+    public:
+        LiveMilliseconds()
+            : Owner(nullptr) {
+        }
+
+        explicit LiveMilliseconds(const Stopwatch* owner)
+            : Owner(owner) {
+        }
+
+        operator double() const {
+            return Owner != nullptr ? Owner->ComputeElapsedMilliseconds() : 0.0;
+        }
+
+    private:
+        const Stopwatch* Owner;
+    };
+
+    class LiveTimeSpan {
+    public:
+        LiveTimeSpan()
+            : TotalMilliseconds(), Owner(nullptr) {
+        }
+
+        explicit LiveTimeSpan(const Stopwatch* owner)
+            : TotalMilliseconds(owner), Owner(owner) {
+        }
+
+        operator TimeSpan() const {
+            return Owner != nullptr ? Owner->ComputeElapsed() : TimeSpan();
+        }
+
+        LiveMilliseconds TotalMilliseconds;
+
+    private:
+        const Stopwatch* Owner;
+    };
+
     /// <summary>
     /// Initializes a new stopwatch in the stopped state.
     /// </summary>
     Stopwatch()
-        : Elapsed(), IsRunningValue(false), StartTime(), TotalElapsedMilliseconds(0.0) {
+        : Elapsed(this), IsRunningValue(false), StartTime(), TotalElapsedMilliseconds(0.0) {
     }
 
     /// <summary>
@@ -52,7 +90,6 @@ public:
         TotalElapsedMilliseconds = 0.0;
         StartTime = DateTime::Now();
         IsRunningValue = true;
-        Elapsed = TimeSpan(0.0);
     }
 
     /// <summary>
@@ -61,7 +98,6 @@ public:
     void Stop() {
         if (IsRunningValue) {
             TotalElapsedMilliseconds += (DateTime::Now() - StartTime).TotalMilliseconds;
-            Elapsed = TimeSpan(TotalElapsedMilliseconds);
             IsRunningValue = false;
         }
     }
@@ -71,17 +107,13 @@ public:
     /// </summary>
     /// <returns>Elapsed time as a managed-style duration value.</returns>
     TimeSpan get_Elapsed() {
-        if (IsRunningValue) {
-            return TimeSpan(TotalElapsedMilliseconds + (DateTime::Now() - StartTime).TotalMilliseconds);
-        }
-
-        return Elapsed;
+        return ComputeElapsed();
     }
 
     /// <summary>
     /// Gets the accumulated elapsed time in a field shape that matches the generated C++ property lowering.
     /// </summary>
-    TimeSpan Elapsed;
+    LiveTimeSpan Elapsed;
 
 private:
     /// <summary>
@@ -98,6 +130,18 @@ private:
     /// Accumulates elapsed time across stopped and running intervals.
     /// </summary>
     double TotalElapsedMilliseconds;
+
+    double ComputeElapsedMilliseconds() const {
+        if (IsRunningValue) {
+            return TotalElapsedMilliseconds + (DateTime::Now() - StartTime).TotalMilliseconds;
+        }
+
+        return TotalElapsedMilliseconds;
+    }
+
+    TimeSpan ComputeElapsed() const {
+        return TimeSpan(ComputeElapsedMilliseconds());
+    }
 };
 
 }

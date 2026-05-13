@@ -466,6 +466,7 @@ namespace cs2.cpp {
                 if (processor != null) {
                     CPPTypeData runtimeTypeData;
                     processor.ConvertToCPPType(VariableUtil.GetVarType(normalizedReferencedClass), out runtimeTypeData);
+                    processor.RegisterRuntimeRequirement("NativeType");
                 }
 
                 return "runtime/native_type";

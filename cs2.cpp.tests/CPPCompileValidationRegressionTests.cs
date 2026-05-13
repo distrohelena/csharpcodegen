@@ -680,6 +680,176 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures inherited value-type property bridges preserve direct-value setter signatures.
+        /// </summary>
+        [Fact]
+        public void EmitInheritedPropertyBridge_WithValueType_UsesDirectValueSetterSignature() {
+            ConversionOutput output = RunConversion("""
+                public struct float3 {
+                    public float X;
+                }
+
+                public class EntityBase {
+                    float3 orientation;
+
+                    public float3 LocalOrientation {
+                        get {
+                            return orientation;
+                        }
+                        set {
+                            orientation = value;
+                        }
+                    }
+                }
+
+                public class Entity : EntityBase {
+                }
+                """);
+
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Entity.hpp"));
+
+            Assert.Contains("::float3 get_LocalOrientation();", headerOutput);
+            Assert.Contains("void set_LocalOrientation(::float3 value);", headerOutput);
+            Assert.DoesNotContain("set_LocalOrientation(::float3* value)", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures value-type properties, static value members, and mixed receiver shapes emit the correct native access operators.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypePropertyAndStaticAccessChain_UsesConsistentNativeShapes() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+
+                    public bool Equals(float3 other) {
+                        return true;
+                    }
+
+                    public static float3 Zero {
+                        get {
+                            return new float3();
+                        }
+                    }
+
+                    public static float3 Normalize(float3 value) {
+                        return value;
+                    }
+                }
+
+                public struct float4 {
+                    public static float4 CreateFromAxisAngle(float3 axis, float angle) {
+                        return new float4();
+                    }
+                }
+
+                public class Core {
+                    static Core instance;
+
+                    public static Core Instance {
+                        get {
+                            return instance;
+                        }
+                    }
+
+                    public float DeltaTime {
+                        get {
+                            return 1.0f;
+                        }
+                    }
+                }
+
+                public class Entity {
+                    float4 localOrientation;
+
+                    public float4 LocalOrientation {
+                        get {
+                            return localOrientation;
+                        }
+                        set {
+                            localOrientation = value;
+                        }
+                    }
+                }
+
+                public class AxisRotationComponent {
+                    public float3 Axis { get; set; }
+                    public Entity Parent { get; set; }
+                    public float AngularSpeedRadiansPerSecond { get; set; }
+
+                    public void Update() {
+                        if (Axis.Equals(float3.Zero)) {
+                            return;
+                        }
+
+                        float3 normalizedAxis = float3.Normalize(Axis);
+                        float deltaAngleRadians = AngularSpeedRadiansPerSecond * Core.Instance.DeltaTime;
+                        float4 deltaRotation = float4.CreateFromAxisAngle(normalizedAxis, deltaAngleRadians);
+                        Parent.LocalOrientation = deltaRotation;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AxisRotationComponent.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AxisRotationComponent.cpp"));
+
+            Assert.Contains("::float3 Axis;", headerOutput);
+            Assert.Contains("void set_Axis(::float3 value);", headerOutput);
+            Assert.Contains("if (this->Axis.Equals(float3::get_Zero()))", sourceOutput);
+            Assert.Contains("::float3 normalizedAxis = float3::Normalize(this->Axis);", sourceOutput);
+            Assert.Contains("const float deltaAngleRadians = this->AngularSpeedRadiansPerSecond * Core::get_Instance()->get_DeltaTime();", sourceOutput);
+            Assert.Contains("::float4 deltaRotation = float4::CreateFromAxisAngle(normalizedAxis, deltaAngleRadians);", sourceOutput);
+            Assert.Contains("this->Parent->set_LocalOrientation(deltaRotation);", sourceOutput);
+            Assert.DoesNotContain("::float3->", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Core->Instance", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Parent->LocalOrientation", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures value-type constructor temporaries lower as direct values instead of heap allocations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeConstructorTemporary_UsesDirectValueConstruction() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+
+                    public float3(float x, float y, float z) {
+                        X = x;
+                        Y = y;
+                        Z = z;
+                    }
+
+                    public static float3 Normalize(float3 value) {
+                        return value;
+                    }
+                }
+
+                public class AxisTestCameraForwardSpinComponent {
+                    public float CameraForwardAxisX { get; set; }
+                    public float CameraForwardAxisY { get; set; }
+                    public float CameraForwardAxisZ { get; set; }
+
+                    public void Update() {
+                        float3 axis = float3.Normalize(new float3(CameraForwardAxisX, CameraForwardAxisY, CameraForwardAxisZ));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AxisTestCameraForwardSpinComponent.cpp"));
+
+            Assert.Contains("::float3 axis = float3::Normalize(float3(this->CameraForwardAxisX, this->CameraForwardAxisY, this->CameraForwardAxisZ));", sourceOutput);
+            Assert.DoesNotContain("Normalize(new float3(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Normalize(::float3* ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures managed event null-guards and invocations lower through the native event placeholder instead of pointer-style calls.
         /// </summary>
         [Fact]

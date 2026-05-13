@@ -42,6 +42,10 @@ public:
         }
     }
 
+    int32_t get_Length() const {
+        return Length;
+    }
+
     T& operator[](int32_t index) {
         return Data[index];
     }

@@ -7,6 +7,14 @@ class StringComparer {
 public:
     static const StringComparer Ordinal;
     static const StringComparer OrdinalIgnoreCase;
+
+    static const StringComparer& get_Ordinal() {
+        return Ordinal;
+    }
+
+    static const StringComparer& get_OrdinalIgnoreCase() {
+        return OrdinalIgnoreCase;
+    }
 };
 
 inline const StringComparer StringComparer::Ordinal = StringComparer();
