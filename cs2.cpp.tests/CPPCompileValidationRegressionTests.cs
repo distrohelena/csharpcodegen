@@ -2659,6 +2659,82 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures dictionary TryGetValue out-variable declarations stay in the surrounding statement scope instead of being trapped inside an invocation lambda.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDictionaryTryGetValueOutVarCondition_HoistsDeclarationOutsideConditionLambda() {
+            string source = """
+                using System.Collections.Generic;
+
+                public struct Glyph {
+                    public float AdvanceWidth;
+                }
+
+                public class FontAsset {
+                    public Dictionary<char, Glyph> Characters;
+
+                    public float Measure(string text) {
+                        float width = 0f;
+                        for (int i = 0; i < text.Length; i++) {
+                            char c = text[i];
+                            if (Characters.TryGetValue(c, out var ch)) {
+                                width += ch.AdvanceWidth;
+                            }
+                        }
+
+                        return width;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
+
+            Assert.Contains("::Glyph ch;", sourceOutput);
+            Assert.Contains("if (this->Characters->TryGetValue(c, ch))", sourceOutput);
+            Assert.Contains("width += ch.AdvanceWidth;", sourceOutput);
+            Assert.DoesNotContain("([&]() {\n::Glyph ch;\nreturn this->Characters->TryGetValue(c, ch);\n})()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures out-variable declarations from invocation statements remain available to subsequent statements in the same scope.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInvocationStatementOutVars_HoistsDeclarationsOutsideStatement() {
+            string source = """
+                public interface ICamera {
+                }
+
+                public interface IHit {
+                }
+
+                public class PointerInteractionSystem {
+                    IHit Hovering;
+
+                    void ResolveTop(out IHit hit, out ICamera hitCamera) {
+                        hit = null;
+                        hitCamera = null;
+                    }
+
+                    public bool Update() {
+                        ResolveTop(out var hit, out var hitCamera);
+                        bool hoveringChanged = hit != Hovering;
+                        return hoveringChanged && hitCamera != null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PointerInteractionSystem.cpp"));
+
+            Assert.Contains("::IHit* hit;", sourceOutput);
+            Assert.Contains("::ICamera* hitCamera;", sourceOutput);
+            Assert.Contains("this->ResolveTop(hit, hitCamera);", sourceOutput);
+            Assert.Contains("const bool hoveringChanged = hit != this->Hovering;", sourceOutput);
+            Assert.DoesNotContain("([&]() {\n::IHit* hit;\n::ICamera* hitCamera;\nthis->ResolveTop(hit, hitCamera);\n})();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures HLSL parser helper patterns lower through native list adapters, runtime string helpers, numeric helpers, and string-switch if-chains.
         /// </summary>
         [Fact]
@@ -3100,6 +3176,373 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("items->Clear()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures non-escaping managed local allocations emit a scope-exit delete guard in generated C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNonEscapingManagedLocalAllocation_EmitsScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    public int Count() {
+                        List<int> values = new List<int>();
+                        values.Add(1);
+                        values.Add(2);
+                        return values.Count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.Contains("delete values;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures managed locals that escape through a return value do not emit a scope-exit delete guard.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEscapingManagedLocalAllocation_DoesNotEmitScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    public List<int> Build() {
+                        List<int> values = new List<int>();
+                        return values;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures method-group delegates passed to EngineBinaryReader.ReadArray lower through a scoped temporary that is deleted after the call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadArrayMethodGroupArgument_EmitsScopedDelegateTemporary() {
+            string source = """
+                public class EngineBinaryReader {
+                    public T[] ReadArray<T>(System.Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class Widget {
+                    public int[] Read(EngineBinaryReader reader) {
+                        return reader.ReadArray(ReadValue);
+                    }
+
+                    static int ReadValue(EngineBinaryReader reader) {
+                        return 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("= new Func<EngineBinaryReader*, int32_t>(&Widget::ReadValue);", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.Contains("delete __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReadArray(new Func<EngineBinaryReader*, int32_t>(&Widget::ReadValue))", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures method-group delegates passed to EngineBinaryWriter.WriteArray lower through a scoped temporary that is deleted after the call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithWriteArrayMethodGroupArgument_EmitsScopedDelegateTemporary() {
+            string source = """
+                public class EngineBinaryWriter {
+                    public void WriteArray<T>(T[] values, System.Action<EngineBinaryWriter, T> writeElement) {
+                    }
+                }
+
+                public class Widget {
+                    public void Write(EngineBinaryWriter writer, int[] values) {
+                        writer.WriteArray(values, WriteValue);
+                    }
+
+                    static void WriteValue(EngineBinaryWriter writer, int value) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("= new Action<EngineBinaryWriter*, int32_t>(&Widget::WriteValue);", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.Contains("delete __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("WriteArray(values, new Action<EngineBinaryWriter*, int32_t>(&Widget::WriteValue))", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures scoped delegate temporaries used by ReadArray survive member-assignment lowering and are declared before the generated assignment statement.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadArrayAssignment_EmitsDelegateTemporaryBeforeAssignment() {
+            string source = """
+                public class EngineBinaryReader {
+                    public T[] ReadArray<T>(System.Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class Asset {
+                    public int[] Values;
+                }
+
+                public class Widget {
+                    public Asset Read(EngineBinaryReader reader) {
+                        Asset asset = new Asset();
+                        asset.Values = reader.ReadArray(ReadValue);
+                        return asset;
+                    }
+
+                    static int ReadValue(EngineBinaryReader reader) {
+                        return 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("auto __delegateArg", sourceOutput);
+            Assert.Contains("delete __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("ReadArray<int32_t>(__delegateArg", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures scoped delegate temporaries used by ReadArray survive object-initializer member assignments.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadArrayObjectInitializer_EmitsDelegateTemporaryBeforeInitializerAssignment() {
+            string source = """
+                public class EngineBinaryReader {
+                    public T[] ReadArray<T>(System.Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public class Asset {
+                    public int[] Values;
+                }
+
+                public class Widget {
+                    public Asset Read(EngineBinaryReader reader) {
+                        return new Asset {
+                            Values = reader.ReadArray(ReadValue)
+                        };
+                    }
+
+                    static int ReadValue(EngineBinaryReader reader) {
+                        return 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("auto __delegateArg", sourceOutput);
+            Assert.Contains("delete __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("ReadArray<int32_t>(__delegateArg", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer-backed using declarations dispose and delete the generated resource on scope exit.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerUsingDeclaration_EmitsDisposeAndDeleteCleanup() {
+            string source = """
+                using System;
+
+                public class Reader : IDisposable {
+                    public void Dispose() {
+                    }
+
+                    public int Read() {
+                        return 1;
+                    }
+                }
+
+                public class Widget {
+                    public int Load() {
+                        using Reader reader = new Reader();
+                        return reader.Read();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("reader->Dispose();", sourceOutput);
+            Assert.Contains("delete reader;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures pointer-backed using statements dispose and delete the generated resource at the end of the using block.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerUsingStatement_EmitsDisposeAndDeleteCleanup() {
+            string source = """
+                using System;
+
+                public class Reader : IDisposable {
+                    public void Dispose() {
+                    }
+
+                    public int Read() {
+                        return 1;
+                    }
+                }
+
+                public class Widget {
+                    public int Load() {
+                        using (Reader reader = new Reader()) {
+                            return reader.Read();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("reader->Dispose();", sourceOutput);
+            Assert.Contains("delete reader;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures inline list temporaries passed to HlslShaderBindingParser.ParseBindings lower through a scoped temporary that is deleted after the call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithParseBindingsInlineListArgument_EmitsScopedTemporary() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ShaderDefine {
+                }
+
+                public class ShaderBinding {
+                }
+
+                public class ShaderBindingPolicy {
+                }
+
+                public class HlslShaderBindingParser {
+                    public static ShaderBinding[] ParseBindings(string source, ShaderBindingPolicy bindingPolicy) {
+                        return ParseBindings(source, bindingPolicy, new List<ShaderDefine>());
+                    }
+
+                    public static ShaderBinding[] ParseBindings(string source, ShaderBindingPolicy bindingPolicy, List<ShaderDefine> defines) {
+                        return null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "HlslShaderBindingParser.cpp"));
+
+            Assert.Contains("__scopedArg", sourceOutput);
+            Assert.Contains("delete __scopedArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ParseBindings(source, bindingPolicy, new List<ShaderDefine*>())", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inline list temporaries passed to HlslShaderBindingParser.ComputeConstantBufferSize lower through a scoped temporary that is deleted after the call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithComputeConstantBufferSizeInlineListArgument_EmitsScopedTemporary() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ShaderConstantMember {
+                }
+
+                public class HlslShaderBindingParser {
+                    static int ComputeConstantBufferSize(List<ShaderConstantMember> members) {
+                        return members.Count;
+                    }
+
+                    static int Measure(ShaderConstantMember[] members) {
+                        return ComputeConstantBufferSize(new List<ShaderConstantMember>(members));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "HlslShaderBindingParser.cpp"));
+
+            Assert.Contains("__scopedArg", sourceOutput);
+            Assert.Contains("delete __scopedArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ComputeConstantBufferSize(new List<ShaderConstantMember*>", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inline separator arrays passed to string.Split lower through a scoped temporary that is deleted after the call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringSplitInlineSeparatorArray_EmitsScopedTemporary() {
+            string source = """
+                public class Widget {
+                    public string[] Split(string value) {
+                        return value.Split(new[] { ' ', '\t' }, 2, System.StringSplitOptions.RemoveEmptyEntries);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("__scopedArg", sourceOutput);
+            Assert.Contains("delete __scopedArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("String::Split(value, new Array<char>({ ' ', '\\t' })", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures scope-deleted managed locals that are reassigned to a fresh heap allocation delete the previous value before overwriting the pointer.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithScopeDeletedManagedLocalReassignment_DeletesPreviousValueBeforeOverwrite() {
+            string source = """
+                public class StringBuilder {
+                    public StringBuilder() {
+                    }
+
+                    public StringBuilder(string value) {
+                    }
+                }
+
+                public class Widget {
+                    public void Replace() {
+                        StringBuilder wrappedText = new StringBuilder();
+                        wrappedText = new StringBuilder("next");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("auto __reassignValue", sourceOutput);
+            Assert.Contains("delete wrappedText;", sourceOutput);
+            Assert.Contains("wrappedText = __reassignValue", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

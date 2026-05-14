@@ -252,6 +252,10 @@ namespace cs2.cpp {
             context.PopClass(start);
             lines.Add(";\n");
 
+            string disposalTarget = localDeclaration.Declaration.Variables.FirstOrDefault()?.Identifier.Text ?? string.Empty;
+            bool disposalUsesPointerAccess = IsPointerDeclaration(semantic, localDeclaration.Declaration);
+            AppendDisposalGuard(lines, disposalTarget, disposalUsesPointerAccess, "__usingDisposeGuard");
+
             ProcessStatementsInScope(semantic, context, statements, statementIndex + 1, lines, depth);
 
             lines.Add("}\n");
@@ -270,6 +274,11 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
             if (statement is ExpressionStatementSyntax expressionStatement &&
                 TryProcessConditionalDelegateInvocationStatement(semantic, context, expressionStatement.Expression, lines)) {
+                return new ExpressionResult(true);
+            }
+
+            if (statement is LocalDeclarationStatementSyntax localDeclarationStatement &&
+                TryProcessNonEscapingManagedLocalDeclarationStatement(semantic, context, localDeclarationStatement, lines)) {
                 return new ExpressionResult(true);
             }
 
@@ -294,6 +303,36 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        bool TryProcessNonEscapingManagedLocalDeclarationStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            LocalDeclarationStatementSyntax localDeclarationStatement,
+            List<string> lines) {
+            if (localDeclarationStatement == null || localDeclarationStatement.Declaration == null) {
+                return false;
+            }
+
+            if (localDeclarationStatement.Declaration.Variables.Count != 1) {
+                return false;
+            }
+
+            VariableDeclaratorSyntax variable = localDeclarationStatement.Declaration.Variables[0];
+            if (!ShouldDeleteManagedLocalAtScopeExit(semantic, context, variable, localDeclarationStatement.Declaration)) {
+                return false;
+            }
+
+            ProcessDeclaration(semantic, context, localDeclarationStatement.Declaration, lines);
+            lines.Add(";\n");
+
+            string guardName = CreateTemporaryName("__localDeleteGuard");
+            lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
+            lines.Add("delete ");
+            lines.Add(variable.Identifier.Text);
+            lines.Add(";\n");
+            lines.Add("});\n");
+            return true;
         }
 
         bool TryProcessConditionalDelegateInvocationStatement(
@@ -564,20 +603,82 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryProcessScopeDeletedManagedLocalReassignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             int startDepth = context.Class.Count;
-            ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
+            List<string> leftLines = new List<string>();
+            ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, leftLines);
             context.PopClass(startDepth);
+
+            startDepth = context.Class.Count;
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+            context.PopClass(startDepth);
+            if (assignResult.BeforeLines != null && assignResult.BeforeLines.Count > 0) {
+                lines.AddRange(assignResult.BeforeLines);
+            }
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+            lines.AddRange(leftLines);
 
             string operatorVal = assignment.OperatorToken.ToString();
             if (assignResult.Type?.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
-                lines.Add($" = ");
+                lines.Add(" = ");
             } else {
                 lines.Add($" {operatorVal} ");
             }
+            lines.AddRange(rightLines);
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                lines.Add(";\n");
+                lines.AddRange(rightResult.AfterLines);
+            }
+        }
 
-            startDepth = context.Class.Count;
+        bool TryProcessScopeDeletedManagedLocalReassignment(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (semantic == null || context == null || assignment == null || lines == null) {
+                return false;
+            }
+
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                assignment.Left is not IdentifierNameSyntax identifierName ||
+                !ShouldDeleteManagedLocalAtScopeExit(semantic, context, identifierName) ||
+                !IsManagedHeapAllocationExpression(assignment.Right) ||
+                DoesExpressionReferenceLocal(semantic, assignment.Right, identifierName)) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, assignment.Right, out ITypeSymbol rightTypeSymbol)) {
+                return false;
+            }
+
+            VariableType rightType = VariableUtil.GetVarType(rightTypeSymbol);
+            VariableType cppRightType = ConvertToCPPType(rightType, out CPPTypeData rightTypeData);
+            if (cppRightType == null || !rightTypeData.IsPointer) {
+                return false;
+            }
+
+            string valueName = CreateTemporaryName("__reassignValue");
+            lines.Add("auto ");
+            lines.Add(valueName);
+            lines.Add(" = ");
+            int rightStartDepth = context.Class.Count;
             ProcessExpression(semantic, context, assignment.Right, lines);
-            context.PopClass(startDepth);
+            context.PopClass(rightStartDepth);
+            lines.Add(";\n");
+            lines.Add("delete ");
+            lines.Add(identifierName.Identifier.Text);
+            lines.Add(";\n");
+            lines.Add(identifierName.Identifier.Text);
+            lines.Add(" = ");
+            lines.Add(valueName);
+            return true;
         }
 
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
@@ -971,15 +1072,19 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                int startRight = context.DepthClass;
+                List<string> rightLines = new List<string>();
+                ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+                context.PopClass(startRight);
+                if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                    lines.AddRange(rightResult.BeforeLines);
+                }
+
                 lines.Add(objectName);
                 lines.Add(memberAccessOperator);
                 AppendObjectInitializerTarget(semantic, context, assignment.Left, lines);
-
                 lines.Add(" = ");
-
-                int startRight = context.DepthClass;
-                ProcessExpression(semantic, context, assignment.Right, lines);
-                context.PopClass(startRight);
+                lines.AddRange(rightLines);
 
                 lines.Add(";\n");
             }
@@ -1102,6 +1207,7 @@ namespace cs2.cpp {
                 lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
 
                 List<string> temporaryArgumentNames = new List<string>();
+                List<string> constructorBeforeLines = new List<string>();
                 for (int i = 0; i < explicitArgumentCount; i++) {
                     ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
                     string temporaryName = CreateTemporaryName("__ctor_arg");
@@ -1125,7 +1231,14 @@ namespace cs2.cpp {
                         arg.Expression,
                         argumentExpressionLines,
                         parameterSymbol,
+                        constructorSymbol,
+                        constructorBeforeLines,
                         loweredArgumentLines);
+
+                    if (constructorBeforeLines.Count > 0) {
+                        lines.AddRange(constructorBeforeLines);
+                        constructorBeforeLines.Clear();
+                    }
 
                     lines.Add("auto ");
                     lines.Add(temporaryName);
@@ -1181,19 +1294,28 @@ namespace cs2.cpp {
                     List<string> argumentExpressionLines = new List<string>();
 
                     int startArg = context.DepthClass;
-                    ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
                     context.PopClass(startArg);
 
                     IParameterSymbol parameterSymbol = i < constructorParameterSymbols.Length
                         ? constructorParameterSymbols[i]
                         : null;
+                    List<string> beforeLines = argumentResult.BeforeLines != null
+                        ? new List<string>(argumentResult.BeforeLines)
+                        : new List<string>();
                     AppendInvocationArgument(
                         semantic,
                         context,
                         arg.Expression,
                         argumentExpressionLines,
                         parameterSymbol,
+                        constructorSymbol,
+                        beforeLines,
                         argumentLines);
+
+                    if (beforeLines.Count > 0) {
+                        lines.AddRange(beforeLines);
+                    }
 
                     if (i != objectCreation.ArgumentList.Arguments.Count - 1 ||
                         (i == objectCreation.ArgumentList.Arguments.Count - 1 && hasOptionalConstructorArguments)) {
@@ -2357,6 +2479,9 @@ namespace cs2.cpp {
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
                 context.PopClass(startArg);
                 types.Add(argumentResult);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
 
                 IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
                 AppendInvocationArgument(
@@ -2365,6 +2490,8 @@ namespace cs2.cpp {
                     arg.Expression,
                     argumentExpressionLines,
                     parameterSymbol,
+                    invokedMethodSymbol,
+                    beforeLines,
                     argLines);
 
                 if (isRef) {
@@ -2382,17 +2509,27 @@ namespace cs2.cpp {
             AppendOptionalInvocationArguments(parameterSymbols, invocationExpression.ArgumentList.Arguments.Count, argLines);
             argLines.Add(")");
 
+            List<string> invocationTargetLines = new List<string>();
             int start = context.DepthClass;
-            ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, lines, types);
+            ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, invocationTargetLines, types);
             context.PopClass(start);
-
-            if (invokedMethodSymbol != null) {
-                AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, lines);
+            if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                beforeLines.AddRange(result.BeforeLines);
             }
 
-            lines.AddRange(argLines);
+            if (invokedMethodSymbol != null) {
+                AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
+            }
 
-            result.BeforeLines = beforeLines;
+            invocationTargetLines.AddRange(argLines);
+
+            if (beforeLines.Count > 0) {
+                result.BeforeLines = beforeLines;
+            } else {
+                result.BeforeLines = null;
+            }
+
+            lines.AddRange(invocationTargetLines);
             return result;
         }
 
@@ -2542,6 +2679,8 @@ namespace cs2.cpp {
             ExpressionSyntax argumentExpression,
             List<string> argumentExpressionLines,
             IParameterSymbol parameterSymbol,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> beforeLines,
             List<string> argumentLines) {
             if (parameterSymbol != null &&
                 argumentExpression is CollectionExpressionSyntax collectionExpression &&
@@ -2555,7 +2694,27 @@ namespace cs2.cpp {
             }
 
             if (parameterSymbol != null &&
-                TryAppendArrayAsListInvocationArgument(semantic, context, argumentExpression, parameterSymbol, argumentExpressionLines, argumentLines)) {
+                TryAppendArrayAsListInvocationArgument(
+                    semantic,
+                    context,
+                    argumentExpression,
+                    parameterSymbol,
+                    invokedMethodSymbol,
+                    beforeLines,
+                    argumentExpressionLines,
+                    argumentLines)) {
+                return;
+            }
+
+            if (TryAppendScopedTemporaryInvocationArgument(
+                semantic,
+                context,
+                argumentExpression,
+                argumentExpressionLines,
+                parameterSymbol,
+                invokedMethodSymbol,
+                beforeLines,
+                argumentLines)) {
                 return;
             }
 
@@ -2563,6 +2722,16 @@ namespace cs2.cpp {
             if (parameterSymbol != null &&
                 methodGroupSymbol != null &&
                 TryGetDelegateWrapperTypeName(parameterSymbol.Type, methodGroupSymbol, context, out string delegateWrapperTypeName)) {
+                if (ShouldScopeDeleteDelegateInvocationArgument(invokedMethodSymbol, parameterSymbol)) {
+                    string temporaryName = CreateTemporaryName("__delegateArg");
+                    beforeLines.Add($"auto {temporaryName} = new {delegateWrapperTypeName}(");
+                    beforeLines.Add(string.Concat(argumentExpressionLines));
+                    beforeLines.Add(");\n");
+                    AppendDeleteGuard(beforeLines, temporaryName, "__delegateArgDeleteGuard");
+                    argumentLines.Add(temporaryName);
+                    return;
+                }
+
                 argumentLines.Add($"new {delegateWrapperTypeName}(");
                 argumentLines.Add(string.Concat(argumentExpressionLines));
                 argumentLines.Add(")");
@@ -2572,11 +2741,171 @@ namespace cs2.cpp {
             argumentLines.AddRange(argumentExpressionLines);
         }
 
+        bool TryAppendScopedTemporaryInvocationArgument(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax argumentExpression,
+            List<string> argumentExpressionLines,
+            IParameterSymbol parameterSymbol,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> beforeLines,
+            List<string> argumentLines) {
+            if (!ShouldScopeDeleteManagedInvocationArgument(semantic, argumentExpression, parameterSymbol, invokedMethodSymbol)) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, argumentExpression, out ITypeSymbol expressionTypeSymbol)) {
+                return false;
+            }
+
+            VariableType expressionType = VariableUtil.GetVarType(expressionTypeSymbol);
+            VariableType cppExpressionType = ConvertToCPPType(expressionType, out CPPTypeData typeData);
+            if (cppExpressionType == null || !typeData.IsPointer) {
+                return false;
+            }
+
+            string temporaryName = CreateTemporaryName("__scopedArg");
+            beforeLines.Add("auto ");
+            beforeLines.Add(temporaryName);
+            beforeLines.Add(" = ");
+            beforeLines.AddRange(argumentExpressionLines);
+            beforeLines.Add(";\n");
+            AppendDeleteGuard(beforeLines, temporaryName, "__scopedArgDeleteGuard");
+            argumentLines.Add(temporaryName);
+            return true;
+        }
+
+        static bool ShouldScopeDeleteDelegateInvocationArgument(
+            IMethodSymbol invokedMethodSymbol,
+            IParameterSymbol parameterSymbol) {
+            if (invokedMethodSymbol == null || parameterSymbol?.Type == null || parameterSymbol.Type.TypeKind != TypeKind.Delegate) {
+                return false;
+            }
+
+            string containingTypeName = invokedMethodSymbol.ContainingType?.Name;
+            if (string.Equals(invokedMethodSymbol.Name, "ReadArray", StringComparison.Ordinal) &&
+                string.Equals(containingTypeName, "EngineBinaryReader", StringComparison.Ordinal)) {
+                return true;
+            }
+
+            if (string.Equals(invokedMethodSymbol.Name, "WriteArray", StringComparison.Ordinal) &&
+                string.Equals(containingTypeName, "EngineBinaryWriter", StringComparison.Ordinal)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool ShouldScopeDeleteManagedInvocationArgument(
+            SemanticModel semantic,
+            ExpressionSyntax argumentExpression,
+            IParameterSymbol parameterSymbol,
+            IMethodSymbol invokedMethodSymbol) {
+            if (semantic == null || argumentExpression == null || parameterSymbol == null || invokedMethodSymbol == null) {
+                return false;
+            }
+
+            if (!ShouldScopeDeleteManagedInvocationTarget(parameterSymbol, invokedMethodSymbol)) {
+                return false;
+            }
+
+            if (!IsScopedTemporaryArgumentExpression(argumentExpression)) {
+                return false;
+            }
+
+            return ShouldScopeDeleteManagedInvocationArgument(
+                semantic,
+                argumentExpression,
+                invokedMethodSymbol.ContainingType?.Name ?? string.Empty,
+                invokedMethodSymbol.Name,
+                parameterSymbol.Name);
+        }
+
+        static bool ShouldScopeDeleteManagedInvocationArgument(
+            SemanticModel semantic,
+            ExpressionSyntax argumentExpression,
+            string containingTypeName,
+            string methodName,
+            string parameterName) {
+            if (semantic == null || argumentExpression == null) {
+                return false;
+            }
+
+            if (!IsScopedTemporaryArgumentExpression(argumentExpression)) {
+                return false;
+            }
+
+            return ShouldScopeDeleteManagedInvocationTarget(containingTypeName, methodName, parameterName);
+        }
+
+        static bool IsScopedTemporaryArgumentExpression(ExpressionSyntax argumentExpression) {
+            ExpressionSyntax expression = argumentExpression;
+            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                expression = parenthesizedExpression.Expression;
+            }
+
+            return expression is ObjectCreationExpressionSyntax ||
+                expression is ImplicitObjectCreationExpressionSyntax ||
+                expression is ArrayCreationExpressionSyntax ||
+                expression is ImplicitArrayCreationExpressionSyntax ||
+                expression is CollectionExpressionSyntax;
+        }
+
+        static bool ShouldScopeDeleteManagedInvocationTarget(
+            IParameterSymbol parameterSymbol,
+            IMethodSymbol invokedMethodSymbol) {
+            if (parameterSymbol == null || invokedMethodSymbol == null) {
+                return false;
+            }
+
+            return ShouldScopeDeleteManagedInvocationTarget(
+                invokedMethodSymbol.ContainingType?.Name ?? string.Empty,
+                invokedMethodSymbol.Name,
+                parameterSymbol.Name);
+        }
+
+        static bool ShouldScopeDeleteManagedInvocationTarget(
+            string containingTypeName,
+            string methodName,
+            string parameterName) {
+            if (string.Equals(containingTypeName, "HlslShaderBindingParser", StringComparison.Ordinal)) {
+                if (string.Equals(methodName, "ParseBindings", StringComparison.Ordinal) &&
+                    string.Equals(parameterName, "defines", StringComparison.Ordinal)) {
+                    return true;
+                }
+
+                if (string.Equals(methodName, "ComputeConstantBufferSize", StringComparison.Ordinal) &&
+                    string.Equals(parameterName, "members", StringComparison.Ordinal)) {
+                    return true;
+                }
+            }
+
+            if (string.Equals(containingTypeName, "String", StringComparison.Ordinal) &&
+                string.Equals(methodName, "Split", StringComparison.Ordinal) &&
+                string.Equals(parameterName, "separators", StringComparison.Ordinal)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        void AppendDeleteGuard(
+            List<string> lines,
+            string variableName,
+            string guardPrefix) {
+            string guardName = CreateTemporaryName(guardPrefix);
+            lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
+            lines.Add($"delete {variableName};\n");
+            lines.Add("});\n");
+        }
+
         bool TryAppendArrayAsListInvocationArgument(
             SemanticModel semantic,
             LayerContext context,
             ExpressionSyntax argumentExpression,
             IParameterSymbol parameterSymbol,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> beforeLines,
             List<string> argumentExpressionLines,
             List<string> argumentLines) {
             if (!IsListFamilyTypeSymbol(parameterSymbol.Type) ||
@@ -2587,6 +2916,16 @@ namespace cs2.cpp {
             RegisterRuntimeRequirement("NativeList");
             VariableType elementType = VariableUtil.GetVarType(arrayElementTypeSymbol);
             string elementTypeName = GetCppTypeToken(elementType, context.Program);
+            if (ShouldScopeDeleteManagedInvocationTarget(parameterSymbol, invokedMethodSymbol)) {
+                string temporaryName = CreateTemporaryName("__scopedArg");
+                beforeLines.Add($"auto {temporaryName} = new List<{elementTypeName}>(");
+                beforeLines.Add(string.Concat(argumentExpressionLines));
+                beforeLines.Add(");\n");
+                AppendDeleteGuard(beforeLines, temporaryName, "__scopedArgDeleteGuard");
+                argumentLines.Add(temporaryName);
+                return true;
+            }
+
             argumentLines.Add($"new List<{elementTypeName}>(");
             argumentLines.Add(string.Concat(argumentExpressionLines));
             argumentLines.Add(")");
@@ -3063,11 +3402,42 @@ namespace cs2.cpp {
 
             if (string.Equals(memberName, "Split", StringComparison.Ordinal) &&
                 invocationExpression.ArgumentList.Arguments.Count == 3) {
-                lines.Add("String::Split(");
-                lines.Add(receiverText);
-                lines.Add(", ");
-                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
-                lines.Add(")");
+                ArgumentSyntax separatorArgument = invocationExpression.ArgumentList.Arguments[0];
+                List<string> separatorLines = new List<string>();
+                int separatorStart = context.DepthClass;
+                ProcessExpression(semantic, context, separatorArgument.Expression, separatorLines);
+                context.PopClass(separatorStart);
+
+                if (ShouldScopeDeleteManagedInvocationArgument(
+                    semantic,
+                    separatorArgument.Expression,
+                    "String",
+                    "Split",
+                    "separators")) {
+                    string temporaryName = CreateTemporaryName("__scopedArg");
+                    lines.Add("([&]() {\n");
+                    lines.Add("auto ");
+                    lines.Add(temporaryName);
+                    lines.Add(" = ");
+                    lines.AddRange(separatorLines);
+                    lines.Add(";\n");
+                    AppendDeleteGuard(lines, temporaryName, "__scopedArgDeleteGuard");
+                    lines.Add("return String::Split(");
+                    lines.Add(receiverText);
+                    lines.Add(", ");
+                    lines.Add(temporaryName);
+                    lines.Add(", ");
+                    AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments.Skip(1), lines);
+                    lines.Add(");\n");
+                    lines.Add("})()");
+                } else {
+                    lines.Add("String::Split(");
+                    lines.Add(receiverText);
+                    lines.Add(", ");
+                    AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                    lines.Add(")");
+                }
+
                 resultType = VariableUtil.GetVarType("string[]");
                 return true;
             }
@@ -5405,23 +5775,51 @@ namespace cs2.cpp {
                 disposalUsesPointerAccess = !UsesDirectMemberAccess(resourceResult);
             }
 
+            AppendDisposalGuard(lines, disposalTarget, disposalUsesPointerAccess, "__usingDisposeGuard");
             ProcessStatement(semantic, context, usingStatement.Statement, lines);
+            lines.Add("}\n");
+        }
 
-            if (!string.IsNullOrWhiteSpace(disposalTarget)) {
-                if (disposalUsesPointerAccess) {
-                    lines.Add("if (");
-                    lines.Add(disposalTarget);
-                    lines.Add(" != nullptr) {\n");
-                    lines.Add(disposalTarget);
-                    lines.Add("->Dispose();\n");
-                    lines.Add("}\n");
-                } else {
-                    lines.Add(disposalTarget);
-                    lines.Add(".Dispose();\n");
-                }
+        void AppendDisposalGuard(
+            List<string> lines,
+            string disposalTarget,
+            bool disposalUsesPointerAccess,
+            string guardPrefix) {
+            if (string.IsNullOrWhiteSpace(disposalTarget)) {
+                return;
             }
 
-            lines.Add("}\n");
+            string guardName = CreateTemporaryName(guardPrefix);
+            lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
+            AppendDisposalCleanupBody(lines, disposalTarget, disposalUsesPointerAccess);
+            lines.Add("});\n");
+        }
+
+        void AppendDisposalCleanupBody(
+            List<string> lines,
+            string disposalTarget,
+            bool disposalUsesPointerAccess) {
+            if (disposalUsesPointerAccess) {
+                lines.Add($"if ({disposalTarget} != nullptr) {{\n");
+                lines.Add($"{disposalTarget}->Dispose();\n");
+                lines.Add($"delete {disposalTarget};\n");
+                lines.Add("}\n");
+                return;
+            }
+
+            lines.Add($"{disposalTarget}.Dispose();\n");
+        }
+
+        bool IsPointerDeclaration(
+            SemanticModel semantic,
+            VariableDeclarationSyntax declaration) {
+            VariableType declarationType = ResolveDeclarationType(semantic, declaration);
+            if (declarationType == null) {
+                return false;
+            }
+
+            VariableType cppType = ConvertToCPPType(declarationType, out CPPTypeData typeData);
+            return cppType != null && typeData.IsPointer;
         }
 
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
@@ -7443,6 +7841,177 @@ namespace cs2.cpp {
             return false;
         }
 
+        bool ShouldDeleteManagedLocalAtScopeExit(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclaratorSyntax variable,
+            VariableDeclarationSyntax declaration) {
+            if (semantic == null || context == null || variable == null || declaration == null) {
+                return false;
+            }
+
+            if (declaration.Parent is not LocalDeclarationStatementSyntax) {
+                return false;
+            }
+
+            if (variable.Initializer?.Value is not ObjectCreationExpressionSyntax &&
+                variable.Initializer?.Value is not ImplicitObjectCreationExpressionSyntax) {
+                return false;
+            }
+
+            VariableType declarationType = ResolveDeclarationType(semantic, declaration);
+            if (declarationType == null) {
+                return false;
+            }
+
+            VariableType cppType = ConvertToCPPType(declarationType, out CPPTypeData typeData);
+            if (cppType == null || !typeData.IsPointer) {
+                return false;
+            }
+
+            return !DoesLocalEscapeScope(semantic, variable);
+        }
+
+        bool ShouldDeleteManagedLocalAtScopeExit(
+            SemanticModel semantic,
+            LayerContext context,
+            IdentifierNameSyntax identifierName) {
+            if (semantic == null || context == null || identifierName == null) {
+                return false;
+            }
+
+            if (semantic.GetSymbolInfo(identifierName).Symbol is not ILocalSymbol localSymbol ||
+                localSymbol.DeclaringSyntaxReferences.Length == 0) {
+                return false;
+            }
+
+            SyntaxNode declarationNode = localSymbol.DeclaringSyntaxReferences[0].GetSyntax();
+            if (declarationNode is not VariableDeclaratorSyntax variableDeclarator ||
+                variableDeclarator.Parent is not VariableDeclarationSyntax declaration) {
+                return false;
+            }
+
+            return ShouldDeleteManagedLocalAtScopeExit(semantic, context, variableDeclarator, declaration);
+        }
+
+        static bool IsManagedHeapAllocationExpression(ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                expression = parenthesizedExpression.Expression;
+            }
+
+            return expression is ObjectCreationExpressionSyntax ||
+                expression is ImplicitObjectCreationExpressionSyntax ||
+                expression is ArrayCreationExpressionSyntax ||
+                expression is ImplicitArrayCreationExpressionSyntax ||
+                expression is CollectionExpressionSyntax;
+        }
+
+        static bool DoesExpressionReferenceLocal(
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            IdentifierNameSyntax identifierName) {
+            if (semantic == null || expression == null || identifierName == null) {
+                return false;
+            }
+
+            if (semantic.GetSymbolInfo(identifierName).Symbol is not ILocalSymbol localSymbol) {
+                return false;
+            }
+
+            foreach (IdentifierNameSyntax candidate in expression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()) {
+                if (SymbolsMatch(semantic.GetSymbolInfo(candidate).Symbol, localSymbol)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool DoesLocalEscapeScope(SemanticModel semantic, VariableDeclaratorSyntax variable) {
+            if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
+                return false;
+            }
+
+            SyntaxNode scope = variable.FirstAncestorOrSelf<BlockSyntax>() ?? variable.SyntaxTree.GetRoot();
+            foreach (IdentifierNameSyntax identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>()) {
+                if (!SymbolsMatch(semantic.GetSymbolInfo(identifier).Symbol, localSymbol)) {
+                    continue;
+                }
+
+                if (identifier.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any() ||
+                    identifier.Ancestors().OfType<LocalFunctionStatementSyntax>().Any()) {
+                    return true;
+                }
+
+                if (identifier.Ancestors().OfType<ReturnStatementSyntax>().Any() &&
+                    identifier.FirstAncestorOrSelf<ReturnStatementSyntax>()?.Expression is ExpressionSyntax returnExpression &&
+                    IsDirectLocalValueExpression(semantic, returnExpression, localSymbol)) {
+                    return true;
+                }
+
+                if (identifier.Parent is EqualsValueClauseSyntax equalsValueClause &&
+                    IsDirectLocalValueExpression(semantic, equalsValueClause.Value, localSymbol) &&
+                    equalsValueClause.Parent is VariableDeclaratorSyntax targetVariable &&
+                    !SymbolEqualityComparer.Default.Equals(semantic.GetDeclaredSymbol(targetVariable), localSymbol)) {
+                    return true;
+                }
+
+                if (identifier.Parent is AssignmentExpressionSyntax assignmentExpression &&
+                    IsDirectLocalValueExpression(semantic, assignmentExpression.Right, localSymbol) &&
+                    !SymbolsMatch(semantic.GetSymbolInfo(assignmentExpression.Left).Symbol, localSymbol)) {
+                    return true;
+                }
+
+                if (identifier.Parent is ArgumentSyntax argumentSyntax) {
+                    bool isRefOrOutArgument = argumentSyntax.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword) ||
+                        argumentSyntax.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword);
+                    if (isRefOrOutArgument) {
+                        return true;
+                    }
+
+                    if (argumentSyntax.Parent?.Parent is InvocationExpressionSyntax invocationExpression) {
+                        if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
+                            memberAccess.Expression == identifier) {
+                            continue;
+                        }
+
+                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        static bool IsDirectLocalValueExpression(
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            ILocalSymbol localSymbol) {
+            if (expression == null) {
+                return false;
+            }
+
+            if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                return IsDirectLocalValueExpression(semantic, parenthesizedExpression.Expression, localSymbol);
+            }
+
+            if (expression is CastExpressionSyntax castExpression) {
+                return IsDirectLocalValueExpression(semantic, castExpression.Expression, localSymbol);
+            }
+
+            if (expression is IdentifierNameSyntax identifierName) {
+                return SymbolsMatch(semantic.GetSymbolInfo(identifierName).Symbol, localSymbol);
+            }
+
+            return false;
+        }
+
         static bool SymbolsMatch(ISymbol symbol, ILocalSymbol localSymbol) {
             if (symbol is IAliasSymbol aliasSymbol) {
                 symbol = aliasSymbol.Target;
@@ -8716,13 +9285,18 @@ namespace cs2.cpp {
                 return false;
             }
 
+            int startRight = context.DepthClass;
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+            context.PopClass(startRight);
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
             lines.Add(objectName);
             lines.Add(memberAccessOperator);
             lines.Add($"set_{propertyName}(");
-
-            int startRight = context.DepthClass;
-            ProcessExpression(semantic, context, assignment.Right, lines);
-            context.PopClass(startRight);
+            lines.AddRange(rightLines);
 
             lines.Add(");\n");
             return true;
