@@ -103,17 +103,7 @@ namespace cs2.core.Pipeline {
         }
 
         public void Execute(ConversionSession session) {
-            if (session.Project.ParseOptions is not CSharpParseOptions parseOptions) {
-                return;
-            }
-
-            HashSet<string> combined = new HashSet<string>(parseOptions.PreprocessorSymbolNames, StringComparer.OrdinalIgnoreCase);
-            foreach (string symbol in symbols) {
-                combined.Add(symbol);
-            }
-
-            CSharpParseOptions updated = parseOptions.WithPreprocessorSymbols(combined);
-            session.Project = session.Project.WithParseOptions(updated);
+            session.Project = ProjectPreprocessorSymbolApplicator.AddSymbols(session.Project, symbols);
         }
     }
 

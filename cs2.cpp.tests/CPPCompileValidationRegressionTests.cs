@@ -215,6 +215,33 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures pointer-only generated interface signatures use forward declarations instead of pulling full generated headers into cyclic interface graphs.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerOnlyInterfaceSignature_DoesNotIncludeConcreteGeneratedHeader() {
+            string source = """
+                public class Entity {
+                }
+
+                public interface IDrawable2D {
+                    Entity Parent { get; }
+                    byte RenderOrder2D { get; set; }
+                    void Draw();
+                }
+
+                public interface ITextDrawable2D : IDrawable2D {
+                    string Text { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string drawableHeader = File.ReadAllText(Path.Combine(output.OutputPath, "IDrawable2D.hpp"));
+
+            Assert.Contains("class Entity;", drawableHeader);
+            Assert.DoesNotContain("#include \"Entity.hpp\"", drawableHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generated references to generic converted types emit template-aware forward declarations instead of non-template class declarations.
         /// </summary>
         [Fact]
@@ -3225,6 +3252,38 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
             Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures managed locals passed into constructors are treated as escaping and do not emit a scope-exit delete guard.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedLocalPassedToConstructor_DoesNotEmitScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Asset {
+                    public Dictionary<char, int> Values;
+
+                    public Asset(Dictionary<char, int> values) {
+                        Values = values;
+                    }
+                }
+
+                public class Widget {
+                    public Asset Build() {
+                        Dictionary<char, int> values = new Dictionary<char, int>();
+                        return new Asset(values);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Dictionary<char, int32_t> *values = new Dictionary<char, int32_t>();", sourceOutput);
+            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("new ::Asset(values)", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

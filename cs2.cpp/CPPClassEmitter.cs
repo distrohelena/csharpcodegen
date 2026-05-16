@@ -1,5 +1,6 @@
 using cs2.core;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
@@ -73,24 +74,27 @@ namespace cs2.cpp {
 
             bool wroteInclude = false;
             HashSet<string> referencedTypes = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> includeRequiredTypes = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> forwardDeclaredTypes = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
 
             foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
                 if (!excludedTypeNames.Contains(extension)) {
                     referencedTypes.Add(extension);
+                    includeRequiredTypes.Add(extension);
                 }
             }
 
-            AddSemanticInheritanceTypeReferences(conversionClass, referencedTypes, excludedTypeNames);
+            AddSemanticInheritanceTypeReferences(conversionClass, referencedTypes, includeRequiredTypes, excludedTypeNames);
 
             foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
                 if (!excludedTypeNames.Contains(referencedClass)) {
                     referencedTypes.Add(referencedClass);
+                    includeRequiredTypes.Add(referencedClass);
                 }
             }
 
-            AddSignatureTypeReferences(conversionClass, referencedTypes);
+            AddSignatureTypeReferences(conversionClass, referencedTypes, includeRequiredTypes);
 
             foreach (string referencedType in referencedTypes) {
                 if (TryResolveForwardDeclaration(conversionClass, referencedType, out string forwardDeclaration)) {
@@ -107,6 +111,13 @@ namespace cs2.cpp {
             }
 
             foreach (string referencedType in referencedTypes) {
+                string normalizedReferencedType = NormalizeReferencedClassName(referencedType);
+                if (!includeRequiredTypes.Contains(referencedType) &&
+                    !includeRequiredTypes.Contains(normalizedReferencedType) &&
+                    TryResolveGeneratedClass(referencedType, out _)) {
+                    continue;
+                }
+
                 if (WriteInclude(headerWriter, conversionClass, referencedType)) {
                     wroteInclude = true;
                 }
@@ -122,17 +133,18 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="conversionClass">The type whose declared member signatures should be scanned.</param>
         /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
-        void AddSignatureTypeReferences(ConversionClass conversionClass, ISet<string> referencedTypes) {
+        /// <param name="includeRequiredTypes">The destination set that receives types whose signatures require a concrete header include.</param>
+        void AddSignatureTypeReferences(ConversionClass conversionClass, ISet<string> referencedTypes, ISet<string> includeRequiredTypes) {
             foreach (ConversionVariable variable in conversionClass.Variables) {
-                AddTypeReference(variable.VarType, referencedTypes, conversionClass.GenericArgs);
+                AddTypeReference(variable.VarType, referencedTypes, includeRequiredTypes, conversionClass.GenericArgs);
             }
 
             foreach (ConversionFunction function in conversionClass.Functions) {
                 HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass, function);
-                AddTypeReference(function.ReturnType, referencedTypes, excludedTypeNames);
+                AddTypeReference(function.ReturnType, referencedTypes, includeRequiredTypes, excludedTypeNames);
 
                 foreach (ConversionVariable parameter in function.InParameters) {
-                    AddTypeReference(parameter.VarType, referencedTypes, excludedTypeNames);
+                    AddTypeReference(parameter.VarType, referencedTypes, includeRequiredTypes, excludedTypeNames);
                 }
             }
         }
@@ -142,8 +154,9 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="variableType">The type metadata to inspect.</param>
         /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
+        /// <param name="includeRequiredTypes">The destination set that receives type names that require concrete header includes.</param>
         /// <param name="excludedTypeNames">Type names that should remain compile-time only and must not become includes.</param>
-        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes, IEnumerable<string> excludedTypeNames) {
+        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes, ISet<string> includeRequiredTypes, IEnumerable<string> excludedTypeNames) {
             if (variableType == null) {
                 return;
             }
@@ -165,6 +178,9 @@ namespace cs2.cpp {
                 !excludedTypeNameSet.Contains(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(variableType.TypeName)) {
                 referencedTypes.Add(referencedTypeName);
+                if (!CanUseForwardDeclarationOnly(variableType)) {
+                    includeRequiredTypes.Add(referencedTypeName);
+                }
             }
 
             if (variableType.GenericArgs == null) {
@@ -172,8 +188,22 @@ namespace cs2.cpp {
             }
 
             foreach (VariableType genericArgument in variableType.GenericArgs) {
-                AddTypeReference(genericArgument, referencedTypes, excludedTypeNameSet);
+                AddTypeReference(genericArgument, referencedTypes, includeRequiredTypes, excludedTypeNameSet);
             }
+        }
+
+        /// <summary>
+        /// Determines whether a type used in a declaration can rely on a generated forward declaration without a concrete header include.
+        /// </summary>
+        /// <param name="variableType">Declaration type being evaluated.</param>
+        /// <returns><c>true</c> when a forward declaration is sufficient; otherwise <c>false</c>.</returns>
+        bool CanUseForwardDeclarationOnly(VariableType variableType) {
+            if (variableType == null || processor == null) {
+                return false;
+            }
+
+            processor.ConvertToCPPType(variableType, out CPPTypeData typeData);
+            return typeData.IsPointer && !typeData.IsArray && !typeData.IsNativeType;
         }
 
         /// <summary>
@@ -343,7 +373,15 @@ namespace cs2.cpp {
 
             HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
+            HashSet<string> sourceIncludeTypes = new HashSet<string>(StringComparer.Ordinal);
             foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
+                sourceIncludeTypes.Add(referencedClass);
+            }
+
+            AddSourceSignatureTypeReferences(conversionClass, sourceIncludeTypes);
+            AddReferencedGeneratedClassSignatureTypeReferences(conversionClass, sourceIncludeTypes);
+
+            foreach (string referencedClass in sourceIncludeTypes) {
                 string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
                 if (excludedTypeNames.Contains(referencedClass) || excludedTypeNames.Contains(normalizedReferencedClass)) {
                     continue;
@@ -376,6 +414,87 @@ namespace cs2.cpp {
             }
 
             sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Collects member-signature types that source files must include concretely because implementation bodies commonly dereference those parameters and return types.
+        /// </summary>
+        /// <param name="conversionClass">The type whose member signatures should be scanned for source includes.</param>
+        /// <param name="sourceIncludeTypes">Destination set that receives discovered concrete type names.</param>
+        void AddSourceSignatureTypeReferences(ConversionClass conversionClass, ISet<string> sourceIncludeTypes) {
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                AddSourceTypeReference(variable.VarType, sourceIncludeTypes, conversionClass.GenericArgs);
+            }
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass, function);
+                AddSourceTypeReference(function.ReturnType, sourceIncludeTypes, excludedTypeNames);
+
+                foreach (ConversionVariable parameter in function.InParameters) {
+                    AddSourceTypeReference(parameter.VarType, sourceIncludeTypes, excludedTypeNames);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds concrete signature types exposed by directly referenced generated classes so chained property-return types do not remain incomplete in implementation files.
+        /// </summary>
+        /// <param name="conversionClass">The class whose direct generated dependencies should be scanned.</param>
+        /// <param name="sourceIncludeTypes">Destination set that receives discovered concrete type names.</param>
+        void AddReferencedGeneratedClassSignatureTypeReferences(ConversionClass conversionClass, ISet<string> sourceIncludeTypes) {
+            if (conversionClass == null) {
+                throw new ArgumentNullException(nameof(conversionClass));
+            }
+            if (sourceIncludeTypes == null) {
+                throw new ArgumentNullException(nameof(sourceIncludeTypes));
+            }
+
+            foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
+                if (!TryResolveGeneratedClass(referencedClass, out ConversionClass generatedClass)) {
+                    continue;
+                }
+
+                AddSourceSignatureTypeReferences(generatedClass, sourceIncludeTypes);
+            }
+        }
+
+        /// <summary>
+        /// Adds one type and any nested generic argument types to the concrete source-include set.
+        /// </summary>
+        /// <param name="variableType">Type metadata to inspect.</param>
+        /// <param name="sourceIncludeTypes">Destination set that receives concrete source include types.</param>
+        /// <param name="excludedTypeNames">Type names that must remain compile-time only.</param>
+        void AddSourceTypeReference(VariableType variableType, ISet<string> sourceIncludeTypes, IEnumerable<string> excludedTypeNames) {
+            if (variableType == null) {
+                return;
+            }
+
+            HashSet<string> excludedTypeNameSet = excludedTypeNames == null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(excludedTypeNames, StringComparer.Ordinal);
+
+            if (variableType.IsNullable) {
+                sourceIncludeTypes.Add("Nullable");
+                return;
+            }
+
+            string referencedTypeName = variableType.GenericArgs.Count > 0
+                ? variableType.ToString()
+                : variableType.TypeName;
+
+            if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
+                !excludedTypeNameSet.Contains(referencedTypeName) &&
+                !excludedTypeNameSet.Contains(variableType.TypeName)) {
+                sourceIncludeTypes.Add(referencedTypeName);
+            }
+
+            if (variableType.GenericArgs == null) {
+                return;
+            }
+
+            foreach (VariableType genericArgument in variableType.GenericArgs) {
+                AddSourceTypeReference(genericArgument, sourceIncludeTypes, excludedTypeNameSet);
+            }
         }
 
         /// <summary>
@@ -923,6 +1042,7 @@ namespace cs2.cpp {
         void AddSemanticInheritanceTypeReferences(
             ConversionClass conversionClass,
             HashSet<string> referencedTypes,
+            HashSet<string> includeRequiredTypes,
             HashSet<string> excludedTypeNames) {
             if (conversionClass.TypeSymbol is not INamedTypeSymbol typeSymbol) {
                 return;
@@ -932,22 +1052,24 @@ namespace cs2.cpp {
                 typeSymbol.BaseType != null &&
                 typeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
                 typeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
-                AddInheritanceTypeReference(typeSymbol.BaseType, referencedTypes, excludedTypeNames);
+                AddInheritanceTypeReference(typeSymbol.BaseType, referencedTypes, includeRequiredTypes, excludedTypeNames);
             }
 
             foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
-                AddInheritanceTypeReference(interfaceSymbol, referencedTypes, excludedTypeNames);
+                AddInheritanceTypeReference(interfaceSymbol, referencedTypes, includeRequiredTypes, excludedTypeNames);
             }
         }
 
         void AddInheritanceTypeReference(
             INamedTypeSymbol typeSymbol,
             HashSet<string> referencedTypes,
+            HashSet<string> includeRequiredTypes,
             HashSet<string> excludedTypeNames) {
             string typeName = program.FindGeneratedClass(typeSymbol.Name, typeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
                 ?? NormalizeReferencedClassName(typeSymbol.Name);
             if (!excludedTypeNames.Contains(typeName)) {
                 referencedTypes.Add(typeName);
+                includeRequiredTypes.Add(typeName);
             }
 
             foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
@@ -955,6 +1077,7 @@ namespace cs2.cpp {
                 string argumentTypeName = NormalizeReferencedClassName(argumentType.TypeName);
                 if (!string.IsNullOrWhiteSpace(argumentTypeName) && !excludedTypeNames.Contains(argumentTypeName)) {
                     referencedTypes.Add(argumentTypeName);
+                    includeRequiredTypes.Add(argumentTypeName);
                 }
             }
         }
@@ -1891,7 +2014,7 @@ namespace cs2.cpp {
 
                 if (function.ConstructorInitializer.ArgumentList != null) {
                     for (int index = 0; index < function.ConstructorInitializer.ArgumentList.Arguments.Count; index++) {
-                        initializerWriter.Write(function.ConstructorInitializer.ArgumentList.Arguments[index].Expression.ToString());
+                        initializerWriter.Write(RenderConstructorInitializerArgument(conversionClass, function, function.ConstructorInitializer.ArgumentList.Arguments[index].Expression));
                         if (index < function.ConstructorInitializer.ArgumentList.Arguments.Count - 1) {
                             initializerWriter.Write(", ");
                         }
@@ -1912,6 +2035,33 @@ namespace cs2.cpp {
 
             sourceWriter.Write(" : ");
             sourceWriter.Write(string.Join(", ", initializerSegments));
+        }
+
+        /// <summary>
+        /// Converts one constructor initializer argument through the normal C++ expression lowering pipeline so enum members and other platform-sensitive syntax are emitted correctly.
+        /// </summary>
+        /// <param name="conversionClass">The class that owns the constructor.</param>
+        /// <param name="function">The constructor function being emitted.</param>
+        /// <param name="expression">The Roslyn syntax expression that provides the initializer argument.</param>
+        /// <returns>The lowered C++ expression text.</returns>
+        string RenderConstructorInitializerArgument(ConversionClass conversionClass, ConversionFunction function, ExpressionSyntax expression) {
+            if (conversionClass == null) {
+                throw new ArgumentNullException(nameof(conversionClass));
+            }
+            if (function == null) {
+                throw new ArgumentNullException(nameof(function));
+            }
+            if (expression == null) {
+                throw new ArgumentNullException(nameof(expression));
+            }
+
+            LayerContext context = new CPPLayerContext(program);
+            context.AddClass(conversionClass);
+            context.AddFunction(new FunctionStack(function));
+
+            List<string> tokens = new List<string>();
+            processor.ProcessExpression(conversionClass.Semantic, context, expression, tokens);
+            return string.Concat(tokens);
         }
 
         /// <summary>

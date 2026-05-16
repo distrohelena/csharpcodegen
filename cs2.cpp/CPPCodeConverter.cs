@@ -131,6 +131,7 @@ namespace cs2.cpp {
             CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
 
             writeClasses(outputFolder, BuildUsageReport);
+            new CPPGeneratedOutputAdapter().Apply(outputFolder, Options);
             PruneDisabledFeatureRuntimeFiles(outputFolder);
 
             string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);

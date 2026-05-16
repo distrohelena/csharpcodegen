@@ -29,6 +29,11 @@ namespace cs2.cpp {
         public bool IsWindowsHost { get; set; }
 
         /// <summary>
+        /// Gets or sets the generated runtime math convention required by the target platform.
+        /// </summary>
+        public CPPGeneratedMathConventionKind GeneratedMathConvention { get; set; }
+
+        /// <summary>
         /// Creates the default Windows headless development profile.
         /// </summary>
         /// <returns>The default Windows platform profile.</returns>
@@ -38,7 +43,8 @@ namespace cs2.cpp {
                 Name = "windows-headless",
                 DefineName = "HE_CPP_PLATFORM_WINDOWS",
                 IsLittleEndian = true,
-                IsWindowsHost = true
+                IsWindowsHost = true,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
             };
         }
 
@@ -52,7 +58,8 @@ namespace cs2.cpp {
                 Name = "gamecube-headless",
                 DefineName = "HE_CPP_PLATFORM_GAMECUBE",
                 IsLittleEndian = false,
-                IsWindowsHost = false
+                IsWindowsHost = false,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector
             };
         }
 
@@ -66,7 +73,8 @@ namespace cs2.cpp {
                 Name = "ps2-headless",
                 DefineName = "HE_CPP_PLATFORM_PS2",
                 IsLittleEndian = true,
-                IsWindowsHost = false
+                IsWindowsHost = false,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
             };
         }
 
@@ -80,7 +88,8 @@ namespace cs2.cpp {
                 Name = "n64-headless",
                 DefineName = "HE_CPP_PLATFORM_N64",
                 IsLittleEndian = false,
-                IsWindowsHost = false
+                IsWindowsHost = false,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
             };
         }
     }

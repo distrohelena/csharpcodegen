@@ -1,5 +1,4 @@
 using cs2.core.Pipeline;
-using Microsoft.CodeAnalysis.CSharp;
 
 namespace cs2.ts {
     /// <summary>
@@ -28,12 +27,7 @@ namespace cs2.ts {
                 return;
             }
 
-            if (session.Project.ParseOptions is not CSharpParseOptions parseOptions) {
-                return;
-            }
-
-            CSharpParseOptions updated = parseOptions.WithPreprocessorSymbols(owner.PreprocessorSymbols);
-            session.Project = session.Project.WithParseOptions(updated);
+            session.Project = ProjectPreprocessorSymbolApplicator.ReplaceSymbols(session.Project, owner.PreprocessorSymbols);
         }
     }
 }

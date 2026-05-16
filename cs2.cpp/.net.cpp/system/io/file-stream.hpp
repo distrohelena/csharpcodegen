@@ -7,18 +7,23 @@
 #include "file-access.hpp"
 #include "file-share.hpp"
 #include <cstdio>  // For std::FILE*
+#include <vector>
 #include <string>
 #include "file-mode.hpp"
 
 class FileStream : public Stream {
 private:
     std::FILE* file;
+    std::vector<uint8_t> memoryBuffer;
     size_t position;
     size_t length;
+    bool ownsMemoryBuffer;
+    bool writable;
 
     void UpdateLength();  // Helper to update file size
 
 public:
+    FileStream(const uint8_t* data, size_t length);
     FileStream(const char* path, FileMode mode);
     FileStream(const char* path, FileMode mode, FileAccess access, FileShare share);
     FileStream(const std::string& path, FileMode mode);

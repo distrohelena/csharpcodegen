@@ -6,8 +6,6 @@ namespace cs2.cpp {
     /// </summary>
     public static class CPPFeatureCatalog {
         static readonly Dictionary<string, CPPFeatureKind[]> TypeFeatureMap = new Dictionary<string, CPPFeatureKind[]>(StringComparer.Ordinal) {
-            ["helengine.ShaderAsset"] = new[] { CPPFeatureKind.Shaders },
-            ["helengine.core.shaders.ShaderAsset"] = new[] { CPPFeatureKind.Shaders },
             ["helengine.RenderManager2D"] = new[] { CPPFeatureKind.Render2D },
             ["helengine.IDrawable2D"] = new[] { CPPFeatureKind.Render2D },
             ["helengine.ISpriteDrawable2D"] = new[] { CPPFeatureKind.Sprites, CPPFeatureKind.Render2D },
@@ -18,9 +16,10 @@ namespace cs2.cpp {
             ["helengine.DebugOverlayComponent"] = new[] { CPPFeatureKind.DebugOverlay },
             ["helengine.core.shaders.compilation.ShaderConditionalPreprocessor"] = new[] { CPPFeatureKind.Shaders, CPPFeatureKind.TextProcessing },
             ["helengine.core.content.RuntimeManifestJsonReader"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.TextProcessing },
+            ["helengine.TextContentProcessor"] = new[] { CPPFeatureKind.TextProcessing },
             ["helengine.core.content.RuntimeStartupManifest"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.HostFileSystem },
             ["helengine.core.content.RuntimeCodeModuleManifest"] = new[] { CPPFeatureKind.RuntimeJson, CPPFeatureKind.HostFileSystem },
-            ["helengine.core.content.ContentManager"] = new[] { CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureKind.HostFileSystem },
+            ["helengine.ContentManager"] = new[] { CPPFeatureKind.HostFileSystem, CPPFeatureKind.TextProcessing },
         };
 
         /// <summary>

@@ -32,5 +32,15 @@ namespace cs2.cpp {
         /// Gets or sets the restriction profile used by the preset.
         /// </summary>
         public CPPRestrictionProfile RestrictionProfile { get; set; } = CPPRestrictionProfile.CreatePermissive(string.Empty);
+
+        /// <summary>
+        /// Gets or sets the additional preprocessor symbols that the preset injects into the conversion pipeline.
+        /// </summary>
+        public IReadOnlyList<string> AdditionalPreprocessorSymbols { get; set; } = Array.Empty<string>();
+
+        /// <summary>
+        /// Gets or sets whether project-defined preprocessor symbols remain active alongside preset-owned symbols.
+        /// </summary>
+        public bool IncludeProjectDefinedPreprocessorSymbols { get; set; } = true;
     }
 }

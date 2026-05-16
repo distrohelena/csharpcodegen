@@ -49,6 +49,17 @@ public class CPPConversionOptionsTests {
     }
 
     /// <summary>
+    /// Ensures the GameCube default options opt into the native column-vector generated math convention.
+    /// </summary>
+    [Fact]
+    public void CreateGameCubeDefault_UsesNativeColumnVectorMathConvention() {
+        CPPConversionOptions options = CPPConversionOptions.CreateGameCubeDefault();
+
+        object convention = typeof(CPPPlatformProfile).GetProperty("GeneratedMathConvention")?.GetValue(options.PlatformProfile);
+        Assert.Equal("NativeColumnVector", convention?.ToString());
+    }
+
+    /// <summary>
     /// Ensures the conversion report can record blocking diagnostics.
     /// </summary>
     [Fact]

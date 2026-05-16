@@ -96,10 +96,6 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (!IsRequirementEnabled(definition)) {
-                return false;
-            }
-
             registeredRequirements.TryAdd(definition.Name, definition);
             currentTypeScope?.Register(definition.Name);
             return true;
@@ -124,22 +120,5 @@ namespace cs2.cpp {
             return catalog.TryGet(name, out definition);
         }
 
-        bool IsRequirementEnabled(CPPRuntimeRequirementDefinition definition) {
-            if (definition == null) {
-                throw new ArgumentNullException(nameof(definition));
-            }
-
-            if (definition.OwningFeatures.Count == 0) {
-                return true;
-            }
-
-            foreach (CPPFeatureKind owningFeature in definition.OwningFeatures) {
-                if (buildUsageReport.IsEnabled(owningFeature)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 }

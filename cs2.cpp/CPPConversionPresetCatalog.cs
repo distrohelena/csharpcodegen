@@ -24,6 +24,8 @@ namespace cs2.cpp {
             options.RuntimeProfile = preset.RuntimeProfile;
             options.BuildFeatureProfile = preset.BuildFeatureProfile;
             options.RestrictionProfile = preset.RestrictionProfile;
+            options.AdditionalPreprocessorSymbols = preset.AdditionalPreprocessorSymbols;
+            options.IncludeProjectDefinedPreprocessorSymbols = preset.IncludeProjectDefinedPreprocessorSymbols;
             return options;
         }
 
@@ -71,7 +73,9 @@ namespace cs2.cpp {
                 PlatformProfile = CPPPlatformProfile.CreateWindowsHeadless(),
                 RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
                 BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
-                RestrictionProfile = CPPRestrictionProfile.CreatePermissive("desktop")
+                RestrictionProfile = CPPRestrictionProfile.CreatePermissive("desktop"),
+                IncludeProjectDefinedPreprocessorSymbols = true,
+                AdditionalPreprocessorSymbols = Array.Empty<string>()
             };
         }
 
@@ -92,7 +96,9 @@ namespace cs2.cpp {
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "desktop-no-shaders",
                     ForbidShaders = true
-                }
+                },
+                IncludeProjectDefinedPreprocessorSymbols = true,
+                AdditionalPreprocessorSymbols = Array.Empty<string>()
             };
         }
 
@@ -118,6 +124,12 @@ namespace cs2.cpp {
                     ForbidReflectionLikeRuntime = true,
                     ForbidRegex = true,
                     ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = new[] {
+                    "HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED",
+                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                    "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 }
             };
         }
@@ -128,6 +140,7 @@ namespace cs2.cpp {
         /// <returns>The resolved GameCube core-boot preset.</returns>
         static CPPConversionPreset CreateGameCubeCoreBootPreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
+                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
                 .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
@@ -138,7 +151,15 @@ namespace cs2.cpp {
                 BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "gamecube-core-boot",
+                    ForbidShaders = true,
+                    ForbidRuntimeJson = true,
+                    ForbidReflectionLikeRuntime = true,
                     ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = new[] {
+                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                    "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 }
             };
         }
@@ -167,6 +188,11 @@ namespace cs2.cpp {
                     ForbidReflectionLikeRuntime = true,
                     ForbidRegex = true,
                     ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = new[] {
+                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                    "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 }
             };
         }

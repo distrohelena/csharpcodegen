@@ -39,4 +39,43 @@ public class CPPConversionPresetCatalogTests {
         Assert.True(preset.RestrictionProfile.ForbidShaders);
         Assert.True(preset.RestrictionProfile.ForbidDebugOnlySystems);
     }
+
+    /// <summary>
+    /// Ensures the GameCube preset resolves the native column-vector generated math convention.
+    /// </summary>
+    [Fact]
+    public void Resolve_GameCubeCoreBoot_UsesNativeColumnVectorMathConvention() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+
+        object convention = typeof(CPPPlatformProfile).GetProperty("GeneratedMathConvention")?.GetValue(preset.PlatformProfile);
+        Assert.Equal("NativeColumnVector", convention?.ToString());
+    }
+
+    /// <summary>
+    /// Ensures the GameCube core-boot preset forbids reflection-like runtime systems.
+    /// </summary>
+    [Fact]
+    public void Resolve_GameCubeCoreBoot_ForbidsReflectionLikeRuntime() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+
+        Assert.True(preset.RestrictionProfile.ForbidReflectionLikeRuntime);
+        Assert.True(preset.RestrictionProfile.ForbidRuntimeJson);
+    }
+
+    /// <summary>
+    /// Ensures the GameCube core-boot preset carries only the reflection-disable preprocessor symbols required by the stripped runtime.
+    /// </summary>
+    [Fact]
+    public void ApplyTo_GameCubeCoreBoot_AddsReflectionDisableSymbols() {
+        CPPConversionOptions options = new CPPConversionOptions {
+            PresetId = "gamecube-core-boot"
+        };
+
+        new CPPConversionPresetCatalog().ApplyTo(options);
+
+        Assert.False(options.IncludeProjectDefinedPreprocessorSymbols);
+        Assert.DoesNotContain("HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED", options.AdditionalPreprocessorSymbols);
+        Assert.Contains("HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION", options.AdditionalPreprocessorSymbols);
+        Assert.Contains("HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION", options.AdditionalPreprocessorSymbols);
+    }
 }

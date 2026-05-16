@@ -327,6 +327,7 @@ namespace cs2.cpp {
             lines.Add(";\n");
 
             string guardName = CreateTemporaryName("__localDeleteGuard");
+            RegisterRuntimeRequirement("NativeFinally");
             lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
             lines.Add("delete ");
             lines.Add(variable.Identifier.Text);
@@ -1480,7 +1481,7 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Static, primitiveLimitType);
             }
 
-            if (TryProcessPrimitiveNumberRuntimeMemberAccess(memberAccess, lines, out VariableType primitiveNumberType)) {
+            if (TryProcessPrimitiveNumberRuntimeMemberAccess(semantic, memberAccess, lines, out VariableType primitiveNumberType)) {
                 return new ExpressionResult(true, VariablePath.Static, primitiveNumberType);
             }
 
@@ -1572,7 +1573,22 @@ namespace cs2.cpp {
                 return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
             }
 
-            ExpressionResult result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+            ISymbol staticReceiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+            if (staticReceiverSymbol is IAliasSymbol staticReceiverAliasSymbol) {
+                staticReceiverSymbol = staticReceiverAliasSymbol.Target;
+            }
+
+            ExpressionResult result;
+            if (staticReceiverSymbol is INamespaceSymbol) {
+                lines.Add(memberAccess.Expression.ToString());
+                result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType("object"));
+            } else if (staticReceiverSymbol is INamedTypeSymbol staticReceiverTypeSymbol) {
+                lines.Add(GetContainingTypeAccessName(context, staticReceiverTypeSymbol));
+                result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(staticReceiverTypeSymbol));
+            } else {
+                result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+            }
+
             if (result.Processed) {
                 bool useStaticAccess = result.VarPath == VariablePath.Static || memberAccess.Expression is BaseExpressionSyntax;
                 ISymbol memberSymbol = null;
@@ -2046,24 +2062,30 @@ namespace cs2.cpp {
         }
 
         bool TryProcessPrimitiveNumberRuntimeMemberAccess(
+            SemanticModel semantic,
             MemberAccessExpressionSyntax memberAccess,
             List<string> lines,
             out VariableType resultType) {
             resultType = null;
 
-            if (memberAccess.Expression is not PredefinedTypeSyntax predefinedType ||
-                memberAccess.Name is not IdentifierNameSyntax identifierName) {
+            if (semantic == null) {
+                throw new ArgumentNullException(nameof(semantic));
+            }
+
+            if (memberAccess.Name is not IdentifierNameSyntax identifierName) {
                 return false;
             }
 
-            string predefinedTypeName = predefinedType.Keyword.ValueText;
             string memberName = identifierName.Identifier.Text;
+            SpecialType receiverSpecialType = ResolvePrimitiveStaticReceiverSpecialType(semantic, memberAccess.Expression);
             bool isSupportedNumberMember =
-                string.Equals(predefinedTypeName, "int", StringComparison.Ordinal) &&
+                receiverSpecialType == SpecialType.System_Int32 &&
                 string.Equals(memberName, "TryParse", StringComparison.Ordinal) ||
-                (string.Equals(predefinedTypeName, "float", StringComparison.Ordinal) ||
-                 string.Equals(predefinedTypeName, "double", StringComparison.Ordinal)) &&
-                string.Equals(memberName, "IsPositiveInfinity", StringComparison.Ordinal);
+                (receiverSpecialType == SpecialType.System_Single ||
+                 receiverSpecialType == SpecialType.System_Double) &&
+                (string.Equals(memberName, "IsPositiveInfinity", StringComparison.Ordinal) ||
+                 string.Equals(memberName, "IsNaN", StringComparison.Ordinal) ||
+                 string.Equals(memberName, "IsInfinity", StringComparison.Ordinal));
             if (!isSupportedNumberMember) {
                 return false;
             }
@@ -2073,6 +2095,41 @@ namespace cs2.cpp {
             lines.Add(memberName);
             resultType = VariableUtil.GetVarType("object");
             return true;
+        }
+
+        /// <summary>
+        /// Resolves the special primitive type represented by one static member receiver so primitive helper calls can be lowered consistently regardless of whether Roslyn surfaced the receiver as a keyword or CLR type symbol.
+        /// </summary>
+        /// <param name="semantic">Semantic model that owns the member-access expression.</param>
+        /// <param name="receiverExpression">Static member receiver expression to inspect.</param>
+        /// <returns>The resolved primitive special type when the receiver is a supported primitive static type; otherwise <see cref="SpecialType.None"/>.</returns>
+        static SpecialType ResolvePrimitiveStaticReceiverSpecialType(
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression) {
+            if (receiverExpression is PredefinedTypeSyntax predefinedType) {
+                return predefinedType.Keyword.ValueText switch {
+                    "int" => SpecialType.System_Int32,
+                    "float" => SpecialType.System_Single,
+                    "double" => SpecialType.System_Double,
+                    _ => SpecialType.None
+                };
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverExpression).Type;
+            if (receiverTypeSymbol != null && receiverTypeSymbol.SpecialType != SpecialType.None) {
+                return receiverTypeSymbol.SpecialType;
+            }
+
+            ISymbol receiverSymbol = semantic.GetSymbolInfo(receiverExpression).Symbol;
+            if (receiverSymbol is IAliasSymbol aliasSymbol) {
+                receiverSymbol = aliasSymbol.Target;
+            }
+
+            if (receiverSymbol is INamedTypeSymbol namedTypeSymbol) {
+                return namedTypeSymbol.SpecialType;
+            }
+
+            return SpecialType.None;
         }
 
         /// <summary>
@@ -2398,6 +2455,8 @@ namespace cs2.cpp {
                 receiverMethodSymbol.IsStatic &&
                 receiverMethodSymbol.ContainingType != null) {
                 referencedTypeName = receiverMethodSymbol.ContainingType.Name;
+            } else if (receiverSymbol is INamedTypeSymbol receiverTypeSymbol) {
+                referencedTypeName = receiverTypeSymbol.Name;
             } else if (receiverResult.Class != null) {
                 referencedTypeName = receiverResult.Class.Name;
             }
@@ -2894,6 +2953,7 @@ namespace cs2.cpp {
             string variableName,
             string guardPrefix) {
             string guardName = CreateTemporaryName(guardPrefix);
+            RegisterRuntimeRequirement("NativeFinally");
             lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
             lines.Add($"delete {variableName};\n");
             lines.Add("});\n");
@@ -4206,6 +4266,10 @@ namespace cs2.cpp {
                 return enumArithmeticResult;
             }
 
+            if (TryProcessFloatingPointModuloExpression(semantic, context, binary, lines, out ExpressionResult floatingPointModuloResult)) {
+                return floatingPointModuloResult;
+            }
+
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
 
             string rightText = string.Concat(right).Trim();
@@ -4238,6 +4302,48 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        bool TryProcessFloatingPointModuloExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binary,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (!binary.IsKind(SyntaxKind.ModuloExpression)) {
+                return false;
+            }
+
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binary.Left).ConvertedType ?? semantic.GetTypeInfo(binary.Left).Type;
+            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binary.Right).ConvertedType ?? semantic.GetTypeInfo(binary.Right).Type;
+            if (!IsFloatingPointTypeSymbol(leftTypeSymbol) && !IsFloatingPointTypeSymbol(rightTypeSymbol)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Math");
+
+            List<string> left = new List<string>();
+            int startLeft = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binary.Left, left);
+            context.PopClass(startLeft);
+
+            List<string> right = new List<string>();
+            int startRight = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binary.Right, right);
+            context.PopClass(startRight);
+
+            lines.Add("std::fmod(");
+            lines.AddRange(left);
+            lines.Add(", ");
+            lines.AddRange(right);
+            lines.Add(")");
+
+            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binary).ConvertedType ?? semantic.GetTypeInfo(binary).Type;
+            VariableType resultType = resultTypeSymbol != null ? VariableUtil.GetVarType(resultTypeSymbol) : VariableUtil.GetVarType("double");
+            result = new ExpressionResult(leftResult.Processed && rightResult.Processed, VariablePath.Unknown, resultType);
+            return true;
         }
 
         bool TryProcessEnumArithmeticExpression(
@@ -5481,6 +5587,23 @@ namespace cs2.cpp {
             };
         }
 
+        /// <summary>
+        /// Returns whether the supplied Roslyn type symbol represents one floating-point primitive.
+        /// </summary>
+        /// <param name="typeSymbol">Type symbol to inspect.</param>
+        /// <returns>True when the symbol is <see cref="float"/> or <see cref="double"/>.</returns>
+        static bool IsFloatingPointTypeSymbol(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            return typeSymbol.SpecialType switch {
+                SpecialType.System_Single => true,
+                SpecialType.System_Double => true,
+                _ => false
+            };
+        }
+
         string EscapeCppStringLiteral(string value) {
             return value
                 .Replace("\\", "\\\\")
@@ -5790,6 +5913,7 @@ namespace cs2.cpp {
             }
 
             string guardName = CreateTemporaryName(guardPrefix);
+            RegisterRuntimeRequirement("NativeFinally");
             lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
             AppendDisposalCleanupBody(lines, disposalTarget, disposalUsesPointerAccess);
             lines.Add("});\n");
@@ -7979,6 +8103,12 @@ namespace cs2.cpp {
                             continue;
                         }
 
+                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol)) {
+                            return true;
+                        }
+                    }
+
+                    if (argumentSyntax.Parent?.Parent is BaseObjectCreationExpressionSyntax objectCreationExpression) {
                         if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol)) {
                             return true;
                         }

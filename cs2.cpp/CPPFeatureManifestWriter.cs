@@ -31,17 +31,23 @@ namespace cs2.cpp {
         }
 
         static string BuildHeaderText() {
-            return """
+            List<string> lines = new List<string> {
+                """
 #pragma once
 
 #include <cstddef>
 
 enum class HEFeature {
-    Render2D,
-    Sprites,
-    Text2D,
-    Shaders,
-    DebugOverlay
+"""
+            };
+
+            CPPFeatureKind[] features = Enum.GetValues<CPPFeatureKind>();
+            for (int index = 0; index < features.Length; index++) {
+                string separator = index < features.Length - 1 ? "," : string.Empty;
+                lines.Add($"    {features[index]}{separator}");
+            }
+
+            lines.Add("""
 };
 
 enum class HEFeatureDecisionOrigin {
@@ -60,7 +66,8 @@ struct HEFeatureEntry {
 
 bool he_feature_enabled(HEFeature feature);
 const HEFeatureEntry* he_get_feature_entries(std::size_t* count);
-""";
+""");
+            return string.Join(Environment.NewLine, lines);
         }
 
         static string BuildSourceText(CPPBuildUsageReport buildUsageReport) {
