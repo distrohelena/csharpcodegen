@@ -14,7 +14,6 @@ namespace cs2.cpp {
             }
 
             CPPGeneratedSourcePruner.RemoveEditorOnlyGeneratedSourceFiles(outputFolder);
-            CPPGeneratedOutputNormalizer.Normalize(outputFolder);
 
             if (options.PlatformProfile.Kind == CPPPlatformKind.GameCubeHeadless) {
                 new CPPGameCubeGeneratedRuntimeAdapter().Apply(outputFolder);

@@ -3652,6 +3652,55 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures methods that return managed strings coalesce explicit null returns to the native managed empty-string singleton instead of emitting an invalid <c>std::string</c> null return.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringNullReturn_UsesManagedEmptyString() {
+            string source = """
+                public class Reader {
+                    public string ReadString() {
+                        return null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
+
+            Assert.Contains("return String::Empty;", sourceOutput);
+            Assert.DoesNotContain("return nullptr;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated body-only generic type arguments register header dependencies before emission so pointer-only generated references can rely on forward declarations without post-generation repair.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBodyOnlyGenericTypeArgument_EmitsForwardDeclarationInHeader() {
+            string source = """
+                public class MenuSelectedDescriptionComponent {
+                }
+
+                public class MenuItemComponent {
+                }
+
+                public class MenuComponent {
+                    T Find<T>() {
+                        return default;
+                    }
+
+                    public bool HasSelection() {
+                        return Find<MenuSelectedDescriptionComponent>() != null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MenuComponent.hpp"));
+
+            Assert.Contains("class MenuSelectedDescriptionComponent;", headerOutput);
+        }
+
+        /// <summary>
         /// Ensures StringComparer static members lower through a native comparer runtime token instead of synthetic type leakage.
         /// </summary>
         [Fact]
