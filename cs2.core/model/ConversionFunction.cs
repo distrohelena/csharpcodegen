@@ -17,6 +17,8 @@ namespace cs2.core {
         public bool IsAsync { get; set; }
         public bool IsConstructor { get; set; }
         public bool IsOverride { get; set; }
+        public string NativeFreeFunctionName { get; set; }
+        public string NativeFreeFunctionIncludePath { get; set; }
 
         public List<ConversionVariable> InParameters { get; set; }
 
@@ -46,6 +48,8 @@ namespace cs2.core {
             Name = "";
             InParameters = new List<ConversionVariable>();
             BodyVariables = new List<ConversionFunctionVariableUsage>();
+            NativeFreeFunctionName = string.Empty;
+            NativeFreeFunctionIncludePath = string.Empty;
         }
 
         public string GetGenericArguments() {

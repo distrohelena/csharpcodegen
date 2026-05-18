@@ -93,6 +93,11 @@ public:
     static double Tan(TValue value) {
         return std::tan(static_cast<double>(value));
     }
+
+    template <typename TY, typename TX>
+    static double Atan2(TY y, TX x) {
+        return std::atan2(static_cast<double>(y), static_cast<double>(x));
+    }
 };
 
 class MathF {
@@ -160,6 +165,11 @@ public:
     template <typename TValue>
     static float Tan(TValue value) {
         return static_cast<float>(Math::Tan(value));
+    }
+
+    template <typename TY, typename TX>
+    static float Atan2(TY y, TX x) {
+        return static_cast<float>(Math::Atan2(y, x));
     }
 };
 

@@ -26,6 +26,10 @@ public:
         : std::vector<T>(values) {
     }
 
+    explicit List(const std::vector<T>& values)
+        : std::vector<T>(values) {
+    }
+
     explicit List(const Array<T>* values) {
         if (values == nullptr || values->Length <= 0 || values->Data == nullptr) {
             return;

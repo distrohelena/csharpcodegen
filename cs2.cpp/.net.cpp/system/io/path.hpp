@@ -23,6 +23,8 @@ public:
 
     static std::string GetFullPath(const std::string& path);
 
+    static std::string ChangeExtension(const std::string& path, const std::string& extension);
+
     static bool IsPathRooted(const std::string& path);
 };
 

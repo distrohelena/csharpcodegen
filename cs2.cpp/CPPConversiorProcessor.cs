@@ -277,6 +277,11 @@ namespace cs2.cpp {
                 return new ExpressionResult(true);
             }
 
+            if (statement is ExpressionStatementSyntax nativeOwnershipExpressionStatement &&
+                TryProcessNativeOwnershipInvocationStatement(semantic, context, nativeOwnershipExpressionStatement.Expression, lines)) {
+                return new ExpressionResult(true);
+            }
+
             if (statement is LocalDeclarationStatementSyntax localDeclarationStatement &&
                 TryProcessNonEscapingManagedLocalDeclarationStatement(semantic, context, localDeclarationStatement, lines)) {
                 return new ExpressionResult(true);
@@ -303,6 +308,192 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        bool TryProcessNativeOwnershipInvocationStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines) {
+            if (expression is not InvocationExpressionSyntax invocationExpression) {
+                return false;
+            }
+
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (invokedMethodSymbol == null ||
+                !string.Equals(invokedMethodSymbol.ContainingType?.Name, "NativeOwnership", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (invocationExpression.ArgumentList.Arguments.Count != 1) {
+                throw new InvalidOperationException($"Native ownership helper '{invokedMethodSymbol.Name}' requires exactly one argument.");
+            }
+
+            ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[0];
+            if (string.Equals(invokedMethodSymbol.Name, "Delete", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
+                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                lines.Add("delete ");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(";\n");
+                return true;
+            }
+
+            if (string.Equals(invokedMethodSymbol.Name, "DisposeAndDelete", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
+                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                lines.Add("if (");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(" != nullptr)\n{\n");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add("->Dispose();\n");
+                lines.Add("delete ");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(";\n");
+                lines.Add("}\n");
+                return true;
+            }
+
+            if (string.Equals(invokedMethodSymbol.Name, "Release", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, true);
+                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                lines.Add("delete ");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(";\n");
+                lines.Add(nativeOwnershipTarget.ClearExpression);
+                lines.Add(";\n");
+                return true;
+            }
+
+            if (string.Equals(invokedMethodSymbol.Name, "DisposeAndRelease", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, true);
+                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                lines.Add("if (");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(" != nullptr)\n{\n");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add("->Dispose();\n");
+                lines.Add("delete ");
+                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(";\n");
+                lines.Add("}\n");
+                lines.Add(nativeOwnershipTarget.ClearExpression);
+                lines.Add(";\n");
+                return true;
+            }
+
+            return false;
+        }
+
+        NativeOwnershipTarget ResolveNativeOwnershipTarget(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax targetExpression,
+            bool requireWritableClearTarget) {
+            List<string> beforeLines = new List<string>();
+            List<string> readExpressionLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult readExpressionResult = ProcessExpression(semantic, context, targetExpression, readExpressionLines);
+            context.PopClass(start);
+            if (readExpressionResult.BeforeLines != null && readExpressionResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(readExpressionResult.BeforeLines);
+            }
+
+            string readExpression = string.Concat(readExpressionLines);
+            string clearExpression = requireWritableClearTarget
+                ? ResolveNativeOwnershipClearExpression(semantic, context, targetExpression)
+                : string.Empty;
+            return new NativeOwnershipTarget(readExpression, clearExpression, beforeLines);
+        }
+
+        string ResolveNativeOwnershipClearExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax targetExpression) {
+            ISymbol targetSymbol = ResolveNativeOwnershipTargetSymbol(semantic, targetExpression);
+            if (targetSymbol is ILocalSymbol || targetSymbol is IParameterSymbol || targetSymbol is IFieldSymbol) {
+                List<string> clearLines = new List<string>();
+                int start = context.DepthClass;
+                ProcessExpression(semantic, context, targetExpression, clearLines);
+                context.PopClass(start);
+                return string.Concat(clearLines) + " = nullptr";
+            }
+
+            if (targetSymbol is IPropertySymbol propertySymbol) {
+                if (propertySymbol.SetMethod == null) {
+                    throw new InvalidOperationException($"Native ownership release requires a writable property target for '{propertySymbol.Name}'.");
+                }
+
+                if (propertySymbol.IsStatic) {
+                    VariableType propertySourceType = VariableUtil.GetVarType(propertySymbol.ContainingType);
+                    string propertyContainingTypeName = GetCppTypeToken(propertySourceType, context.Program);
+                    return $"{propertyContainingTypeName}::set_{propertySymbol.Name}(nullptr)";
+                }
+
+                if (targetExpression is MemberAccessExpressionSyntax memberAccessExpression) {
+                    List<string> receiverLines = new List<string>();
+                    int receiverStart = context.DepthClass;
+                    ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccessExpression.Expression, receiverLines);
+                    context.PopClass(receiverStart);
+                    string receiverText = string.Concat(receiverLines);
+                    string memberAccessToken = UsesDirectMemberAccess(receiverResult) ? "." : "->";
+                    return $"{receiverText}{memberAccessToken}set_{propertySymbol.Name}(nullptr)";
+                }
+
+                return $"this->set_{propertySymbol.Name}(nullptr)";
+            }
+
+            throw new InvalidOperationException($"Native ownership helper target '{targetExpression}' must resolve to a field, local, parameter, or writable property.");
+        }
+
+        static ISymbol ResolveNativeOwnershipTargetSymbol(
+            SemanticModel semantic,
+            ExpressionSyntax targetExpression) {
+            SymbolInfo symbolInfo = semantic.GetSymbolInfo(targetExpression);
+            ISymbol targetSymbol = symbolInfo.Symbol;
+            if (targetSymbol is IAliasSymbol aliasSymbol) {
+                targetSymbol = aliasSymbol.Target;
+            }
+
+            if (targetSymbol != null) {
+                return targetSymbol;
+            }
+
+            if (semantic.GetOperation(targetExpression) is ILocalReferenceOperation localReferenceOperation) {
+                return localReferenceOperation.Local;
+            }
+
+            if (semantic.GetOperation(targetExpression) is IParameterReferenceOperation parameterReferenceOperation) {
+                return parameterReferenceOperation.Parameter;
+            }
+
+            if (semantic.GetOperation(targetExpression) is IFieldReferenceOperation fieldReferenceOperation) {
+                return fieldReferenceOperation.Field;
+            }
+
+            if (semantic.GetOperation(targetExpression) is IPropertyReferenceOperation propertyReferenceOperation) {
+                return propertyReferenceOperation.Property;
+            }
+
+            if (symbolInfo.CandidateSymbols.Length > 0) {
+                return symbolInfo.CandidateSymbols[0];
+            }
+
+            return null;
+        }
+
+        sealed class NativeOwnershipTarget {
+            public NativeOwnershipTarget(string readExpression, string clearExpression, List<string> beforeLines) {
+                ReadExpression = readExpression;
+                ClearExpression = clearExpression;
+                BeforeLines = beforeLines;
+            }
+
+            public string ReadExpression { get; }
+
+            public string ClearExpression { get; }
+
+            public List<string> BeforeLines { get; }
         }
 
         bool TryProcessNonEscapingManagedLocalDeclarationStatement(
@@ -2496,6 +2687,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, nativeStringType);
             }
 
+            if (TryProcessNativeFreeFunctionInvocation(semantic, context, invocationExpression, lines, out VariableType nativeFreeFunctionType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, nativeFreeFunctionType);
+            }
+
             if (TryProcessDirectoryInvocation(semantic, context, invocationExpression, lines, out VariableType directoryInvocationType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, directoryInvocationType);
             }
@@ -3522,6 +3717,67 @@ namespace cs2.cpp {
                 lines.Add(")");
                 resultType = VariableUtil.GetVarType("bool");
                 return true;
+            }
+
+            return false;
+        }
+
+        bool TryProcessNativeFreeFunctionInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = null;
+            IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (!TryResolveNativeFreeFunctionMetadata(methodSymbol, out string functionName, out string includePath)) {
+                return false;
+            }
+
+            ConversionClass currentClass = context.GetCurrentClass();
+            if (currentClass != null && !string.IsNullOrWhiteSpace(includePath)) {
+                currentClass.SourceIncludes.Add(includePath);
+            }
+
+            lines.Add(functionName);
+            lines.Add("(");
+            AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+            lines.Add(")");
+
+            if (methodSymbol?.ReturnType != null && methodSymbol.ReturnType.SpecialType != SpecialType.System_Void) {
+                resultType = VariableUtil.GetVarType(methodSymbol.ReturnType);
+            }
+
+            return true;
+        }
+
+        static bool TryResolveNativeFreeFunctionMetadata(IMethodSymbol methodSymbol, out string functionName, out string includePath) {
+            functionName = string.Empty;
+            includePath = string.Empty;
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            foreach (AttributeData attribute in methodSymbol.GetAttributes()) {
+                INamedTypeSymbol attributeType = attribute.AttributeClass;
+                if (attributeType == null) {
+                    continue;
+                }
+
+                string attributeName = attributeType.Name;
+                if (!string.Equals(attributeName, "NativeFreeFunctionAttribute", StringComparison.Ordinal) &&
+                    !string.Equals(attributeName, "NativeFreeFunction", StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments.Length >= 1) {
+                    functionName = attribute.ConstructorArguments[0].Value?.ToString() ?? string.Empty;
+                }
+                if (attribute.ConstructorArguments.Length >= 2) {
+                    includePath = attribute.ConstructorArguments[1].Value?.ToString() ?? string.Empty;
+                }
+
+                return !string.IsNullOrWhiteSpace(functionName);
             }
 
             return false;

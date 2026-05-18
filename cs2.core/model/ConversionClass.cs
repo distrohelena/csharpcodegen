@@ -10,6 +10,7 @@ namespace cs2.core {
         public List<string> Extensions { get; set; }
 
         public List<string> ReferencedClasses { get; set; }
+        public List<string> SourceIncludes { get; set; }
 
         public List<ConversionVariable> Variables { get; set; }
         public List<ConversionFunction> Functions { get; set; }
@@ -28,6 +29,7 @@ namespace cs2.core {
             Functions = new List<ConversionFunction>();
             Extensions = new List<string>();
             ReferencedClasses = new List<string>();
+            SourceIncludes = new List<string>();
         }
 
         public string GetGenericArguments() {

@@ -3867,6 +3867,202 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures ArgumentNullException exposes the managed parameter-name and message overload required by generated throws.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArgumentNullExceptionParameterAndMessage_UsesRuntimeOverload() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    public void Validate(string value) {
+                        if (value == null) {
+                            throw new ArgumentNullException(nameof(value), "Value is required.");
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("return new ArgumentNullException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
+            Assert.Contains("ArgumentNullException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures native ownership helper calls lower directly into explicit delete and dispose operations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeOwnershipHelpers_EmitsStructuredDeleteAndDisposeContracts() {
+            string source = """
+                using System;
+
+                public static class NativeOwnership {
+                    public static void Delete<T>(T value) where T : class {
+                    }
+
+                    public static void DisposeAndDelete<T>(T value) where T : class, IDisposable {
+                        value?.Dispose();
+                    }
+
+                    public static void Release<T>(ref T value) where T : class {
+                        value = null;
+                    }
+
+                    public static void DisposeAndRelease<T>(ref T value) where T : class, IDisposable {
+                        if (value != null) {
+                            value.Dispose();
+                        }
+
+                        value = null;
+                    }
+                }
+
+                public class Child : IDisposable {
+                    public void Dispose() {
+                    }
+                }
+
+                public class Widget {
+                    public Child Owned { get; set; }
+                    public Child Source;
+
+                    public void Clear(Child child) {
+                        NativeOwnership.Delete(child);
+                        NativeOwnership.DisposeAndDelete(child);
+                        NativeOwnership.Release(ref Source);
+                        NativeOwnership.DisposeAndRelease(ref Owned);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("delete child;", sourceOutput);
+            Assert.Contains("if (child != nullptr)", sourceOutput);
+            Assert.Contains("child->Dispose();", sourceOutput);
+            Assert.Contains("delete this->Source;", sourceOutput);
+            Assert.Contains("this->Source = nullptr;", sourceOutput);
+            Assert.Contains("if (this->Owned != nullptr)", sourceOutput);
+            Assert.Contains("this->Owned->Dispose();", sourceOutput);
+            Assert.Contains("delete this->Owned;", sourceOutput);
+            Assert.Contains("this->set_Owned(nullptr);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures NativeOwnership lowering still emits direct delete operations when a local type name collides with a member name in class scope.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeOwnershipOnLocalTypeMatchingMemberName_EmitsDirectDeleteWithoutHelperCall() {
+            string source = """
+                namespace helengine {
+                    public class FontInfo {
+                    }
+
+                    public static class NativeOwnership {
+                        public static void Delete<T>(T value) where T : class {
+                        }
+                    }
+
+                    public class FontAsset {
+                        public FontInfo FontInfo { get; set; }
+
+                        public void Dispose() {
+                            FontInfo fontInfo = FontInfo;
+                            FontInfo = null;
+                            NativeOwnership.Delete(fontInfo);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
+
+            Assert.Contains("FontInfo *fontInfo", sourceOutput);
+            Assert.Contains("delete fontInfo;", sourceOutput);
+            Assert.DoesNotContain("NativeOwnership::Delete", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures typed out-variable declarations in compound conditions are hoisted into the surrounding scope before the invocation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTypedOutDeclarationInCompoundCondition_HoistsDeclarationBeforeCondition() {
+            string source = """
+                public class RuntimeSceneCatalogEntry {
+                    public string CookedRelativePath { get; set; }
+                }
+
+                public class RuntimeSceneCatalog {
+                    public bool TryGetEntry(string sceneId, out RuntimeSceneCatalogEntry entry) {
+                        entry = null;
+                        return false;
+                    }
+                }
+
+                public class SceneManager {
+                    RuntimeSceneCatalog SceneCatalog;
+
+                    public string Resolve(string sceneId) {
+                        if (SceneCatalog != null && SceneCatalog.TryGetEntry(sceneId, out RuntimeSceneCatalogEntry entry)) {
+                            return entry.CookedRelativePath;
+                        }
+
+                        return string.Empty;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SceneManager.cpp"));
+
+            Assert.Contains("::RuntimeSceneCatalogEntry* entry;", sourceOutput);
+            Assert.Contains("if (this->SceneCatalog != nullptr && this->SceneCatalog->TryGetEntry(sceneId, entry))", sourceOutput);
+            Assert.DoesNotContain("out RuntimeSceneCatalogEntry entry", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures attributed partial-method hooks lower into native free-function calls and source includes without emitting a dead generated member definition.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeFreeFunctionPartialMethod_UsesFreeFunctionCallAndSkipsStubEmission() {
+            string source = """
+                using System;
+
+                [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
+                internal sealed class NativeFreeFunctionAttribute : Attribute {
+                    public NativeFreeFunctionAttribute(string functionName, string includePath) {
+                    }
+                }
+
+                public sealed class RuntimeComponentRegistry {
+                    public static RuntimeComponentRegistry CreateDefault() {
+                        RuntimeComponentRegistry registry = new RuntimeComponentRegistry();
+                        RegisterGeneratedRuntimeComponentDeserializers(registry);
+                        return registry;
+                    }
+
+                    [NativeFreeFunction("RegisterGeneratedRuntimeComponentDeserializers", "GeneratedRuntimeComponentDeserializerRegistration.hpp")]
+                    static void RegisterGeneratedRuntimeComponentDeserializers(RuntimeComponentRegistry registry) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeComponentRegistry.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeComponentRegistry.hpp"));
+
+            Assert.Contains("#include \"GeneratedRuntimeComponentDeserializerRegistration.hpp\"", sourceOutput);
+            Assert.Contains("RegisterGeneratedRuntimeComponentDeserializers(registry);", sourceOutput);
+            Assert.DoesNotContain("RuntimeComponentRegistry::RegisterGeneratedRuntimeComponentDeserializers", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("RegisterGeneratedRuntimeComponentDeserializers(", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures managed array helper and allocation patterns lower through the native Array runtime surface.
         /// </summary>
         [Fact]

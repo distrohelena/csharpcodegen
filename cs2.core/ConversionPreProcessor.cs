@@ -32,6 +32,76 @@ namespace cs2.core {
             return false;
         }
 
+        static bool TryResolveNativeFreeFunctionMetadata(IMethodSymbol methodSymbol, out string functionName, out string includePath) {
+            functionName = string.Empty;
+            includePath = string.Empty;
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            foreach (AttributeData attribute in methodSymbol.GetAttributes()) {
+                INamedTypeSymbol attributeType = attribute.AttributeClass;
+                if (attributeType == null) {
+                    continue;
+                }
+
+                string attributeName = attributeType.Name;
+                if (!string.Equals(attributeName, "NativeFreeFunctionAttribute", StringComparison.Ordinal) &&
+                    !string.Equals(attributeName, "NativeFreeFunction", StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments.Length >= 1) {
+                    functionName = attribute.ConstructorArguments[0].Value?.ToString() ?? string.Empty;
+                }
+                if (attribute.ConstructorArguments.Length >= 2) {
+                    includePath = attribute.ConstructorArguments[1].Value?.ToString() ?? string.Empty;
+                }
+
+                return !string.IsNullOrWhiteSpace(functionName);
+            }
+
+            return false;
+        }
+
+        static bool TryResolveNativeFreeFunctionMetadata(MethodDeclarationSyntax methodDeclaration, out string functionName, out string includePath) {
+            functionName = string.Empty;
+            includePath = string.Empty;
+            if (methodDeclaration == null) {
+                return false;
+            }
+
+            foreach (AttributeListSyntax attributeList in methodDeclaration.AttributeLists) {
+                foreach (AttributeSyntax attribute in attributeList.Attributes) {
+                    string attributeName = attribute.Name.ToString();
+                    if (!string.Equals(attributeName, "NativeFreeFunction", StringComparison.Ordinal) &&
+                        !string.Equals(attributeName, "NativeFreeFunctionAttribute", StringComparison.Ordinal)) {
+                        continue;
+                    }
+
+                    if (attribute.ArgumentList?.Arguments.Count >= 1) {
+                        functionName = TryReadStringLiteral(attribute.ArgumentList.Arguments[0].Expression);
+                    }
+                    if (attribute.ArgumentList?.Arguments.Count >= 2) {
+                        includePath = TryReadStringLiteral(attribute.ArgumentList.Arguments[1].Expression);
+                    }
+
+                    return !string.IsNullOrWhiteSpace(functionName);
+                }
+            }
+
+            return false;
+        }
+
+        static string TryReadStringLiteral(ExpressionSyntax expression) {
+            if (expression is LiteralExpressionSyntax literalExpression &&
+                literalExpression.IsKind(SyntaxKind.StringLiteralExpression)) {
+                return literalExpression.Token.ValueText;
+            }
+
+            return string.Empty;
+        }
+
         private static void ProcessClassDeclaration(SemanticModel semantic, ClassDeclarationSyntax classDecl, ConversionContext context) {
             // declare class
             var cl = context.StartClass();
@@ -189,6 +259,13 @@ namespace cs2.core {
             if (HasTypeScriptAsyncAttribute(methodSymbol) ||
                 HasTypeScriptAsyncAttribute(methodSymbol?.ContainingType)) {
                 func.IsAsync = true;
+            }
+            if (TryResolveNativeFreeFunctionMetadata(methodSymbol, out string nativeFreeFunctionName, out string nativeFreeFunctionIncludePath)) {
+                func.NativeFreeFunctionName = nativeFreeFunctionName;
+                func.NativeFreeFunctionIncludePath = nativeFreeFunctionIncludePath;
+            } else if (TryResolveNativeFreeFunctionMetadata(method, out nativeFreeFunctionName, out nativeFreeFunctionIncludePath)) {
+                func.NativeFreeFunctionName = nativeFreeFunctionName;
+                func.NativeFreeFunctionIncludePath = nativeFreeFunctionIncludePath;
             }
 
             if (method.ReturnType != null) {

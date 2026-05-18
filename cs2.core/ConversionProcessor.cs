@@ -327,8 +327,24 @@ namespace cs2.core {
             context.PopClass(start1);
 
             int start2 = context.DepthClass;
-            ProcessExpression(semantic, context, binaryExp.Right, right);
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binaryExp.Right, right);
             context.PopClass(start2);
+
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                if (result.BeforeLines == null) {
+                    result.BeforeLines = new List<string>();
+                }
+
+                result.BeforeLines.AddRange(rightResult.BeforeLines);
+            }
+
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                if (result.AfterLines == null) {
+                    result.AfterLines = new List<string>();
+                }
+
+                result.AfterLines.AddRange(rightResult.AfterLines);
+            }
 
             BinaryOpTypes type;
             SyntaxKind kind = binaryExp.Kind();
