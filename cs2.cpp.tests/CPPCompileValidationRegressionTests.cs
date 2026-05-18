@@ -2456,6 +2456,18 @@ namespace cs2.cpp.tests {
                         return BitConverter.SingleToInt32Bits(value);
                     }
 
+                    public static long WriteDouble(double value) {
+                        return BitConverter.DoubleToInt64Bits(value);
+                    }
+
+                    public static double ReadDouble(byte[] bytes) {
+                        return BinaryPrimitives.ReadDoubleLittleEndian(bytes);
+                    }
+
+                    public static void WriteDoubleBytes(byte[] bytes, double value) {
+                        BinaryPrimitives.WriteDoubleBigEndian(bytes, value);
+                    }
+
                     public static string ReadString(byte[] bytes) {
                         return Encoding.UTF8.GetString(bytes);
                     }
@@ -2481,6 +2493,9 @@ namespace cs2.cpp.tests {
             Assert.Contains("new ::BinaryWriterLE(stream, true)", sourceOutput);
             Assert.Contains("BitConverter::Int32BitsToSingle(value)", sourceOutput);
             Assert.Contains("BitConverter::SingleToInt32Bits(value)", sourceOutput);
+            Assert.Contains("BitConverter::DoubleToInt64Bits(value)", sourceOutput);
+            Assert.Contains("BinaryPrimitives::ReadDoubleLittleEndian(bytes->data())", sourceOutput);
+            Assert.Contains("BinaryPrimitives::WriteDoubleBigEndian(bytes->data(), value)", sourceOutput);
             Assert.Contains("Encoding::GetString(Encoding::UTF8, bytes)", sourceOutput);
             Assert.Contains("Encoding::GetBytes(Encoding::UTF8, value)", sourceOutput);
             Assert.Contains("int32_t totalBytesRead = 0;", sourceOutput);
@@ -3988,6 +4003,47 @@ namespace cs2.cpp.tests {
             Assert.Contains("this->Owned->Dispose();", sourceOutput);
             Assert.Contains("delete this->Owned;", sourceOutput);
             Assert.Contains("this->set_Owned(nullptr);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures the generated NativeOwnership helper implementation preserves the same delete and dispose semantics as direct call-site lowering.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeOwnershipHelpers_EmitsStructuredDeleteAndDisposeContractsInNativeOwnershipSource() {
+            string source = """
+                using System;
+
+                public static class NativeOwnership {
+                    public static void Delete<T>(T value) where T : class {
+                    }
+
+                    public static void DisposeAndDelete<T>(T value) where T : class, IDisposable {
+                        value?.Dispose();
+                    }
+
+                    public static void Release<T>(ref T value) where T : class {
+                        value = null;
+                    }
+
+                    public static void DisposeAndRelease<T>(ref T value) where T : class, IDisposable {
+                        if (value != null) {
+                            value.Dispose();
+                        }
+
+                        value = null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string nativeOwnershipSource = File.ReadAllText(Path.Combine(output.OutputPath, "NativeOwnership.cpp"));
+
+            Assert.Contains("void NativeOwnership::Delete(T value)", nativeOwnershipSource);
+            Assert.Contains("delete value;", nativeOwnershipSource);
+            Assert.Contains("void NativeOwnership::DisposeAndDelete(T value)", nativeOwnershipSource);
+            Assert.Contains("value->Dispose();", nativeOwnershipSource);
+            Assert.Contains("void NativeOwnership::Release(T& value)", nativeOwnershipSource);
+            Assert.Contains("value = nullptr;", nativeOwnershipSource);
         }
 
         /// <summary>

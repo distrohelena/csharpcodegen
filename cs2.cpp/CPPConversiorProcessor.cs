@@ -1990,6 +1990,9 @@ namespace cs2.cpp {
 
         static bool TryGetAssignedPropertySymbol(SemanticModel semantic, ExpressionSyntax expression, out IPropertySymbol propertySymbol) {
             propertySymbol = null;
+            if (semantic == null || expression == null) {
+                return false;
+            }
 
             ISymbol? symbol = semantic.GetSymbolInfo(expression).Symbol;
             if (expression is MemberAccessExpressionSyntax memberAccessExpression) {
@@ -2675,6 +2678,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, encodingInvocationType);
             }
 
+            if (TryProcessBinaryPrimitivesInvocation(semantic, context, invocationExpression, lines, out VariableType binaryPrimitivesInvocationType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, binaryPrimitivesInvocationType);
+            }
+
             if (TryProcessSha256Invocation(semantic, context, invocationExpression, lines, out VariableType sha256InvocationType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, sha256InvocationType);
             }
@@ -2898,6 +2905,49 @@ namespace cs2.cpp {
                 resultType = string.Equals(methodName, "GetBytes", StringComparison.Ordinal)
                     ? VariableUtil.GetVarType("byte[]")
                     : VariableUtil.GetVarType("string");
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers BinaryPrimitives invocations onto the native runtime helper surface and rewrites managed byte-array buffers to raw pointer access.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the invocation.</param>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="lines">Destination token buffer.</param>
+        /// <param name="resultType">Receives the inferred result type when the invocation is handled.</param>
+        /// <returns><c>true</c> when the invocation targets BinaryPrimitives; otherwise <c>false</c>.</returns>
+        bool TryProcessBinaryPrimitivesInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("object");
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax memberIdentifier ||
+                !TryResolveStaticRuntimeType(semantic, memberAccess.Expression, out string runtimeTypeName, out string runtimeRequirementName) ||
+                !string.Equals(runtimeTypeName, "BinaryPrimitives", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement(runtimeRequirementName);
+            lines.Add("BinaryPrimitives::");
+            lines.Add(memberIdentifier.Identifier.Text);
+            lines.Add("(");
+            AppendBinaryPrimitivesInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+            lines.Add(")");
+
+            if (TryGetExpressionTypeSymbol(semantic, invocationExpression, out ITypeSymbol resultTypeSymbol)) {
+                resultType = VariableUtil.GetVarType(resultTypeSymbol);
+            } else {
+                IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+                if (invokedMethodSymbol?.ReturnType != null) {
+                    resultType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
+                }
             }
 
             return true;
@@ -7512,6 +7562,55 @@ namespace cs2.cpp {
             }
         }
 
+        /// <summary>
+        /// Emits BinaryPrimitives arguments while rewriting managed byte-array buffers to the raw native pointer expected by the runtime helper surface.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the invocation.</param>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="arguments">Invocation arguments to emit.</param>
+        /// <param name="lines">Destination token buffer.</param>
+        void AppendBinaryPrimitivesInvocationArguments(
+            SemanticModel semantic,
+            LayerContext context,
+            SeparatedSyntaxList<ArgumentSyntax> arguments,
+            List<string> lines) {
+            for (int index = 0; index < arguments.Count; index++) {
+                ArgumentSyntax argument = arguments[index];
+                if (!TryAppendBinaryPrimitivesBufferArgument(semantic, context, argument.Expression, lines)) {
+                    int start = context.DepthClass;
+                    ProcessExpression(semantic, context, argument.Expression, lines);
+                    context.PopClass(start);
+                }
+
+                if (index < arguments.Count - 1) {
+                    lines.Add(", ");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Emits the raw backing buffer for BinaryPrimitives when the managed argument is a byte array.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the argument expression.</param>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="expression">Argument expression to emit.</param>
+        /// <param name="lines">Destination token buffer.</param>
+        /// <returns><c>true</c> when the expression was emitted as a native byte pointer; otherwise <c>false</c>.</returns>
+        bool TryAppendBinaryPrimitivesBufferArgument(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines) {
+            if (!TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol expressionTypeSymbol) ||
+                !IsByteArrayTypeSymbol(expressionTypeSymbol)) {
+                return false;
+            }
+
+            string bufferText = RenderExpressionText(semantic, context, expression);
+            lines.Add($"{bufferText}->data()");
+            return true;
+        }
+
         void AppendInvocationArguments(
             SemanticModel semantic,
             LayerContext context,
@@ -7536,6 +7635,16 @@ namespace cs2.cpp {
             ProcessExpression(semantic, context, expression, expressionLines);
             context.PopClass(start);
             return string.Concat(expressionLines);
+        }
+
+        /// <summary>
+        /// Determines whether a Roslyn type symbol represents a managed byte array.
+        /// </summary>
+        /// <param name="typeSymbol">Type symbol to inspect.</param>
+        /// <returns><c>true</c> when the symbol is a byte array; otherwise <c>false</c>.</returns>
+        static bool IsByteArrayTypeSymbol(ITypeSymbol typeSymbol) {
+            return typeSymbol is IArrayTypeSymbol arrayTypeSymbol &&
+                arrayTypeSymbol.ElementType.SpecialType == SpecialType.System_Byte;
         }
 
         static bool IsNativeExceptionTypeName(string typeName) {

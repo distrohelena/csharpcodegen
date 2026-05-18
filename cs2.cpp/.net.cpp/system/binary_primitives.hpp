@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "bit_converter.hpp"
 
 /// <summary>
 /// Provides the minimal managed BinaryPrimitives surface required by transpiled serializer code.
@@ -52,6 +53,13 @@ public:
     }
 
     /// <summary>
+    /// Reads a double-precision floating point value from a little-endian byte buffer.
+    /// </summary>
+    static double ReadDoubleLittleEndian(const uint8_t* buffer) {
+        return BitConverter::Int64BitsToDouble(ReadInt64LittleEndian(buffer));
+    }
+
+    /// <summary>
     /// Reads an unsigned 16-bit integer from a big-endian byte buffer.
     /// </summary>
     static uint16_t ReadUInt16BigEndian(const uint8_t* buffer) {
@@ -96,6 +104,13 @@ public:
     }
 
     /// <summary>
+    /// Reads a double-precision floating point value from a big-endian byte buffer.
+    /// </summary>
+    static double ReadDoubleBigEndian(const uint8_t* buffer) {
+        return BitConverter::Int64BitsToDouble(ReadInt64BigEndian(buffer));
+    }
+
+    /// <summary>
     /// Writes an unsigned 16-bit integer into a little-endian byte buffer.
     /// </summary>
     static void WriteUInt16LittleEndian(uint8_t* buffer, uint16_t value) {
@@ -128,6 +143,13 @@ public:
     }
 
     /// <summary>
+    /// Writes a double-precision floating point value into a little-endian byte buffer.
+    /// </summary>
+    static void WriteDoubleLittleEndian(uint8_t* buffer, double value) {
+        WriteInt64LittleEndian(buffer, BitConverter::DoubleToInt64Bits(value));
+    }
+
+    /// <summary>
     /// Writes an unsigned 16-bit integer into a big-endian byte buffer.
     /// </summary>
     static void WriteUInt16BigEndian(uint8_t* buffer, uint16_t value) {
@@ -157,6 +179,13 @@ public:
     /// </summary>
     static void WriteInt64BigEndian(uint8_t* buffer, int64_t value) {
         WriteUInt64BigEndian(buffer, static_cast<uint64_t>(value));
+    }
+
+    /// <summary>
+    /// Writes a double-precision floating point value into a big-endian byte buffer.
+    /// </summary>
+    static void WriteDoubleBigEndian(uint8_t* buffer, double value) {
+        WriteInt64BigEndian(buffer, BitConverter::DoubleToInt64Bits(value));
     }
 
 private:
