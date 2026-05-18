@@ -242,6 +242,44 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures generated string property getters return constant references so hot render paths do not allocate temporary native strings on every access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringProperties_EmitsConstReferenceGetters() {
+            string source = """
+                public class RuntimeData {
+                    public string Id { get; private set; }
+
+                    public void SetId(string id) {
+                        Id = id;
+                    }
+                }
+
+                public class TextComponent {
+                    string TextValue;
+
+                    public string Text {
+                        get { return TextValue; }
+                        set { TextValue = value; }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeDataHeader = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeData.hpp"));
+            string runtimeDataSource = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeData.cpp"));
+            string textComponentHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextComponent.hpp"));
+            string textComponentSource = File.ReadAllText(Path.Combine(output.OutputPath, "TextComponent.cpp"));
+
+            Assert.Contains("const std::string& get_Id();", runtimeDataHeader);
+            Assert.Contains("const std::string& RuntimeData::get_Id()", runtimeDataSource);
+            Assert.Contains("return this->Id;", runtimeDataSource);
+            Assert.Contains("const std::string& get_Text();", textComponentHeader);
+            Assert.Contains("const std::string& TextComponent::get_Text()", textComponentSource);
+            Assert.Contains("return this->TextValue;", textComponentSource);
+        }
+
+        /// <summary>
         /// Ensures generated references to generic converted types emit template-aware forward declarations instead of non-template class declarations.
         /// </summary>
         [Fact]

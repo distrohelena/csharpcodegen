@@ -17,6 +17,10 @@ namespace cs2.core {
         public bool IsAsync { get; set; }
         public bool IsConstructor { get; set; }
         public bool IsOverride { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the generated native signature should return a constant reference instead of a value copy.
+        /// </summary>
+        public bool ReturnsConstReference { get; set; }
         public string NativeFreeFunctionName { get; set; }
         public string NativeFreeFunctionIncludePath { get; set; }
 

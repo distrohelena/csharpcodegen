@@ -1352,7 +1352,7 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives declarations.</param>
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void WriteInterfacePropertyBridgeGetter(ConversionClass conversionClass, IPropertySymbol interfacePropertySymbol, IPropertySymbol implementationPropertySymbol, TextWriter headerWriter, TextWriter sourceWriter) {
-            string typeName = ConvertType(VariableUtil.GetVarType(interfacePropertySymbol.Type), conversionClass);
+            string typeName = GetPropertyGetterReturnType(conversionClass, VariableUtil.GetVarType(interfacePropertySymbol.Type));
             string accessorName = $"get_{interfacePropertySymbol.Name}";
             string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationPropertySymbol.ContainingType);
 
@@ -1398,7 +1398,7 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives declarations.</param>
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void WriteBasePropertyBridgeGetter(ConversionClass conversionClass, ConversionClass baseConversionClass, ConversionVariable baseVariable, TextWriter headerWriter, TextWriter sourceWriter) {
-            string typeName = ConvertType(baseVariable.VarType, conversionClass);
+            string typeName = GetPropertyGetterReturnType(conversionClass, baseVariable.VarType);
             string accessorName = $"get_{baseVariable.Name}";
 
             headerWriter.WriteLine($"    {typeName} {accessorName}();");
@@ -1664,11 +1664,11 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives the getter definition.</param>
         void WriteExpressionBodiedGetter(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
-            string typeName = ConvertType(variable.VarType, conversionClass);
-            headerWriter.WriteLine($"    {staticKeyword}{typeName} get_{variable.Name}();");
+            string returnTypeName = GetPropertyGetterReturnType(conversionClass, variable);
+            headerWriter.WriteLine($"    {staticKeyword}{returnTypeName} get_{variable.Name}();");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
-            sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
+            sourceWriter.WriteLine($"{returnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
             sourceWriter.WriteLine("{");
 
             List<string> expressionLines = new List<string>();
@@ -1710,11 +1710,12 @@ namespace cs2.cpp {
 
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
             string typeName = ConvertType(variable.VarType, conversionClass);
+            string getterReturnTypeName = GetPropertyGetterReturnType(conversionClass, variable);
 
             if (variable.IsGet) {
-                headerWriter.WriteLine($"    {staticKeyword}{typeName} get_{variable.Name}();");
+                headerWriter.WriteLine($"    {staticKeyword}{getterReturnTypeName} get_{variable.Name}();");
                 WriteTemplateDeclaration(conversionClass, sourceWriter);
-                sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
+                sourceWriter.WriteLine($"{getterReturnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
                 sourceWriter.WriteLine("{");
                 sourceWriter.WriteLine(variable.IsStatic
                     ? $"return {GetQualifiedClassName(conversionClass)}::{variable.Name};"
@@ -1748,9 +1749,66 @@ namespace cs2.cpp {
                 DeclarationType = variable.DeclarationType,
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
+                ReturnsConstReference = ShouldEmitConstReferencePropertyGetter(variable),
                 ReturnType = new VariableType(variable.VarType),
                 RawBlock = variable.GetBlock
             };
+        }
+
+        /// <summary>
+        /// Resolves the native return type for one generated property getter, preserving constant-reference semantics for strings.
+        /// </summary>
+        /// <param name="conversionClass">Owning class for the property getter.</param>
+        /// <param name="variable">Property being emitted.</param>
+        /// <returns>The native return type token.</returns>
+        string GetPropertyGetterReturnType(ConversionClass conversionClass, ConversionVariable variable) {
+            string typeName = ConvertType(variable.VarType, conversionClass);
+            if (ShouldEmitConstReferencePropertyGetter(variable)) {
+                return $"const {typeName}&";
+            }
+
+            return typeName;
+        }
+
+        /// <summary>
+        /// Resolves the native return type for one generated property getter from raw type metadata, preserving constant-reference semantics for native strings.
+        /// </summary>
+        /// <param name="conversionClass">Owning class for the property getter.</param>
+        /// <param name="variableType">Type metadata for the property being emitted.</param>
+        /// <returns>The native return type token.</returns>
+        string GetPropertyGetterReturnType(ConversionClass conversionClass, VariableType variableType) {
+            string typeName = ConvertType(variableType, conversionClass);
+            if (ShouldEmitConstReferencePropertyGetter(variableType)) {
+                return $"const {typeName}&";
+            }
+
+            return typeName;
+        }
+
+        /// <summary>
+        /// Returns whether one generated property getter should expose a constant-reference native signature instead of copying the string value on every access.
+        /// </summary>
+        /// <param name="variable">Property being emitted.</param>
+        /// <returns><c>true</c> when the getter should return a constant string reference; otherwise, <c>false</c>.</returns>
+        bool ShouldEmitConstReferencePropertyGetter(ConversionVariable variable) {
+            if (variable == null || !variable.IsGet) {
+                return false;
+            }
+
+            return ShouldEmitConstReferencePropertyGetter(variable.VarType);
+        }
+
+        /// <summary>
+        /// Returns whether one property type should expose a constant-reference native getter instead of copying the string value on every access.
+        /// </summary>
+        /// <param name="variableType">Property type being emitted.</param>
+        /// <returns><c>true</c> when the getter should return a constant string reference; otherwise, <c>false</c>.</returns>
+        bool ShouldEmitConstReferencePropertyGetter(VariableType variableType) {
+            if (variableType == null) {
+                return false;
+            }
+
+            return string.Equals(variableType.ToCPPString(program), "std::string", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2102,7 +2160,12 @@ namespace cs2.cpp {
                 return "void";
             }
 
-            return ConvertType(function.ReturnType, conversionClass, function);
+            string typeName = ConvertType(function.ReturnType, conversionClass, function);
+            if (function.ReturnsConstReference) {
+                return $"const {typeName}&";
+            }
+
+            return typeName;
         }
 
         string ConvertType(VariableType variableType, ConversionClass conversionClass = null, ConversionFunction function = null) {
