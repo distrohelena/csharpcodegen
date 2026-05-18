@@ -28,6 +28,10 @@ public:
         return this->erase(key) > 0;
     }
 
+    void Clear() {
+        this->clear();
+    }
+
     bool TryGetValue(const TKey& key, TValue& value) const {
         auto iterator = this->find(key);
         if (iterator == this->end()) {

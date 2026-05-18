@@ -252,6 +252,32 @@ public:
         return value.substr(0, safeStartIndex) + insertion + value.substr(safeStartIndex);
     }
 
+    static std::string Replace(const std::string& value, char oldValue, char newValue) {
+        std::string updatedValue = value;
+        std::replace(updatedValue.begin(), updatedValue.end(), oldValue, newValue);
+        return updatedValue;
+    }
+
+    static std::string Replace(const std::string& value, const std::string& oldValue, const std::string& newValue) {
+        if (oldValue.empty()) {
+            return value;
+        }
+
+        std::string updatedValue = value;
+        size_t searchIndex = 0;
+        while (searchIndex < updatedValue.size()) {
+            size_t matchIndex = updatedValue.find(oldValue, searchIndex);
+            if (matchIndex == std::string::npos) {
+                break;
+            }
+
+            updatedValue.replace(matchIndex, oldValue.size(), newValue);
+            searchIndex = matchIndex + newValue.size();
+        }
+
+        return updatedValue;
+    }
+
     /// <summary>
     /// Concatenates string values from a collection using the supplied separator.
     /// </summary>

@@ -1,23 +1,24 @@
 #ifndef ACTION_HPP
 #define ACTION_HPP
 
+#include <functional>
+
 template<typename... TArgs>
 class Action {
 private:
-    using FuncType = void(*)(TArgs...);
-    FuncType func = nullptr;
+    using FuncType = std::function<void(TArgs...)>;
+    FuncType func{};
 
 public:
-    // Default constructor
     Action() = default;
 
-    // Constructor for function pointers
     explicit Action(FuncType f);
 
-    // Invoke stored function
+    template<typename TCallable>
+    explicit Action(TCallable f);
+
     void operator()(TArgs... args) const;
 
-    // Checks if the Action is valid
     explicit operator bool() const;
 };
 

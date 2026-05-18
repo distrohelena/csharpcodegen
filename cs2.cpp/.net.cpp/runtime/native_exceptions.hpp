@@ -38,6 +38,10 @@ public:
     explicit ArgumentNullException(const std::string& parameterName)
         : ArgumentException("Value cannot be null. Parameter name: " + parameterName) {
     }
+
+    ArgumentNullException(const std::string& parameterName, const std::string& message)
+        : ArgumentException(message, parameterName) {
+    }
 };
 
 class ArgumentOutOfRangeException : public ArgumentException {

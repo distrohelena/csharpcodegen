@@ -395,6 +395,14 @@ namespace cs2.cpp {
                 sourceWriter.WriteLine($"#include \"{includePath}.hpp\"");
             }
 
+            foreach (string sourceIncludePath in conversionClass.SourceIncludes.Distinct(StringComparer.Ordinal).OrderBy(path => path, StringComparer.Ordinal)) {
+                if (string.IsNullOrWhiteSpace(sourceIncludePath) || !emittedIncludePaths.Add(sourceIncludePath)) {
+                    continue;
+                }
+
+                sourceWriter.WriteLine($"#include \"{sourceIncludePath}\"");
+            }
+
             foreach (string requirementName in typeScope.GetRegisteredRequirements().OrderBy(name => name, StringComparer.Ordinal)) {
                 if (processor == null ||
                     !processor.TryGetRuntimeRequirementDefinition(requirementName, out CPPRuntimeRequirementDefinition requirement)) {
@@ -1776,6 +1784,10 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunction(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter, TextWriter sourceWriter) {
+            if (IsNativeFreeFunctionStub(function)) {
+                return;
+            }
+
             WriteFunctionDeclaration(conversionClass, function, headerWriter);
             WriteFunctionDefinition(conversionClass, function, sourceWriter);
         }
@@ -1800,6 +1812,10 @@ namespace cs2.cpp {
         /// <param name="function">The function to declare.</param>
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         void WriteFunctionDeclaration(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter) {
+            if (IsNativeFreeFunctionStub(function)) {
+                return;
+            }
+
             bool emitPureVirtualDeclaration = ShouldEmitPureVirtualDeclaration(conversionClass, function);
 
             WriteFunctionTemplateDeclaration(function, headerWriter, "    ");
@@ -1834,6 +1850,10 @@ namespace cs2.cpp {
         /// <param name="function">The function to define.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
+            if (IsNativeFreeFunctionStub(function)) {
+                return;
+            }
+
             if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
                 return;
             }
@@ -1860,6 +1880,14 @@ namespace cs2.cpp {
 
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        static bool IsNativeFreeFunctionStub(ConversionFunction function) {
+            if (function == null) {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(function.NativeFreeFunctionName);
         }
 
         static bool ShouldEmitPureVirtualDeclaration(ConversionClass conversionClass, ConversionFunction function) {

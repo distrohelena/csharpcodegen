@@ -11,6 +11,8 @@
 /// </summary>
 class Number {
 public:
+    inline static constexpr double Epsilon = 2.2204460492503131e-16;
+
     /// <summary>
     /// Attempts to parse a signed 32-bit integer from text.
     /// </summary>
@@ -40,6 +42,42 @@ public:
     /// <returns>True when the value is positive infinity; otherwise false.</returns>
     static bool IsPositiveInfinity(double value) {
         return std::isinf(value) && value > 0.0;
+    }
+
+    /// <summary>
+    /// Determines whether the supplied single-precision value is not-a-number.
+    /// </summary>
+    /// <param name="value">Value to inspect.</param>
+    /// <returns>True when the value is NaN; otherwise false.</returns>
+    static bool IsNaN(float value) {
+        return std::isnan(value);
+    }
+
+    /// <summary>
+    /// Determines whether the supplied double-precision value is not-a-number.
+    /// </summary>
+    /// <param name="value">Value to inspect.</param>
+    /// <returns>True when the value is NaN; otherwise false.</returns>
+    static bool IsNaN(double value) {
+        return std::isnan(value);
+    }
+
+    /// <summary>
+    /// Determines whether the supplied single-precision value is infinite.
+    /// </summary>
+    /// <param name="value">Value to inspect.</param>
+    /// <returns>True when the value is infinite; otherwise false.</returns>
+    static bool IsInfinity(float value) {
+        return std::isinf(value);
+    }
+
+    /// <summary>
+    /// Determines whether the supplied double-precision value is infinite.
+    /// </summary>
+    /// <param name="value">Value to inspect.</param>
+    /// <returns>True when the value is infinite; otherwise false.</returns>
+    static bool IsInfinity(double value) {
+        return std::isinf(value);
     }
 
     /// <summary>

@@ -15,15 +15,21 @@ public:
     }
 
     explicit Array(int32_t length)
-        : Length(length), Data(length > 0 ? new T[length] : nullptr) {
+        : Length(length), Data(length > 0 ? new T[length]() : nullptr) {
     }
 
     Array(std::initializer_list<T> values)
-        : Length(static_cast<int32_t>(values.size())), Data(values.size() > 0 ? new T[values.size()] : nullptr) {
+        : Length(static_cast<int32_t>(values.size())), Data(values.size() > 0 ? new T[values.size()]() : nullptr) {
         int32_t index = 0;
         for (const T& value : values) {
             Data[index++] = value;
         }
+    }
+
+    ~Array() {
+        delete[] Data;
+        Data = nullptr;
+        Length = 0;
     }
 
     static Array<T>* Empty() {

@@ -7,6 +7,10 @@
 template<typename... TArgs>
 Action<TArgs...>::Action(FuncType f) : func(f) {}
 
+template<typename... TArgs>
+template<typename TCallable>
+Action<TArgs...>::Action(TCallable f) : func(f) {}
+
 // Invoke function
 template<typename... TArgs>
 void Action<TArgs...>::operator()(TArgs... args) const {

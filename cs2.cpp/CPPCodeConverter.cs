@@ -145,6 +145,8 @@ namespace cs2.cpp {
                 TrackEmittedFile(harnessFile);
             }
 
+            CPPGeneratedOwnershipValidator.Validate(outputFolder);
+
             string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder);
             TrackEmittedFile(windowsHandoffPath);
 
@@ -480,6 +482,9 @@ namespace cs2.cpp {
                 if (cl.IsNative) {
                     continue;
                 }
+                if (!ShouldEmitGeneratedSourceClass(cl)) {
+                    continue;
+                }
 
                 string filePath = Path.Combine(folder, cl.GetEmittedTypeName());
                 string headerPath = filePath + ".hpp";
@@ -515,6 +520,19 @@ namespace cs2.cpp {
                 TrackEmittedFile(codePath);
                 Report.EmittedTypeCount++;
             }
+        }
+
+        /// <summary>
+        /// Returns whether one converted type should emit standalone generated C++ source files.
+        /// </summary>
+        /// <param name="conversionClass">Converted type to inspect.</param>
+        /// <returns>True when the type should emit generated C++ source files; otherwise false.</returns>
+        static bool ShouldEmitGeneratedSourceClass(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return false;
+            }
+
+            return !string.Equals(conversionClass.Name, "NativeFreeFunctionAttribute", StringComparison.Ordinal);
         }
 
         /// <summary>

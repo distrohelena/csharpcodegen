@@ -1,4 +1,11 @@
 #include "file.hpp"
+
+#include "helcpp_config.hpp"
+
+#if HE_CPP_PLATFORM_GAMECUBE
+#include "platform/gamecube/GameCubeDiscFileSystem.hpp"
+#endif
+
 #include <fstream>
 
 bool File::Exists(const char* fileName) {
@@ -6,6 +13,12 @@ bool File::Exists(const char* fileName) {
 	{
 		return false;
 	}
+
+#if HE_CPP_PLATFORM_GAMECUBE
+	if (helengine::gamecube::GameCubeDiscFileSystem::CanHandlePath(fileName)) {
+		return helengine::gamecube::GameCubeDiscFileSystem::Exists(fileName);
+	}
+#endif
 
 	std::ifstream file(fileName);
 	return file.good();
@@ -40,6 +53,12 @@ FileStream File::Open(const std::string& filePath, FileMode fileMode)
 
 FileStream* File::OpenRead(const char* filePath)
 {
+#if HE_CPP_PLATFORM_GAMECUBE
+	if (helengine::gamecube::GameCubeDiscFileSystem::CanHandlePath(filePath)) {
+		return helengine::gamecube::GameCubeDiscFileSystem::OpenRead(filePath);
+	}
+#endif
+
 	return new FileStream(filePath, FileMode::Open, FileAccess::Read, FileShare::Read);
 }
 
