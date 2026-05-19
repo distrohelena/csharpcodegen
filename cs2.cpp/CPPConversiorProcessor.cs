@@ -822,11 +822,104 @@ namespace cs2.cpp {
             } else {
                 lines.Add($" {operatorVal} ");
             }
-            lines.AddRange(rightLines);
+            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
+                lines.Add("std::string()");
+            } else {
+                lines.AddRange(rightLines);
+            }
             if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
+        }
+
+        /// <summary>
+        /// Determines whether one simple assignment writes a null-like literal into a string target and therefore must lower to an empty native string instead of a pointer literal.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the active document.</param>
+        /// <param name="leftExpression">Assignment target being written.</param>
+        /// <param name="rightExpression">Assignment value being lowered.</param>
+        /// <returns><c>true</c> when the assignment should emit <c>std::string()</c>; otherwise, <c>false</c>.</returns>
+        static bool ShouldEmitEmptyStringForTargetedNullAssignment(
+            SemanticModel semantic,
+            ExpressionSyntax leftExpression,
+            ExpressionSyntax rightExpression) {
+            if (semantic == null || leftExpression == null || rightExpression == null) {
+                return false;
+            }
+
+            if (!IsNullLikeExpression(rightExpression)) {
+                return false;
+            }
+
+            return TryGetAssignmentTargetTypeSymbol(semantic, leftExpression, out ITypeSymbol leftTypeSymbol)
+                && IsStringTypeSymbol(leftTypeSymbol);
+        }
+
+        /// <summary>
+        /// Resolves the static type of one assignment target using type information first and symbol information as a fallback for properties and fields.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the active document.</param>
+        /// <param name="leftExpression">Assignment target whose type should be resolved.</param>
+        /// <param name="typeSymbol">Resolved target type when available.</param>
+        /// <returns><c>true</c> when a target type was resolved; otherwise, <c>false</c>.</returns>
+        static bool TryGetAssignmentTargetTypeSymbol(
+            SemanticModel semantic,
+            ExpressionSyntax leftExpression,
+            out ITypeSymbol typeSymbol) {
+            typeSymbol = null;
+            if (semantic == null || leftExpression == null || semantic.SyntaxTree != leftExpression.SyntaxTree) {
+                return false;
+            }
+
+            try {
+                TypeInfo typeInfo = semantic.GetTypeInfo(leftExpression);
+                typeSymbol = typeInfo.ConvertedType ?? typeInfo.Type;
+            } catch (ArgumentException) {
+                typeSymbol = null;
+            }
+
+            if (typeSymbol != null) {
+                return true;
+            }
+
+            ISymbol targetSymbol;
+            try {
+                targetSymbol = semantic.GetSymbolInfo(leftExpression).Symbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+
+            if (targetSymbol is IAliasSymbol aliasSymbol) {
+                targetSymbol = aliasSymbol.Target;
+            }
+
+            if (targetSymbol is IPropertySymbol propertySymbol) {
+                typeSymbol = propertySymbol.Type;
+            } else if (targetSymbol is IFieldSymbol fieldSymbol) {
+                typeSymbol = fieldSymbol.Type;
+            } else if (targetSymbol is ILocalSymbol localSymbol) {
+                typeSymbol = localSymbol.Type;
+            } else if (targetSymbol is IParameterSymbol parameterSymbol) {
+                typeSymbol = parameterSymbol.Type;
+            }
+
+            return typeSymbol != null;
+        }
+
+        /// <summary>
+        /// Determines whether one expression represents a null-like literal in source.
+        /// </summary>
+        /// <param name="expression">Expression to inspect.</param>
+        /// <returns><c>true</c> when the expression is <c>null</c> or <c>default</c>; otherwise, <c>false</c>.</returns>
+        static bool IsNullLikeExpression(ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            return expression.IsKind(SyntaxKind.NullLiteralExpression)
+                || expression.IsKind(SyntaxKind.DefaultLiteralExpression)
+                || expression.IsKind(SyntaxKind.DefaultExpression);
         }
 
         bool TryProcessScopeDeletedManagedLocalReassignment(
@@ -880,7 +973,13 @@ namespace cs2.cpp {
             bool isQualifiedMemberName = identifier.Parent is MemberAccessExpressionSyntax qualifiedMemberAccess &&
                 ReferenceEquals(qualifiedMemberAccess.Name, identifier);
 
-            ISymbol? nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            ISymbol nsSymbol;
+            try {
+                nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+            } catch (ArgumentException) {
+                nsSymbol = null;
+            }
+
             if (nsSymbol is IAliasSymbol aliasSymbol) {
                 nsSymbol = aliasSymbol.Target;
             }
@@ -1047,7 +1146,13 @@ namespace cs2.cpp {
 
                 if (isClassVar && !isQualifiedMemberName) {
                     bool isStaticClassMember = false;
-                    ISymbol identifierSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+                    ISymbol identifierSymbol;
+                    try {
+                        identifierSymbol = semantic.GetSymbolInfo(identifier).Symbol;
+                    } catch (ArgumentException) {
+                        identifierSymbol = null;
+                    }
+
                     if (identifierSymbol is IAliasSymbol identifierAliasSymbol) {
                         identifierSymbol = identifierAliasSymbol.Target;
                     }
@@ -1071,7 +1176,13 @@ namespace cs2.cpp {
                             }
                         } else {
                             // semantic
-                            ISymbol? symbol = semantic.GetSymbolInfo(identifier).Symbol;
+                            ISymbol symbol;
+                            try {
+                                symbol = semantic.GetSymbolInfo(identifier).Symbol;
+                            } catch (ArgumentException) {
+                                symbol = null;
+                            }
+
                             if (symbol is INamedTypeSymbol namedTypeSymbol) {
                                 if (!namedTypeSymbol.IsStatic &&
                                     !namedTypeSymbol.IsType) {
@@ -1929,9 +2040,13 @@ namespace cs2.cpp {
             }
 
             lines.Add($"set_{propertyName}(");
-            int rightStartDepth = context.Class.Count;
-            ProcessExpression(semantic, context, assignment.Right, lines);
-            context.PopClass(rightStartDepth);
+            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
+                lines.Add("std::string()");
+            } else {
+                int rightStartDepth = context.Class.Count;
+                ProcessExpression(semantic, context, assignment.Right, lines);
+                context.PopClass(rightStartDepth);
+            }
             lines.Add(")");
             return true;
         }
@@ -1994,7 +2109,17 @@ namespace cs2.cpp {
                 return false;
             }
 
-            ISymbol? symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (semantic.SyntaxTree != expression.SyntaxTree) {
+                return false;
+            }
+
+            ISymbol symbol;
+            try {
+                symbol = semantic.GetSymbolInfo(expression).Symbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+
             if (expression is MemberAccessExpressionSyntax memberAccessExpression) {
                 symbol = ResolveMemberAccessSymbol(semantic, memberAccessExpression);
             }
@@ -8260,9 +8385,13 @@ namespace cs2.cpp {
 
                 if (variable.Initializer != null) {
                     newLines.Add($" = ");
-                    ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
-                    if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
-                        beforeDeclarationLines.AddRange(result.BeforeLines);
+                    if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
+                        newLines.Add("std::string()");
+                    } else {
+                        ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
+                        if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                            beforeDeclarationLines.AddRange(result.BeforeLines);
+                        }
                     }
                 }
             }
@@ -8369,7 +8498,18 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (semantic.GetSymbolInfo(identifierName).Symbol is not ILocalSymbol localSymbol ||
+            if (semantic.SyntaxTree != identifierName.SyntaxTree) {
+                return false;
+            }
+
+            ILocalSymbol localSymbol;
+            try {
+                localSymbol = semantic.GetSymbolInfo(identifierName).Symbol as ILocalSymbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+
+            if (localSymbol == null ||
                 localSymbol.DeclaringSyntaxReferences.Length == 0) {
                 return false;
             }
@@ -8407,7 +8547,19 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (semantic.GetSymbolInfo(identifierName).Symbol is not ILocalSymbol localSymbol) {
+            if (semantic.SyntaxTree != expression.SyntaxTree ||
+                semantic.SyntaxTree != identifierName.SyntaxTree) {
+                return false;
+            }
+
+            ILocalSymbol localSymbol;
+            try {
+                localSymbol = semantic.GetSymbolInfo(identifierName).Symbol as ILocalSymbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+
+            if (localSymbol == null) {
                 return false;
             }
 
@@ -9217,9 +9369,13 @@ namespace cs2.cpp {
 
                 if (variable.Initializer != null) {
                     declarationLines.Add(" = ");
-                    ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, declarationLines);
-                    if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
-                        beforeDeclarationLines.AddRange(result.BeforeLines);
+                    if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
+                        declarationLines.Add("std::string()");
+                    } else {
+                        ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, declarationLines);
+                        if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                            beforeDeclarationLines.AddRange(result.BeforeLines);
+                        }
                     }
                 }
 
@@ -9238,6 +9394,26 @@ namespace cs2.cpp {
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether one local declaration must lower a null-like initializer to an empty native string.
+        /// </summary>
+        /// <param name="declarationType">Resolved declared type for the local variable.</param>
+        /// <param name="initializerValue">Initializer expression applied to the declaration.</param>
+        /// <returns><c>true</c> when the initializer should emit <c>std::string()</c>; otherwise, <c>false</c>.</returns>
+        static bool ShouldEmitEmptyStringForStringDeclaration(VariableType declarationType, ExpressionSyntax initializerValue) {
+            if (declarationType == null || initializerValue == null) {
+                return false;
+            }
+
+            if (declarationType.Type != VariableDataType.String &&
+                !string.Equals(declarationType.TypeName, "string", StringComparison.Ordinal) &&
+                !string.Equals(declarationType.TypeName, "std::string", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            return IsNullLikeExpression(initializerValue);
         }
 
         /// <summary>

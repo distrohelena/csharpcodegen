@@ -280,6 +280,40 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures assigning null to string-backed fields lowers to empty native strings instead of invalid std::string null-pointer assignments.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringFieldNullAssignments_EmitsEmptyNativeStrings() {
+            string source = """
+                public class MaterialLayout {
+                    string ShaderAssetIdValue;
+                    string VertexProgramValue;
+                    string PixelProgramValue;
+                    string VariantValue;
+
+                    public void Dispose() {
+                        ShaderAssetIdValue = null;
+                        VertexProgramValue = null;
+                        PixelProgramValue = null;
+                        VariantValue = null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MaterialLayout.cpp"));
+
+            Assert.Contains("this->ShaderAssetIdValue = std::string();", sourceOutput);
+            Assert.Contains("this->VertexProgramValue = std::string();", sourceOutput);
+            Assert.Contains("this->PixelProgramValue = std::string();", sourceOutput);
+            Assert.Contains("this->VariantValue = std::string();", sourceOutput);
+            Assert.DoesNotContain("this->ShaderAssetIdValue = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->VertexProgramValue = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->PixelProgramValue = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->VariantValue = nullptr;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generated references to generic converted types emit template-aware forward declarations instead of non-template class declarations.
         /// </summary>
         [Fact]
@@ -4044,6 +4078,36 @@ namespace cs2.cpp.tests {
             Assert.Contains("value->Dispose();", nativeOwnershipSource);
             Assert.Contains("void NativeOwnership::Release(T& value)", nativeOwnershipSource);
             Assert.Contains("value = nullptr;", nativeOwnershipSource);
+        }
+
+        /// <summary>
+        /// Ensures string-typed null and default assignments lower to empty native strings instead of pointer literals so generated unload and disposal paths remain valid for std::string-backed members.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringNullAssignments_EmitsEmptyNativeStringsInsteadOfNullptr() {
+            string source = """
+                using System;
+
+                public sealed class Widget {
+                    public string Name { get; set; }
+
+                    public void Clear() {
+                        string local = null;
+                        Name = null;
+                        local = default;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("std::string local = std::string();", sourceOutput);
+            Assert.Contains("this->set_Name(std::string());", sourceOutput);
+            Assert.Contains("local = std::string();", sourceOutput);
+            Assert.DoesNotContain("this->set_Name(nullptr);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::string local = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("local = nullptr;", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
