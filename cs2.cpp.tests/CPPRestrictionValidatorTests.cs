@@ -1,4 +1,5 @@
 using cs2.cpp;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -11,11 +12,13 @@ public class CPPRestrictionValidatorTests {
     /// </summary>
     [Fact]
     public void Validate_WhenShadersAreForbiddenAndReachable_ReturnsDiagnostic() {
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         CPPBuildUsageReport usageReport = CPPFeatureResolver.Resolve(
             CPPBuildFeatureProfile.CreateDefault(),
+            catalog,
             [
                 new CPPFeatureUsageRoot {
-                    Feature = CPPFeatureKind.Shaders,
+                    FeatureId = "shaders",
                     RootId = "helengine.core.shaders.ShaderAsset",
                     SourceKind = "Type"
                 }
@@ -29,7 +32,7 @@ public class CPPRestrictionValidatorTests {
         CPPRestrictionValidationResult result = CPPRestrictionValidator.Validate(usageReport, [], profile);
 
         Assert.False(result.IsValid);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("ps2-lite", StringComparison.Ordinal) && diagnostic.Contains("Shaders", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("ps2-lite", StringComparison.Ordinal) && diagnostic.Contains("shaders", StringComparison.Ordinal));
     }
 
     /// <summary>

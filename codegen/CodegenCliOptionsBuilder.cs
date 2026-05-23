@@ -22,6 +22,7 @@ public static class CodegenCliOptionsBuilder {
         options.PlatformProfile = CreatePlatformProfile(parsedArguments.PlatformId, parsedArguments.Endianness);
         options.RuntimeProfile = CreateRuntimeProfile(parsedArguments.RuntimeProfileName);
         options.BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault();
+        options.FeatureCatalog = LoadFeatureCatalog(parsedArguments.FeatureCatalogPath);
         options.CollectDiagnostics = true;
         options.FailOnError = true;
         options.IncludeProjectDefinedPreprocessorSymbols = true;
@@ -44,6 +45,19 @@ public static class CodegenCliOptionsBuilder {
         }
 
         return options;
+    }
+
+    /// <summary>
+    /// Loads the caller-owned external feature catalog when the CLI invocation supplies one.
+    /// </summary>
+    /// <param name="featureCatalogPath">Optional external feature catalog path.</param>
+    /// <returns>The loaded feature catalog, or an empty catalog when the caller intentionally provided none.</returns>
+    static CPPExternalFeatureCatalog LoadFeatureCatalog(string featureCatalogPath) {
+        if (string.IsNullOrWhiteSpace(featureCatalogPath)) {
+            return CPPExternalFeatureCatalog.Empty;
+        }
+
+        return CPPExternalFeatureCatalogLoader.LoadFromFile(featureCatalogPath);
     }
 
     /// <summary>

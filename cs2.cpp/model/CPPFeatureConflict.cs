@@ -4,9 +4,9 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPFeatureConflict {
         /// <summary>
-        /// Gets or sets the feature that produced the conflict.
+        /// Gets or sets the caller-owned feature id that produced the conflict.
         /// </summary>
-        public CPPFeatureKind Feature { get; set; }
+        public string FeatureId { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the policy that controls how the conflict should be treated.

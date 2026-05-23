@@ -6,77 +6,85 @@ namespace cs2.cpp {
         /// <summary>
         /// Stores the requested selection mode for each feature.
         /// </summary>
-        readonly Dictionary<CPPFeatureKind, CPPFeatureMode> Modes = new Dictionary<CPPFeatureKind, CPPFeatureMode>();
+        readonly Dictionary<string, CPPFeatureMode> Modes = new Dictionary<string, CPPFeatureMode>(StringComparer.Ordinal);
 
         /// <summary>
         /// Stores the conflict policy for each feature when detected usage contradicts the profile.
         /// </summary>
-        readonly Dictionary<CPPFeatureKind, CPPFeatureConflictPolicy> ConflictPolicies = new Dictionary<CPPFeatureKind, CPPFeatureConflictPolicy>();
+        readonly Dictionary<string, CPPFeatureConflictPolicy> ConflictPolicies = new Dictionary<string, CPPFeatureConflictPolicy>(StringComparer.Ordinal);
 
         /// <summary>
         /// Gets the selected mode for a feature.
         /// </summary>
-        /// <param name="feature">Feature being queried.</param>
+        /// <param name="featureId">Caller-owned feature id being queried.</param>
+        /// <param name="defaultMode">Default mode to use when the profile has no override.</param>
         /// <returns>The requested feature mode.</returns>
-        public CPPFeatureMode GetMode(CPPFeatureKind feature) {
-            if (Modes.TryGetValue(feature, out CPPFeatureMode mode)) {
+        public CPPFeatureMode GetMode(string featureId, CPPFeatureMode defaultMode) {
+            if (string.IsNullOrWhiteSpace(featureId)) {
+                return defaultMode;
+            }
+
+            if (Modes.TryGetValue(featureId, out CPPFeatureMode mode)) {
                 return mode;
             }
 
-            return CPPFeatureMode.Auto;
+            return defaultMode;
         }
 
         /// <summary>
         /// Gets the conflict policy for a feature.
         /// </summary>
-        /// <param name="feature">Feature being queried.</param>
+        /// <param name="featureId">Caller-owned feature id being queried.</param>
+        /// <param name="defaultPolicy">Default conflict policy to use when the profile has no override.</param>
         /// <returns>The requested conflict policy.</returns>
-        public CPPFeatureConflictPolicy GetConflictPolicy(CPPFeatureKind feature) {
-            if (ConflictPolicies.TryGetValue(feature, out CPPFeatureConflictPolicy policy)) {
+        public CPPFeatureConflictPolicy GetConflictPolicy(string featureId, CPPFeatureConflictPolicy defaultPolicy) {
+            if (string.IsNullOrWhiteSpace(featureId)) {
+                return defaultPolicy;
+            }
+
+            if (ConflictPolicies.TryGetValue(featureId, out CPPFeatureConflictPolicy policy)) {
                 return policy;
             }
 
-            return CPPFeatureConflictPolicy.Error;
+            return defaultPolicy;
         }
 
         /// <summary>
         /// Assigns a feature mode and returns the same profile for fluent configuration.
         /// </summary>
-        /// <param name="feature">Feature being configured.</param>
+        /// <param name="featureId">Caller-owned feature id being configured.</param>
         /// <param name="mode">Requested selection mode.</param>
         /// <returns>The updated build feature profile.</returns>
-        public CPPBuildFeatureProfile WithMode(CPPFeatureKind feature, CPPFeatureMode mode) {
-            Modes[feature] = mode;
+        public CPPBuildFeatureProfile WithMode(string featureId, CPPFeatureMode mode) {
+            if (string.IsNullOrWhiteSpace(featureId)) {
+                throw new ArgumentException("Feature id must not be empty.", nameof(featureId));
+            }
+
+            Modes[featureId] = mode;
             return this;
         }
 
         /// <summary>
         /// Assigns a feature conflict policy and returns the same profile for fluent configuration.
         /// </summary>
-        /// <param name="feature">Feature being configured.</param>
+        /// <param name="featureId">Caller-owned feature id being configured.</param>
         /// <param name="policy">Conflict policy for forced-disable contradictions.</param>
         /// <returns>The updated build feature profile.</returns>
-        public CPPBuildFeatureProfile WithConflictPolicy(CPPFeatureKind feature, CPPFeatureConflictPolicy policy) {
-            ConflictPolicies[feature] = policy;
+        public CPPBuildFeatureProfile WithConflictPolicy(string featureId, CPPFeatureConflictPolicy policy) {
+            if (string.IsNullOrWhiteSpace(featureId)) {
+                throw new ArgumentException("Feature id must not be empty.", nameof(featureId));
+            }
+
+            ConflictPolicies[featureId] = policy;
             return this;
         }
 
         /// <summary>
         /// Creates the default profile for the phase-one feature buckets.
         /// </summary>
-        /// <returns>A build feature profile with automatic selection defaults.</returns>
+        /// <returns>An empty build feature profile that defers feature defaults to the external feature catalog.</returns>
         public static CPPBuildFeatureProfile CreateDefault() {
-            CPPBuildFeatureProfile profile = new CPPBuildFeatureProfile();
-            profile.WithMode(CPPFeatureKind.Render2D, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.Sprites, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.Text2D, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.RuntimeJson, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.HostFileSystem, CPPFeatureMode.Auto);
-            profile.WithMode(CPPFeatureKind.TextProcessing, CPPFeatureMode.Auto);
-            return profile;
+            return new CPPBuildFeatureProfile();
         }
     }
 }

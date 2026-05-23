@@ -24,13 +24,13 @@ namespace cs2.cpp {
             string headerPath = Path.Combine(runtimeFolder, "feature_manifest.hpp");
             string sourcePath = Path.Combine(runtimeFolder, "feature_manifest.cpp");
 
-            File.WriteAllText(headerPath, BuildHeaderText());
+            File.WriteAllText(headerPath, BuildHeaderText(buildUsageReport));
             File.WriteAllText(sourcePath, BuildSourceText(buildUsageReport));
 
             return new[] { headerPath, sourcePath };
         }
 
-        static string BuildHeaderText() {
+        static string BuildHeaderText(CPPBuildUsageReport buildUsageReport) {
             List<string> lines = new List<string> {
                 """
 #pragma once
@@ -41,10 +41,12 @@ enum class HEFeature {
 """
             };
 
-            CPPFeatureKind[] features = Enum.GetValues<CPPFeatureKind>();
+            CPPFeatureDecision[] features = buildUsageReport.FeatureDecisions
+                .OrderBy(item => item.FeatureId, StringComparer.Ordinal)
+                .ToArray();
             for (int index = 0; index < features.Length; index++) {
                 string separator = index < features.Length - 1 ? "," : string.Empty;
-                lines.Add($"    {features[index]}{separator}");
+                lines.Add($"    {CPPFeatureIdentifierFormatter.ToEnumMemberName(features[index].FeatureId)}{separator}");
             }
 
             lines.Add("""
@@ -77,9 +79,9 @@ const HEFeatureEntry* he_get_feature_entries(std::size_t* count);
                 "static const HEFeatureEntry kFeatureEntries[] = {"
             };
 
-            foreach (CPPFeatureDecision decision in buildUsageReport.FeatureDecisions.OrderBy(item => item.Feature.ToString(), StringComparer.Ordinal)) {
+            foreach (CPPFeatureDecision decision in buildUsageReport.FeatureDecisions.OrderBy(item => item.FeatureId, StringComparer.Ordinal)) {
                 string enabledLiteral = decision.Enabled ? "true" : "false";
-                lines.Add($"    {{ HEFeature::{decision.Feature}, {enabledLiteral}, HEFeatureDecisionOrigin::{decision.Origin}, \"{decision.Feature}\" }},");
+                lines.Add($"    {{ HEFeature::{CPPFeatureIdentifierFormatter.ToEnumMemberName(decision.FeatureId)}, {enabledLiteral}, HEFeatureDecisionOrigin::{decision.Origin}, \"{decision.FeatureId}\" }},");
             }
 
             lines.Add("};");

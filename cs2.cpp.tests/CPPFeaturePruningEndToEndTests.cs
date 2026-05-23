@@ -1,4 +1,5 @@
 using System.Text.Json;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -25,7 +26,7 @@ namespace helengine.core.scene {
 
         string outputPath = RunConversion(
             source,
-            CPPBuildFeatureProfile.CreateDefault().WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled));
+            CPPBuildFeatureProfile.CreateDefault().WithMode("shaders", CPPFeatureMode.Disabled));
 
         Assert.False(File.Exists(Path.Combine(outputPath, "ShaderAsset.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "ShaderAsset.cpp")));
@@ -59,7 +60,7 @@ namespace helengine.core.scene {
 
         string outputPath = RunConversion(
             source,
-            CPPBuildFeatureProfile.CreateDefault().WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled));
+            CPPBuildFeatureProfile.CreateDefault().WithMode("debug_overlay", CPPFeatureMode.Disabled));
 
         Assert.False(File.Exists(Path.Combine(outputPath, "DebugOverlayComponent.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "DebugOverlayComponent.cpp")));
@@ -288,6 +289,7 @@ namespace helengine {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.PresetId = "gamecube-core-boot";
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(rootProjectPath);
@@ -509,6 +511,7 @@ namespace helengine {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.PresetId = presetId ?? string.Empty;
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         if (featureProfile != null && string.IsNullOrWhiteSpace(options.PresetId)) {
             options.BuildFeatureProfile = featureProfile;
         }

@@ -17,7 +17,7 @@ public class CPPConversionPresetCatalogTests {
         Assert.Equal("msvc", preset.CompilerProfile.Name);
         Assert.Equal("windows-headless", preset.PlatformProfile.Name);
         Assert.Equal("stl-lite", preset.RuntimeProfile.Name);
-        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode(CPPFeatureKind.Shaders));
+        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("shaders", CPPFeatureMode.Auto));
         Assert.Equal("desktop-no-shaders", preset.RestrictionProfile.Name);
         Assert.True(preset.RestrictionProfile.ForbidShaders);
     }
@@ -33,8 +33,8 @@ public class CPPConversionPresetCatalogTests {
         Assert.Equal("gcc", preset.CompilerProfile.Name);
         Assert.Equal("gamecube-headless", preset.PlatformProfile.Name);
         Assert.Equal("stl-lite", preset.RuntimeProfile.Name);
-        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode(CPPFeatureKind.Shaders));
-        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode(CPPFeatureKind.DebugOverlay));
+        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("shaders", CPPFeatureMode.Auto));
+        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("debug_overlay", CPPFeatureMode.Auto));
         Assert.Equal("gamecube-core-boot", preset.RestrictionProfile.Name);
         Assert.True(preset.RestrictionProfile.ForbidShaders);
         Assert.True(preset.RestrictionProfile.ForbidDebugOnlySystems);

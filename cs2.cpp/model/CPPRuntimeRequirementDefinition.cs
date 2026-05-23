@@ -26,6 +26,6 @@ namespace cs2.cpp {
         /// <summary>
         /// Gets the features that own this runtime requirement when feature pruning is enabled.
         /// </summary>
-        public List<CPPFeatureKind> OwningFeatures { get; } = new List<CPPFeatureKind>();
+        public List<string> OwningFeatureIds { get; } = new List<string>();
     }
 }

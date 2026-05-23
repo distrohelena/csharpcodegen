@@ -8,8 +8,10 @@ namespace cs2.cpp {
         /// <summary>
         /// Initializes the catalog with the built-in runtime requirements.
         /// </summary>
-        public CPPRuntimeRequirementCatalog() {
+        /// <param name="featureCatalog">External feature catalog that owns runtime requirement metadata.</param>
+        public CPPRuntimeRequirementCatalog(CPPExternalFeatureCatalog featureCatalog = null) {
             definitions = CreateDefinitions().ToDictionary(definition => definition.Name, StringComparer.Ordinal);
+            ApplyExternalOwnership(featureCatalog ?? CPPExternalFeatureCatalog.Empty);
         }
 
         /// <summary>
@@ -48,13 +50,13 @@ namespace cs2.cpp {
                 Make("NativeCast", "runtime/native_cast.hpp", "HE_CPP_REQ_NATIVE_CAST", "Runtime-assisted safe cast support for declaration-pattern lowering."),
                 Make("NativeExceptions", "runtime/native_exceptions.hpp", "HE_CPP_REQ_NATIVE_EXCEPTIONS", "Managed exception surface support for common runtime argument and state failures."),
                 Make("StringComparer", "system/string_comparer.hpp", "HE_CPP_REQ_STRING_COMPARER", "Managed string comparer tokens used by generated dictionary construction."),
-                Make("StringBuilder", "system/text/string-builder.hpp", "HE_CPP_REQ_STRING_BUILDER", "Lightweight string builder support for append-heavy managed text composition.", CPPFeatureKind.DebugOverlay, CPPFeatureKind.Shaders, CPPFeatureKind.TextProcessing),
-                Make("Regex", "system/text/regular_expressions/regex.hpp", "HE_CPP_REQ_REGEX", "Lightweight regex, match, and named-group support for transpiled managed text parsing.", CPPFeatureKind.Shaders, CPPFeatureKind.TextProcessing),
+                Make("StringBuilder", "system/text/string-builder.hpp", "HE_CPP_REQ_STRING_BUILDER", "Lightweight string builder support for append-heavy managed text composition."),
+                Make("Regex", "system/text/regular_expressions/regex.hpp", "HE_CPP_REQ_REGEX", "Lightweight regex, match, and named-group support for transpiled managed text parsing."),
                 Make("BinaryReader", "system/io/binary-reader.hpp", "HE_CPP_REQ_BINARY_READER", "Binary reader support for serialized engine data."),
                 Make("BinaryWriter", "system/io/binary-writer.hpp", "HE_CPP_REQ_BINARY_WRITER", "Binary writer support for serialized engine data."),
                 Make("Stream", "system/io/stream.hpp", "HE_CPP_REQ_STREAM", "Stream abstraction support for runtime IO."),
-                Make("StreamReader", "system/io/stream-reader.hpp", "HE_CPP_REQ_STREAM_READER", "Stream reader support for direct UTF-8 text reads from runtime streams.", CPPFeatureKind.TextProcessing),
-                Make("StringReader", "system/io/string-reader.hpp", "HE_CPP_REQ_STRING_READER", "String reader support for line-based text iteration without heap-heavy stream wrappers.", CPPFeatureKind.Shaders, CPPFeatureKind.TextProcessing),
+                Make("StreamReader", "system/io/stream-reader.hpp", "HE_CPP_REQ_STREAM_READER", "Stream reader support for direct UTF-8 text reads from runtime streams."),
+                Make("StringReader", "system/io/string-reader.hpp", "HE_CPP_REQ_STRING_READER", "String reader support for line-based text iteration without heap-heavy stream wrappers."),
                 Make("MemoryStream", "system/io/memory-stream.hpp", "HE_CPP_REQ_MEMORY_STREAM", "Memory stream abstraction support for transient in-memory IO."),
                 Make("FileStream", "system/io/file-stream.hpp", "HE_CPP_REQ_FILE_STREAM", "File stream abstraction support for host-backed runtime IO."),
                 Make("File", "system/io/file.hpp", "HE_CPP_REQ_FILE", "File abstraction support for host-backed IO."),
@@ -72,21 +74,34 @@ namespace cs2.cpp {
             };
         }
 
-        static CPPRuntimeRequirementDefinition Make(string name, string includePath, string configDefineName, string description, params CPPFeatureKind[] owningFeatures) {
-            CPPRuntimeRequirementDefinition definition = new CPPRuntimeRequirementDefinition {
+        /// <summary>
+        /// Applies caller-owned runtime requirement ownership metadata to the built-in requirement definitions.
+        /// </summary>
+        /// <param name="featureCatalog">External feature catalog that may declare runtime requirement ownership.</param>
+        void ApplyExternalOwnership(CPPExternalFeatureCatalog featureCatalog) {
+            foreach (CPPExternalRuntimeRequirementOwnership runtimeRequirementOwnership in featureCatalog.RuntimeRequirements) {
+                if (!definitions.TryGetValue(runtimeRequirementOwnership.RequirementId, out CPPRuntimeRequirementDefinition definition)) {
+                    throw new InvalidOperationException(
+                        $"External feature catalog references unknown runtime requirement '{runtimeRequirementOwnership.RequirementId}'.");
+                }
+
+                definition.OwningFeatureIds.Clear();
+                for (int index = 0; index < runtimeRequirementOwnership.FeatureIds.Count; index++) {
+                    string featureId = runtimeRequirementOwnership.FeatureIds[index];
+                    if (!definition.OwningFeatureIds.Contains(featureId, StringComparer.Ordinal)) {
+                        definition.OwningFeatureIds.Add(featureId);
+                    }
+                }
+            }
+        }
+
+        static CPPRuntimeRequirementDefinition Make(string name, string includePath, string configDefineName, string description) {
+            return new CPPRuntimeRequirementDefinition {
                 Name = name,
                 IncludePath = includePath,
                 ConfigDefineName = configDefineName,
                 Description = description
             };
-
-            if (owningFeatures != null) {
-                foreach (CPPFeatureKind owningFeature in owningFeatures) {
-                    definition.OwningFeatures.Add(owningFeature);
-                }
-            }
-
-            return definition;
         }
     }
 }

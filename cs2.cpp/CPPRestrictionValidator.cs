@@ -15,10 +15,10 @@ namespace cs2.cpp {
             CPPBuildUsageReport report = buildUsageReport ?? new CPPBuildUsageReport();
             CPPRestrictionProfile profile = restrictionProfile ?? CPPRestrictionProfile.CreatePermissive("default");
 
-            ValidateFeature(profile, report, CPPFeatureKind.Shaders, profile.ForbidShaders, result);
-            ValidateFeature(profile, report, CPPFeatureKind.RuntimeJson, profile.ForbidRuntimeJson, result);
-            ValidateFeature(profile, report, CPPFeatureKind.ReflectionLikeRuntime, profile.ForbidReflectionLikeRuntime, result);
-            ValidateFeature(profile, report, CPPFeatureKind.DebugOverlay, profile.ForbidDebugOnlySystems, result);
+            ValidateFeature(profile, report, "shaders", profile.ForbidShaders, result);
+            ValidateFeature(profile, report, "runtime_json", profile.ForbidRuntimeJson, result);
+            ValidateFeature(profile, report, "reflection_like_runtime", profile.ForbidReflectionLikeRuntime, result);
+            ValidateFeature(profile, report, "debug_overlay", profile.ForbidDebugOnlySystems, result);
 
             if (profile.ForbidRegex) {
                 foreach (CPPRuntimeRequirementDefinition definition in registeredRequirements ?? Array.Empty<CPPRuntimeRequirementDefinition>()) {
@@ -36,15 +36,15 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="restrictionProfile">Restriction profile being enforced.</param>
         /// <param name="buildUsageReport">Resolved build usage report.</param>
-        /// <param name="feature">Feature to validate.</param>
+        /// <param name="featureId">Caller-owned feature id to validate.</param>
         /// <param name="isForbidden">Whether the feature is forbidden.</param>
         /// <param name="result">Validation result that receives diagnostics.</param>
-        static void ValidateFeature(CPPRestrictionProfile restrictionProfile, CPPBuildUsageReport buildUsageReport, CPPFeatureKind feature, bool isForbidden, CPPRestrictionValidationResult result) {
-            if (!isForbidden || !buildUsageReport.IsEnabled(feature)) {
+        static void ValidateFeature(CPPRestrictionProfile restrictionProfile, CPPBuildUsageReport buildUsageReport, string featureId, bool isForbidden, CPPRestrictionValidationResult result) {
+            if (!isForbidden || !buildUsageReport.IsEnabled(featureId)) {
                 return;
             }
 
-            result.Diagnostics.Add($"Restriction profile '{restrictionProfile.Name}' forbids feature '{feature}', but the build resolved it as enabled.");
+            result.Diagnostics.Add($"Restriction profile '{restrictionProfile.Name}' forbids feature '{featureId}', but the build resolved it as enabled.");
         }
     }
 }

@@ -10,12 +10,13 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="program">The conversion program to filter.</param>
         /// <param name="report">The resolved feature usage report.</param>
+        /// <param name="featureCatalog">External feature catalog that defines feature-owned type roots.</param>
         /// <returns>The resulting reachability plan.</returns>
-        public static CPPReachabilityPlan Build(ConversionProgram program, CPPBuildUsageReport report) {
+        public static CPPReachabilityPlan Build(ConversionProgram program, CPPBuildUsageReport report, CPPExternalFeatureCatalog featureCatalog) {
             CPPReachabilityPlan plan = new CPPReachabilityPlan();
 
             foreach (ConversionClass conversionClass in program.Classes) {
-                if (!ShouldIncludeType(conversionClass, report)) {
+                if (!ShouldIncludeType(conversionClass, report, featureCatalog)) {
                     continue;
                 }
 
@@ -30,17 +31,23 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="conversionClass">The converted type to inspect.</param>
         /// <param name="report">The resolved feature usage report.</param>
+        /// <param name="featureCatalog">External feature catalog that defines which types own which caller-owned features.</param>
         /// <returns><c>true</c> when the type should be kept; otherwise <c>false</c>.</returns>
-        static bool ShouldIncludeType(ConversionClass conversionClass, CPPBuildUsageReport report) {
+        static bool ShouldIncludeType(ConversionClass conversionClass, CPPBuildUsageReport report, CPPExternalFeatureCatalog featureCatalog = null) {
             if (conversionClass.TypeSymbol == null) {
                 return true;
             }
 
-            if (!CPPFeatureCatalog.TryGetFeatures(conversionClass.TypeSymbol, out CPPFeatureKind[] features)) {
+            Dictionary<string, IReadOnlyList<string>> ruleMap = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (CPPExternalFeatureRootRule rootRule in (featureCatalog ?? CPPExternalFeatureCatalog.Empty).RootRules) {
+                ruleMap[rootRule.TypeName] = rootRule.FeatureIds;
+            }
+
+            if (!ruleMap.TryGetValue(conversionClass.TypeSymbol.ToDisplayString(), out IReadOnlyList<string> features)) {
                 return true;
             }
 
-            foreach (CPPFeatureKind feature in features) {
+            foreach (string feature in features) {
                 if (!report.IsEnabled(feature)) {
                     return false;
                 }

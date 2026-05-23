@@ -4,6 +4,14 @@ namespace cs2.cpp {
     /// </summary>
     public sealed class CPPExternalFeatureCatalog {
         /// <summary>
+        /// Gets an empty external feature catalog for callers that intentionally publish no feature metadata.
+        /// </summary>
+        public static CPPExternalFeatureCatalog Empty { get; } = new CPPExternalFeatureCatalog(
+            Array.Empty<CPPExternalFeatureDefinition>(),
+            Array.Empty<CPPExternalFeatureRootRule>(),
+            Array.Empty<CPPExternalRuntimeRequirementOwnership>());
+
+        /// <summary>
         /// Initializes a new external feature catalog.
         /// </summary>
         /// <param name="features">Feature definitions declared by the caller.</param>

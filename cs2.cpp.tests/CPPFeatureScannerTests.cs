@@ -11,27 +11,35 @@ public class CPPFeatureScannerTests {
     /// Verifies that shader-oriented type usage resolves to the shader feature bucket.
     /// </summary>
     [Fact]
-    public void Scan_WhenShaderNamespaceIsReferenced_DetectsShaders() {
+    public void Scan_WhenShaderRuntimeTypesAreReferenced_DetectsShaders() {
         string source = """
-using helengine.core.shaders;
-
-namespace helengine.core.shaders {
+namespace helengine {
     public class ShaderAsset {
+    }
+
+    public interface IShaderRenderManager3D {
     }
 }
 
 namespace SampleGame {
+    using helengine;
+
     public class MaterialHost {
         public ShaderAsset Asset { get; set; }
+    }
+
+    public class ShaderRendererHost {
+        public IShaderRenderManager3D Renderer { get; set; }
     }
 }
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
-        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation).ToArray();
+        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.Shaders);
+        Assert.Contains(roots, root => root.FeatureId == "shaders");
     }
 
     /// <summary>
@@ -54,11 +62,12 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
-        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation).ToArray();
+        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.Sprites);
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.Render2D);
+        Assert.Contains(roots, root => root.FeatureId == "sprites");
+        Assert.Contains(roots, root => root.FeatureId == "render2d");
     }
 
     /// <summary>
@@ -88,11 +97,12 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
-        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation).ToArray();
+        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.Text2D);
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.Render2D);
+        Assert.Contains(roots, root => root.FeatureId == "text2d");
+        Assert.Contains(roots, root => root.FeatureId == "render2d");
     }
 
     /// <summary>
@@ -116,9 +126,38 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
-        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation).ToArray();
+        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
-        Assert.Contains(roots, root => root.Feature == CPPFeatureKind.DebugOverlay);
+        Assert.Contains(roots, root => root.FeatureId == "debug_overlay");
+    }
+
+    /// <summary>
+    /// Verifies that the high-level debug component root enables the debug overlay bucket because it creates overlay UI at runtime.
+    /// </summary>
+    [Fact]
+    public void Scan_WhenDebugComponentIsReferenced_DetectsDebugOverlay() {
+        string source = """
+namespace helengine {
+    public class DebugComponent {
+    }
+}
+
+namespace SampleGame {
+    using helengine;
+
+    public class DebugScreen {
+        public DebugComponent Overlay { get; set; }
+    }
+}
+""";
+
+        CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+
+        CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
+
+        Assert.Contains(roots, root => root.FeatureId == "debug_overlay");
     }
 }

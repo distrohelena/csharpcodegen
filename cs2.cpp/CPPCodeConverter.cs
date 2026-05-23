@@ -38,7 +38,7 @@ namespace cs2.cpp {
             includeProjectPreprocessorSymbols = Options.IncludeProjectDefinedPreprocessorSymbols;
             Report = new CPPConversionReport();
             BuildUsageReport = new CPPBuildUsageReport();
-            RuntimeRequirementCatalog = new CPPRuntimeRequirementCatalog();
+            RuntimeRequirementCatalog = new CPPRuntimeRequirementCatalog(Options.FeatureCatalog);
             RuntimeRequirementRegistrar = new CPPRuntimeRequirementRegistrar(RuntimeRequirementCatalog, Report);
 
             var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
@@ -417,7 +417,7 @@ namespace cs2.cpp {
         /// <param name="outputFolder">Generated output folder that contains copied runtime templates.</param>
         void PruneDisabledFeatureRuntimeFiles(string outputFolder) {
             foreach (CPPRuntimeRequirementDefinition definition in RuntimeRequirementCatalog.Definitions) {
-                if (definition.OwningFeatures.Count == 0) {
+                if (definition.OwningFeatureIds.Count == 0) {
                     continue;
                 }
 
@@ -475,7 +475,7 @@ namespace cs2.cpp {
 
         private void writeClasses(string folder, CPPBuildUsageReport buildUsageReport) {
             SortProgram();
-            CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport);
+            CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
 
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];
@@ -541,16 +541,16 @@ namespace cs2.cpp {
         /// <returns>The resolved build usage report for the current conversion.</returns>
         CPPBuildUsageReport ResolveBuildUsageReport() {
             if (project == null) {
-                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Array.Empty<CPPFeatureUsageRoot>());
+                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Options.FeatureCatalog, Array.Empty<CPPFeatureUsageRoot>());
             }
 
             Compilation compilation = AsyncUtil.RunSync(() => project.GetCompilationAsync());
             if (compilation is not CSharpCompilation csharpCompilation) {
-                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Array.Empty<CPPFeatureUsageRoot>());
+                return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Options.FeatureCatalog, Array.Empty<CPPFeatureUsageRoot>());
             }
 
-            IReadOnlyList<CPPFeatureUsageRoot> detectedRoots = CPPFeatureScanner.Scan(csharpCompilation);
-            return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, detectedRoots);
+            IReadOnlyList<CPPFeatureUsageRoot> detectedRoots = CPPFeatureScanner.Scan(csharpCompilation, Options.FeatureCatalog);
+            return CPPFeatureResolver.Resolve(Options.BuildFeatureProfile, Options.FeatureCatalog, detectedRoots);
         }
 
         protected override void PreProcessExpression(SemanticModel model, MemberDeclarationSyntax member, ConversionContext context) {

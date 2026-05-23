@@ -1,4 +1,5 @@
 using System.Text.Json;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -25,13 +26,13 @@ namespace helengine.core.scene {
 
         string outputPath = RunConversion(
             source,
-            CPPBuildFeatureProfile.CreateDefault().WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled));
+            CPPBuildFeatureProfile.CreateDefault().WithMode("shaders", CPPFeatureMode.Disabled));
 
         string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportPath));
 
         JsonElement decisions = document.RootElement.GetProperty("buildFeatures").GetProperty("decisions");
-        JsonElement shadersDecision = decisions.EnumerateArray().Single(decision => decision.GetProperty("feature").GetString() == "Shaders");
+        JsonElement shadersDecision = decisions.EnumerateArray().Single(decision => decision.GetProperty("feature").GetString() == "shaders");
 
         Assert.False(shadersDecision.GetProperty("enabled").GetBoolean());
         Assert.Equal("ForcedDisabled", shadersDecision.GetProperty("origin").GetString());
@@ -56,7 +57,7 @@ namespace helengine.core.scene {
 
         string outputPath = RunConversion(
             source,
-            CPPBuildFeatureProfile.CreateDefault().WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled));
+            CPPBuildFeatureProfile.CreateDefault().WithMode("shaders", CPPFeatureMode.Disabled));
 
         string headerPath = Path.Combine(outputPath, "runtime", "feature_manifest.hpp");
         string sourcePath = Path.Combine(outputPath, "runtime", "feature_manifest.cpp");
@@ -87,6 +88,7 @@ namespace helengine.core.scene {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.BuildFeatureProfile = featureProfile;
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);

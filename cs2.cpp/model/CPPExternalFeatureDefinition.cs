@@ -7,9 +7,9 @@ namespace cs2.cpp {
         /// Initializes a new external feature definition.
         /// </summary>
         /// <param name="id">Free-form caller-owned feature id.</param>
-        /// <param name="defaultMode">Default mode string declared in metadata.</param>
-        /// <param name="conflictPolicy">Conflict policy string declared in metadata.</param>
-        public CPPExternalFeatureDefinition(string id, string defaultMode, string conflictPolicy) {
+        /// <param name="defaultMode">Default mode declared in metadata.</param>
+        /// <param name="conflictPolicy">Conflict policy declared in metadata.</param>
+        public CPPExternalFeatureDefinition(string id, CPPFeatureMode defaultMode, CPPFeatureConflictPolicy conflictPolicy) {
             Id = id;
             DefaultMode = defaultMode;
             ConflictPolicy = conflictPolicy;
@@ -23,11 +23,11 @@ namespace cs2.cpp {
         /// <summary>
         /// Gets the default mode declared by metadata.
         /// </summary>
-        public string DefaultMode { get; }
+        public CPPFeatureMode DefaultMode { get; }
 
         /// <summary>
         /// Gets the conflict policy declared by metadata.
         /// </summary>
-        public string ConflictPolicy { get; }
+        public CPPFeatureConflictPolicy ConflictPolicy { get; }
     }
 }

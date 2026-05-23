@@ -56,6 +56,11 @@ namespace cs2.cpp {
         public CPPBuildFeatureProfile BuildFeatureProfile { get; set; } = CPPBuildFeatureProfile.CreateDefault();
 
         /// <summary>
+        /// Gets or sets the external feature catalog that defines caller-owned feature ids, root rules, and runtime ownership.
+        /// </summary>
+        public CPPExternalFeatureCatalog FeatureCatalog { get; set; } = CPPExternalFeatureCatalog.Empty;
+
+        /// <summary>
         /// Gets or sets the restriction profile that forbids disallowed runtime systems for the active conversion.
         /// </summary>
         public CPPRestrictionProfile RestrictionProfile { get; set; } = CPPRestrictionProfile.CreatePermissive("default");

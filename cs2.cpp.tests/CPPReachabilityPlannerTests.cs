@@ -28,18 +28,20 @@ namespace helengine.core.scene {
 """);
 
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
-            .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled);
+            .WithMode("shaders", CPPFeatureMode.Disabled);
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         CPPBuildUsageReport report = CPPFeatureResolver.Resolve(
             profile,
+            catalog,
             new[] {
                 new CPPFeatureUsageRoot {
-                    Feature = CPPFeatureKind.Shaders,
+                    FeatureId = "shaders",
                     RootId = "helengine.core.shaders.ShaderAsset",
                     SourceKind = "TypeReference",
                 }
             });
 
-        CPPReachabilityPlan plan = CPPReachabilityPlanner.Build(program, report);
+        CPPReachabilityPlan plan = CPPReachabilityPlanner.Build(program, report, catalog);
 
         Assert.DoesNotContain(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.core.shaders.ShaderAsset");
         Assert.Contains(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.core.scene.SceneNode");

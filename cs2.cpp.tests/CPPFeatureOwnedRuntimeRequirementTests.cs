@@ -1,4 +1,5 @@
 using System.Text.Json;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -26,7 +27,7 @@ namespace helengine.core.shaders.compilation {
 
         string outputPath = RunConversion(
             source,
-            CPPBuildFeatureProfile.CreateDefault().WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled));
+            CPPBuildFeatureProfile.CreateDefault().WithMode("shaders", CPPFeatureMode.Disabled));
 
         string stringReaderPath = Path.Combine(outputPath, "system", "io", "string-reader.hpp");
         string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
@@ -43,17 +44,17 @@ namespace helengine.core.shaders.compilation {
     /// </summary>
     [Fact]
     public void Catalog_MapsRestrictedHelpersToExpandedFeatureBuckets() {
-        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog(CPPTestFeatureCatalogFactory.CreateHelengineCatalog());
 
         Assert.True(catalog.TryGet("NativeType", out CPPRuntimeRequirementDefinition nativeType));
-        Assert.Contains(CPPFeatureKind.ReflectionLikeRuntime, nativeType.OwningFeatures);
+        Assert.Empty(nativeType.OwningFeatureIds);
 
         Assert.True(catalog.TryGet("Regex", out CPPRuntimeRequirementDefinition regex));
-        Assert.Contains(CPPFeatureKind.Shaders, regex.OwningFeatures);
-        Assert.Contains(CPPFeatureKind.TextProcessing, regex.OwningFeatures);
+        Assert.Contains("shaders", regex.OwningFeatureIds);
+        Assert.Contains("text_processing", regex.OwningFeatureIds);
 
         Assert.True(catalog.TryGet("File", out CPPRuntimeRequirementDefinition file));
-        Assert.Contains(CPPFeatureKind.HostFileSystem, file.OwningFeatures);
+        Assert.Empty(file.OwningFeatureIds);
     }
 
     /// <summary>
@@ -76,6 +77,7 @@ namespace helengine.core.shaders.compilation {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.BuildFeatureProfile = featureProfile;
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);

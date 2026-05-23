@@ -85,7 +85,7 @@ namespace cs2.cpp {
         /// <returns>The resolved Windows shader-disabled preset.</returns>
         static CPPConversionPreset CreateWindowsNoShadersPreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled);
+                .WithMode("shaders", CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
                 Id = "windows-no-shaders",
@@ -108,8 +108,8 @@ namespace cs2.cpp {
         /// <returns>The resolved PlayStation 2 preset.</returns>
         static CPPConversionPreset CreatePlayStation2LitePreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
-                .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled);
+                .WithMode("shaders", CPPFeatureMode.Disabled)
+                .WithMode("debug_overlay", CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
                 Id = "ps2-lite",
@@ -140,8 +140,8 @@ namespace cs2.cpp {
         /// <returns>The resolved GameCube core-boot preset.</returns>
         static CPPConversionPreset CreateGameCubeCoreBootPreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
-                .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled);
+                .WithMode("shaders", CPPFeatureMode.Disabled)
+                .WithMode("debug_overlay", CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
                 Id = "gamecube-core-boot",
@@ -170,10 +170,10 @@ namespace cs2.cpp {
         /// <returns>The resolved Nintendo 64 preset.</returns>
         static CPPConversionPreset CreateNintendo64MinimalPreset() {
             CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
-                .WithMode(CPPFeatureKind.DebugOverlay, CPPFeatureMode.Disabled)
-                .WithMode(CPPFeatureKind.Render2D, CPPFeatureMode.Disabled)
-                .WithMode(CPPFeatureKind.Text2D, CPPFeatureMode.Disabled);
+                .WithMode("shaders", CPPFeatureMode.Disabled)
+                .WithMode("debug_overlay", CPPFeatureMode.Disabled)
+                .WithMode("render2d", CPPFeatureMode.Disabled)
+                .WithMode("text2d", CPPFeatureMode.Disabled);
 
             return new CPPConversionPreset {
                 Id = "n64-minimal",

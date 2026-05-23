@@ -43,17 +43,17 @@ namespace cs2.cpp {
                 .ToArray();
 
             CPPFeatureDecision[] orderedFeatureDecisions = report.BuildUsageReport.FeatureDecisions
-                .OrderBy(decision => decision.Feature.ToString(), StringComparer.Ordinal)
+                .OrderBy(decision => decision.FeatureId, StringComparer.Ordinal)
                 .ToArray();
 
             CPPFeatureUsageRoot[] orderedDetectedRoots = report.BuildUsageReport.DetectedRoots
-                .OrderBy(root => root.Feature.ToString(), StringComparer.Ordinal)
+                .OrderBy(root => root.FeatureId, StringComparer.Ordinal)
                 .ThenBy(root => root.RootId, StringComparer.Ordinal)
                 .ThenBy(root => root.SourceKind, StringComparer.Ordinal)
                 .ToArray();
 
             CPPFeatureConflict[] orderedConflicts = report.BuildUsageReport.Conflicts
-                .OrderBy(conflict => conflict.Feature.ToString(), StringComparer.Ordinal)
+                .OrderBy(conflict => conflict.FeatureId, StringComparer.Ordinal)
                 .ThenBy(conflict => conflict.Policy.ToString(), StringComparer.Ordinal)
                 .ThenBy(conflict => conflict.Message, StringComparer.Ordinal)
                 .ToArray();
@@ -78,17 +78,17 @@ namespace cs2.cpp {
                 },
                 buildFeatures = new {
                     decisions = orderedFeatureDecisions.Select(decision => new {
-                        feature = decision.Feature.ToString(),
+                        feature = decision.FeatureId,
                         enabled = decision.Enabled,
                         origin = decision.Origin.ToString()
                     }).ToArray(),
                     detectedRoots = orderedDetectedRoots.Select(root => new {
-                        feature = root.Feature.ToString(),
+                        feature = root.FeatureId,
                         rootId = root.RootId,
                         sourceKind = root.SourceKind
                     }).ToArray(),
                     conflicts = orderedConflicts.Select(conflict => new {
-                        feature = conflict.Feature.ToString(),
+                        feature = conflict.FeatureId,
                         policy = conflict.Policy.ToString(),
                         message = conflict.Message
                     }).ToArray()

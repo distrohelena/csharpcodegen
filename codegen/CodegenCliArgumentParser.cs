@@ -87,6 +87,9 @@ public static class CodegenCliArgumentParser {
                     case "preset":
                         parsedArguments.PresetId = RequireValue(args, ref index, optionName);
                         break;
+                    case "feature-catalog":
+                        parsedArguments.FeatureCatalogPath = RequireValue(args, ref index, optionName);
+                        break;
                     case "set":
                         AddSelectedOption(args, ref index, parsedArguments.SelectedOptions);
                         break;
@@ -111,6 +114,9 @@ public static class CodegenCliArgumentParser {
             parsedArguments.OutputFolder = Path.GetFullPath(parsedArguments.OutputFolder);
             if (!string.IsNullOrWhiteSpace(parsedArguments.RuntimeRoot)) {
                 parsedArguments.RuntimeRoot = Path.GetFullPath(parsedArguments.RuntimeRoot);
+            }
+            if (!string.IsNullOrWhiteSpace(parsedArguments.FeatureCatalogPath)) {
+                parsedArguments.FeatureCatalogPath = Path.GetFullPath(parsedArguments.FeatureCatalogPath);
             }
             if (string.IsNullOrWhiteSpace(parsedArguments.PlatformId)) {
                 parsedArguments.PlatformId = "windows";

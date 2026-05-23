@@ -68,15 +68,11 @@ namespace cs2.cpp {
                     throw new InvalidOperationException($"Feature metadata contains a duplicate feature id '{normalizedId}'.");
                 }
 
-                string defaultMode = NormalizeKeyword(
+                CPPFeatureMode defaultMode = ParseFeatureMode(
                     ReadRequiredStringProperty(featureElement, "defaultMode", $"Feature '{normalizedId}'"),
-                    "defaultMode",
-                    new[] { "auto", "enabled", "disabled" },
                     normalizedId);
-                string conflictPolicy = NormalizeKeyword(
+                CPPFeatureConflictPolicy conflictPolicy = ParseConflictPolicy(
                     ReadRequiredStringProperty(featureElement, "conflictPolicy", $"Feature '{normalizedId}'"),
-                    "conflictPolicy",
-                    new[] { "warn", "error" },
                     normalizedId);
 
                 features.Add(new CPPExternalFeatureDefinition(normalizedId, defaultMode, conflictPolicy));
@@ -200,14 +196,36 @@ namespace cs2.cpp {
             return id.Trim();
         }
 
-        static string NormalizeKeyword(string value, string propertyName, IReadOnlyList<string> validValues, string featureId) {
-            string normalizedValue = NormalizeId(value, $"Feature '{featureId}' property '{propertyName}'").ToLowerInvariant();
-            if (!validValues.Contains(normalizedValue, StringComparer.Ordinal)) {
-                throw new InvalidOperationException(
-                    $"Feature '{featureId}' property '{propertyName}' must be one of: {string.Join(", ", validValues)}.");
+        static CPPFeatureMode ParseFeatureMode(string value, string featureId) {
+            string normalizedValue = NormalizeId(value, $"Feature '{featureId}' property 'defaultMode'").ToLowerInvariant();
+            if (string.Equals(normalizedValue, "auto", StringComparison.Ordinal)) {
+                return CPPFeatureMode.Auto;
             }
 
-            return normalizedValue;
+            if (string.Equals(normalizedValue, "enabled", StringComparison.Ordinal)) {
+                return CPPFeatureMode.Enabled;
+            }
+
+            if (string.Equals(normalizedValue, "disabled", StringComparison.Ordinal)) {
+                return CPPFeatureMode.Disabled;
+            }
+
+            throw new InvalidOperationException(
+                $"Feature '{featureId}' property 'defaultMode' must be one of: auto, enabled, disabled.");
+        }
+
+        static CPPFeatureConflictPolicy ParseConflictPolicy(string value, string featureId) {
+            string normalizedValue = NormalizeId(value, $"Feature '{featureId}' property 'conflictPolicy'").ToLowerInvariant();
+            if (string.Equals(normalizedValue, "warn", StringComparison.Ordinal)) {
+                return CPPFeatureConflictPolicy.Warn;
+            }
+
+            if (string.Equals(normalizedValue, "error", StringComparison.Ordinal)) {
+                return CPPFeatureConflictPolicy.Error;
+            }
+
+            throw new InvalidOperationException(
+                $"Feature '{featureId}' property 'conflictPolicy' must be one of: warn, error.");
         }
     }
 }

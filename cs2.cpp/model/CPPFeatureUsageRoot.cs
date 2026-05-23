@@ -4,18 +4,18 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPFeatureUsageRoot {
         /// <summary>
-        /// Gets or sets the feature reached by this root.
+        /// Gets or sets the caller-owned feature id reached by this root.
         /// </summary>
-        public CPPFeatureKind Feature { get; set; }
+        public string FeatureId { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the stable identifier for the detected root.
         /// </summary>
-        public string RootId { get; set; }
+        public string RootId { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the source category for the detected root.
         /// </summary>
-        public string SourceKind { get; set; }
+        public string SourceKind { get; set; } = string.Empty;
     }
 }

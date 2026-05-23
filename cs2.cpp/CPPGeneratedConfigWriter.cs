@@ -63,9 +63,9 @@ namespace cs2.cpp {
         }
 
         static void AppendFeatureDefines(List<string> lines, CPPBuildUsageReport buildUsageReport) {
-            foreach (CPPFeatureKind feature in Enum.GetValues<CPPFeatureKind>()) {
-                bool enabled = buildUsageReport.GetDecision(feature).Enabled;
-                lines.Add($"#define HE_CPP_FEATURE_{feature.ToString().ToUpperInvariant()} {ToDefineValue(enabled)}");
+            foreach (CPPFeatureDecision decision in buildUsageReport.FeatureDecisions.OrderBy(item => item.FeatureId, StringComparer.Ordinal)) {
+                string defineSuffix = CPPFeatureIdentifierFormatter.ToConfigDefineSuffix(decision.FeatureId);
+                lines.Add($"#define HE_CPP_FEATURE_{defineSuffix} {ToDefineValue(decision.Enabled)}");
             }
         }
     }

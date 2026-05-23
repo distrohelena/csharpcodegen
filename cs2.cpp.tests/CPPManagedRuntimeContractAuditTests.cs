@@ -933,9 +933,10 @@ namespace cs2.cpp.tests {
             options.LoadNativeRuntimeMetadata = false;
             options.WriteConversionReport = true;
             options.BuildFeatureProfile
-                .WithMode(CPPFeatureKind.HostFileSystem, CPPFeatureMode.Enabled)
-                .WithMode(CPPFeatureKind.ReflectionLikeRuntime, CPPFeatureMode.Enabled)
-                .WithMode(CPPFeatureKind.TextProcessing, CPPFeatureMode.Enabled);
+                .WithMode("host_file_system", CPPFeatureMode.Enabled)
+                .WithMode("reflection_like_runtime", CPPFeatureMode.Enabled)
+                .WithMode("text_processing", CPPFeatureMode.Enabled);
+            options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
             configureOptions?.Invoke(options);
 
             CPPConversionRules rules = new CPPConversionRules();

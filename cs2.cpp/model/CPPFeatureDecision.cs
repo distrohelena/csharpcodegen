@@ -4,9 +4,9 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPFeatureDecision {
         /// <summary>
-        /// Gets or sets the feature being described.
+        /// Gets or sets the caller-owned feature id being described.
         /// </summary>
-        public CPPFeatureKind Feature { get; set; }
+        public string FeatureId { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets whether the feature is included in the final build.

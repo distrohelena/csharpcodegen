@@ -21,26 +21,26 @@ namespace cs2.cpp {
         /// <summary>
         /// Returns whether the specified feature is enabled in the resolved report.
         /// </summary>
-        /// <param name="feature">The feature to inspect.</param>
+        /// <param name="featureId">The caller-owned feature id to inspect.</param>
         /// <returns><c>true</c> when the feature is enabled; otherwise <c>false</c>.</returns>
-        public bool IsEnabled(CPPFeatureKind feature) {
-            return GetDecision(feature).Enabled;
+        public bool IsEnabled(string featureId) {
+            return GetDecision(featureId).Enabled;
         }
 
         /// <summary>
         /// Returns the resolved decision for the specified feature.
         /// </summary>
-        /// <param name="feature">The feature to inspect.</param>
+        /// <param name="featureId">The caller-owned feature id to inspect.</param>
         /// <returns>The resolved decision for the feature.</returns>
-        public CPPFeatureDecision GetDecision(CPPFeatureKind feature) {
+        public CPPFeatureDecision GetDecision(string featureId) {
             foreach (CPPFeatureDecision decision in FeatureDecisions) {
-                if (decision.Feature == feature) {
+                if (string.Equals(decision.FeatureId, featureId, StringComparison.Ordinal)) {
                     return decision;
                 }
             }
 
             return new CPPFeatureDecision {
-                Feature = feature,
+                FeatureId = featureId ?? string.Empty,
                 Enabled = false,
                 Origin = CPPFeatureDecisionOrigin.NotIncluded,
             };

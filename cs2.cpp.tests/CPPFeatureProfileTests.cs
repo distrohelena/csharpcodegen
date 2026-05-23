@@ -13,11 +13,11 @@ public class CPPFeatureProfileTests {
     public void CreateDefault_UsesAutoForPhaseOneFeatures() {
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault();
 
-        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode(CPPFeatureKind.Shaders));
-        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode(CPPFeatureKind.Sprites));
-        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode(CPPFeatureKind.Text2D));
-        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode(CPPFeatureKind.Render2D));
-        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode(CPPFeatureKind.DebugOverlay));
+        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode("shaders", CPPFeatureMode.Auto));
+        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode("sprites", CPPFeatureMode.Auto));
+        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode("text2d", CPPFeatureMode.Auto));
+        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode("render2d", CPPFeatureMode.Auto));
+        Assert.Equal(CPPFeatureMode.Auto, profile.GetMode("debug_overlay", CPPFeatureMode.Auto));
     }
 
     /// <summary>
@@ -28,6 +28,7 @@ public class CPPFeatureProfileTests {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
 
         Assert.NotNull(options.BuildFeatureProfile);
+        Assert.Same(CPPExternalFeatureCatalog.Empty, options.FeatureCatalog);
     }
 
     /// <summary>

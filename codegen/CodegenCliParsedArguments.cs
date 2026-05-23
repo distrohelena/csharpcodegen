@@ -50,6 +50,11 @@ public sealed class CodegenCliParsedArguments {
     public string PresetId { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the optional external feature catalog metadata path supplied by the caller.
+    /// </summary>
+    public string FeatureCatalogPath { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets the selected free-form option assignments keyed by setting id.
     /// </summary>
     public Dictionary<string, string> SelectedOptions { get; } = new(StringComparer.OrdinalIgnoreCase);

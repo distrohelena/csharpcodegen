@@ -1,4 +1,5 @@
 using cs2.cpp;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -28,18 +29,19 @@ public class CPPGeneratedConfigWriterTests {
     /// </summary>
     [Fact]
     public void Register_WhenFeatureOwnedRequirementIsDisabled_SkipsRegistration() {
+        CPPExternalFeatureCatalog catalogMetadata = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         CPPConversionReport report = new CPPConversionReport();
-        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog(catalogMetadata);
         CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(catalog, report);
         CPPBuildUsageReport buildUsageReport = new CPPBuildUsageReport();
 
         buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
-            Feature = CPPFeatureKind.DebugOverlay,
+            FeatureId = "debug_overlay",
             Enabled = false,
             Origin = CPPFeatureDecisionOrigin.ForcedDisabled
         });
         buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
-            Feature = CPPFeatureKind.Shaders,
+            FeatureId = "shaders",
             Enabled = false,
             Origin = CPPFeatureDecisionOrigin.ForcedDisabled
         });
@@ -106,12 +108,12 @@ public class CPPGeneratedConfigWriterTests {
 
         CPPBuildUsageReport buildUsageReport = new CPPBuildUsageReport();
         buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
-            Feature = CPPFeatureKind.Shaders,
+            FeatureId = "shaders",
             Enabled = false,
             Origin = CPPFeatureDecisionOrigin.ForcedDisabled
         });
         buildUsageReport.FeatureDecisions.Add(new CPPFeatureDecision {
-            Feature = CPPFeatureKind.Sprites,
+            FeatureId = "sprites",
             Enabled = true,
             Origin = CPPFeatureDecisionOrigin.ForcedEnabled
         });

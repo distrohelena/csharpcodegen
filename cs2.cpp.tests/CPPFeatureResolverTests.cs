@@ -1,4 +1,5 @@
 using cs2.cpp;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -11,20 +12,21 @@ public class CPPFeatureResolverTests {
     /// </summary>
     [Fact]
     public void Resolve_WhenFeatureIsForceDisabled_WinsOverDetectedUsage() {
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
-            .WithMode(CPPFeatureKind.Shaders, CPPFeatureMode.Disabled)
-            .WithConflictPolicy(CPPFeatureKind.Shaders, CPPFeatureConflictPolicy.Error);
+            .WithMode("shaders", CPPFeatureMode.Disabled)
+            .WithConflictPolicy("shaders", CPPFeatureConflictPolicy.Error);
 
-        CPPBuildUsageReport report = CPPFeatureResolver.Resolve(profile, new[] {
+        CPPBuildUsageReport report = CPPFeatureResolver.Resolve(profile, catalog, new[] {
             new CPPFeatureUsageRoot {
-                Feature = CPPFeatureKind.Shaders,
+                FeatureId = "shaders",
                 RootId = "helengine.core.shaders.ShaderAsset",
                 SourceKind = "Type",
             }
         });
 
-        Assert.False(report.IsEnabled(CPPFeatureKind.Shaders));
-        Assert.Equal(CPPFeatureDecisionOrigin.ForcedDisabled, report.GetDecision(CPPFeatureKind.Shaders).Origin);
+        Assert.False(report.IsEnabled("shaders"));
+        Assert.Equal(CPPFeatureDecisionOrigin.ForcedDisabled, report.GetDecision("shaders").Origin);
         Assert.Single(report.Conflicts);
         Assert.Equal(CPPFeatureConflictPolicy.Error, report.Conflicts[0].Policy);
     }
@@ -34,13 +36,14 @@ public class CPPFeatureResolverTests {
     /// </summary>
     [Fact]
     public void Resolve_WhenFeatureIsForceEnabled_StaysEnabledWithoutDetectedUsage() {
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
-            .WithMode(CPPFeatureKind.Sprites, CPPFeatureMode.Enabled);
+            .WithMode("sprites", CPPFeatureMode.Enabled);
 
-        CPPBuildUsageReport report = CPPFeatureResolver.Resolve(profile, Array.Empty<CPPFeatureUsageRoot>());
+        CPPBuildUsageReport report = CPPFeatureResolver.Resolve(profile, catalog, Array.Empty<CPPFeatureUsageRoot>());
 
-        Assert.True(report.IsEnabled(CPPFeatureKind.Sprites));
-        Assert.Equal(CPPFeatureDecisionOrigin.ForcedEnabled, report.GetDecision(CPPFeatureKind.Sprites).Origin);
+        Assert.True(report.IsEnabled("sprites"));
+        Assert.Equal(CPPFeatureDecisionOrigin.ForcedEnabled, report.GetDecision("sprites").Origin);
         Assert.Empty(report.Conflicts);
     }
 }
