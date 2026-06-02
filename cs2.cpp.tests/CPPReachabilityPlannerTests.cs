@@ -16,7 +16,7 @@ public class CPPReachabilityPlannerTests {
     [Fact]
     public void Build_WhenShadersAreDisabled_ExcludesShaderTypesFromReachableSet() {
         ConversionProgram program = CreateProgram("""
-namespace helengine.core.shaders {
+namespace helengine {
     public class ShaderAsset {
     }
 }
@@ -43,7 +43,7 @@ namespace helengine.core.scene {
 
         CPPReachabilityPlan plan = CPPReachabilityPlanner.Build(program, report, catalog);
 
-        Assert.DoesNotContain(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.core.shaders.ShaderAsset");
+        Assert.DoesNotContain(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.ShaderAsset");
         Assert.Contains(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.core.scene.SceneNode");
     }
 

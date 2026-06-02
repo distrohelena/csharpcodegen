@@ -1,6 +1,7 @@
 using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
@@ -50,6 +51,13 @@ namespace cs2.cpp {
                     return;
                 }
 
+                if (conversionClass.DeclarationType == MemberDeclarationType.Delegate) {
+                    processor?.RegisterRuntimeRequirement("Delegate");
+                    WriteSourcePreamble(conversionClass, sourceWriter, typeScope);
+                    WriteDelegate(conversionClass, headerWriter);
+                    return;
+                }
+
                 StringWriter deferredSourceWriter = new StringWriter();
                 WriteClass(conversionClass, headerWriter, deferredSourceWriter);
                 WriteSourcePreamble(conversionClass, sourceWriter, typeScope);
@@ -69,6 +77,9 @@ namespace cs2.cpp {
             headerWriter.WriteLine("#ifdef DrawText");
             headerWriter.WriteLine("#undef DrawText");
             headerWriter.WriteLine("#endif");
+            if (ShouldEmitSequentialLayoutTailPadding(conversionClass)) {
+                headerWriter.WriteLine("#include <array>");
+            }
             headerWriter.WriteLine("#include <cstdint>");
             headerWriter.WriteLine();
 
@@ -79,20 +90,15 @@ namespace cs2.cpp {
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
 
             foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
-                if (!excludedTypeNames.Contains(extension)) {
+                string normalizedExtension = NormalizeReferencedClassName(NormalizeIncludeCandidateTypeName(extension));
+                if (!excludedTypeNames.Contains(extension) &&
+                    !excludedTypeNames.Contains(normalizedExtension)) {
                     referencedTypes.Add(extension);
                     includeRequiredTypes.Add(extension);
                 }
             }
 
             AddSemanticInheritanceTypeReferences(conversionClass, referencedTypes, includeRequiredTypes, excludedTypeNames);
-
-            foreach (string referencedClass in conversionClass.ReferencedClasses.Distinct(StringComparer.Ordinal)) {
-                if (!excludedTypeNames.Contains(referencedClass)) {
-                    referencedTypes.Add(referencedClass);
-                    includeRequiredTypes.Add(referencedClass);
-                }
-            }
 
             AddSignatureTypeReferences(conversionClass, referencedTypes, includeRequiredTypes);
 
@@ -141,10 +147,20 @@ namespace cs2.cpp {
 
             foreach (ConversionFunction function in conversionClass.Functions) {
                 HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass, function);
-                AddTypeReference(function.ReturnType, referencedTypes, includeRequiredTypes, excludedTypeNames);
+                AddTypeReference(
+                    function.ReturnType,
+                    referencedTypes,
+                    includeRequiredTypes,
+                    excludedTypeNames,
+                    allowReferenceForwardDeclaration: function.ReturnsReference || function.ReturnsConstReference);
 
                 foreach (ConversionVariable parameter in function.InParameters) {
-                    AddTypeReference(parameter.VarType, referencedTypes, includeRequiredTypes, excludedTypeNames);
+                    AddTypeReference(
+                        parameter.VarType,
+                        referencedTypes,
+                        includeRequiredTypes,
+                        excludedTypeNames,
+                        allowReferenceForwardDeclaration: UsesReferenceSignature(parameter));
                 }
             }
         }
@@ -156,8 +172,17 @@ namespace cs2.cpp {
         /// <param name="referencedTypes">The destination set that receives discovered type names.</param>
         /// <param name="includeRequiredTypes">The destination set that receives type names that require concrete header includes.</param>
         /// <param name="excludedTypeNames">Type names that should remain compile-time only and must not become includes.</param>
-        void AddTypeReference(VariableType variableType, ISet<string> referencedTypes, ISet<string> includeRequiredTypes, IEnumerable<string> excludedTypeNames) {
+        void AddTypeReference(
+            VariableType variableType,
+            ISet<string> referencedTypes,
+            ISet<string> includeRequiredTypes,
+            IEnumerable<string> excludedTypeNames,
+            bool allowReferenceForwardDeclaration = false) {
             if (variableType == null) {
+                return;
+            }
+
+            if (variableType.IsGenericParameter) {
                 return;
             }
 
@@ -172,13 +197,13 @@ namespace cs2.cpp {
 
             string referencedTypeName = variableType.GenericArgs.Count > 0
                 ? variableType.ToString()
-                : variableType.TypeName;
+                : GetReferencedTypeName(variableType);
 
             if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(variableType.TypeName)) {
                 referencedTypes.Add(referencedTypeName);
-                if (!CanUseForwardDeclarationOnly(variableType)) {
+                if (!CanUseForwardDeclarationOnly(variableType, allowReferenceForwardDeclaration)) {
                     includeRequiredTypes.Add(referencedTypeName);
                 }
             }
@@ -193,17 +218,55 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Chooses the most specific available source type name for dependency tracking, preferring qualified Roslyn metadata when present.
+        /// </summary>
+        /// <param name="variableType">Type metadata being recorded for include resolution.</param>
+        /// <returns>Qualified type name when available; otherwise the leaf type name.</returns>
+        static string GetReferencedTypeName(VariableType variableType) {
+            if (variableType == null) {
+                return string.Empty;
+            }
+
+            return !string.IsNullOrWhiteSpace(variableType.QualifiedTypeName)
+                ? variableType.QualifiedTypeName
+                : variableType.TypeName;
+        }
+
+        /// <summary>
         /// Determines whether a type used in a declaration can rely on a generated forward declaration without a concrete header include.
         /// </summary>
         /// <param name="variableType">Declaration type being evaluated.</param>
         /// <returns><c>true</c> when a forward declaration is sufficient; otherwise <c>false</c>.</returns>
-        bool CanUseForwardDeclarationOnly(VariableType variableType) {
+        bool CanUseForwardDeclarationOnly(VariableType variableType, bool allowReferenceForwardDeclaration = false) {
             if (variableType == null || processor == null) {
                 return false;
             }
 
+            if (IsGeneratedDelegateType(variableType)) {
+                return false;
+            }
+
             processor.ConvertToCPPType(variableType, out CPPTypeData typeData);
-            return typeData.IsPointer && !typeData.IsArray && !typeData.IsNativeType;
+            if (typeData.IsPointer && !typeData.IsArray && !typeData.IsNativeType) {
+                return true;
+            }
+
+            return allowReferenceForwardDeclaration && !typeData.IsArray && !typeData.IsNativeType;
+        }
+
+        /// <summary>
+        /// Determines whether one parameter lowers to a C++ reference signature that can rely on a forward declaration in the owning header.
+        /// </summary>
+        /// <param name="parameter">Parameter metadata to inspect.</param>
+        /// <returns><c>true</c> when the emitted signature uses a reference; otherwise, <c>false</c>.</returns>
+        static bool UsesReferenceSignature(ConversionVariable parameter) {
+            if (parameter == null) {
+                return false;
+            }
+
+            return parameter.Modifier.HasFlag(ParameterModifier.In) ||
+                parameter.Modifier.HasFlag(ParameterModifier.Out) ||
+                parameter.Modifier.HasFlag(ParameterModifier.Ref);
         }
 
         /// <summary>
@@ -265,10 +328,15 @@ namespace cs2.cpp {
         /// <param name="referencedClass">Referenced type name to resolve.</param>
         /// <returns><c>true</c> when an include directive was emitted; otherwise <c>false</c>.</returns>
         bool WriteInclude(TextWriter headerWriter, ConversionClass conversionClass, string referencedClass) {
+            string normalizedIncludeCandidate = NormalizeIncludeCandidateTypeName(referencedClass);
+            if (string.IsNullOrWhiteSpace(normalizedIncludeCandidate)) {
+                return false;
+            }
+
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
             string currentEmittedTypeName = conversionClass.GetEmittedTypeName();
 
-            if (TryResolveGeneratedClass(referencedClass, out ConversionClass generatedClass) &&
+            if (TryResolveGeneratedClass(normalizedIncludeCandidate, out ConversionClass generatedClass) &&
                 string.Equals(generatedClass.GetEmittedTypeName(), currentEmittedTypeName, StringComparison.Ordinal)) {
                 return false;
             }
@@ -284,7 +352,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            string includePath = ResolveIncludePath(referencedClass);
+            string includePath = ResolveIncludePath(normalizedIncludeCandidate);
             if (string.IsNullOrWhiteSpace(includePath)) {
                 return false;
             }
@@ -316,6 +384,10 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (generatedClass.DeclarationType == MemberDeclarationType.Delegate) {
+                return false;
+            }
+
             if (generatedClass.GenericArgs != null && generatedClass.GenericArgs.Count > 0) {
                 string templateParameters = string.Join(", ", generatedClass.GenericArgs.Select(static genericArgument => $"typename {genericArgument}"));
                 forwardDeclaration = $"template <{templateParameters}> class {generatedTypeName};";
@@ -335,20 +407,22 @@ namespace cs2.cpp {
         bool TryResolveGeneratedClass(string referencedClass, out ConversionClass generatedClass) {
             generatedClass = null;
 
-            if (string.IsNullOrWhiteSpace(referencedClass)) {
+            string normalizedIncludeCandidate = NormalizeIncludeCandidateTypeName(referencedClass);
+            if (string.IsNullOrWhiteSpace(normalizedIncludeCandidate)) {
                 return false;
             }
 
-            VariableType variableType = VariableUtil.GetVarType(referencedClass);
-            generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
+            VariableType variableType = VariableUtil.GetVarType(normalizedIncludeCandidate);
+            variableType.QualifiedTypeName = normalizedIncludeCandidate;
+            generatedClass = program.FindGeneratedClass(variableType);
             if (generatedClass != null) {
                 return true;
             }
 
-            string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
+            string normalizedReferencedClass = NormalizeReferencedClassName(normalizedIncludeCandidate);
             generatedClass = program.Classes.FirstOrDefault(candidate =>
                 !candidate.IsNative &&
-                string.Equals(candidate.GetEmittedTypeName(), referencedClass, StringComparison.Ordinal));
+                string.Equals(candidate.GetEmittedTypeName(), normalizedIncludeCandidate, StringComparison.Ordinal));
 
             if (generatedClass != null) {
                 return true;
@@ -369,7 +443,7 @@ namespace cs2.cpp {
             sourceWriter.WriteLine("#ifdef DrawText");
             sourceWriter.WriteLine("#undef DrawText");
             sourceWriter.WriteLine("#endif");
-            sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedTypeName()}.hpp\"");
+            sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedFileStem(program)}.hpp\"");
 
             HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
@@ -380,10 +454,14 @@ namespace cs2.cpp {
 
             AddSourceSignatureTypeReferences(conversionClass, sourceIncludeTypes);
             AddReferencedGeneratedClassSignatureTypeReferences(conversionClass, sourceIncludeTypes);
+            AddFunctionBodyTypeReferences(conversionClass, sourceIncludeTypes);
 
             foreach (string referencedClass in sourceIncludeTypes) {
                 string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
-                if (excludedTypeNames.Contains(referencedClass) || excludedTypeNames.Contains(normalizedReferencedClass)) {
+                string normalizedIncludeCandidate = NormalizeReferencedClassName(NormalizeIncludeCandidateTypeName(referencedClass));
+                if (excludedTypeNames.Contains(referencedClass) ||
+                    excludedTypeNames.Contains(normalizedReferencedClass) ||
+                    excludedTypeNames.Contains(normalizedIncludeCandidate)) {
                     continue;
                 }
 
@@ -467,6 +545,179 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Collects concrete type references that appear only inside function bodies so body-only generic arguments still emit the source includes they require.
+        /// </summary>
+        /// <param name="conversionClass">The type whose function bodies should be scanned.</param>
+        /// <param name="sourceIncludeTypes">Destination set that receives discovered concrete type names.</param>
+        void AddFunctionBodyTypeReferences(ConversionClass conversionClass, ISet<string> sourceIncludeTypes) {
+            if (conversionClass == null) {
+                throw new ArgumentNullException(nameof(conversionClass));
+            }
+
+            if (sourceIncludeTypes == null) {
+                throw new ArgumentNullException(nameof(sourceIncludeTypes));
+            }
+
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                SemanticModel semantic = function.Semantic ?? conversionClass.Semantic;
+                if (semantic == null) {
+                    continue;
+                }
+
+                HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass, function);
+                foreach (TypeSyntax bodyTypeSyntax in EnumerateFunctionBodyTypeSyntax(function)) {
+                    VariableType bodyType = VariableUtil.GetVarType(bodyTypeSyntax, semantic);
+                    AddSourceTypeReference(bodyType, sourceIncludeTypes, excludedTypeNames);
+                }
+
+                foreach (ITypeSymbol referencedTypeSymbol in EnumerateFunctionBodyReferencedTypeSymbols(function, semantic)) {
+                    AddSourceTypeReference(VariableUtil.GetVarType(referencedTypeSymbol), sourceIncludeTypes, excludedTypeNames);
+                    if (TryResolveDirectExternalGeneratedIncludePath(referencedTypeSymbol, out string directIncludePath) &&
+                        !conversionClass.SourceIncludes.Contains(directIncludePath, StringComparer.Ordinal)) {
+                        conversionClass.SourceIncludes.Add(directIncludePath);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enumerates type syntax nodes that appear within one function body or expression body.
+        /// </summary>
+        /// <param name="function">Function whose body syntax should be scanned.</param>
+        /// <returns>Sequence of type syntax nodes referenced within the function body.</returns>
+        static IEnumerable<TypeSyntax> EnumerateFunctionBodyTypeSyntax(ConversionFunction function) {
+            if (function == null) {
+                yield break;
+            }
+
+            if (function.RawBlock != null) {
+                foreach (TypeSyntax typeSyntax in function.RawBlock.DescendantNodes().OfType<TypeSyntax>()) {
+                    yield return typeSyntax;
+                }
+            }
+
+            if (function.ArrowExpression != null) {
+                foreach (TypeSyntax typeSyntax in function.ArrowExpression.DescendantNodes().OfType<TypeSyntax>()) {
+                    yield return typeSyntax;
+                }
+            }
+
+            if (function.ConstructorInitializer != null) {
+                foreach (TypeSyntax typeSyntax in function.ConstructorInitializer.DescendantNodes().OfType<TypeSyntax>()) {
+                    yield return typeSyntax;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enumerates containing type symbols referenced by one function body through member access so source files include owning generated types even when no explicit type syntax appears.
+        /// </summary>
+        /// <param name="function">Function whose body syntax should be scanned.</param>
+        /// <param name="semantic">Semantic model used to resolve referenced symbols.</param>
+        /// <returns>Sequence of containing type symbols required by the function body.</returns>
+        static IEnumerable<ITypeSymbol> EnumerateFunctionBodyReferencedTypeSymbols(ConversionFunction function, SemanticModel semantic) {
+            if (function == null || semantic == null) {
+                yield break;
+            }
+
+            foreach (SyntaxNode rootNode in EnumerateFunctionBodyRoots(function)) {
+                foreach (ExpressionSyntax expressionSyntax in rootNode.DescendantNodesAndSelf().OfType<ExpressionSyntax>()) {
+                    SymbolInfo symbolInfo = semantic.GetSymbolInfo(expressionSyntax);
+                    ISymbol referencedSymbol = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
+                    ITypeSymbol containingTypeSymbol = GetReferencedContainingTypeSymbol(referencedSymbol);
+                    if (containingTypeSymbol != null) {
+                        yield return containingTypeSymbol;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enumerates one function's syntax roots that may contain body-only references.
+        /// </summary>
+        /// <param name="function">Function whose syntax roots should be returned.</param>
+        /// <returns>Syntax roots that belong to the function body, expression body, or constructor initializer.</returns>
+        static IEnumerable<SyntaxNode> EnumerateFunctionBodyRoots(ConversionFunction function) {
+            if (function == null) {
+                yield break;
+            }
+
+            if (function.RawBlock != null) {
+                yield return function.RawBlock;
+            }
+
+            if (function.ArrowExpression != null) {
+                yield return function.ArrowExpression;
+            }
+
+            if (function.ConstructorInitializer != null) {
+                yield return function.ConstructorInitializer;
+            }
+        }
+
+        /// <summary>
+        /// Resolves the containing type that owns one referenced member symbol.
+        /// </summary>
+        /// <param name="referencedSymbol">Referenced symbol discovered in one function body.</param>
+        /// <returns>The owning containing type when the symbol requires a generated include; otherwise <c>null</c>.</returns>
+        static ITypeSymbol GetReferencedContainingTypeSymbol(ISymbol referencedSymbol) {
+            return referencedSymbol switch {
+                IMethodSymbol methodSymbol => methodSymbol.ContainingType,
+                IPropertySymbol propertySymbol => propertySymbol.ContainingType,
+                IFieldSymbol fieldSymbol => fieldSymbol.ContainingType,
+                IEventSymbol eventSymbol => eventSymbol.ContainingType,
+                _ => null
+            };
+        }
+
+        /// <summary>
+        /// Resolves one direct generated-header include path for a referenced external named type when the current conversion program does not own that generated class.
+        /// </summary>
+        /// <param name="referencedTypeSymbol">Referenced containing type symbol discovered in one function body.</param>
+        /// <param name="includePath">Receives the direct generated-header include path when one can be inferred safely.</param>
+        /// <returns>True when a direct generated-header include path was inferred; otherwise false.</returns>
+        bool TryResolveDirectExternalGeneratedIncludePath(ITypeSymbol referencedTypeSymbol, out string includePath) {
+            includePath = string.Empty;
+            if (referencedTypeSymbol is not INamedTypeSymbol namedTypeSymbol) {
+                return false;
+            }
+
+            if (namedTypeSymbol.SpecialType != SpecialType.None ||
+                namedTypeSymbol.TypeKind == TypeKind.TypeParameter ||
+                namedTypeSymbol.ContainingNamespace == null) {
+                return false;
+            }
+
+            string namespaceName = namedTypeSymbol.ContainingNamespace.ToDisplayString();
+            if (namespaceName.StartsWith("System", StringComparison.Ordinal) ||
+                namespaceName.StartsWith("Microsoft", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (program.FindGeneratedClass(namedTypeSymbol) != null) {
+                return false;
+            }
+
+            VariableType referencedType = VariableUtil.GetVarType(namedTypeSymbol);
+            string resolvedIncludePath = TryResolveIncludePath(referencedType.QualifiedTypeName);
+            if (!string.IsNullOrWhiteSpace(resolvedIncludePath)) {
+                includePath = resolvedIncludePath + ".hpp";
+                return true;
+            }
+
+            string leafTypeName = namedTypeSymbol.Name;
+            if (string.IsNullOrWhiteSpace(leafTypeName)) {
+                return false;
+            }
+
+            string emittedFileStem = namedTypeSymbol.Arity > 0
+                ? $"{leafTypeName}_{namedTypeSymbol.Arity}"
+                : leafTypeName;
+            includePath = emittedFileStem + ".hpp";
+            return true;
+        }
+
+        /// <summary>
         /// Adds one type and any nested generic argument types to the concrete source-include set.
         /// </summary>
         /// <param name="variableType">Type metadata to inspect.</param>
@@ -474,6 +725,10 @@ namespace cs2.cpp {
         /// <param name="excludedTypeNames">Type names that must remain compile-time only.</param>
         void AddSourceTypeReference(VariableType variableType, ISet<string> sourceIncludeTypes, IEnumerable<string> excludedTypeNames) {
             if (variableType == null) {
+                return;
+            }
+
+            if (variableType.IsGenericParameter) {
                 return;
             }
 
@@ -488,7 +743,7 @@ namespace cs2.cpp {
 
             string referencedTypeName = variableType.GenericArgs.Count > 0
                 ? variableType.ToString()
-                : variableType.TypeName;
+                : GetReferencedTypeName(variableType);
 
             if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(referencedTypeName) &&
@@ -548,6 +803,170 @@ namespace cs2.cpp {
                 string.Equals(referencedTypeName, "ReadOnlySpan", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeSpan");
                 return "runtime/native_span";
+            }
+
+            if (string.Equals(referencedClass, "IEnumerator", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.IEnumerator", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "IEnumerator", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "IEnumerator", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeIEnumerator");
+                return "system/collections/generic/ienumerator";
+            }
+
+            if (string.Equals(referencedClass, "IEnumerable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.IEnumerable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "IEnumerable", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "IEnumerable", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeIEnumerable");
+                return "system/collections/generic/ienumerable";
+            }
+
+            if (string.Equals(referencedClass, "SpinLock", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Threading.SpinLock", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "SpinLock", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "SpinLock", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("SpinLock");
+                return "system/threading/spin_lock";
+            }
+
+            if (string.Equals(referencedClass, "AutoResetEvent", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Threading.AutoResetEvent", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "AutoResetEvent", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "AutoResetEvent", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("AutoResetEvent");
+                return "system/threading/auto_reset_event";
+            }
+
+            if (string.Equals(referencedClass, "Thread", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Threading.Thread", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Thread", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Thread", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Thread");
+                return "system/threading/thread";
+            }
+
+            if (string.Equals(referencedClass, "NotImplementedException", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.NotImplementedException", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "NotImplementedException", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "NotImplementedException", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NotImplementedException");
+                return "system/not_implemented_exception";
+            }
+
+            if (string.Equals(referencedClass, "Random", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Random", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Random", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Random", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Random");
+                return "system/random";
+            }
+
+            if (string.Equals(referencedClass, "MulticastDelegate", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.MulticastDelegate", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "MulticastDelegate", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "MulticastDelegate", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("MulticastDelegate");
+                return "system/multicast_delegate";
+            }
+
+            if (string.Equals(referencedClass, "ICloneable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.ICloneable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "ICloneable", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "ICloneable", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("ICloneable");
+                return "system/icloneable";
+            }
+
+            if (string.Equals(referencedClass, "ISerializable", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Serialization.ISerializable", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "ISerializable", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "ISerializable", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("ISerializable");
+                return "system/runtime/serialization/iserializable";
+            }
+
+            if (string.Equals(referencedClass, "KeyValuePair", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.KeyValuePair", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "KeyValuePair", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "KeyValuePair", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeKeyValuePair");
+                return "system/collections/generic/key_value_pair";
+            }
+
+            if (string.Equals(referencedClass, "MemoryMarshal", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.InteropServices.MemoryMarshal", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "MemoryMarshal", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "MemoryMarshal", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("MemoryMarshal");
+                return "system/runtime/interopservices/memory_marshal";
+            }
+
+            if (string.Equals(referencedClass, "Vector", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Numerics.Vector", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Vector", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector");
+                return "system/numerics/vector";
+            }
+
+            if (string.Equals(referencedClass, "Vector128", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.Vector128", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector128", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Vector128", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector128");
+                return "system/runtime/intrinsics/vector128";
+            }
+
+            if (string.Equals(referencedClass, "Vector256", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "Vector256Runtime", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.Vector256", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector256", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector256Runtime", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Vector256", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector256");
+                return "system/runtime/intrinsics/vector256";
+            }
+
+            if (string.Equals(referencedClass, "Vector512", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "Vector512Runtime", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector512", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Vector512Runtime", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Vector512", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector512");
+                return "system/runtime/intrinsics/vector512";
+            }
+
+            if (string.Equals(referencedClass, "Sse", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.X86.Sse", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Sse", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Sse", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Sse");
+                return "system/runtime/intrinsics/x86/sse";
+            }
+
+            if (string.Equals(referencedClass, "Avx", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.X86.Avx", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Avx", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Avx", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Avx");
+                return "system/runtime/intrinsics/x86/avx";
+            }
+
+            if (string.Equals(referencedClass, "Avx2", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.X86.Avx2", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Avx2", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Avx2", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Avx2");
+                return "system/runtime/intrinsics/x86/avx2";
+            }
+
+            if (string.Equals(referencedClass, "Sse41", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Runtime.Intrinsics.X86.Sse41", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Sse41", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Sse41", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Sse41");
+                return "system/runtime/intrinsics/x86/sse41";
             }
 
             if (string.Equals(referencedClass, "Nullable", StringComparison.Ordinal) ||
@@ -627,6 +1046,13 @@ namespace cs2.cpp {
                 return "system/string_comparer";
             }
 
+            if (string.Equals(referencedClass, "EqualityComparer", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.EqualityComparer", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "EqualityComparer", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "EqualityComparer", StringComparison.Ordinal)) {
+                return "system/collections/generic/equality_comparer";
+            }
+
             if (string.Equals(referencedClass, "StringComparison", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.StringComparison", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "StringComparison", StringComparison.Ordinal) ||
@@ -645,6 +1071,14 @@ namespace cs2.cpp {
                 string.Equals(referencedTypeName, "MidpointRounding", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("Math");
                 return "system/math";
+            }
+
+            if (string.Equals(referencedClass, "BitOperations", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Numerics.BitOperations", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "BitOperations", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "BitOperations", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("BitOperations");
+                return "system/bit_operations";
             }
 
             if (string.Equals(referencedClass, "Regex", StringComparison.Ordinal) ||
@@ -734,9 +1168,13 @@ namespace cs2.cpp {
                 return "system/func";
             }
 
-            if (string.Equals(referencedClass, "IntPtr", StringComparison.Ordinal) ||
+            if (string.Equals(referencedClass, "nint", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "nint", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "IntPtr", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.IntPtr", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "IntPtr", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "nuint", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "nuint", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "UIntPtr", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.UIntPtr", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "UIntPtr", StringComparison.Ordinal)) {
@@ -785,6 +1223,12 @@ namespace cs2.cpp {
                 return "system/io/path";
             }
 
+            if (string.Equals(referencedClass, "System.Buffer", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "global::System.Buffer", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Buffer");
+                return string.Empty;
+            }
+
             if (IsNativeExceptionTypeName(normalizedReferencedClass)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
@@ -821,9 +1265,14 @@ namespace cs2.cpp {
         /// <param name="referencedClass">Referenced type name to resolve.</param>
         /// <returns>The include path without extension when resolution succeeds; otherwise, an empty string.</returns>
         string TryResolveIncludePath(string referencedClass) {
-            VariableType variableType = VariableUtil.GetVarType(referencedClass);
+            string normalizedIncludeCandidate = NormalizeIncludeCandidateTypeName(referencedClass);
+            if (string.IsNullOrWhiteSpace(normalizedIncludeCandidate)) {
+                return string.Empty;
+            }
 
-            if (referencedClass.Contains("[]", StringComparison.Ordinal) || variableType.Type == VariableDataType.Array) {
+            VariableType variableType = VariableUtil.GetVarType(normalizedIncludeCandidate);
+
+            if (normalizedIncludeCandidate.Contains("[]", StringComparison.Ordinal) || variableType.Type == VariableDataType.Array) {
                 return "runtime/array";
             }
 
@@ -843,8 +1292,81 @@ namespace cs2.cpp {
                 return "runtime/native_dictionary";
             }
 
+            if (string.Equals(variableType.TypeName, "FunctionPointer", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeFunctionPointer");
+                return "runtime/function_pointer";
+            }
+
             if (string.Equals(variableType.TypeName, "Stack", StringComparison.Ordinal)) {
                 return "runtime/native_stack";
+            }
+
+            if (string.Equals(variableType.TypeName, "Interlocked", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Threading.Interlocked", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Interlocked");
+                return "system/threading/interlocked";
+            }
+
+            if (string.Equals(variableType.TypeName, "Volatile", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Threading.Volatile", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Volatile");
+                return "system/threading/volatile";
+            }
+
+            if (string.Equals(variableType.TypeName, "Vector256", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "Vector256Runtime", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.Vector256", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector256");
+                return "system/runtime/intrinsics/vector256";
+            }
+
+            if (string.Equals(variableType.TypeName, "Vector512", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "Vector512Runtime", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeVector512");
+                return "system/runtime/intrinsics/vector512";
+            }
+
+            if (string.Equals(variableType.TypeName, "Sse", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.X86.Sse", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Sse");
+                return "system/runtime/intrinsics/x86/sse";
+            }
+
+            if (string.Equals(variableType.TypeName, "Avx", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.X86.Avx", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Avx");
+                return "system/runtime/intrinsics/x86/avx";
+            }
+
+            if (string.Equals(variableType.TypeName, "Avx2", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.X86.Avx2", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Avx2");
+                return "system/runtime/intrinsics/x86/avx2";
+            }
+
+            if (string.Equals(variableType.TypeName, "Thread", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Threading.Thread", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("Thread");
+                return "system/threading/thread";
+            }
+
+            if (string.Equals(variableType.TypeName, "NotImplementedException", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.NotImplementedException", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NotImplementedException");
+                return "system/not_implemented_exception";
+            }
+
+            if (string.Equals(variableType.TypeName, "SpinLock", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Threading.SpinLock", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("SpinLock");
+                return "system/threading/spin_lock";
+            }
+
+            if (string.Equals(variableType.TypeName, "SpinWait", StringComparison.Ordinal) ||
+                string.Equals(variableType.TypeName, "System.Threading.SpinWait", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("SpinWait");
+                return "system/threading/spin_wait";
             }
 
             if (string.Equals(variableType.TypeName, "StringReader", StringComparison.Ordinal)) {
@@ -866,6 +1388,11 @@ namespace cs2.cpp {
                 return "system/binary_primitives";
             }
 
+            if (string.Equals(variableType.TypeName, "BitOperations", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("BitOperations");
+                return "system/bit_operations";
+            }
+
             if (IsNativeExceptionTypeName(variableType.TypeName)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
@@ -881,13 +1408,13 @@ namespace cs2.cpp {
             }
 
             ConversionClass generatedClass = null;
-            if (TryResolveGeneratedClass(referencedClass, out generatedClass)) {
-                return generatedClass.GetEmittedTypeName();
+            if (TryResolveGeneratedClass(normalizedIncludeCandidate, out generatedClass)) {
+                return generatedClass.GetEmittedFileStem(program);
             }
 
-            generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
+            generatedClass = program.FindGeneratedClass(variableType);
             if (generatedClass != null) {
-                return generatedClass.GetEmittedTypeName();
+                return generatedClass.GetEmittedFileStem(program);
             }
 
             CPPKnownClass knownSourceClass = program.Requirements.FirstOrDefault(requirement => requirement.Name == variableType.TypeName);
@@ -901,6 +1428,15 @@ namespace cs2.cpp {
                 variableType = processor.ConvertToCPPType(variableType, out typeData);
             }
 
+            if (TryResolveGeneratedClass(variableType.TypeName, out generatedClass)) {
+                return generatedClass.GetEmittedFileStem(program);
+            }
+
+            generatedClass = program.FindGeneratedClass(variableType);
+            if (generatedClass != null) {
+                return generatedClass.GetEmittedFileStem(program);
+            }
+
             if (typeData.IsNativeType) {
                 return string.Empty;
             }
@@ -910,7 +1446,7 @@ namespace cs2.cpp {
                 return knownClass.Path;
             }
 
-            return variableType.TypeName;
+            return string.Empty;
         }
 
         /// <summary>
@@ -929,6 +1465,52 @@ namespace cs2.cpp {
             }
 
             return referencedClass[(separatorIndex + 1)..];
+        }
+
+        /// <summary>
+        /// Removes ref-like modifiers and pointer suffixes from include candidates so pseudo-types do not become invalid generated header names.
+        /// </summary>
+        /// <param name="referencedClass">Raw referenced type text captured from preprocessing.</param>
+        /// <returns>Normalized include candidate, or an empty string when the candidate should not produce a header include.</returns>
+        static string NormalizeIncludeCandidateTypeName(string referencedClass) {
+            if (string.IsNullOrWhiteSpace(referencedClass)) {
+                return string.Empty;
+            }
+
+            string normalized = referencedClass.Trim();
+            bool removedPrefix;
+            do {
+                removedPrefix = false;
+                removedPrefix |= TryTrimPrefix(ref normalized, "scoped ");
+                removedPrefix |= TryTrimPrefix(ref normalized, "readonly ");
+                removedPrefix |= TryTrimPrefix(ref normalized, "ref ");
+                removedPrefix |= TryTrimPrefix(ref normalized, "out ");
+                removedPrefix |= TryTrimPrefix(ref normalized, "in ");
+                removedPrefix |= TryTrimPrefix(ref normalized, "params ");
+            } while (removedPrefix);
+
+            normalized = normalized.TrimEnd('*', '&').Trim();
+            if (string.IsNullOrWhiteSpace(normalized) ||
+                string.Equals(normalized, "var", StringComparison.Ordinal)) {
+                return string.Empty;
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
+        /// Removes one known prefix from a referenced type candidate when present.
+        /// </summary>
+        /// <param name="value">Candidate text to normalize.</param>
+        /// <param name="prefix">Prefix to remove.</param>
+        /// <returns>True when the prefix was removed; otherwise false.</returns>
+        static bool TryTrimPrefix(ref string value, string prefix) {
+            if (!value.StartsWith(prefix, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            value = value[prefix.Length..].TrimStart();
+            return true;
         }
 
         /// <summary>
@@ -996,6 +1578,11 @@ namespace cs2.cpp {
 
             string emittedTypeName = conversionClass.GetEmittedTypeName();
             string inheritance = GetInheritanceClause(conversionClass);
+            int layoutPack = GetPackedStructLayoutPack(conversionClass);
+            if (layoutPack > 0) {
+                headerWriter.WriteLine($"#pragma pack(push, {layoutPack})");
+            }
+
             if (string.IsNullOrWhiteSpace(inheritance)) {
                 headerWriter.WriteLine($"class {emittedTypeName}");
             } else {
@@ -1003,10 +1590,14 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("{");
+            WriteNestedTypeFriendDeclarations(conversionClass, headerWriter);
 
             if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
                 WriteInterfaceSection(conversionClass, headerWriter, sourceWriter);
                 headerWriter.WriteLine("};");
+                if (conversionClass.HasExplicitLayout) {
+                    headerWriter.WriteLine("#pragma pack(pop)");
+                }
                 WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
                 return;
             }
@@ -1020,23 +1611,89 @@ namespace cs2.cpp {
                 headerWriter.WriteLine("public:");
             }
 
+            if (ShouldEmitSequentialLayoutTailPadding(conversionClass)) {
+                WriteSequentialLayoutTailPadding(conversionClass, headerWriter);
+            }
+
             headerWriter.WriteLine("};");
+            if (layoutPack > 0) {
+                headerWriter.WriteLine("#pragma pack(pop)");
+            }
             WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
+        }
+
+        void WriteDelegate(ConversionClass conversionClass, TextWriter headerWriter) {
+            if (conversionClass == null) {
+                throw new ArgumentNullException(nameof(conversionClass));
+            }
+
+            ConversionFunction invokeFunction = conversionClass.Functions.FirstOrDefault();
+            if (invokeFunction == null) {
+                throw new InvalidOperationException($"Delegate '{conversionClass.Name}' is missing its invoke signature.");
+            }
+
+            headerWriter.WriteLine("#include \"system/delegate.hpp\"");
+            headerWriter.WriteLine();
+            WriteTemplateDeclaration(conversionClass, headerWriter);
+            headerWriter.WriteLine($"using {conversionClass.GetEmittedTypeName()} = {BuildDelegateAliasType(conversionClass, invokeFunction)};");
+        }
+
+        string BuildDelegateAliasType(ConversionClass conversionClass, ConversionFunction invokeFunction) {
+            List<string> signatureParts = new List<string> {
+                GetReturnType(conversionClass, invokeFunction)
+            };
+
+            foreach (ConversionVariable parameter in invokeFunction.InParameters) {
+                string parameterType = ConvertType(parameter.VarType, conversionClass, invokeFunction);
+                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
+                    parameterType += "&";
+                }
+
+                signatureParts.Add(parameterType);
+            }
+
+            return $"Delegate<{string.Join(", ", signatureParts)}>";
+        }
+
+        void WriteNestedTypeFriendDeclarations(ConversionClass conversionClass, TextWriter headerWriter) {
+            if (conversionClass?.TypeSymbol == null) {
+                return;
+            }
+
+            string emittedTypePrefix = conversionClass.GetEmittedTypeName() + "_";
+            foreach (ConversionClass nestedType in program.Classes.Where(candidate =>
+                         candidate != null &&
+                         candidate.DeclarationType != MemberDeclarationType.Delegate &&
+                         candidate.DeclarationType != MemberDeclarationType.Enum &&
+                         ((candidate.TypeSymbol?.ContainingType != null &&
+                           SymbolEqualityComparer.Default.Equals(candidate.TypeSymbol.ContainingType, conversionClass.TypeSymbol)) ||
+                          candidate.GetEmittedTypeName().StartsWith(emittedTypePrefix, StringComparison.Ordinal)))) {
+                if (nestedType.GenericArgs != null && nestedType.GenericArgs.Count > 0) {
+                    string templateArguments = string.Join(", ", nestedType.GenericArgs.Select(argument => $"typename {argument}"));
+                    headerWriter.WriteLine($"template <{templateArguments}>");
+                }
+
+                headerWriter.WriteLine($"friend class {nestedType.GetEmittedTypeName()};");
+            }
         }
 
         string GetInheritanceClause(ConversionClass conversionClass) {
             if (conversionClass.TypeSymbol is INamedTypeSymbol typeSymbol) {
                 List<string> inheritanceParts = new List<string>();
+                bool isValueType = typeSymbol.IsValueType;
 
-                if (typeSymbol.TypeKind != TypeKind.Interface &&
+                if (!isValueType &&
+                    typeSymbol.TypeKind != TypeKind.Interface &&
                     typeSymbol.BaseType != null &&
                     typeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
                     typeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
                     inheritanceParts.Add($"public {RenderInheritanceType(typeSymbol.BaseType)}");
                 }
 
-                foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
-                    inheritanceParts.Add($"public {RenderInheritanceType(interfaceSymbol)}");
+                if (!isValueType) {
+                    foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.Interfaces) {
+                        inheritanceParts.Add($"public {RenderInheritanceType(interfaceSymbol)}");
+                    }
                 }
 
                 if (inheritanceParts.Count > 0) {
@@ -1056,15 +1713,18 @@ namespace cs2.cpp {
                 return;
             }
 
-            if (typeSymbol.TypeKind != TypeKind.Interface &&
+            if (!typeSymbol.IsValueType &&
+                typeSymbol.TypeKind != TypeKind.Interface &&
                 typeSymbol.BaseType != null &&
                 typeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
                 typeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
                 AddInheritanceTypeReference(typeSymbol.BaseType, referencedTypes, includeRequiredTypes, excludedTypeNames);
             }
 
-            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
-                AddInheritanceTypeReference(interfaceSymbol, referencedTypes, includeRequiredTypes, excludedTypeNames);
+            if (!typeSymbol.IsValueType) {
+                foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
+                    AddInheritanceTypeReference(interfaceSymbol, referencedTypes, includeRequiredTypes, excludedTypeNames);
+                }
             }
         }
 
@@ -1073,7 +1733,7 @@ namespace cs2.cpp {
             HashSet<string> referencedTypes,
             HashSet<string> includeRequiredTypes,
             HashSet<string> excludedTypeNames) {
-            string typeName = program.FindGeneratedClass(typeSymbol.Name, typeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+            string typeName = program.FindGeneratedClass(typeSymbol)?.GetEmittedTypeName()
                 ?? NormalizeReferencedClassName(typeSymbol.Name);
             if (!excludedTypeNames.Contains(typeName)) {
                 referencedTypes.Add(typeName);
@@ -1082,28 +1742,48 @@ namespace cs2.cpp {
 
             foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
                 VariableType argumentType = VariableUtil.GetVarType(typeArgument);
-                string argumentTypeName = NormalizeReferencedClassName(argumentType.TypeName);
-                if (!string.IsNullOrWhiteSpace(argumentTypeName) && !excludedTypeNames.Contains(argumentTypeName)) {
-                    referencedTypes.Add(argumentTypeName);
-                    includeRequiredTypes.Add(argumentTypeName);
-                }
+                AddTypeReference(argumentType, referencedTypes, includeRequiredTypes, excludedTypeNames);
             }
         }
 
         string RenderInheritanceType(INamedTypeSymbol typeSymbol) {
-            string emittedTypeName = program.FindGeneratedClass(typeSymbol.Name, typeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+            ConversionClass generatedClass = program.FindGeneratedClass(typeSymbol);
+            string emittedTypeName = generatedClass?.GetEmittedTypeName()
                 ?? NormalizeReferencedClassName(typeSymbol.Name);
 
-            if (typeSymbol.TypeArguments.Length == 0) {
-                return emittedTypeName;
+            List<ITypeSymbol> effectiveTypeArguments = new List<ITypeSymbol>();
+            if (generatedClass?.GenericArgs != null &&
+                generatedClass.GenericArgs.Count > typeSymbol.TypeArguments.Length &&
+                typeSymbol.ContainingType != null) {
+                AppendContainingTypeArguments(typeSymbol.ContainingType, effectiveTypeArguments);
+            }
+
+            effectiveTypeArguments.AddRange(typeSymbol.TypeArguments);
+            if (effectiveTypeArguments.Count == 0) {
+                return $"::{emittedTypeName}";
             }
 
             List<string> renderedArguments = new List<string>();
-            foreach (ITypeSymbol typeArgument in typeSymbol.TypeArguments) {
-                renderedArguments.Add(ConvertType(VariableUtil.GetVarType(typeArgument)));
+            foreach (ITypeSymbol effectiveTypeArgument in effectiveTypeArguments) {
+                VariableType sourceType = VariableUtil.GetVarType(effectiveTypeArgument);
+                renderedArguments.Add(ConvertType(sourceType));
             }
 
-            return $"{emittedTypeName}<{string.Join(", ", renderedArguments)}>";
+            return $"::{emittedTypeName}<{string.Join(", ", renderedArguments)}>";
+        }
+
+        static void AppendContainingTypeArguments(INamedTypeSymbol containingTypeSymbol, List<ITypeSymbol> effectiveTypeArguments) {
+            if (containingTypeSymbol == null || effectiveTypeArguments == null) {
+                return;
+            }
+
+            if (containingTypeSymbol.ContainingType != null) {
+                AppendContainingTypeArguments(containingTypeSymbol.ContainingType, effectiveTypeArguments);
+            }
+
+            foreach (ITypeSymbol typeArgument in containingTypeSymbol.TypeArguments) {
+                effectiveTypeArguments.Add(typeArgument);
+            }
         }
 
         /// <summary>
@@ -1116,6 +1796,7 @@ namespace cs2.cpp {
             headerWriter.WriteLine("public:");
 
             List<Action> writers = new List<Action>();
+            HashSet<string> emittedFunctionKeys = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (ConversionVariable variable in conversionClass.Variables) {
                 if (variable.IsGet || variable.IsSet) {
@@ -1129,6 +1810,14 @@ namespace cs2.cpp {
             foreach (ConversionFunction function in conversionClass.Functions) {
                 if (IsFreeOperatorFunction(function)) {
                     writers.Add(() => WriteFriendOperatorDeclaration(conversionClass, function, headerWriter));
+                    continue;
+                }
+
+                if (function.GenericParameters != null && function.GenericParameters.Count > 0) {
+                    continue;
+                }
+
+                if (!emittedFunctionKeys.Add(BuildFunctionEmissionKey(conversionClass, function))) {
                     continue;
                 }
 
@@ -1167,15 +1856,21 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when at least one member was emitted for the section.</returns>
         bool WriteAccessSection(ConversionClass conversionClass, MemberAccessType accessType, TextWriter headerWriter, TextWriter sourceWriter) {
             List<Action> writers = new List<Action>();
+            HashSet<string> emittedFunctionKeys = new HashSet<string>(StringComparer.Ordinal);
 
             if (accessType == MemberAccessType.Public &&
-                conversionClass.DeclarationType != MemberDeclarationType.Interface) {
+                conversionClass.DeclarationType != MemberDeclarationType.Interface &&
+                ShouldEmitVirtualDestructor(conversionClass)) {
                 writers.Add(() => headerWriter.WriteLine($"    virtual ~{conversionClass.GetEmittedTypeName()}() = default;"));
             }
 
             if (accessType == MemberAccessType.Public &&
                 ShouldEmitImplicitDefaultConstructor(conversionClass)) {
                 writers.Add(() => WriteImplicitDefaultConstructor(conversionClass, headerWriter, sourceWriter));
+            }
+
+            if (ShouldWriteExplicitLayoutFieldsInSection(conversionClass, accessType)) {
+                writers.Add(() => WriteExplicitLayoutFields(conversionClass, headerWriter, sourceWriter));
             }
 
             foreach (ConversionVariable variable in conversionClass.Variables.Where(variable => variable.AccessType == accessType)) {
@@ -1189,12 +1884,20 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                if (conversionClass.HasExplicitLayout && IsExplicitLayoutInstanceField(variable)) {
+                    continue;
+                }
+
                 writers.Add(() => WriteField(conversionClass, variable, headerWriter, sourceWriter));
             }
 
-            foreach (ConversionFunction function in conversionClass.Functions.Where(function => function.AccessType == accessType)) {
+            foreach (ConversionFunction function in conversionClass.Functions.Where(function => GetEffectiveFunctionAccessType(function) == accessType)) {
                 if (IsFreeOperatorFunction(function)) {
                     writers.Add(() => WriteFriendOperatorDeclaration(conversionClass, function, headerWriter));
+                    continue;
+                }
+
+                if (!emittedFunctionKeys.Add(BuildFunctionEmissionKey(conversionClass, function))) {
                     continue;
                 }
 
@@ -1221,6 +1924,36 @@ namespace cs2.cpp {
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines whether the converted type should expose a virtual destructor in native output.
+        /// </summary>
+        /// <param name="conversionClass">Type metadata being emitted.</param>
+        /// <returns><c>true</c> for reference types that participate in polymorphic ownership; otherwise <c>false</c>.</returns>
+        static bool ShouldEmitVirtualDestructor(ConversionClass conversionClass) {
+            return conversionClass?.TypeSymbol == null ||
+                conversionClass.TypeSymbol.TypeKind == TypeKind.Class;
+        }
+
+        /// <summary>
+        /// Promotes certain non-public generic overrides to public in native output when runtime dispatch rewrites need to invoke them directly on concrete generated implementations.
+        /// </summary>
+        /// <param name="function">Function being assigned to one native access section.</param>
+        /// <returns>The effective access bucket to use for native emission.</returns>
+        static MemberAccessType GetEffectiveFunctionAccessType(ConversionFunction function) {
+            if (function == null) {
+                return MemberAccessType.Private;
+            }
+
+            if (function.AccessType != MemberAccessType.Public &&
+                function.GenericParameters != null &&
+                function.GenericParameters.Count > 0 &&
+                (function.IsOverride || function.DeclarationType == MemberDeclarationType.Abstract)) {
+                return MemberAccessType.Public;
+            }
+
+            return function.AccessType;
         }
 
         /// <summary>
@@ -1269,7 +2002,7 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void AddBasePropertyBridgeWriters(ConversionClass conversionClass, HashSet<string> plannedAccessorNames, List<Action> writers, TextWriter headerWriter, TextWriter sourceWriter) {
             for (INamedTypeSymbol baseTypeSymbol = conversionClass.TypeSymbol?.BaseType; baseTypeSymbol != null; baseTypeSymbol = baseTypeSymbol.BaseType) {
-                ConversionClass baseConversionClass = program.FindGeneratedClass(baseTypeSymbol.Name, baseTypeSymbol.TypeArguments.Length);
+                ConversionClass baseConversionClass = program.FindGeneratedClass(baseTypeSymbol);
                 if (baseConversionClass == null) {
                     continue;
                 }
@@ -1352,7 +2085,11 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives declarations.</param>
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void WriteInterfacePropertyBridgeGetter(ConversionClass conversionClass, IPropertySymbol interfacePropertySymbol, IPropertySymbol implementationPropertySymbol, TextWriter headerWriter, TextWriter sourceWriter) {
-            string typeName = GetPropertyGetterReturnType(conversionClass, VariableUtil.GetVarType(interfacePropertySymbol.Type));
+            string typeName = GetPropertyGetterReturnType(
+                conversionClass,
+                VariableUtil.GetVarType(interfacePropertySymbol.Type),
+                interfacePropertySymbol.RefKind == RefKind.Ref,
+                interfacePropertySymbol.RefKind == RefKind.RefReadOnly);
             string accessorName = $"get_{interfacePropertySymbol.Name}";
             string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationPropertySymbol.ContainingType);
 
@@ -1398,15 +2135,16 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives declarations.</param>
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void WriteBasePropertyBridgeGetter(ConversionClass conversionClass, ConversionClass baseConversionClass, ConversionVariable baseVariable, TextWriter headerWriter, TextWriter sourceWriter) {
-            string typeName = GetPropertyGetterReturnType(conversionClass, baseVariable.VarType);
+            string typeName = GetPropertyGetterReturnType(conversionClass, baseVariable);
             string accessorName = $"get_{baseVariable.Name}";
+            string qualifier = GetBasePropertyBridgeQualifier(conversionClass, baseConversionClass);
 
             headerWriter.WriteLine($"    {typeName} {accessorName}();");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::{accessorName}()");
             sourceWriter.WriteLine("{");
-            sourceWriter.WriteLine($"return this->{baseConversionClass.GetEmittedTypeName()}::{accessorName}();");
+            sourceWriter.WriteLine($"return {qualifier}{accessorName}();");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
         }
@@ -1422,15 +2160,56 @@ namespace cs2.cpp {
         void WriteBasePropertyBridgeSetter(ConversionClass conversionClass, ConversionClass baseConversionClass, ConversionVariable baseVariable, TextWriter headerWriter, TextWriter sourceWriter) {
             string typeName = ConvertType(baseVariable.VarType, conversionClass);
             string accessorName = $"set_{baseVariable.Name}";
+            string qualifier = GetBasePropertyBridgeQualifier(conversionClass, baseConversionClass);
 
             headerWriter.WriteLine($"    void {accessorName}({typeName} value);");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::{accessorName}({typeName} value)");
             sourceWriter.WriteLine("{");
-            sourceWriter.WriteLine($"this->{baseConversionClass.GetEmittedTypeName()}::{accessorName}(value);");
+            sourceWriter.WriteLine($"{qualifier}{accessorName}(value);");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Builds the qualified base-type prefix used by inherited property bridges, preserving concrete generic arguments from the current derived type.
+        /// </summary>
+        /// <param name="conversionClass">Concrete generated class receiving the bridge.</param>
+        /// <param name="baseConversionClass">Base class that already owns the accessor implementation.</param>
+        /// <returns>C++ base-type qualifier ending in <c>::</c>.</returns>
+        string GetBasePropertyBridgeQualifier(ConversionClass conversionClass, ConversionClass baseConversionClass) {
+            if (conversionClass?.TypeSymbol == null || baseConversionClass?.TypeSymbol == null) {
+                return $"{baseConversionClass?.GetEmittedTypeName()}::";
+            }
+
+            INamedTypeSymbol matchingBaseTypeSymbol = FindMatchingBaseTypeSymbol(conversionClass.TypeSymbol, baseConversionClass.TypeSymbol);
+            if (matchingBaseTypeSymbol == null) {
+                return $"{baseConversionClass.GetEmittedTypeName()}::";
+            }
+
+            string renderedBaseType = RenderInheritanceType(matchingBaseTypeSymbol).TrimStart(':');
+            return $"{renderedBaseType}::";
+        }
+
+        /// <summary>
+        /// Resolves the concrete base-type symbol on one derived type that matches the requested generated base class definition.
+        /// </summary>
+        /// <param name="derivedTypeSymbol">Derived type being emitted.</param>
+        /// <param name="targetBaseTypeSymbol">Base type definition that owns the inherited member implementation.</param>
+        /// <returns>The concrete instantiated base type when found; otherwise <c>null</c>.</returns>
+        static INamedTypeSymbol FindMatchingBaseTypeSymbol(INamedTypeSymbol derivedTypeSymbol, INamedTypeSymbol targetBaseTypeSymbol) {
+            if (derivedTypeSymbol == null || targetBaseTypeSymbol == null) {
+                return null;
+            }
+
+            for (INamedTypeSymbol currentBaseTypeSymbol = derivedTypeSymbol.BaseType; currentBaseTypeSymbol != null; currentBaseTypeSymbol = currentBaseTypeSymbol.BaseType) {
+                if (SymbolEqualityComparer.Default.Equals(currentBaseTypeSymbol.OriginalDefinition, targetBaseTypeSymbol)) {
+                    return currentBaseTypeSymbol;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -1445,7 +2224,7 @@ namespace cs2.cpp {
                 return "this->";
             }
 
-            string containingTypeName = program.FindGeneratedClass(containingTypeSymbol.Name, containingTypeSymbol.TypeArguments.Length)?.GetEmittedTypeName()
+            string containingTypeName = program.FindGeneratedClass(containingTypeSymbol)?.GetEmittedTypeName()
                 ?? containingTypeSymbol.Name;
             return $"this->{containingTypeName}::";
         }
@@ -1483,7 +2262,9 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{emittedTypeName}()");
 
-            List<string> initializers = GetInstanceFieldInitializers(conversionClass);
+            List<string> initializers = ShouldEmitExplicitLayoutFieldAssignments(conversionClass)
+                ? new List<string>()
+                : GetInstanceFieldInitializers(conversionClass);
             if (initializers.Count > 0) {
                 sourceWriter.Write(" : ");
                 sourceWriter.Write(string.Join(", ", initializers));
@@ -1491,6 +2272,9 @@ namespace cs2.cpp {
 
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
+            if (ShouldEmitExplicitLayoutFieldAssignments(conversionClass)) {
+                WriteExplicitLayoutFieldAssignments(conversionClass, sourceWriter);
+            }
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
         }
@@ -1517,6 +2301,21 @@ namespace cs2.cpp {
                 .ToList();
         }
 
+        static bool ConstructorDelegatesToThis(ConversionFunction function) {
+            return function?.ConstructorInitializer != null &&
+                string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "this", StringComparison.Ordinal);
+        }
+
+        bool ShouldEmitExplicitLayoutFieldAssignments(ConversionClass conversionClass) {
+            return conversionClass?.HasExplicitLayout == true;
+        }
+
+        void WriteExplicitLayoutFieldAssignments(ConversionClass conversionClass, TextWriter sourceWriter) {
+            foreach (ConversionVariable variable in conversionClass.Variables.Where(variable => !variable.IsStatic && !IsComputedProperty(variable))) {
+                sourceWriter.WriteLine($"this->{variable.Name} = {GetFieldAssignmentExpression(conversionClass, variable)};");
+            }
+        }
+
         string GetFieldInitializerExpression(ConversionClass conversionClass, ConversionVariable variable) {
             if (TryLowerInlineFieldInitializer(conversionClass, variable, out string loweredInitializer)) {
                 return loweredInitializer;
@@ -1525,15 +2324,29 @@ namespace cs2.cpp {
             return string.Empty;
         }
 
+        string GetFieldAssignmentExpression(ConversionClass conversionClass, ConversionVariable variable) {
+            string initializerExpression = GetFieldInitializerExpression(conversionClass, variable);
+            if (!string.IsNullOrWhiteSpace(initializerExpression)) {
+                return initializerExpression;
+            }
+
+            if (variable?.VarType?.IsPointer == true) {
+                return "nullptr";
+            }
+
+            return $"{ConvertType(variable.VarType, conversionClass)}()";
+        }
+
         bool TryLowerInlineFieldInitializer(ConversionClass conversionClass, ConversionVariable variable, out string loweredInitializer) {
             loweredInitializer = string.Empty;
+            SemanticModel variableSemantic = variable.Semantic ?? conversionClass.Semantic;
 
             if (variable.AssignmentExpression != null) {
                 List<string> initializerLines = new List<string>();
                 LayerContext context = new CPPLayerContext(program);
                 int start = context.DepthClass;
                 context.AddClass(conversionClass);
-                ExpressionResult result = processor.ProcessExpression(conversionClass.Semantic, context, variable.AssignmentExpression, initializerLines);
+                ExpressionResult result = processor.ProcessExpression(variableSemantic, context, variable.AssignmentExpression, initializerLines);
                 context.PopClass(start);
 
                 if ((result.BeforeLines == null || result.BeforeLines.Count == 0) &&
@@ -1560,13 +2373,309 @@ namespace cs2.cpp {
         /// <param name="variable">The variable to emit.</param>
         /// <param name="headerWriter">Writer that receives the field declaration.</param>
         void WriteField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
-            string staticKeyword = variable.IsStatic ? "static " : string.Empty;
-            string typeName = ConvertType(variable.VarType, conversionClass);
-            headerWriter.WriteLine($"    {staticKeyword}{typeName} {variable.Name};");
+            if (variable.IsConst) {
+                WriteConstField(conversionClass, variable, headerWriter, sourceWriter);
+                return;
+            }
+
+            headerWriter.WriteLine(GetFieldDeclaration(conversionClass, variable, "    "));
 
             if (variable.IsStatic) {
                 WriteStaticFieldDefinition(conversionClass, variable, sourceWriter);
             }
+        }
+
+        bool ShouldWriteExplicitLayoutFieldsInSection(ConversionClass conversionClass, MemberAccessType accessType) {
+            if (!conversionClass.HasExplicitLayout) {
+                return false;
+            }
+
+            return accessType == GetExplicitLayoutFieldAccessType(conversionClass);
+        }
+
+        static bool IsExplicitLayoutInstanceField(ConversionVariable variable) {
+            return variable != null &&
+                !variable.IsStatic &&
+                !variable.IsConst &&
+                !variable.IsGet &&
+                !variable.IsSet;
+        }
+
+        MemberAccessType GetExplicitLayoutFieldAccessType(ConversionClass conversionClass) {
+            ConversionVariable firstField = conversionClass.Variables.FirstOrDefault(IsExplicitLayoutInstanceField);
+            return firstField?.AccessType ?? MemberAccessType.Public;
+        }
+
+        string GetFieldDeclaration(ConversionClass conversionClass, ConversionVariable variable, string indent) {
+            string staticKeyword = variable.IsStatic ? "static " : string.Empty;
+            string typeName = ConvertType(variable.VarType, conversionClass);
+            return $"{indent}{staticKeyword}{typeName} {variable.Name};";
+        }
+
+        void WriteExplicitLayoutFields(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            List<ConversionVariable> fields = conversionClass.Variables
+                .Where(IsExplicitLayoutInstanceField)
+                .OrderBy(variable => variable.HasExplicitLayoutOffset ? variable.ExplicitLayoutOffset : int.MaxValue)
+                .ThenBy(variable => variable.Name, StringComparer.Ordinal)
+                .ToList();
+            if (fields.Count == 0) {
+                return;
+            }
+
+            headerWriter.WriteLine("    union {");
+            int paddingIndex = 0;
+            foreach (ConversionVariable field in fields) {
+                headerWriter.WriteLine("        struct {");
+                if (field.HasExplicitLayoutOffset && field.ExplicitLayoutOffset > 0) {
+                    headerWriter.WriteLine($"            uint8_t __pad_{paddingIndex}[{field.ExplicitLayoutOffset}];");
+                    paddingIndex++;
+                }
+
+                headerWriter.WriteLine(GetFieldDeclaration(conversionClass, field, "            "));
+                headerWriter.WriteLine("        };");
+            }
+
+            headerWriter.WriteLine("    };");
+        }
+
+        int GetPackedStructLayoutPack(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return 0;
+            }
+
+            if (conversionClass.HasExplicitLayout) {
+                return 1;
+            }
+
+            if (conversionClass.HasSequentialStructLayout && conversionClass.SequentialStructLayoutPack > 0) {
+                return conversionClass.SequentialStructLayoutPack;
+            }
+
+            return 0;
+        }
+
+        bool ShouldEmitSequentialLayoutTailPadding(ConversionClass conversionClass) {
+            if (conversionClass == null ||
+                conversionClass.HasExplicitLayout ||
+                !conversionClass.HasSequentialStructLayout ||
+                conversionClass.SequentialStructLayoutSize <= 0) {
+                return false;
+            }
+
+            return TryGetSequentialLayoutFieldSize(conversionClass, out int fieldSize) &&
+                fieldSize < conversionClass.SequentialStructLayoutSize;
+        }
+
+        void WriteSequentialLayoutTailPadding(ConversionClass conversionClass, TextWriter headerWriter) {
+            if (!TryGetSequentialLayoutFieldSize(conversionClass, out int fieldSize)) {
+                return;
+            }
+
+            int paddingSize = conversionClass.SequentialStructLayoutSize - fieldSize;
+            if (paddingSize <= 0) {
+                return;
+            }
+
+            headerWriter.WriteLine($"    std::array<uint8_t, {paddingSize}> __tail_padding{{}};");
+        }
+
+        bool TryGetSequentialLayoutFieldSize(ConversionClass conversionClass, out int size) {
+            size = 0;
+            if (conversionClass == null) {
+                return false;
+            }
+
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                if (variable == null ||
+                    variable.IsStatic ||
+                    variable.IsConst ||
+                    variable.IsGet ||
+                    variable.IsSet) {
+                    continue;
+                }
+
+                if (!TryGetNativeValueSize(variable.VarType, out int variableSize)) {
+                    return false;
+                }
+
+                size += variableSize;
+            }
+
+            return true;
+        }
+
+        bool TryGetNativeValueSize(VariableType variableType, out int size) {
+            size = 0;
+            if (variableType == null || variableType.IsPointer || variableType.IsReference || variableType.IsConstReference) {
+                return false;
+            }
+
+            string qualifiedTypeName = variableType.QualifiedTypeName ?? string.Empty;
+            string typeName = variableType.TypeName ?? string.Empty;
+            if (TryGetKnownPrimitiveSize(qualifiedTypeName, out size) || TryGetKnownPrimitiveSize(typeName, out size)) {
+                return true;
+            }
+
+            if (TryResolveConfiguredLayoutTypeRemap(variableType, out VariableType remappedVariableType)) {
+                return TryGetNativeValueSize(remappedVariableType, out size);
+            }
+
+            if (program.FindGeneratedClass(variableType) is ConversionClass generatedClass) {
+                return TryGetGeneratedClassValueSize(generatedClass, out size);
+            }
+
+            string normalizedTypeName = NormalizeReferencedClassName(typeName);
+            if (program.FindGeneratedClass(normalizedTypeName, variableType.GenericArgs.Count) is ConversionClass normalizedClass) {
+                return TryGetGeneratedClassValueSize(normalizedClass, out size);
+            }
+
+            return false;
+        }
+
+        bool TryResolveConfiguredLayoutTypeRemap(VariableType variableType, out VariableType remappedVariableType) {
+            remappedVariableType = null;
+            if (variableType == null || program?.TypeMap == null || program.TypeMap.Count == 0) {
+                return false;
+            }
+
+            string remappedTypeName;
+            if (!string.IsNullOrWhiteSpace(variableType.QualifiedTypeName) &&
+                program.TypeMap.TryGetValue(variableType.QualifiedTypeName, out remappedTypeName) &&
+                !string.Equals(remappedTypeName, variableType.QualifiedTypeName, StringComparison.Ordinal)) {
+                remappedVariableType = VariableUtil.GetVarType(remappedTypeName);
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(variableType.TypeName) &&
+                program.TypeMap.TryGetValue(variableType.TypeName, out remappedTypeName) &&
+                !string.Equals(remappedTypeName, variableType.TypeName, StringComparison.Ordinal)) {
+                remappedVariableType = VariableUtil.GetVarType(remappedTypeName);
+                return true;
+            }
+
+            return false;
+        }
+
+        bool TryGetGeneratedClassValueSize(ConversionClass conversionClass, out int size) {
+            size = 0;
+            if (conversionClass == null) {
+                return false;
+            }
+
+            if (conversionClass.HasSequentialStructLayout && conversionClass.SequentialStructLayoutSize > 0) {
+                size = conversionClass.SequentialStructLayoutSize;
+                return true;
+            }
+
+            if (conversionClass.HasExplicitLayout) {
+                return TryGetExplicitLayoutSize(conversionClass, out size);
+            }
+
+            if (!conversionClass.IsValueType) {
+                return false;
+            }
+
+            return TryGetSequentialLayoutFieldSize(conversionClass, out size);
+        }
+
+        bool TryGetExplicitLayoutSize(ConversionClass conversionClass, out int size) {
+            size = 0;
+            if (conversionClass == null) {
+                return false;
+            }
+
+            foreach (ConversionVariable variable in conversionClass.Variables.Where(IsExplicitLayoutInstanceField)) {
+                if (!TryGetNativeValueSize(variable.VarType, out int variableSize)) {
+                    return false;
+                }
+
+                int candidateSize = variable.HasExplicitLayoutOffset
+                    ? variable.ExplicitLayoutOffset + variableSize
+                    : variableSize;
+                if (candidateSize > size) {
+                    size = candidateSize;
+                }
+            }
+
+            return size > 0;
+        }
+
+        static bool TryGetKnownPrimitiveSize(string typeName, out int size) {
+            size = 0;
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                return false;
+            }
+
+            switch (typeName) {
+                case "bool":
+                case "System.Boolean":
+                case "byte":
+                case "System.Byte":
+                case "sbyte":
+                case "System.SByte":
+                    size = 1;
+                    return true;
+                case "short":
+                case "System.Int16":
+                case "ushort":
+                case "System.UInt16":
+                case "char":
+                case "System.Char":
+                    size = 2;
+                    return true;
+                case "int":
+                case "System.Int32":
+                case "uint":
+                case "System.UInt32":
+                case "float":
+                case "System.Single":
+                    size = 4;
+                    return true;
+                case "long":
+                case "System.Int64":
+                case "ulong":
+                case "System.UInt64":
+                case "double":
+                case "System.Double":
+                    size = 8;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Writes one C# const field either as an inline literal constant or as a declaration plus source definition for dependent expressions.
+        /// </summary>
+        /// <param name="conversionClass">Owning class that declares the field.</param>
+        /// <param name="variable">Constant field to emit.</param>
+        /// <param name="headerWriter">Writer that receives the header declaration.</param>
+        /// <param name="sourceWriter">Writer that receives any out-of-class definition required for dependent constants.</param>
+        void WriteConstField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
+            string typeName = ConvertType(variable.VarType, conversionClass);
+            if (ShouldInlineConstField(variable)) {
+                headerWriter.Write($"    inline static const {typeName} {variable.Name}");
+                if (TryLowerInlineFieldInitializer(conversionClass, variable, out string loweredInitializer)) {
+                    headerWriter.Write($" = {loweredInitializer}");
+                } else if (!string.IsNullOrWhiteSpace(variable.Assignment)) {
+                    headerWriter.Write($" = {variable.Assignment}");
+                }
+
+                headerWriter.WriteLine(";");
+                return;
+            }
+
+            headerWriter.WriteLine($"    static const {typeName} {variable.Name};");
+            WriteStaticFieldDefinition(conversionClass, variable, sourceWriter);
+        }
+
+        /// <summary>
+        /// Determines whether one C# const field can stay inline in the header without depending on sibling declarations.
+        /// </summary>
+        /// <param name="variable">Constant field being evaluated.</param>
+        /// <returns><c>true</c> when the initializer is one standalone literal; otherwise <c>false</c>.</returns>
+        static bool ShouldInlineConstField(ConversionVariable variable) {
+            return variable?.AssignmentExpression is LiteralExpressionSyntax;
         }
 
         /// <summary>
@@ -1579,7 +2688,8 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
 
             string typeName = ConvertType(variable.VarType, conversionClass);
-            sourceWriter.Write($"{typeName} {GetQualifiedClassName(conversionClass)}::{variable.Name}");
+            string constQualifier = variable.IsConst ? "const " : string.Empty;
+            sourceWriter.Write($"{constQualifier}{typeName} {GetQualifiedClassName(conversionClass)}::{variable.Name}");
 
             if (TryWriteStaticFieldInitializer(conversionClass, variable, sourceWriter)) {
                 sourceWriter.WriteLine(";");
@@ -1599,6 +2709,7 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when an initializer was emitted; otherwise <c>false</c>.</returns>
         bool TryWriteStaticFieldInitializer(ConversionClass conversionClass, ConversionVariable variable, TextWriter sourceWriter) {
             if (variable.AssignmentExpression != null) {
+                SemanticModel variableSemantic = variable.Semantic ?? conversionClass.Semantic;
                 List<string> initializerLines = new List<string>();
                 LayerContext context = new CPPLayerContext(program);
                 int start = context.DepthClass;
@@ -1606,7 +2717,7 @@ namespace cs2.cpp {
                 context.AddFunction(new FunctionStack(new ConversionFunction {
                     IsStatic = true
                 }));
-                ExpressionResult result = processor.ProcessExpression(conversionClass.Semantic, context, variable.AssignmentExpression, initializerLines);
+                ExpressionResult result = processor.ProcessExpression(variableSemantic, context, variable.AssignmentExpression, initializerLines);
                 context.PopClass(start);
 
                 if ((result.BeforeLines == null || result.BeforeLines.Count == 0) &&
@@ -1665,6 +2776,7 @@ namespace cs2.cpp {
         void WriteExpressionBodiedGetter(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
             string returnTypeName = GetPropertyGetterReturnType(conversionClass, variable);
+            SemanticModel variableSemantic = variable.Semantic ?? conversionClass.Semantic;
             headerWriter.WriteLine($"    {staticKeyword}{returnTypeName} get_{variable.Name}();");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
@@ -1681,7 +2793,7 @@ namespace cs2.cpp {
                 }));
             }
 
-            ExpressionResult expressionResult = processor.ProcessExpression(conversionClass.Semantic, context, variable.ArrowExpression, expressionLines);
+            ExpressionResult expressionResult = processor.ProcessExpression(variableSemantic, context, variable.ArrowExpression, expressionLines);
             context.PopClass(start);
 
             if (!expressionResult.Processed) {
@@ -1749,7 +2861,9 @@ namespace cs2.cpp {
                 DeclarationType = variable.DeclarationType,
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
-                ReturnsConstReference = ShouldEmitConstReferencePropertyGetter(variable),
+                ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(variable),
+                ReturnsReference = variable.ReturnsReference,
+                Semantic = variable.Semantic,
                 ReturnType = new VariableType(variable.VarType),
                 RawBlock = variable.GetBlock
             };
@@ -1763,6 +2877,14 @@ namespace cs2.cpp {
         /// <returns>The native return type token.</returns>
         string GetPropertyGetterReturnType(ConversionClass conversionClass, ConversionVariable variable) {
             string typeName = ConvertType(variable.VarType, conversionClass);
+            if (variable.ReturnsReference) {
+                return $"{typeName}&";
+            }
+
+            if (variable.ReturnsConstReference) {
+                return $"const {typeName}&";
+            }
+
             if (ShouldEmitConstReferencePropertyGetter(variable)) {
                 return $"const {typeName}&";
             }
@@ -1777,7 +2899,27 @@ namespace cs2.cpp {
         /// <param name="variableType">Type metadata for the property being emitted.</param>
         /// <returns>The native return type token.</returns>
         string GetPropertyGetterReturnType(ConversionClass conversionClass, VariableType variableType) {
+            return GetPropertyGetterReturnType(conversionClass, variableType, false, false);
+        }
+
+        /// <summary>
+        /// Resolves the native return type for one generated property getter from raw type metadata and ref-kind information.
+        /// </summary>
+        /// <param name="conversionClass">Owning class for the property getter.</param>
+        /// <param name="variableType">Type metadata for the property being emitted.</param>
+        /// <param name="returnsReference"><c>true</c> when the getter returns one mutable native reference.</param>
+        /// <param name="returnsConstReference"><c>true</c> when the getter returns one constant native reference.</param>
+        /// <returns>The native return type token.</returns>
+        string GetPropertyGetterReturnType(ConversionClass conversionClass, VariableType variableType, bool returnsReference, bool returnsConstReference) {
             string typeName = ConvertType(variableType, conversionClass);
+            if (returnsReference) {
+                return $"{typeName}&";
+            }
+
+            if (returnsConstReference) {
+                return $"const {typeName}&";
+            }
+
             if (ShouldEmitConstReferencePropertyGetter(variableType)) {
                 return $"const {typeName}&";
             }
@@ -1823,6 +2965,7 @@ namespace cs2.cpp {
                 DeclarationType = variable.DeclarationType,
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
+                Semantic = variable.Semantic,
                 RawBlock = variable.SetBlock
             };
 
@@ -1912,7 +3055,7 @@ namespace cs2.cpp {
                 return;
             }
 
-            if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
+            if (ShouldSkipFunctionDefinition(conversionClass, function)) {
                 return;
             }
 
@@ -1929,6 +3072,12 @@ namespace cs2.cpp {
             WriteConstructorInitializer(conversionClass, function, sourceWriter);
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
+
+            if (function.IsConstructor &&
+                ShouldEmitExplicitLayoutFieldAssignments(conversionClass) &&
+                !ConstructorDelegatesToThis(function)) {
+                WriteExplicitLayoutFieldAssignments(conversionClass, sourceWriter);
+            }
 
             if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
@@ -1949,6 +3098,10 @@ namespace cs2.cpp {
         }
 
         static bool ShouldEmitPureVirtualDeclaration(ConversionClass conversionClass, ConversionFunction function) {
+            if (HasMethodLevelGenericParameters(function)) {
+                return false;
+            }
+
             if (function.IsStatic) {
                 return false;
             }
@@ -1961,12 +3114,36 @@ namespace cs2.cpp {
         }
 
         static bool ShouldEmitVirtualKeyword(ConversionClass conversionClass, ConversionFunction function) {
+            if (HasMethodLevelGenericParameters(function)) {
+                return false;
+            }
+
             if (function.IsStatic) {
                 return false;
             }
 
             return ShouldEmitPureVirtualDeclaration(conversionClass, function) ||
                 function.DeclarationType == MemberDeclarationType.Virtual;
+        }
+
+        static bool ShouldSkipFunctionDefinition(ConversionClass conversionClass, ConversionFunction function) {
+            if (ShouldEmitPureVirtualDeclaration(conversionClass, function)) {
+                return true;
+            }
+
+            if (!HasMethodLevelGenericParameters(function)) {
+                return false;
+            }
+
+            if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool HasMethodLevelGenericParameters(ConversionFunction function) {
+            return function.GenericParameters != null && function.GenericParameters.Count > 0;
         }
 
         void WriteFreeFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
@@ -2043,7 +3220,61 @@ namespace cs2.cpp {
                 return conversionClass.GetEmittedTypeName();
             }
 
-            return function.Name;
+            return function.Name + GetRefModifierSuffix(function);
+        }
+
+        string BuildFunctionEmissionKey(ConversionClass conversionClass, ConversionFunction function) {
+            StringBuilder keyBuilder = new StringBuilder();
+            keyBuilder.Append(GetFunctionName(conversionClass, function));
+            keyBuilder.Append('|');
+            if (function.GenericParameters != null && function.GenericParameters.Count > 0) {
+                keyBuilder.Append('<');
+                for (int index = 0; index < function.GenericParameters.Count; index++) {
+                    if (index > 0) {
+                        keyBuilder.Append(',');
+                    }
+
+                    keyBuilder.Append(function.GenericParameters[index]);
+                }
+                keyBuilder.Append('>');
+            }
+            keyBuilder.Append('|');
+            for (int index = 0; index < function.InParameters.Count; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                string parameterType = ConvertType(parameter.VarType, conversionClass, function);
+                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
+                    parameterType += "&";
+                }
+
+                keyBuilder.Append(parameterType);
+                keyBuilder.Append('|');
+            }
+
+            return keyBuilder.ToString();
+        }
+
+        static string GetRefModifierSuffix(ConversionFunction function) {
+            if (function?.InParameters == null || function.InParameters.Count == 0) {
+                return string.Empty;
+            }
+
+            List<string> suffixParts = new List<string>();
+            for (int index = 0; index < function.InParameters.Count; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                if ((parameter.Modifier & (ParameterModifier.Ref | ParameterModifier.Out)) == 0) {
+                    continue;
+                }
+
+                if ((parameter.Modifier & ParameterModifier.Ref) != 0) {
+                    suffixParts.Add($"ref{index}");
+                } else {
+                    suffixParts.Add($"out{index}");
+                }
+            }
+
+            return suffixParts.Count == 0
+                ? string.Empty
+                : "__" + string.Join("_", suffixParts);
         }
 
         static bool IsFreeOperatorFunction(ConversionFunction function) {
@@ -2079,16 +3310,22 @@ namespace cs2.cpp {
                 string initializerTarget;
                 delegatesToThis = string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "this", StringComparison.Ordinal);
                 if (string.Equals(function.ConstructorInitializer.ThisOrBaseKeyword.Text, "base", StringComparison.Ordinal)) {
-                    string baseTypeName = conversionClass.Extensions?.FirstOrDefault();
-                    if (string.IsNullOrWhiteSpace(baseTypeName)) {
-                        return;
-                    }
-
-                    ConversionClass baseClass = program.FindGeneratedClass(baseTypeName, 0);
-                    if (baseClass != null) {
-                        initializerTarget = baseClass.GetEmittedTypeName();
+                    if (conversionClass.TypeSymbol?.BaseType != null &&
+                        conversionClass.TypeSymbol.BaseType.SpecialType != SpecialType.System_Object &&
+                        conversionClass.TypeSymbol.BaseType.SpecialType != SpecialType.System_ValueType) {
+                        initializerTarget = RenderInheritanceType(conversionClass.TypeSymbol.BaseType);
                     } else {
-                        initializerTarget = NormalizeReferencedClassName(baseTypeName);
+                        string baseTypeName = conversionClass.Extensions?.FirstOrDefault();
+                        if (string.IsNullOrWhiteSpace(baseTypeName)) {
+                            return;
+                        }
+
+                        ConversionClass baseClass = program.FindGeneratedClass(baseTypeName, 0);
+                        if (baseClass != null) {
+                            initializerTarget = baseClass.GetEmittedTypeName();
+                        } else {
+                            initializerTarget = NormalizeReferencedClassName(baseTypeName);
+                        }
                     }
                 } else {
                     initializerTarget = conversionClass.GetEmittedTypeName();
@@ -2111,7 +3348,7 @@ namespace cs2.cpp {
                 initializerSegments.Add(initializerWriter.ToString());
             }
 
-            if (!delegatesToThis) {
+            if (!delegatesToThis && !ShouldEmitExplicitLayoutFieldAssignments(conversionClass)) {
                 initializerSegments.AddRange(GetInstanceFieldInitializers(conversionClass));
             }
 
@@ -2146,7 +3383,8 @@ namespace cs2.cpp {
             context.AddFunction(new FunctionStack(function));
 
             List<string> tokens = new List<string>();
-            processor.ProcessExpression(conversionClass.Semantic, context, expression, tokens);
+            SemanticModel functionSemantic = function.Semantic ?? conversionClass.Semantic;
+            processor.ProcessExpression(functionSemantic, context, expression, tokens);
             return string.Concat(tokens);
         }
 
@@ -2161,6 +3399,10 @@ namespace cs2.cpp {
             }
 
             string typeName = ConvertType(function.ReturnType, conversionClass, function);
+            if (function.ReturnsReference) {
+                return $"{typeName}&";
+            }
+
             if (function.ReturnsConstReference) {
                 return $"const {typeName}&";
             }
@@ -2196,7 +3438,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            ConversionClass generatedClass = program.FindGeneratedClass(variableType.TypeName, variableType.GenericArgs.Count);
+            ConversionClass generatedClass = program.FindGeneratedClass(variableType);
             if (generatedClass == null && !string.IsNullOrWhiteSpace(variableType.TypeName)) {
                 string normalizedTypeName = NormalizeReferencedClassName(variableType.TypeName);
                 generatedClass = program.FindGeneratedClass(normalizedTypeName, variableType.GenericArgs.Count);
@@ -2205,13 +3447,28 @@ namespace cs2.cpp {
             return generatedClass?.DeclarationType == MemberDeclarationType.Enum;
         }
 
+        bool IsGeneratedDelegateType(VariableType variableType) {
+            if (variableType == null) {
+                return false;
+            }
+
+            ConversionClass generatedClass = program.FindGeneratedClass(variableType);
+            if (generatedClass == null && !string.IsNullOrWhiteSpace(variableType.TypeName)) {
+                string normalizedTypeName = NormalizeReferencedClassName(variableType.TypeName);
+                generatedClass = program.FindGeneratedClass(normalizedTypeName, variableType.GenericArgs.Count);
+            }
+
+            return generatedClass?.DeclarationType == MemberDeclarationType.Delegate;
+        }
+
         string GetScopedTypeName(VariableType variableType, ConversionClass conversionClass, ConversionFunction function) {
             string renderedTypeName = variableType.ToCPPString(program);
             if (IsParameterlessActionType(variableType, renderedTypeName)) {
                 return "Action<>";
             }
 
-            if (variableType.GenericArgs == null || variableType.GenericArgs.Count == 0) {
+            IReadOnlyList<VariableType> effectiveGenericArguments = GetScopedGenericArguments(variableType);
+            if (effectiveGenericArguments.Count == 0) {
                 return QualifyTypeName(renderedTypeName, variableType, conversionClass, function);
             }
 
@@ -2221,8 +3478,49 @@ namespace cs2.cpp {
                 : renderedTypeName;
 
             string qualifiedTopLevelTypeName = QualifyTypeName(topLevelTypeName, variableType, conversionClass, function);
-            string genericArguments = string.Join(", ", variableType.GenericArgs.Select(argument => GetScopedTypeName(argument, conversionClass, function)));
+            string genericArguments = string.Join(", ", effectiveGenericArguments.Select(argument => GetScopedTypeName(argument, conversionClass, function)));
             return QualifyRenderedTypeName($"{qualifiedTopLevelTypeName}<{genericArguments}>", conversionClass, function);
+        }
+
+        IReadOnlyList<VariableType> GetScopedGenericArguments(VariableType variableType) {
+            if (variableType == null) {
+                return Array.Empty<VariableType>();
+            }
+
+            ConversionClass generatedClass = program.FindGeneratedClass(variableType);
+            if (generatedClass?.GenericArgs == null || generatedClass.GenericArgs.Count == 0) {
+                return variableType.GenericArgs != null
+                    ? variableType.GenericArgs
+                    : Array.Empty<VariableType>();
+            }
+
+            if (variableType.GenericArgs != null && variableType.GenericArgs.Count > 0) {
+                int implicitArgumentCount = generatedClass.GenericArgs.Count - variableType.GenericArgs.Count;
+                if (implicitArgumentCount <= 0) {
+                    return variableType.GenericArgs;
+                }
+
+                List<VariableType> effectiveGenericArguments = generatedClass.GenericArgs
+                    .Take(implicitArgumentCount)
+                    .Select(genericArgument => new VariableType(VariableDataType.Unknown, genericArgument) {
+                        QualifiedTypeName = genericArgument,
+                        IsGenericParameter = true
+                    })
+                    .ToList();
+                effectiveGenericArguments.AddRange(variableType.GenericArgs);
+                return effectiveGenericArguments;
+            }
+
+            if (generatedClass.TypeSymbol?.ContainingType == null) {
+                return Array.Empty<VariableType>();
+            }
+
+            return generatedClass.GenericArgs
+                .Select(genericArgument => new VariableType(VariableDataType.Unknown, genericArgument) {
+                    QualifiedTypeName = genericArgument,
+                    IsGenericParameter = true
+                })
+                .ToList();
         }
 
         string QualifyRenderedTypeName(string renderedTypeName, ConversionClass conversionClass, ConversionFunction function) {
@@ -2327,6 +3625,8 @@ namespace cs2.cpp {
             return string.Equals(typeName, "Stream", StringComparison.Ordinal) ||
                 string.Equals(typeName, "FileStream", StringComparison.Ordinal) ||
                 string.Equals(typeName, "MemoryStream", StringComparison.Ordinal) ||
+                string.Equals(typeName, "Span", StringComparison.Ordinal) ||
+                string.Equals(typeName, "ReadOnlySpan", StringComparison.Ordinal) ||
                 string.Equals(typeName, "Event", StringComparison.Ordinal) ||
                 string.Equals(typeName, "MathF", StringComparison.Ordinal) ||
                 IsNativeExceptionTypeName(typeName);

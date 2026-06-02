@@ -64,9 +64,47 @@ namespace cs2.core {
             }
 
             variableType.IsValueType = typeSymbol.IsValueType;
+            variableType.QualifiedTypeName = NormalizeQualifiedTypeName(typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
             if (typeSymbol.TypeKind == TypeKind.Enum) {
                 variableType.IsEnum = true;
             }
+        }
+
+        /// <summary>
+        /// Applies ref-kind metadata to one variable type so nested generic signatures can preserve by-reference shapes.
+        /// </summary>
+        /// <param name="variableType">Variable type metadata to update.</param>
+        /// <param name="refKind">Roslyn ref-kind associated with the use site.</param>
+        static void ApplyRefKindMetadata(VariableType variableType, RefKind refKind) {
+            if (variableType == null) {
+                return;
+            }
+
+            if (refKind == RefKind.Ref || refKind == RefKind.Out) {
+                variableType.IsReference = true;
+                variableType.IsConstReference = false;
+                return;
+            }
+
+            if (refKind == RefKind.In || refKind == RefKind.RefReadOnlyParameter) {
+                variableType.IsConstReference = true;
+                variableType.IsReference = false;
+            }
+        }
+
+        /// <summary>
+        /// Normalizes Roslyn fully-qualified type display strings into a caller-stable lookup key by removing the global alias prefix.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Fully-qualified Roslyn display string.</param>
+        /// <returns>Normalized fully-qualified type name without a global alias prefix.</returns>
+        static string NormalizeQualifiedTypeName(string qualifiedTypeName) {
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            return qualifiedTypeName.StartsWith("global::", StringComparison.Ordinal)
+                ? qualifiedTypeName["global::".Length..]
+                : qualifiedTypeName;
         }
 
         private static VariableType HandleQualifiedName(QualifiedNameSyntax qualifiedName, ITypeSymbol resolvedTypeSymbol) {
@@ -97,13 +135,14 @@ namespace cs2.core {
                 assigned = $"new {def.Type.ToString()}()";
             } else if (equals.Value is LiteralExpressionSyntax literal) {
                 assigned = literal.Token.ToString();
+            } else if (equals.Value is IdentifierNameSyntax identifier) {
+                assigned = identifier.ToString();
             } else if (equals.Value is MemberAccessExpressionSyntax member) {
                 assigned = member.ToString();
             } else if (equals.Value is PrefixUnaryExpressionSyntax unary) {
                 assigned = unary.ToString();
             } else {
-                Debugger.Break();
-                throw new NotSupportedException();
+                assigned = equals.Value.ToString();
             }
 
             return $" = {assigned}";
@@ -114,6 +153,12 @@ namespace cs2.core {
 
             if (normalizedTypeName.Length == 0) {
                 return new VariableType(VariableDataType.Unknown);
+            }
+
+            if (TryStripPointerSuffix(normalizedTypeName, out string pointedTypeName)) {
+                VariableType pointedType = GetVarType(pointedTypeName);
+                pointedType.IsPointer = true;
+                return pointedType;
             }
 
             if (normalizedTypeName.StartsWith("[", StringComparison.Ordinal) &&
@@ -182,6 +227,61 @@ namespace cs2.core {
             }
 
             return -1;
+        }
+
+        /// <summary>
+        /// Detects one top-level unsafe pointer suffix and returns the underlying pointed element type text.
+        /// </summary>
+        /// <param name="typeName">Source type name to inspect.</param>
+        /// <param name="pointedTypeName">Underlying element type name when a pointer suffix is present.</param>
+        /// <returns><c>true</c> when the type name ends with one top-level pointer suffix; otherwise <c>false</c>.</returns>
+        static bool TryStripPointerSuffix(string typeName, out string pointedTypeName) {
+            pointedTypeName = string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName) || !typeName.EndsWith("*", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            int genericDepth = 0;
+            int tupleDepth = 0;
+            int arrayDepth = 0;
+            for (int index = 0; index < typeName.Length - 1; index++) {
+                char currentCharacter = typeName[index];
+                if (currentCharacter == '<') {
+                    genericDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == '>') {
+                    genericDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == '(') {
+                    tupleDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ')') {
+                    tupleDepth--;
+                    continue;
+                }
+
+                if (currentCharacter == '[') {
+                    arrayDepth++;
+                    continue;
+                }
+
+                if (currentCharacter == ']') {
+                    arrayDepth--;
+                }
+            }
+
+            if (genericDepth != 0 || tupleDepth != 0 || arrayDepth != 0) {
+                return false;
+            }
+
+            pointedTypeName = typeName[..^1].TrimEnd();
+            return pointedTypeName.Length > 0;
         }
 
         static string NormalizeLeafTypeName(string typeName) {
@@ -344,8 +444,21 @@ namespace cs2.core {
         }
 
         public static VariableType GetVarType(TypeSyntax type, SemanticModel semantic) {
+            if (type == null) {
+                return new VariableType(VariableDataType.Unknown);
+            }
+
+            if (semantic == null ||
+                !ReferenceEquals(type.SyntaxTree, semantic.SyntaxTree)) {
+                return GetDetachedSyntaxVarType(type);
+            }
+
             var typeInfo = semantic.GetTypeInfo(type);
             ITypeSymbol resolvedTypeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
+
+            if (resolvedTypeSymbol is IFunctionPointerTypeSymbol functionPointerTypeSymbol) {
+                return GetVarType(functionPointerTypeSymbol);
+            }
 
             if (resolvedTypeSymbol is ITypeParameterSymbol typeParameterSymbol) {
                 VariableType genericParameterType = CreateVariableType(GetVarDataType(typeParameterSymbol.Name), typeParameterSymbol.Name, typeParameterSymbol);
@@ -357,6 +470,12 @@ namespace cs2.core {
                 VariableType enumType = CreateVariableType(GetVarDataType(resolvedTypeSymbol.Name), resolvedTypeSymbol.Name, resolvedTypeSymbol);
                 enumType.IsEnum = true;
                 return enumType;
+            }
+
+            if (type is PointerTypeSyntax pointerType) {
+                VariableType pointedType = GetVarType(pointerType.ElementType, semantic);
+                pointedType.IsPointer = true;
+                return pointedType;
             }
 
             if (type is IdentifierNameSyntax) {
@@ -372,6 +491,10 @@ namespace cs2.core {
                     string typeInfoName = typeInfo.Type?.Name ?? "object";
                     return CreateVariableType(GetVarDataType(typeInfoName), typeInfoName, resolvedTypeSymbol);
                 } else {
+                    if (resolvedTypeSymbol != null) {
+                        return GetVarType(resolvedTypeSymbol);
+                    }
+
                     return CreateVariableType(GetVarDataType(identifierName), identifierName, resolvedTypeSymbol);
                 }
             } else if (type is GenericNameSyntax) {
@@ -385,6 +508,10 @@ namespace cs2.core {
                     return nullableBaseType;
                 }
 
+                if (resolvedTypeSymbol is INamedTypeSymbol resolvedNamedGenericTypeSymbol) {
+                    return GetVarType(resolvedNamedGenericTypeSymbol);
+                }
+
                 VariableType baseType = CreateVariableType(GetVarDataType(identifierName), identifierName, resolvedTypeSymbol);
 
                 foreach (var genType in generic.TypeArgumentList.Arguments) {
@@ -396,8 +523,8 @@ namespace cs2.core {
                 PredefinedTypeSyntax predefined = (PredefinedTypeSyntax)type;
 
                 string predefinedName = predefined.ToString();
-                var typeSymbol = semantic.GetTypeInfo(type).Type;
-                var specialType = typeSymbol.SpecialType;
+                ITypeSymbol typeSymbol = semantic.GetTypeInfo(type).Type ?? resolvedTypeSymbol;
+                SpecialType specialType = typeSymbol?.SpecialType ?? SpecialType.None;
 
                 VariableDataType dataType;
                 switch (predefinedName) {
@@ -473,12 +600,32 @@ namespace cs2.core {
                 return HandleTupleType(semantic, tuple);
             } else if (type is QualifiedNameSyntax qualifiedName) {
                 // Handle qualified name types
+                if (resolvedTypeSymbol is INamedTypeSymbol resolvedQualifiedTypeSymbol) {
+                    return GetVarType(resolvedQualifiedTypeSymbol);
+                }
+
                 return HandleQualifiedName(qualifiedName, resolvedTypeSymbol);
             } else {
                 Debugger.Break();
             }
 
             return new VariableType(VariableDataType.Object);
+        }
+
+        static VariableType GetDetachedSyntaxVarType(TypeSyntax type) {
+            if (type is PointerTypeSyntax pointerType) {
+                VariableType pointedType = GetDetachedSyntaxVarType(pointerType.ElementType);
+                pointedType.IsPointer = true;
+                return pointedType;
+            }
+
+            if (type is NullableTypeSyntax nullableType) {
+                VariableType nullableBaseType = GetDetachedSyntaxVarType(nullableType.ElementType);
+                nullableBaseType.IsNullable = true;
+                return nullableBaseType;
+            }
+
+            return GetVarType(type.ToString());
         }
 
         /// <summary>
@@ -501,6 +648,34 @@ namespace cs2.core {
                 }
 
                 return elementType;
+            }
+
+            if (typeSymbol is IPointerTypeSymbol pointerTypeSymbol) {
+                VariableType pointedType = GetVarType(pointerTypeSymbol.PointedAtType);
+                pointedType.IsPointer = true;
+                return pointedType;
+            }
+
+            if (typeSymbol is IFunctionPointerTypeSymbol functionPointerTypeSymbol) {
+                VariableType functionPointerType = CreateVariableType(VariableDataType.Callback, "FunctionPointer", functionPointerTypeSymbol);
+                VariableType returnType = GetVarType(functionPointerTypeSymbol.Signature.ReturnType);
+                if (functionPointerTypeSymbol.Signature.ReturnsByRefReadonly) {
+                    returnType.IsConstReference = true;
+                    returnType.IsReference = false;
+                } else if (functionPointerTypeSymbol.Signature.ReturnsByRef) {
+                    returnType.IsReference = true;
+                    returnType.IsConstReference = false;
+                }
+
+                functionPointerType.GenericArgs.Add(returnType);
+
+                foreach (IParameterSymbol functionPointerParameter in functionPointerTypeSymbol.Signature.Parameters) {
+                    VariableType parameterType = GetVarType(functionPointerParameter.Type);
+                    ApplyRefKindMetadata(parameterType, functionPointerParameter.RefKind);
+                    functionPointerType.GenericArgs.Add(parameterType);
+                }
+
+                return functionPointerType;
             }
 
             if (typeSymbol is ITypeParameterSymbol parameterSymbol) {
@@ -601,7 +776,7 @@ namespace cs2.core {
                     baseType.IsEnum = true;
                 }
 
-                if (namedTypeSymbol.IsGenericType) {
+                if (namedTypeSymbol.TypeArguments.Length > 0) {
                     foreach (var typeArgument in namedTypeSymbol.TypeArguments) {
                         baseType.GenericArgs.Add(GetVarType(typeArgument));
                     }
@@ -686,6 +861,8 @@ namespace cs2.core {
                     return VariableDataType.Char;
                 case "object":
                 case "Object":
+                case "nint":
+                case "nuint":
                     return VariableDataType.Object;
 
                 case "List":

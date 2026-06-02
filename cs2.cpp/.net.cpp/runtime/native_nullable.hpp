@@ -55,6 +55,14 @@ public:
         return *this;
     }
 
+    bool operator==(std::nullptr_t) const {
+        return !HasValue;
+    }
+
+    bool operator!=(std::nullptr_t) const {
+        return HasValue;
+    }
+
     bool get_HasValue() const {
         return HasValue;
     }
@@ -78,3 +86,13 @@ public:
     /// </summary>
     T Value;
 };
+
+template <typename T>
+bool operator==(std::nullptr_t, const Nullable<T>& value) {
+    return value == nullptr;
+}
+
+template <typename T>
+bool operator!=(std::nullptr_t, const Nullable<T>& value) {
+    return value != nullptr;
+}

@@ -11,6 +11,7 @@ namespace cs2.cpp {
             "EditorPropertyHiddenAttribute",
             "EditorPropertyOrderAttribute",
             "NativeFreeFunctionAttribute",
+            "NativeNoEscapeAttribute",
             "ScenePersistenceIgnoreAttribute"
         ];
 

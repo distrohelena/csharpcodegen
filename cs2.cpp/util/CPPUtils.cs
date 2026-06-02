@@ -6,6 +6,10 @@ namespace cs2.cpp {
         public static string GetInheritance(ConversionProgram program, ConversionClass cl) {
             List<string> exts = new List<string>();
 
+            if (cl.IsValueType) {
+                return string.Empty;
+            }
+
             for (int i = 0; i < cl.Extensions.Count; i++) {
                 string ext = cl.Extensions[i];
                 if (string.IsNullOrWhiteSpace(ext)) {

@@ -46,6 +46,11 @@ namespace cs2.cpp {
         public IReadOnlyList<string> AdditionalPreprocessorSymbols { get; set; } = Array.Empty<string>();
 
         /// <summary>
+        /// Gets or sets caller-provided source-to-target type remaps applied during native type lowering.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> TypeRemaps { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>
         /// Gets or sets whether the converter should write a serialized conversion report alongside generated output.
         /// </summary>
         public bool WriteConversionReport { get; set; }

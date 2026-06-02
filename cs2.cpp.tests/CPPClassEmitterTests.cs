@@ -138,9 +138,9 @@ public class CPPClassEmitterTests {
 
         (string header, string source) = Emit(emitter, conversionClass);
 
-        Assert.Contains("std::string get_DisplayName();", header);
+        Assert.Contains("const std::string& get_DisplayName();", header);
         Assert.Contains("void set_DisplayName(std::string value);", header);
-        Assert.Contains("std::string Profile::get_DisplayName()", source);
+        Assert.Contains("const std::string& Profile::get_DisplayName()", source);
         Assert.Contains("void Profile::set_DisplayName(std::string value)", source);
     }
 

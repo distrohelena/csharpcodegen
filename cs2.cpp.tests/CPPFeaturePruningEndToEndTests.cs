@@ -13,7 +13,7 @@ public class CPPFeaturePruningEndToEndTests {
     [Fact]
     public void WriteOutput_WhenShadersAreDisabled_DoesNotEmitShaderTypes() {
         string source = """
-namespace helengine.core.shaders {
+namespace helengine {
     public class ShaderAsset {
     }
 }
@@ -89,7 +89,7 @@ namespace helengine.core.runtime {
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => RunConversionWithPreset(source, "ps2-lite"));
         Assert.Contains("ps2-lite", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("RuntimeJson", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("runtime_json", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -98,7 +98,7 @@ namespace helengine.core.runtime {
     [Fact]
     public void WriteOutput_WhenPresetIsGameCubeCoreBoot_WritesGameCubeConfigAndDisablesShaders() {
         string source = """
-namespace helengine.core.shaders {
+namespace helengine {
     public class ShaderAsset {
     }
 }
@@ -118,7 +118,7 @@ namespace helengine.core.scene {
         Assert.Contains("#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0", config);
         Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", config);
         Assert.Contains("#define HE_CPP_FEATURE_SHADERS 0", config);
-        Assert.Contains("#define HE_CPP_FEATURE_DEBUGOVERLAY 0", config);
+        Assert.Contains("#define HE_CPP_FEATURE_DEBUG_OVERLAY 0", config);
     }
 
     /// <summary>

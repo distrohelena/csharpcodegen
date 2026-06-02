@@ -96,6 +96,10 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (!CanRegisterForResolvedFeatures(definition)) {
+                return false;
+            }
+
             registeredRequirements.TryAdd(definition.Name, definition);
             currentTypeScope?.Register(definition.Name);
             return true;
@@ -118,6 +122,29 @@ namespace cs2.cpp {
         /// <returns>True when the catalog contains the requirement.</returns>
         public bool TryGet(string name, out CPPRuntimeRequirementDefinition definition) {
             return catalog.TryGet(name, out definition);
+        }
+
+        /// <summary>
+        /// Returns whether one runtime requirement is allowed by the resolved feature decisions for the active build.
+        /// </summary>
+        /// <param name="definition">Runtime requirement definition being evaluated.</param>
+        /// <returns><c>true</c> when the requirement is featureless or at least one owning feature is enabled; otherwise <c>false</c>.</returns>
+        bool CanRegisterForResolvedFeatures(CPPRuntimeRequirementDefinition definition) {
+            if (definition == null) {
+                return false;
+            }
+
+            if (definition.OwningFeatureIds.Count == 0) {
+                return true;
+            }
+
+            for (int index = 0; index < definition.OwningFeatureIds.Count; index++) {
+                if (buildUsageReport.IsEnabled(definition.OwningFeatureIds[index])) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
     }

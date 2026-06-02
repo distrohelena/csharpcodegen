@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using cs2.core;
 using cs2.cpp;
 
 namespace cs2.cpp.tests {
@@ -154,6 +156,235 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("virtual ~Asset() = default;", assetHeader);
             Assert.Contains("virtual ~TextureAsset() = default;", textureHeader);
+        }
+
+        /// <summary>
+        /// Ensures converted value types stay nonpolymorphic so unmanaged layout-sensitive structs do not gain vtables.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStruct_DoesNotEmitVirtualDestructor() {
+            string source = """
+                public struct Metanode {
+                    public int Parent;
+                    public int IndexInParent;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Metanode.hpp"));
+
+            Assert.DoesNotContain("virtual ~Metanode() = default;", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures fallback inheritance rendering skips interface bases for value types when symbol-backed inheritance data is unavailable.
+        /// </summary>
+        [Fact]
+        public void GetInheritance_WithValueTypeFallbackExtensions_ReturnsEmptyClause() {
+            ConversionProgram program = new ConversionProgram(new ConversionRules());
+            ConversionClass conversionClass = new ConversionClass {
+                Name = "float3",
+                IsValueType = true
+            };
+            conversionClass.Extensions.Add("IEquatable");
+            conversionClass.Extensions.Add("IEqualityComparerRef");
+
+            string inheritance = CPPUtils.GetInheritance(program, conversionClass);
+
+            Assert.Equal(string.Empty, inheritance);
+        }
+
+        /// <summary>
+        /// Ensures explicit-layout value types emit packed field overlays that preserve declared field offsets.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitLayoutStruct_EmitsPackedOffsetOverlayFields() {
+            string source = """
+                using System.Numerics;
+                using System.Runtime.InteropServices;
+
+                [StructLayout(LayoutKind.Explicit)]
+                public struct NodeChild {
+                    [FieldOffset(0)]
+                    public Vector3 Min;
+
+                    [FieldOffset(12)]
+                    public int Index;
+
+                    [FieldOffset(16)]
+                    public Vector3 Max;
+
+                    [FieldOffset(28)]
+                    public int LeafCount;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "NodeChild.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "NodeChild.cpp"));
+
+            Assert.Contains("#pragma pack(push, 1)", headerOutput);
+            Assert.Contains("union {", headerOutput);
+            Assert.Contains(" Min;", headerOutput);
+            Assert.Contains("uint8_t __pad_0[12];", headerOutput);
+            Assert.Contains("int32_t Index;", headerOutput);
+            Assert.Contains("uint8_t __pad_1[16];", headerOutput);
+            Assert.Contains(" Max;", headerOutput);
+            Assert.Contains("uint8_t __pad_2[28];", headerOutput);
+            Assert.Contains("int32_t LeafCount;", headerOutput);
+            Assert.Contains("#pragma pack(pop)", headerOutput);
+            Assert.DoesNotContain("NodeChild::NodeChild() :", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("= ;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit-layout overlapping fields emit separate overlay structs so unioned offsets remain representable.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitLayoutOverlap_EmitsOverlayStructsForSharedOffsets() {
+            string source = """
+                using System.Runtime.InteropServices;
+
+                [StructLayout(LayoutKind.Explicit)]
+                public struct Metanode {
+                    [FieldOffset(0)]
+                    public int Parent;
+
+                    [FieldOffset(4)]
+                    public int IndexInParent;
+
+                    [FieldOffset(8)]
+                    public int RefineFlag;
+
+                    [FieldOffset(8)]
+                    public float LocalCostChange;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Metanode.hpp"));
+
+            Assert.Contains("uint8_t __pad_0[4];", headerOutput);
+            Assert.Equal(2, Regex.Matches(headerOutput, "uint8_t __pad_[0-9]+\\[8\\];").Count);
+            Assert.Contains("int32_t RefineFlag;", headerOutput);
+            Assert.Contains("float LocalCostChange;", headerOutput);
+        }
+
+        /// <summary>
+        /// Ensures sequential structs with fixed size and pack metadata emit packed declarations plus tail padding so nested runtime layouts remain stable.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSequentialStructLayoutSizeAndPack_EmitsPackedTailPadding() {
+            string source = """
+                using System.Runtime.InteropServices;
+
+                [StructLayout(LayoutKind.Sequential, Size = 32, Pack = 1)]
+                public struct PackedPose {
+                    public int A;
+                    public int B;
+                    public int C;
+                    public int D;
+                    public int E;
+                    public int F;
+                    public int G;
+                }
+
+                [StructLayout(LayoutKind.Sequential, Size = 64, Pack = 1)]
+                public struct PackedMotionState {
+                    public PackedPose Pose;
+                    public int LinearX;
+                    public int LinearY;
+                    public int LinearZ;
+                    public int AngularX;
+                    public int AngularY;
+                    public int AngularZ;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string poseHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PackedPose.hpp"));
+            string motionHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PackedMotionState.hpp"));
+
+            Assert.Contains("#include <array>", poseHeaderOutput);
+            Assert.Contains("#pragma pack(push, 1)", poseHeaderOutput);
+            Assert.Contains("std::array<uint8_t, 4> __tail_padding{};", poseHeaderOutput);
+            Assert.Contains("#pragma pack(pop)", poseHeaderOutput);
+            Assert.Contains("#include <array>", motionHeaderOutput);
+            Assert.Contains("#pragma pack(push, 1)", motionHeaderOutput);
+            Assert.Contains("std::array<uint8_t, 8> __tail_padding{};", motionHeaderOutput);
+            Assert.Contains("#pragma pack(pop)", motionHeaderOutput);
+        }
+
+        /// <summary>
+        /// Ensures sequential-layout sizing respects configured type remaps so packed outer structs preserve their declared native size.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSequentialStructLayoutOverRemappedValueTypes_EmitsPackedTailPadding() {
+            string source = """
+                using System.Numerics;
+                using System.Runtime.InteropServices;
+
+                namespace helengine {
+                    public struct float3 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                    }
+
+                    public struct float4 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                        public float W;
+                    }
+                }
+
+                [StructLayout(LayoutKind.Sequential, Size = 32, Pack = 1)]
+                public struct PackedPose {
+                    public Vector4 Orientation;
+                    public Vector3 Position;
+                }
+                """;
+
+            ConversionOutput output = RunConversionWithTypeRemaps(
+                source,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector3"] = "helengine.float3",
+                    ["System.Numerics.Vector4"] = "helengine.float4"
+                });
+            string poseHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PackedPose.hpp"));
+
+            Assert.Contains("#pragma pack(push, 1)", poseHeaderOutput);
+            Assert.Contains("::float4 Orientation;", poseHeaderOutput);
+            Assert.Contains("::float3 Position;", poseHeaderOutput);
+            Assert.Contains("std::array<uint8_t, 4> __tail_padding{};", poseHeaderOutput);
+            Assert.Contains("#pragma pack(pop)", poseHeaderOutput);
+        }
+
+        /// <summary>
+        /// Ensures value-type instance fields preserve declaration order instead of being alphabetized during native emission.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeFieldsOutOfAlphabeticalOrder_PreservesDeclarationOrder() {
+            string source = """
+                public struct OrderedValue {
+                    public int Z;
+                    public int X;
+                    public int Y;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "OrderedValue.hpp"));
+
+            int zIndex = headerOutput.IndexOf("int32_t Z;", StringComparison.Ordinal);
+            int xIndex = headerOutput.IndexOf("int32_t X;", StringComparison.Ordinal);
+            int yIndex = headerOutput.IndexOf("int32_t Y;", StringComparison.Ordinal);
+
+            Assert.True(zIndex >= 0, "Expected Z field emission.");
+            Assert.True(xIndex >= 0, "Expected X field emission.");
+            Assert.True(yIndex >= 0, "Expected Y field emission.");
+            Assert.True(zIndex < xIndex && xIndex < yIndex, "Expected emitted field order Z, X, Y.");
         }
 
         /// <summary>
@@ -336,7 +567,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("template <typename T>", contentManagerHeader);
             Assert.Contains("class IContentProcessor_1;", contentManagerHeader);
-            Assert.Contains("#include \"IContentProcessor_1.hpp\"", contentManagerHeader);
+            Assert.DoesNotContain("#include \"IContentProcessor_1.hpp\"", contentManagerHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -433,6 +664,35 @@ namespace cs2.cpp.tests {
             Assert.Contains("Changed -= &Widget::Handle;", sourceOutput);
             Assert.DoesNotContain("Changed += this->Handle;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Changed -= this->Handle;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures instance method groups assigned into Action fields lower through a bound native delegate wrapper instead of a raw member-function pointer.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInstanceMethodGroupDelegateAssignment_BindsCurrentInstanceInActionWrapper() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    Action<int> handler;
+
+                    public void Handle(int value) {
+                    }
+
+                    public void Wire() {
+                        handler = Handle;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Action<int32_t>* handler;", headerOutput);
+            Assert.Contains("this->handler = new Action<int32_t>(std::bind_front(&Widget::Handle, this));", sourceOutput);
+            Assert.DoesNotContain("this->handler = &Widget::Handle;", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -681,7 +941,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Registration.cpp"));
 
-            Assert.Contains("std::string Registration::get_ProcessorId()", sourceOutput);
+            Assert.Contains("const std::string& Registration::get_ProcessorId()", sourceOutput);
             Assert.Contains("return this->processorIdValue;", sourceOutput);
             Assert.DoesNotContain("Method has no generated body.", sourceOutput, StringComparison.Ordinal);
         }
@@ -943,7 +1203,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AxisTestCameraForwardSpinComponent.cpp"));
 
-            Assert.Contains("::float3 axis = float3::Normalize(float3(this->CameraForwardAxisX, this->CameraForwardAxisY, this->CameraForwardAxisZ));", sourceOutput);
+            Assert.Contains("::float3 axis = float3::Normalize(::float3(this->CameraForwardAxisX, this->CameraForwardAxisY, this->CameraForwardAxisZ));", sourceOutput);
             Assert.DoesNotContain("Normalize(new float3(", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Normalize(::float3* ", sourceOutput, StringComparison.Ordinal);
         }
@@ -1037,10 +1297,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("Distance.HasValue", sourceOutput);
-            Assert.Contains("Distance.Value > 0", sourceOutput);
-            Assert.DoesNotContain("Distance->HasValue", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("Distance->Value", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Distance.get_HasValue()", sourceOutput);
+            Assert.Contains("Distance.get_Value() > 0", sourceOutput);
+            Assert.DoesNotContain("Distance->get_HasValue()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Distance->get_Value()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1213,10 +1473,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("this->anchorData->get_LeftDistance().HasValue", sourceOutput);
-            Assert.Contains("this->anchorData->get_LeftDistance().Value > 0", sourceOutput);
-            Assert.DoesNotContain("anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("anchorData->LeftDistance->Value", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->anchorData->get_LeftDistance().get_HasValue()", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().get_Value() > 0", sourceOutput);
+            Assert.DoesNotContain("anchorData->LeftDistance->get_HasValue()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("anchorData->LeftDistance->get_Value()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1258,11 +1518,11 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("__object_00000000->set_LeftDistance(left ? Nullable<float>(anchorParent->Position->X) : Nullable<float>(nullptr));", sourceOutput);
-            Assert.Contains("this->anchorData->get_LeftDistance().HasValue", sourceOutput);
-            Assert.Contains("this->anchorData->get_LeftDistance().Value > 0", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().get_HasValue()", sourceOutput);
+            Assert.Contains("this->anchorData->get_LeftDistance().get_Value() > 0", sourceOutput);
             Assert.DoesNotContain("LeftDistance = left ? anchorParent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("this->anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("this->anchorData->LeftDistance->Value", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->anchorData->LeftDistance->get_HasValue()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->anchorData->LeftDistance->get_Value()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1330,12 +1590,12 @@ namespace cs2.cpp.tests {
 
             Assert.True(sourceOutput.Contains("__object_00000000->set_LeftDistance(left ? Nullable<float>(Parent->Position->X) : Nullable<float>(nullptr));", StringComparison.Ordinal), sourceOutput);
             Assert.True(sourceOutput.Contains("__object_00000000->set_RightDistance(right ? Nullable<float>(windowSize->X - Parent->Position->X) : Nullable<float>(nullptr));", StringComparison.Ordinal), sourceOutput);
-            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().HasValue", StringComparison.Ordinal), sourceOutput);
-            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().Value > 0", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().get_HasValue()", StringComparison.Ordinal), sourceOutput);
+            Assert.True(sourceOutput.Contains("this->anchorData->get_LeftDistance().get_Value() > 0", StringComparison.Ordinal), sourceOutput);
             Assert.DoesNotContain("LeftDistance = left ? Parent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("RightDistance = right ? windowSize->X - Parent->Position->X : nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("anchorData->LeftDistance->HasValue", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("anchorData->LeftDistance->Value", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("anchorData->LeftDistance->get_HasValue()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("anchorData->LeftDistance->get_Value()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1956,10 +2216,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures generated value types can inherit the native generic equatable runtime contract without a header-shape mismatch.
+        /// Ensures generated value types do not inherit native interface runtime contracts that would add polymorphic layout.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithGenericEquatableImplementation_UsesGenericRuntimeContract() {
+        public void WriteOutput_WithGenericEquatableStruct_DoesNotInheritRuntimeContract() {
             string source = """
                 public struct float3 : System.IEquatable<float3> {
                 }
@@ -1967,11 +2227,8 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "float3.hpp"));
-            string runtimeHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_equatable.hpp"));
 
-            Assert.Contains("class float3 : public IEquatable<::float3>", headerOutput);
-            Assert.Contains("template <typename T>", runtimeHeaderOutput);
-            Assert.Contains("class IEquatable", runtimeHeaderOutput);
+            Assert.DoesNotContain("IEquatable<::float3>", headerOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2088,6 +2345,780 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("int2();", headerOutput);
             Assert.Contains("int2::int2() : X(0), Y(0)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures System.Runtime.CompilerServices.Unsafe intrinsics lower to native helper calls instead of unresolved managed helper includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCompilerServicesUnsafeIntrinsics_UsesNativeUnsafeHelpers() {
+            string source = """
+                using System.Runtime.CompilerServices;
+
+                public struct float2 {
+                    public float X;
+                    public float Y;
+                }
+
+                public struct float4 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                    public float W;
+                }
+
+                public class UnsafeGate {
+                    public float Read(float4 value) {
+                        return Unsafe.As<float4, float2>(ref value).X;
+                    }
+
+                    public int Size() {
+                        return Unsafe.SizeOf<float4>();
+                    }
+
+                    public void Reset(byte[] bytes, int index, int count) {
+                        Unsafe.SkipInit(out float4 scratch);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "UnsafeGate.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "UnsafeGate.hpp"));
+            string unsafeShimOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Unsafe.hpp"));
+
+            Assert.Contains("#include \"runtime/native_unsafe.hpp\"", sourceOutput);
+            Assert.Contains("#include \"Unsafe.hpp\"", sourceOutput);
+            Assert.Contains("#include \"Unsafe.hpp\"", headerOutput);
+            Assert.Contains("#include \"runtime/native_unsafe.hpp\"", unsafeShimOutput);
+            Assert.Contains("return he_cpp_unsafe_as<::float2>(&(value)).X;", sourceOutput);
+            Assert.Contains("return he_cpp_unsafe_size_of<::float4>();", sourceOutput);
+            Assert.Contains("(void)0;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures ref locals initialized from ref-return invocations lower to native references instead of empty placeholder initializers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefReturnLocalDeclaration_EmitsNativeReferenceBinding() {
+            string source = """
+                public struct Slot {
+                    public int Value;
+                }
+
+                public struct Container {
+                    public Slot Slot;
+                }
+
+                public static class Access {
+                    public static ref Slot GetSlot(ref Container container) {
+                        return ref container.Slot;
+                    }
+                }
+
+                public class RefReturnFixture {
+                    public int Read(ref Container container) {
+                        ref var slot = ref Access.GetSlot(ref container);
+                        slot.Value = 7;
+                        return slot.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RefReturnFixture.cpp"));
+
+            Assert.DoesNotContain("object *slot = ;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("auto& slot = Access::GetSlot__ref0(container);", sourceOutput);
+            Assert.Contains("slot.Value = 7;", sourceOutput);
+            Assert.Contains("return slot.Value;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures ref-return methods emit native reference signatures instead of degrading to object pointers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefReturnMethod_EmitsReferenceSignature() {
+            string source = """
+                public struct Slot {
+                    public int Value;
+                }
+
+                public struct Container {
+                    public Slot Slot;
+                }
+
+                public static class Access {
+                    public static ref Slot GetSlot(ref Container container) {
+                        return ref container.Slot;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Access.hpp"));
+
+            Assert.Contains("static ::Slot& GetSlot(::Container& container);", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("object*", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref-return properties emit native reference getter signatures instead of degrading to value copies or object placeholders.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefReturnProperty_EmitsReferenceGetter() {
+            string source = """
+                public struct Slot {
+                    public int Value;
+                }
+
+                public struct Container {
+                    public Slot Slot;
+                }
+
+                public class Holder {
+                    Container backing;
+
+                    public ref Slot Current {
+                        get {
+                            return ref backing.Slot;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.cpp"));
+
+            Assert.Contains("::Slot& get_Current();", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("object*", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("return this->backing.Slot;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return ;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures constructor overloads that differ only by ref modifiers keep distinct native signatures.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefConstructorOverload_EmitsDistinctReferenceSignature() {
+            string source = """
+                using System.Numerics;
+
+                public struct WideValue {
+                    public Vector<float> X;
+
+                    public WideValue(ref Vector<float> value) {
+                        X = value;
+                    }
+
+                    public WideValue(Vector<float> value) {
+                        X = value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "WideValue.hpp"));
+
+            Assert.Contains("WideValue(Vector_1<float>& value);", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("WideValue(Vector_1<float> value);", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures partial class declarations merge into one emitted native type instead of overwriting earlier declarations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPartialClassDeclarations_MergesMembersIntoSingleType() {
+            string source = """
+                public partial class PartialFixture {
+                    public int Value;
+                }
+
+                public partial class PartialFixture {
+                    public int Read() {
+                        return Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PartialFixture.hpp"));
+
+            Assert.Contains("int32_t Value;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t Read();", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures partial class members from different source files retain their own semantic models during emission.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCrossFilePartialClassDeclarations_UsesMemberSemanticModels() {
+            ConversionOutput output = RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["Part1.cs"] = """
+                    public partial class PartialFixture {
+                        public int Read() {
+                            return int.Abs(Value);
+                        }
+                    }
+                    """,
+                ["Part2.cs"] = """
+                    public partial class PartialFixture {
+                        public int Value;
+                    }
+                    """
+            });
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PartialFixture.cpp"));
+
+            Assert.Contains("return int32_t::Abs(this->Value);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated C++ type names include namespace-derived prefixes when multiple source namespaces declare the same type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNamespaceTypeNameCollision_QualifiesEmittedTypeNames() {
+            string source = """
+                namespace Alpha {
+                    public class RefinementContext {
+                    }
+                }
+
+                namespace Beta {
+                    public class RefinementContext {
+                    }
+
+                    public class Holder {
+                        public Alpha.RefinementContext First;
+                        public Beta.RefinementContext Second;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string alphaHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Alpha_RefinementContext.hpp"));
+            string betaHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Beta_RefinementContext.hpp"));
+            string holderHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.hpp"));
+
+            Assert.Contains("class Alpha_RefinementContext", alphaHeader);
+            Assert.Contains("class Beta_RefinementContext", betaHeader);
+            Assert.Contains("::Alpha_RefinementContext* First;", holderHeader);
+            Assert.Contains("::Beta_RefinementContext* Second;", holderHeader);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic interface implementations do not emit duplicate class members when the interface model omits the generic contract.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitGenericInterfaceImplementation_DoesNotEmitDuplicateMethod() {
+            string source = """
+                public interface IBufferPool {
+                    int GetCapacityForCount<T>(int count);
+                }
+
+                public class BufferPool : IBufferPool {
+                    public static int GetCapacityForCount<T>(int count) {
+                        return count;
+                    }
+
+                    int IBufferPool.GetCapacityForCount<T>(int count) {
+                        return GetCapacityForCount<T>(count);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BufferPool.hpp"));
+            int emittedMethodCount = headerOutput.Split("GetCapacityForCount", StringSplitOptions.None).Length - 1;
+
+            Assert.Equal(1, emittedMethodCount);
+        }
+
+        /// <summary>
+        /// Ensures nongeneric IEnumerable explicit enumerator shims do not emit an illegal overload that differs only by return type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitNonGenericEnumerableShim_DoesNotEmitConflictingGetEnumeratorOverload() {
+            string source = """
+                using System.Collections;
+                using System.Collections.Generic;
+
+                public class Numbers : IEnumerable<int> {
+                    public IEnumerator<int> GetEnumerator() {
+                        return null;
+                    }
+
+                    IEnumerator IEnumerable.GetEnumerator() {
+                        return GetEnumerator();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Numbers.hpp"));
+
+            Assert.DoesNotContain("IEnumerator* GetEnumerator();", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("IEnumerator<int32_t>* GetEnumerator();", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures default literals adopt value-type zero initialization instead of degrading to nullptr.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeDefaultLiteral_EmitsValueInitialization() {
+            string source = """
+                public struct Handle {
+                    public int Value;
+                }
+
+                public class Holder {
+                    public Handle Read() {
+                        return default;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.cpp"));
+
+            Assert.Contains("return ::Handle();", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return nullptr;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures default literals used against fields whose names shadow their value types qualify the constructed native type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithShadowedValueTypeDefaultLiteral_QualifiesConstructedTypeName() {
+            string source = """
+                public struct Handle {
+                    public int Value;
+                }
+
+                public class Holder {
+                    public Handle Handle;
+
+                    public void Reset() {
+                        Handle = default;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.cpp"));
+
+            Assert.Contains("this->Handle = ::Handle();", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->Handle = Handle();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer locals initialized from stackalloc emit a concrete native backing array and pointer binding.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerStackAllocDeclaration_EmitsBackingArrayAndPointerBinding() {
+            string source = """
+                public unsafe class BufferOwner {
+                    public void Fill(int count) {
+                        int* handles = stackalloc int[4];
+                        handles[0] = count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BufferOwner.cpp"));
+
+            Assert.Contains("int32_t handles_stackalloc[4];", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t *handles = handles_stackalloc;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inferred pointer locals initialized from stackalloc emit the same native backing array and pointer binding as explicit pointer declarations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInferredPointerStackAllocDeclaration_EmitsBackingArrayAndPointerBinding() {
+            string source = """
+                public unsafe class BufferOwner {
+                    public void Fill(int count) {
+                        var handles = stackalloc int[count];
+                        handles[0] = count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BufferOwner.cpp"));
+
+            Assert.Contains("Array<int32_t> handles_stackalloc(count);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t *handles = handles_stackalloc.Data;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t handles_stackalloc[count];", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures casts between raw pointers and native pointer-sized integers use reinterpret_cast and preserve pointer targets.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerSizedIntegerCasts_UsesReinterpretCast() {
+            string source = """
+                public unsafe class PointerBridge {
+                    public static nuint ToValue(int* pointer) {
+                        return (nuint)pointer;
+                    }
+
+                    public static int* ToPointer(nuint value) {
+                        return (int*)value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PointerBridge.cpp"));
+
+            Assert.Contains("return reinterpret_cast<uintptr_t>(pointer);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("return reinterpret_cast<int32_t*>(value);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures raw pointer-to-pointer casts preserve reinterpret semantics instead of emitting invalid static_cast conversions between unrelated native pointer types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerToPointerCast_UsesReinterpretCast() {
+            string source = """
+                public unsafe class PointerBridge {
+                    public static float* ToFloat(int* pointer) {
+                        return (float*)pointer;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PointerBridge.cpp"));
+
+            Assert.Contains("return reinterpret_cast<float*>(pointer);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("static_cast<float*>(pointer)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures casts from ordinary native integer expressions back to raw pointers use reinterpret_cast instead of invalid static_cast pointer conversions.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUnsignedIntegerExpressionToPointerCast_UsesReinterpretCast() {
+            string source = """
+                public unsafe class PointerBridge {
+                    public static byte* Align(byte* pointer) {
+                        return (byte*)(((ulong)pointer + 31ul) & (~31ul));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PointerBridge.cpp"));
+
+            Assert.Contains("return reinterpret_cast<uint8_t*>(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("static_cast<uint8_t*>", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures method groups passed into System.Threading.Thread constructors lower through portable delegate wrappers and runtime thread headers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithThreadMethodGroupConstruction_UsesRuntimeThreadWrapper() {
+            string source = """
+                using System.Threading;
+
+                public class Dispatcher {
+                    Thread thread;
+
+                    public void StartWorker() {
+                        thread = new Thread(WorkerLoop);
+                        thread.IsBackground = true;
+                        thread.Start(null);
+                    }
+
+                    void WorkerLoop(object state) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Dispatcher.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Dispatcher.cpp"));
+
+            Assert.Contains("#include \"system/threading/thread.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Thread.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("new Thread(new Action<void*>(std::bind_front(&Dispatcher::WorkerLoop, this)))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("new Thread(&Dispatcher::WorkerLoop)", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "thread.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures index-from-end element access lowers to one explicit length-based index expression instead of emitting the C# '^' token into native output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSpanIndexFromEndAccess_UsesLengthBasedIndexer() {
+            string source = """
+                public class BufferOwner {
+                    public int ReadLast(Span<int> values) {
+                        return values[^1];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BufferOwner.cpp"));
+
+            Assert.Contains("values.get_Item(values.get_Length() - 1)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("^1", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures primitive generic-math Max and Min calls lower through the shared Math runtime helpers instead of nonexistent static members on fixed-width C++ aliases.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveMaxMinCalls_UsesMathRuntimeHelpers() {
+            string source = """
+                public class ClampHelper {
+                    public int Clamp(int value, int minimum, int maximum) {
+                        return int.Min(maximum, int.Max(minimum, value));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ClampHelper.cpp"));
+
+            Assert.Contains("Math::Max(minimum, value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Math::Min(maximum, Math::Max(minimum, value))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t::Max", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t::Min", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested object initializers resolve their concrete generated type by symbol rather than colliding with unrelated leaf-name matches.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedObjectInitializerTypeNameCollision_UsesCorrectGeneratedValueType() {
+            string source = """
+                namespace TaskScheduling {
+                    public class Worker {
+                    }
+                }
+
+                public class Dispatcher {
+                    public struct Worker {
+                        public int Value;
+                    }
+
+                    public Worker Create() {
+                        return new Worker { Value = 1 };
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Dispatcher.cpp"));
+
+            Assert.DoesNotContain("TaskScheduling_Worker()", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains(".Value = 1;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("->Value = 1;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested generated helper types retain access to private members on their containing type after being emitted as separate top-level C++ classes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedTypePrivateMemberAccess_EmitsFriendDeclaration() {
+            string source = """
+                public class Outer {
+                    static int Hidden(int value) {
+                        return value;
+                    }
+
+                    public class Worker {
+                        public int Read() {
+                            return Hidden(1);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Outer.hpp"));
+            Assert.Contains("friend class Worker;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("return Outer::Hidden(1);", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures assignments targeting ref-return properties write through the generated getter result instead of emitting a nonexistent field or setter access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefReturnPropertyAssignment_AssignsThroughGetterResult() {
+            string source = """
+                public struct Slot {
+                    public int Value;
+                }
+
+                public class Holder {
+                    Slot current;
+
+                    public ref Slot Current => ref current;
+
+                    public void Reset() {
+                        Current = new Slot();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.cpp"));
+
+            Assert.Contains("this->get_Current() = ::Slot();", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->Current = ::Slot();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures expression-bodied methods that return newly constructed managed objects emit a proper return statement instead of a dangling assignment token.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExpressionBodiedFactoryMethod_EmitsReturnNewExpression() {
+            string source = """
+                public class Worker {
+                }
+
+                public static class WorkerFactory {
+                    public static Worker Create() => new Worker();
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "WorkerFactory.cpp"));
+
+            Assert.Contains("return new ::Worker();", sourceOutput);
+            Assert.DoesNotContain("= new ::Worker()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures void expression-bodied methods emit direct statements instead of invalid initializer-style tokens.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithVoidExpressionBodiedMethod_EmitsStatementBody() {
+            string source = """
+                public class Worker {
+                    public int Count { get; private set; }
+
+                    public void Touch() => Count = Count + 1;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Worker.cpp"));
+
+            Assert.Contains("this->set_Count(this->Count + 1);", sourceOutput);
+            Assert.DoesNotContain("{\n = ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ReadOnlySpan overloads remain distinct in generated C++ and the copied runtime span header exposes the read-only companion type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadOnlySpanOverloads_PreservesDistinctNativeSpanTypes() {
+            string source = """
+                using System;
+
+                public class SpanBridge<T> {
+                    public void Copy(Span<T> source) {
+                    }
+
+                    public void Copy(ReadOnlySpan<T> source) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SpanBridge_1.hpp"));
+            string nativeSpanRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_span.hpp"));
+
+            Assert.Contains("void Copy(Span<T> source);", headerOutput);
+            Assert.Contains("void Copy(ReadOnlySpan<T> source);", headerOutput);
+            Assert.Contains("class ReadOnlySpan", nativeSpanRuntime);
+            Assert.Contains("void CopyTo(Span<T> target) const", nativeSpanRuntime);
+        }
+
+        /// <summary>
+        /// Ensures runtime span types stay globally qualified when one generated member named Span would otherwise shadow the template type token inside one class.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMemberNamedSpan_QualifiesRuntimeSpanTypes() {
+            string source = """
+                using System;
+
+                public struct Buffer<T> {
+                }
+
+                public class SpanOwner<T> {
+                    public Buffer<T> Span;
+
+                    public void Copy(Span<T> source) {
+                    }
+
+                    public void Copy(ReadOnlySpan<T> source) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SpanOwner_1.hpp"));
+
+            Assert.Contains("void Copy(::Span<T> source);", headerOutput);
+            Assert.Contains("void Copy(::ReadOnlySpan<T> source);", headerOutput);
+        }
+
+        /// <summary>
+        /// Ensures generic static member access keeps its template arguments so EqualityComparer-based helpers bind to the native runtime template.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericStaticRuntimeMemberAccess_PreservesGenericOwnerArguments() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class EqualityGate<T> {
+                    public bool Match(T a, T b) {
+                        return EqualityComparer<T>.Default.Equals(a, b);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "EqualityGate_1.cpp"));
+
+            Assert.Contains("#include \"system/collections/generic/equality_comparer.hpp\"", output.GeneratedText);
+            Assert.Contains("EqualityComparer<T>::get_Default()", sourceOutput);
+            Assert.DoesNotContain("EqualityComparer::get_Default()", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "collections", "generic", "equality_comparer.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures ref locals do not leak pseudo-type include paths into generated source files.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefLocals_DoesNotEmitRefPseudoIncludes() {
+            string source = """
+                public class RefLocalFixture {
+                    int[] values = new int[] { 1, 2 };
+
+                    public int Read() {
+                        ref int typed = ref values[0];
+                        ref var inferred = ref values[1];
+                        typed = typed + inferred;
+                        return values[0];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.DoesNotContain("#include \"ref int.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"ref var.hpp\"", output.GeneratedText, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2417,6 +3448,44 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures nested else-if conditions that declare inline out variables are wrapped into a scoped nested if so generated C++ stays syntactically valid.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithElseIfInlineOutDeclarations_WrapsNestedIfInElseScope() {
+            string source = """
+                public static class ContactResolver {
+                    public static bool TryResolve(out float penetration, out int axisIndex) {
+                        penetration = 1f;
+                        axisIndex = 2;
+                        return true;
+                    }
+                }
+
+                public class PhysicsGate {
+                    public void Tick(bool firstCondition) {
+                        if (firstCondition) {
+                            return;
+                        } else if (ContactResolver.TryResolve(out float penetration, out int axisIndex)) {
+                            Consume(penetration, axisIndex);
+                        }
+                    }
+
+                    void Consume(float penetration, int axisIndex) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PhysicsGate.cpp"));
+
+            Assert.Contains("else {\n", sourceOutput);
+            Assert.Contains("float penetration;", sourceOutput);
+            Assert.Contains("int32_t axisIndex;", sourceOutput);
+            Assert.Contains("if (ContactResolver::TryResolve(penetration, axisIndex))", sourceOutput);
+            Assert.DoesNotContain("else float penetration;", sourceOutput);
+        }
+
+        /// <summary>
         /// Ensures object.GetType().Name inside diagnostics lowers through the native type token helper instead of an unsupported instance GetType API.
         /// </summary>
         [Fact]
@@ -2439,6 +3508,29 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("he_cpp_type_of<Asset>(\"Asset\")->Name", sourceOutput);
             Assert.DoesNotContain("asset->GetType()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated peer types referenced only through typeof still register their emitted headers for native compilation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTypeOfGeneratedPeerType_RegistersGeneratedHeaderDependency() {
+            string source = """
+                public class PeerType {
+                }
+
+                public static class TypeGate {
+                    public static bool IsPeer<TValue>() {
+                        return typeof(TValue) == typeof(PeerType);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TypeGate.cpp"));
+
+            Assert.Contains("#include \"PeerType.hpp\"", sourceOutput);
+            Assert.Contains("he_cpp_type_of<PeerType>(\"PeerType\")", sourceOutput);
         }
 
         /// <summary>
@@ -2680,6 +3772,92 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures local string variables continue to use native bracket indexing instead of synthetic get_Item calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLocalStringIndexer_UsesNativeBracketAccess() {
+            string source = """
+                public class PathGate {
+                    public bool IsRooted(string path) {
+                        string normalized = path.Trim();
+                        return normalized[0] == '/' || normalized[1] == ':';
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PathGate.cpp"));
+
+            Assert.Contains("normalized[0] == '/'", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("normalized[1] == ':'", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("normalized.get_Item(0)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("normalized.get_Item(1)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures interpolated reads of unqualified instance properties lower through generated getter calls even when the property name collides with framework type names.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterpolatedUnqualifiedInstanceProperty_UsesGetterCall() {
+            string source = """
+                public class Counter {
+                    int current;
+
+                    public int Index {
+                        get {
+                            return current;
+                        }
+                    }
+
+                    public override string ToString() {
+                        return $"<{Index}>";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Counter.cpp"));
+
+            Assert.Contains("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(Index)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures each interpolated segment restores class context so later unqualified properties still lower through generated getters.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMultipleInterpolatedUnqualifiedProperties_UsesGetterCallsForEverySegment() {
+            string source = """
+                public struct ContinuationIndex {
+                    public uint Packed;
+
+                    public int Index {
+                        get {
+                            return (int)(Packed & 0x3FFFFFFF);
+                        }
+                    }
+
+                    public int Type {
+                        get {
+                            return (int)((Packed >> 30) & 1);
+                        }
+                    }
+
+                    public override string ToString() {
+                        return $"<{Type}, {Index}>";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContinuationIndex.cpp"));
+
+            Assert.Contains("std::to_string(this->get_Type())", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(Index)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures nested struct receivers keep direct member access and primitive float limits lower to native literals instead of the fake Number type.
         /// </summary>
         [Fact]
@@ -2846,6 +4024,69 @@ namespace cs2.cpp.tests {
             Assert.Contains("this->ResolveTop(hit, hitCamera);", sourceOutput);
             Assert.Contains("const bool hoveringChanged = hit != this->Hovering;", sourceOutput);
             Assert.DoesNotContain("([&]() {\n::IHit* hit;\n::ICamera* hitCamera;\nthis->ResolveTop(hit, hitCamera);\n})();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inferred var declarations preserve invocation before-lines so inline out variables are declared before the initializer call.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithVarInitializerInlineOutDeclarations_DeclaresTemporariesBeforeInvocation() {
+            string source = """
+                public class ActiveSet {
+                    public bool RemoveAt(int activeBodyIndex, out int handle, out int movedBodyIndex, out int movedBodyHandle) {
+                        handle = activeBodyIndex;
+                        movedBodyIndex = activeBodyIndex + 1;
+                        movedBodyHandle = activeBodyIndex + 2;
+                        return true;
+                    }
+                }
+
+                public class Bodies {
+                    public bool Remove(ActiveSet set, int activeBodyIndex) {
+                        var bodyMoved = set.RemoveAt(activeBodyIndex, out var handle, out var movedBodyIndex, out var movedBodyHandle);
+                        return bodyMoved && handle < movedBodyHandle && movedBodyIndex > activeBodyIndex;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Bodies.cpp"));
+
+            Assert.Contains("int32_t handle;", sourceOutput);
+            Assert.Contains("int32_t movedBodyIndex;", sourceOutput);
+            Assert.Contains("int32_t movedBodyHandle;", sourceOutput);
+            Assert.Contains("const bool bodyMoved = set->RemoveAt(activeBodyIndex, handle, movedBodyIndex, movedBodyHandle);", sourceOutput);
+            Assert.True(sourceOutput.IndexOf("int32_t handle;", StringComparison.Ordinal) < sourceOutput.IndexOf("const bool bodyMoved = set->RemoveAt(activeBodyIndex, handle, movedBodyIndex, movedBodyHandle);", StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Ensures standalone lexical blocks remain explicit C++ scopes so repeated local names in later sibling blocks do not collide.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStandaloneLexicalBlocks_PreservesScopedBraces() {
+            string source = """
+                public static class GatherScatter {
+                    public static int Run(bool useFirst) {
+                        {
+                            int lane = 1;
+                            if (useFirst) {
+                                return lane;
+                            }
+                        }
+
+                        {
+                            int lane = 2;
+                            return lane;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GatherScatter.cpp"));
+
+            Assert.Contains("{\nconst int32_t lane = 1;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("}\n{\nconst int32_t lane = 2;", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -3209,7 +4450,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("items->Count()", sourceOutput);
+            Assert.Contains("items->get_Count()", sourceOutput);
             Assert.DoesNotContain("items->Count >", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("items->Count == ", sourceOutput, StringComparison.Ordinal);
         }
@@ -3238,9 +4479,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("items->Capacity()", sourceOutput);
+            Assert.Contains("items->get_Capacity()", sourceOutput);
             Assert.Contains("items->SetCapacity(desired)", sourceOutput);
-            Assert.Contains("std::to_string(this->items->Capacity())", sourceOutput);
+            Assert.Contains("std::to_string(this->items->get_Capacity())", sourceOutput);
             Assert.DoesNotContain("items->Capacity = ", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -3319,6 +4560,33 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures local managed arrays allocated inside a method are deleted on scope exit, including early return paths.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNonEscapingManagedArrayLocalAllocation_EmitsScopeDeleteGuard() {
+            string source = """
+                public class Widget {
+                    public int Sum(bool exitEarly) {
+                        int[] values = new int[4];
+                        values[0] = 7;
+                        if (exitEarly) {
+                            return values[0];
+                        }
+
+                        return values[0] + values.Length;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Array<int32_t> *values = new Array<int32_t>(4);", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.Contains("delete values;", sourceOutput);
+        }
+
+        /// <summary>
         /// Ensures managed locals that escape through a return value do not emit a scope-exit delete guard.
         /// </summary>
         [Fact]
@@ -3338,6 +4606,27 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures local managed arrays that escape through a return value are not deleted before the caller receives them.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEscapingManagedArrayLocalAllocation_DoesNotEmitScopeDeleteGuard() {
+            string source = """
+                public class Widget {
+                    public int[] Build() {
+                        int[] values = new int[4];
+                        return values;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Array<int32_t> *values = new Array<int32_t>(4);", sourceOutput);
             Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -3371,6 +4660,142 @@ namespace cs2.cpp.tests {
             Assert.Contains("Dictionary<char, int32_t> *values = new Dictionary<char, int32_t>();", sourceOutput);
             Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("new ::Asset(values)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures managed builder locals passed to ordinary helper methods remain scoped to the caller and are deleted on scope exit.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedLocalPassedToHelperMethod_EmitsScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public sealed class NativeNoEscapeAttribute : System.Attribute {
+                }
+
+                public class Widget {
+                    public int Count() {
+                        List<int> values = new List<int>();
+                        Dictionary<string, int> indexes = new Dictionary<string, int>();
+                        AddValues(values, indexes);
+                        return values.Count;
+                    }
+
+                    static void AddValues([NativeNoEscape] List<int> values, [NativeNoEscape] Dictionary<string, int> indexes) {
+                        values.Add(1);
+                        indexes["one"] = 1;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.Contains("Dictionary<std::string, int32_t> *indexes = new Dictionary<std::string, int32_t>();", sourceOutput);
+            Assert.Contains("delete values;", sourceOutput);
+            Assert.Contains("delete indexes;", sourceOutput);
+            Assert.Contains("AddValues(values, indexes);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures array-backed read-only list getters are treated as owned native return values when stored in caller locals.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayBackedReadOnlyListGetterLocal_EmitsScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Source {
+                    readonly int[] items;
+
+                    public Source(int[] items) {
+                        this.items = items;
+                    }
+
+                    public IReadOnlyList<int> Items {
+                        get {
+                            return items;
+                        }
+                    }
+                }
+
+                public class Widget {
+                    public int Count(Source source) {
+                        IReadOnlyList<int> items = source.Items;
+                        return items.Count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+            string providerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Source.cpp"));
+
+            Assert.Contains("return new List<int32_t>(this->items);", providerOutput);
+            Assert.Contains("List<int32_t> *items = source->get_Items();", sourceOutput);
+            Assert.Contains("he_cpp_make_scope_exit", sourceOutput);
+            Assert.Contains("delete items;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures managed locals passed to unannotated helper methods remain conservatively treated as escaping.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedLocalPassedToUnannotatedHelperMethod_DoesNotEmitScopeDeleteGuard() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Widget {
+                    public void Run() {
+                        List<int> values = new List<int>();
+                        Store(values);
+                    }
+
+                    static void Store(List<int> values) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures managed locals with explicit NativeOwnership cleanup do not receive a second generated scope delete guard.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitNativeOwnershipDelete_DoesNotEmitScopeDeleteGuard() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public static class NativeOwnership {
+                    public static void Delete<T>(T value) {
+                    }
+                }
+
+                public class Widget {
+                    public void Run() {
+                        List<int> values = new List<int>();
+                        try {
+                            values.Add(1);
+                        } finally {
+                            NativeOwnership.Delete(values);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
+            Assert.Contains("delete values;", sourceOutput);
+            Assert.DoesNotContain("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -3510,6 +4935,192 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures scoped delegate temporaries used by ReadArray remain outside native coalesce temporaries so null-coalescing assignments stay syntactically valid.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadArrayMethodGroupCoalesce_EmitsDelegateTemporaryBeforeCoalesceAssignment() {
+            string source = """
+                using System;
+
+                public abstract class EngineBinaryReader {
+                    public abstract T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement);
+                }
+
+                public sealed class BinaryReaderLE : EngineBinaryReader {
+                    public override T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public sealed class BinaryReaderBE : EngineBinaryReader {
+                    public override T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public static class ReaderFactory {
+                    public static EngineBinaryReader Create(bool useBigEndian) {
+                        if (useBigEndian) {
+                            return new BinaryReaderBE();
+                        }
+
+                        return new BinaryReaderLE();
+                    }
+                }
+
+                public class Node {
+                }
+
+                public class Asset {
+                    public Node[] Values;
+                }
+
+                public class Widget {
+                    public Asset Read(bool useBigEndian) {
+                        EngineBinaryReader reader = ReaderFactory.Create(useBigEndian);
+                        return new Asset {
+                            Values = reader.ReadArray(ReadValue) ?? Array.Empty<Node>()
+                        };
+                    }
+
+                    static Node ReadValue(EngineBinaryReader reader) {
+                        return new Node();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("auto __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("ReadArray<Node*>(__delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Array<::Node*>* __coalesce", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("dynamic_cast<::BinaryReaderLE*>(reader)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("dynamic_cast<::BinaryReaderBE*>(reader)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("([&]() -> Array<::Node*>*", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("= auto __delegateArg", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures repeated out-var names in disjoint branch scopes do not lower to duplicate native declarations in the same outer function scope.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRepeatedOutVarAcrossBranches_UsesDistinctScopedNames() {
+            string source = """
+                public enum Mode {
+                    None
+                }
+
+                public static class Reader {
+                    public static Mode Read(int value, out int mask) {
+                        mask = value;
+                        return Mode.None;
+                    }
+                }
+
+                public class Widget {
+                    public int Run(bool allow, bool always, bool never) {
+                        if (allow) {
+                            if (always) {
+                                return 1;
+                            } else if (never) {
+                                return 2;
+                            } else {
+                                Mode mode = Reader.Read(1, out var mask);
+                                return mask;
+                            }
+                        } else {
+                            if (always) {
+                                return 3;
+                            } else if (never) {
+                                return 4;
+                            } else {
+                                Mode mode = Reader.Read(2, out var mask);
+                                return mask;
+                            }
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Reader::Read__out1(1, ", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Reader::Read__out1(2, ", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t mask;\r\nint32_t mask;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures repeated out-var names across compile-time generic branch specializations do not collapse into duplicate native declarations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRepeatedOutVarAcrossGenericTypeBranches_UsesRemappedNames() {
+            string source = """
+                public enum Mode {
+                    None
+                }
+
+                public interface IBatchPoseIntegrationAllowed {
+                }
+
+                public interface IBatchIntegrationMode {
+                }
+
+                public struct AllowPoseIntegration : IBatchPoseIntegrationAllowed {
+                }
+
+                public struct DisallowPoseIntegration : IBatchPoseIntegrationAllowed {
+                }
+
+                public struct BatchShouldAlwaysIntegrate : IBatchIntegrationMode {
+                }
+
+                public struct BatchShouldNeverIntegrate : IBatchIntegrationMode {
+                }
+
+                public struct BatchShouldConditionallyIntegrate : IBatchIntegrationMode {
+                }
+
+                public static class Reader {
+                    public static Mode Read(int value, int flags, out int integrationMask) {
+                        integrationMask = value + flags;
+                        return Mode.None;
+                    }
+                }
+
+                public class Widget {
+                    public void Run<TAllowPoseIntegration, TBatchIntegrationMode>(int flags) {
+                        if (typeof(TAllowPoseIntegration) == typeof(AllowPoseIntegration)) {
+                            if (typeof(TBatchIntegrationMode) == typeof(BatchShouldAlwaysIntegrate)) {
+                                return;
+                            } else if (typeof(TBatchIntegrationMode) == typeof(BatchShouldNeverIntegrate)) {
+                                return;
+                            } else {
+                                Mode mode = Reader.Read(1, flags, out var integrationMask);
+                            }
+                        } else {
+                            if (typeof(TBatchIntegrationMode) == typeof(BatchShouldAlwaysIntegrate)) {
+                                return;
+                            } else if (typeof(TBatchIntegrationMode) == typeof(BatchShouldNeverIntegrate)) {
+                                return;
+                            } else {
+                                Mode mode = Reader.Read(2, flags, out var integrationMask);
+                            }
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("Reader::Read__out2(1, flags, ", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Reader::Read__out2(2, flags, ", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t integrationMask;\r\nint32_t integrationMask;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures pointer-backed using declarations dispose and delete the generated resource on scope exit.
         /// </summary>
         [Fact]
@@ -3572,6 +5183,29 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("reader->Dispose();", sourceOutput);
             Assert.Contains("delete reader;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures nongeneric explicit interface implementations remain emitted when they satisfy native abstract interface contracts.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitDisposableImplementation_EmitsDisposeOverride() {
+            string source = """
+                using System;
+
+                public class Reader : IDisposable {
+                    void IDisposable.Dispose() {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
+
+            Assert.Contains("class Reader : public IDisposable", headerOutput);
+            Assert.Contains("void Dispose();", headerOutput);
+            Assert.Contains("void Reader::Dispose()", sourceOutput);
         }
 
         /// <summary>
@@ -3783,8 +5417,10 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MenuComponent.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MenuComponent.cpp"));
 
-            Assert.Contains("class MenuSelectedDescriptionComponent;", headerOutput);
+            Assert.DoesNotContain("class MenuSelectedDescriptionComponent;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("Find<MenuSelectedDescriptionComponent*>()", sourceOutput);
         }
 
         /// <summary>
@@ -3807,7 +5443,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("StringComparer::OrdinalIgnoreCase", sourceOutput);
+            Assert.Contains("StringComparer::get_OrdinalIgnoreCase()", sourceOutput);
             Assert.DoesNotContain("#include \"StringComparer.hpp\"", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -4255,6 +5891,104 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures static managed Array resize and ranged copy helpers lower through the native generic Array runtime owner.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithManagedArrayResizeAndRangedCopy_UsesNativeGenericArrayStatics() {
+            string source = """
+                using System;
+
+                public class ResizeGate {
+                    int[] values;
+
+                    public void EnsureCapacity(int count) {
+                        Array.Resize(ref values, count);
+                    }
+
+                    public void ShiftRight(int index, int count) {
+                        Array.Copy(values, index, values, index + 1, count);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ResizeGate.cpp"));
+
+            Assert.Contains("Array<int32_t>::Resize(this->values, count);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Array<int32_t>::Copy(this->values, index, this->values, index + 1, count);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Array::Resize", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Array::Copy", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures chained member access on a ref-return invocation preserves inline out-variable declarations before the call site.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithChainedRefReturnInvocationAndOutVar_DeclaresOutVariableBeforeReceiverCall() {
+            string source = """
+                public struct Slot {
+                    public void Initialize() {
+                    }
+                }
+
+                public struct Cache<T> {
+                    public T Value;
+
+                    public ref T Allocate(out int index) {
+                        index = 1;
+                        return ref Value;
+                    }
+                }
+
+                public class Holder {
+                    Cache<Slot> cache;
+
+                    public void Run() {
+                        cache.Allocate(out var index).Initialize();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Holder.cpp"));
+
+            Assert.Contains("int32_t index;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->cache.Allocate__out0(index).Initialize();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested generated generic type references preserve emitted type names and captured outer generic parameters in type positions.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedGeneratedGenericTypeReference_UsesEmittedNestedTypeNamesAndCapturedOuterArguments() {
+            string source = """
+                public class Outer<T> {
+                    public struct Item {
+                        public int Value;
+                    }
+
+                    public struct Cache<TValue> {
+                        public TValue Stored;
+                    }
+
+                    Cache<Item> cache;
+
+                    public Cache<Item> Read() {
+                        return cache;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Outer_1.hpp"));
+
+            Assert.Contains("Cache_2<", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("Item_1<T>", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("Read();", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Cache<Item>", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures local declarations qualify generated types when a member with the same identifier exists in class scope.
         /// </summary>
         [Fact]
@@ -4404,6 +6138,349 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures pointer-sized primitive <c>GetHashCode</c> calls lower through the numeric runtime instead of invalid native member calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerSizedPrimitiveGetHashCode_UsesNumberRuntimeHashing() {
+            string source = """
+                public struct Widget {
+                    public nint Value;
+
+                    public override int GetHashCode() {
+                        return Value.GetHashCode();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("return Number::GetHashCode(this->Value);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(".GetHashCode()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures dependent generic <c>GetHashCode</c> calls lower through the portable runtime helper instead of invalid native member syntax for primitive instantiations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericGetHashCode_UsesPortableHashHelper() {
+            string source = """
+                public class Widget<T> {
+                    public int Hash(T value) {
+                        return value.GetHashCode();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget_1.cpp"));
+
+            Assert.Contains("return he_cpp_get_hash_code(value);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("value.GetHashCode()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer-to-int casts lower through a pointer-sized reinterpret cast instead of an invalid direct static_cast.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerToIntCast_UsesPointerSizedIntermediateCast() {
+            string source = """
+                public unsafe struct Widget {
+                    public int* Pointer;
+
+                    public int Read() {
+                        return (int)Pointer;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("static_cast<int32_t>(reinterpret_cast<intptr_t>(this->Pointer))", sourceOutput);
+            Assert.DoesNotContain("static_cast<int32_t>(this->Pointer)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures numeric casts from Math helpers do not route through intptr reinterpret casts.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNumericRoundCast_DoesNotUsePointerSizedReinterpretCast() {
+            string source = """
+                using System;
+
+                public sealed class LayoutMath {
+                    public int Snap(double value) {
+                        return (int)Math.Round(value);
+                    }
+
+                    public int Measure(double value) {
+                        return (int)Math.Ceiling(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.cpp"));
+
+            Assert.Contains("static_cast<int32_t>(Math::Round(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("static_cast<int32_t>(Math::Ceiling(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("reinterpret_cast<intptr_t>(Math::Round(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("reinterpret_cast<intptr_t>(Math::Ceiling(value))", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures numeric casts from Math helpers still avoid intptr reinterpret casts when native runtime metadata is loaded.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNumericRoundCastAndNativeRuntimeMetadata_DoesNotUsePointerSizedReinterpretCast() {
+            string source = """
+                using System;
+
+                public sealed class LayoutMath {
+                    public int Snap(double value) {
+                        return (int)Math.Round(value);
+                    }
+
+                    public int Measure(double value) {
+                        return (int)Math.Ceiling(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, loadNativeRuntimeMetadata: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "LayoutMath.cpp"));
+
+            Assert.Contains("static_cast<int32_t>(Math::Round(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("static_cast<int32_t>(Math::Ceiling(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("reinterpret_cast<intptr_t>(Math::Round(value))", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("reinterpret_cast<intptr_t>(Math::Ceiling(value))", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures function-pointer wrapper invocations use the wrapper call surface instead of delegate-style dereferencing.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFunctionPointerInvocation_UsesWrapperCallSurface() {
+            string source = """
+                public unsafe struct Task {
+                    public delegate*<int, void> Function;
+
+                    public void Invoke(int value) {
+                        Function(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Task.cpp"));
+
+            Assert.Contains("this->Function(value);", sourceOutput);
+            Assert.DoesNotContain("(*this->Function)(value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures expression-bodied members returning implicit object creation expressions emit the constructed value.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImplicitObjectCreationExpressionBody_EmitsReturnValue() {
+            string source = """
+                public enum Mode {
+                    Off,
+                    On
+                }
+
+                public struct Settings {
+                    public Mode Mode;
+                }
+
+                public static class Factory {
+                    public static Settings Create() => new() { Mode = Mode.On };
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("auto __object_", sourceOutput);
+            Assert.Contains("= ::Settings();", sourceOutput);
+            Assert.DoesNotContain("return ;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures implicit object creation targeting one qualified generic type can still render detached generic type syntax safely.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImplicitQualifiedGenericObjectCreation_DoesNotCrashOnDetachedGenericTypeSyntax() {
+            string source = """
+                using System.Collections.Generic;
+
+                public static class Factory {
+                    public static global::System.Collections.Generic.List<int> Create(bool create) {
+                        global::System.Collections.Generic.List<int> existing = new global::System.Collections.Generic.List<int>();
+                        return create ? new() : existing;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("return create ? ", sourceOutput);
+            Assert.Contains("System::Collections::Generic::List", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures implicit object creation with constructor arguments can lower detached argument expressions without asking Roslyn for symbols from a foreign tree.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImplicitQualifiedGenericObjectCreationArguments_DoesNotCrashOnDetachedArgumentSyntax() {
+            string source = """
+                using System.Collections.Generic;
+
+                public static class Factory {
+                    public static global::System.Collections.Generic.List<int> Create(bool create, int capacity) {
+                        global::System.Collections.Generic.List<int> existing = new global::System.Collections.Generic.List<int>();
+                        return create ? new(capacity) : existing;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("capacity", sourceOutput);
+            Assert.Contains("return create ? ", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures implicit object creation can lower detached unmanaged function pointer arguments without requesting Roslyn symbol info from a foreign tree.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImplicitObjectCreationFunctionPointerArgument_DoesNotCrashOnDetachedAddressOfSyntax() {
+            string source = """
+                public unsafe struct CallbackHolder {
+                    public delegate*<int, void> Callback;
+
+                    public CallbackHolder(delegate*<int, void> callback) {
+                        Callback = callback;
+                    }
+                }
+
+                public static unsafe class Factory {
+                    static void Handle(int value) {
+                    }
+
+                    public static CallbackHolder Create(bool create) {
+                        CallbackHolder existing = new CallbackHolder(&Handle);
+                        return create ? new(&Handle) : existing;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("&Handle", sourceOutput);
+            Assert.Contains("return create ? ", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures unmanaged function-pointer address-of expressions emit one typed method pointer without taking the address of the cast result.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFunctionPointerAddressOfMethod_EmitsSingleTypedMethodPointer() {
+            string source = """
+                public unsafe struct CallbackHolder {
+                    public delegate*<int, void> Callback;
+
+                    public CallbackHolder(delegate*<int, void> callback) {
+                        Callback = callback;
+                    }
+                }
+
+                public static unsafe class Factory {
+                    static void Handle(int value) {
+                    }
+
+                    public static CallbackHolder Create() {
+                        return new CallbackHolder(&Handle);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("static_cast<void (*)(int32_t)>(&Factory::Handle)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("&static_cast<void (*)(int32_t)>(&Factory::Handle)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures unmanaged function-pointer address-of expressions preserve closed generic method arguments so native overload resolution targets one concrete template instantiation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericFunctionPointerAddressOfMethod_EmitsClosedGenericMethodTarget() {
+            string source = """
+                public unsafe struct CallbackHolder {
+                    public delegate*<int, void> Callback;
+
+                    public CallbackHolder(delegate*<int, void> callback) {
+                        Callback = callback;
+                    }
+                }
+
+                public static unsafe class Factory {
+                    static void Handle<T>(int value) {
+                    }
+
+                    public static CallbackHolder Create() {
+                        return new CallbackHolder(&Handle<int>);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("static_cast<void (*)(int32_t)>(&Factory::Handle<int32_t>)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("static_cast<void (*)(int32_t)>(&Factory::Handle)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures member access to one field is not redirected to an explicit-interface property with the same simple name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFieldShadowedByExplicitInterfaceProperty_PrefersFieldMemberAccess() {
+            string source = """
+                public interface ICounter<T> {
+                    int Count { get; }
+                }
+
+                public struct Counter : ICounter<Counter> {
+                    public int Count;
+
+                    int ICounter<Counter>.Count => Count;
+
+                    public static void Reset(ref Counter counter) {
+                        counter.Count = 0;
+                    }
+
+                    public static void Increment(ref Counter counter) {
+                        counter.Count++;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Counter.cpp"));
+
+            Assert.Contains("counter.Count = 0;", sourceOutput);
+            Assert.Contains("counter.Count++;", sourceOutput);
+            Assert.DoesNotContain("counter.get_Count()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures dictionary key iteration and TryGetValue out parameters lower to native C++ iteration and reference calls.
         /// </summary>
         [Fact]
@@ -4494,8 +6571,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("new List<::ComboBoxItemVisual*>(items->Count())", sourceOutput);
-            Assert.Contains("for (int32_t i = 0; i < items->Count(); i++)", sourceOutput);
+            Assert.Contains("new List<::ComboBoxItemVisual*>(items->get_Count())", sourceOutput);
+            Assert.Contains("for (int32_t i = 0; i < items->get_Count(); i++)", sourceOutput);
             Assert.Contains("this->itemVisuals->Add((*items)[i]);", sourceOutput);
             Assert.DoesNotContain("for (const int32_t i = 0;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("itemVisuals->Add(items[i])", sourceOutput, StringComparison.Ordinal);
@@ -4799,6 +6876,33 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures array-backed assignments into IReadOnlyList properties wrap the array as a native list so generated constructors remain compilable.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayBackedReadOnlyListPropertyAssignment_WrapsNativeList() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Binding {
+                }
+
+                public class Gate {
+                    public Gate(IReadOnlyList<Binding> bindings) {
+                        Binding[] copiedBindings = new Binding[bindings.Count];
+                        Bindings = copiedBindings;
+                    }
+
+                    public IReadOnlyList<Binding> Bindings { get; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.cpp"));
+
+            Assert.Contains("this->Bindings = new List<Binding*>(copiedBindings);", sourceOutput);
+        }
+
+        /// <summary>
         /// Ensures value-type compound assignments expand to explicit binary assignments when only operator overloads are available.
         /// </summary>
         [Fact]
@@ -4856,6 +6960,532 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures declaration-pattern checks inside boolean expressions declare a typed temporary before the condition and reuse it in the trailing expression.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDeclarationPatternInLogicalAnd_DeclaresPatternTemporaryBeforeCondition() {
+            string source = """
+                public struct Handle {
+                    public int Value;
+
+                    public bool Equals(Handle other) {
+                        return Value == other.Value;
+                    }
+
+                    public override bool Equals(object other) {
+                        return other is Handle typed && Equals(typed);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Handle.cpp"));
+
+            Assert.Contains("Handle* __pattern_typed = static_cast<Handle*>(other);", sourceOutput);
+            Assert.Contains("return __pattern_typed != nullptr && this->Equals((*__pattern_typed));", sourceOutput);
+            Assert.DoesNotContain("return  &&", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures member access uses the instance property getter when a property shares its identifier with a generated value type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPropertyReceiverMatchingTypeName_UsesInstancePropertyGetter() {
+            string source = """
+                public struct BodyHandle {
+                    public int Value;
+                }
+
+                public struct CollidableReference {
+                    BodyHandle handle;
+
+                    public BodyHandle BodyHandle {
+                        get {
+                            return handle;
+                        }
+                    }
+
+                    public int Read() {
+                        return BodyHandle.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "CollidableReference.cpp"));
+
+            Assert.Contains("return this->get_BodyHandle().Value;", sourceOutput);
+            Assert.DoesNotContain("return BodyHandle.Value;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures conditional expressions still use the instance property getter when one branch reads a property whose identifier matches a generated type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConditionalPropertyReceiverMatchingTypeName_UsesInstancePropertyGetter() {
+            string source = """
+                public enum CollidableMobility {
+                    Dynamic,
+                    Kinematic,
+                    Static
+                }
+
+                public struct BodyHandle {
+                    public int Value;
+                }
+
+                public struct StaticHandle {
+                    public int Value;
+                }
+
+                public struct CollidableReference {
+                    BodyHandle bodyHandle;
+                    StaticHandle staticHandle;
+
+                    public CollidableMobility Mobility {
+                        get {
+                            return CollidableMobility.Dynamic;
+                        }
+                    }
+
+                    public BodyHandle BodyHandle {
+                        get {
+                            return bodyHandle;
+                        }
+                    }
+
+                    public StaticHandle StaticHandle {
+                        get {
+                            return staticHandle;
+                        }
+                    }
+
+                    public int Read() {
+                        int handle = (Mobility == CollidableMobility.Static) ? StaticHandle.Value : BodyHandle.Value;
+                        return handle;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "CollidableReference.cpp"));
+
+            Assert.Contains("this->get_StaticHandle().Value : this->get_BodyHandle().Value", sourceOutput);
+            Assert.DoesNotContain(": BodyHandle.Value", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic invocation type arguments register generated dependencies so the caller includes the generated type header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitGenericInvocationTypeArgument_EmitsGeneratedTypeInclude() {
+            string source = """
+                public struct CollisionPair {
+                    public int Value;
+                }
+
+                public class CollisionBatcher {
+                    public TPair AllocatePair<TPair>() {
+                        return default;
+                    }
+
+                    public CollisionPair Make() {
+                        return AllocatePair<CollisionPair>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "CollisionBatcher.cpp"));
+
+            Assert.Contains("#include \"CollisionPair.hpp\"", sourceOutput);
+            Assert.Contains("AllocatePair<CollisionPair>()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic invocation type arguments register generated dependencies even when the type argument is only used inside the method body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitGenericInvocationBodyOnlyTypeArgument_EmitsGeneratedTypeInclude() {
+            string source = """
+                public struct CollisionPair {
+                    public int Value;
+                }
+
+                public class CollisionBatcher {
+                    public TPair AllocatePair<TPair>() {
+                        return default;
+                    }
+
+                    public int Make() {
+                        AllocatePair<CollisionPair>();
+                        return 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "CollisionBatcher.cpp"));
+
+            Assert.Contains("#include \"CollisionPair.hpp\"", sourceOutput);
+            Assert.Contains("AllocatePair<CollisionPair>()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures generic and nongeneric zero-argument overloads do not collapse into one emitted native declaration.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericAndNonGenericZeroArgumentOverloads_EmitsBothMethods() {
+            string source = """
+                public struct Pair {
+                    public int Value;
+                }
+
+                public struct UntypedList {
+                    public int AllocateUnsafely() {
+                        return 1;
+                    }
+
+                    public T AllocateUnsafely<T>() {
+                        return default;
+                    }
+                }
+
+                public class Fixture {
+                    UntypedList list;
+
+                    public Pair Read() {
+                        return list.AllocateUnsafely<Pair>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "UntypedList.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("int32_t AllocateUnsafely();", headerOutput);
+            Assert.Contains("template <typename T>", headerOutput);
+            Assert.Contains("T AllocateUnsafely();", headerOutput);
+            Assert.Contains("#include \"Pair.hpp\"", sourceOutput);
+            Assert.Contains("this->list.AllocateUnsafely<Pair>()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures tuple generic arguments keep the native ValueTuple pointer contract when used inside generated generic containers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericFieldUsingTupleType_EmitsPointerTupleArgument() {
+            string source = """
+                public class Box<T> {
+                }
+
+                public class Fixture {
+                    public Box<(int start, int count)> Regions;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.Contains("Box_1<ValueTuple<int32_t, int32_t>*>* Regions;", headerOutput);
+        }
+
+        /// <summary>
+        /// Ensures tuple locals continue to use pointer-style member access against the native ValueTuple runtime.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTupleLocalMemberReads_UsesPointerTupleAccess() {
+            string source = """
+                public class Fixture {
+                    public int Read() {
+                        var pair = (start: 1, count: 2);
+                        return pair.start + pair.count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("pair->Item1 + pair->Item2", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures inferred generic method type arguments for Buffer-based tuple storage stay aligned with the generated Buffer tuple element type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBufferTupleTakeAndReturn_EmitsValueTupleMethodArgumentsWithoutPointer() {
+            string source = """
+                public struct Buffer<T> {
+                }
+
+                public class BufferPool {
+                    public void Take<T>(int count, out Buffer<T> buffer) {
+                        buffer = default;
+                    }
+
+                    public void Return<T>(ref Buffer<T> buffer) {
+                    }
+                }
+
+                public class Fixture {
+                    Buffer<(int start, int count)> pairRegions;
+
+                    public void Init(BufferPool pool) {
+                        pool.Take(1, out pairRegions);
+                        pool.Return(ref pairRegions);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Take__out1<ValueTuple<int32_t, int32_t>>(1, this->pairRegions)", sourceOutput);
+            Assert.Contains("Return__ref0<ValueTuple<int32_t, int32_t>>(this->pairRegions)", sourceOutput);
+            Assert.DoesNotContain("ValueTuple<int32_t, int32_t>*", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures tuple literals assigned into Buffer tuple slots emit direct value construction instead of heap allocation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBufferTupleElementAssignment_EmitsDirectValueTupleConstruction() {
+            string source = """
+                public struct Buffer<T> {
+                    T item;
+
+                    public ref T this[int index] {
+                        get => ref item;
+                    }
+                }
+
+                public class Fixture {
+                    Buffer<(int start, int count)> pairRegions;
+                    int pairCount;
+                    int subpairCount;
+
+                    public void Create(int childrenInPair) {
+                        pairRegions[pairCount++] = (subpairCount, childrenInPair);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->pairRegions.get_Item(this->pairCount++) = ValueTuple<int32_t, int32_t>(this->subpairCount, childrenInPair);", sourceOutput);
+            Assert.DoesNotContain("= new ValueTuple<int32_t, int32_t>(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures tuple members read from ref locals over Buffer tuple elements use direct member access instead of pointer access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefTupleLocalFromBuffer_UsesDirectTupleMemberAccess() {
+            string source = """
+                public struct Buffer<T> {
+                    T item;
+
+                    public ref T Get(int index) {
+                        return ref item;
+                    }
+                }
+
+                public class Fixture {
+                    Buffer<(int start, int count)> pairRegions;
+
+                    public int Read() {
+                        ref var region = ref pairRegions.Get(0);
+                        return region.count;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("return region.Item2;", sourceOutput);
+            Assert.DoesNotContain("return region->Item2;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inherited instance members in generic base classes are qualified with this-> so dependent-base lookup works in emitted C++ templates.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInheritedGenericBaseFieldAccess_QualifiesThisPointer() {
+            string source = """
+                public class Base<T> {
+                    protected Buffer<T> shapes;
+                }
+
+                public struct Buffer<T> {
+                    T item;
+
+                    public ref T this[int index] {
+                        get => ref item;
+                    }
+                }
+
+                public struct Payload {
+                    public int Value;
+                }
+
+                public class Derived<T> : Base<T> {
+                    public int Read() {
+                        return shapes[0].Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Derived_1.cpp"));
+
+            Assert.Contains("this->shapes.get_Item(0)", sourceOutput);
+            Assert.DoesNotContain("shapes.get_Item(0)", sourceOutput.Replace("this->shapes.get_Item(0)", string.Empty), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures primitive CompareTo on native scalar receivers lowers to a direct native comparison expression.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveCompareTo_EmitsNativeComparisonExpression() {
+            string source = """
+                public struct Pair {
+                    public int Value;
+                }
+
+                public class Fixture {
+                    public int Compare(Pair a, Pair b) {
+                        return a.Value.CompareTo(b.Value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("((a.Value) < (b.Value) ? -1 : ((a.Value) > (b.Value) ? 1 : 0))", sourceOutput);
+            Assert.DoesNotContain(".CompareTo(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures dependent generic static method calls emit the C++ template disambiguator before the method name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentGenericStaticMethodCall_EmitsTemplateDisambiguator() {
+            string source = """
+                public class StaticHost<TState> {
+                    public static void Call<TValue>(TValue value) {
+                    }
+                }
+
+                public class Fixture<TState> {
+                    public void Invoke<TValue>(TValue value) {
+                        StaticHost<TState>.Call<TValue>(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("StaticHost_1<TState>::template Call<TValue>(value)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures dependent generic static calls on nested generic owners emit the C++ template disambiguator before the method name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentNestedGenericStaticMethodCall_EmitsTemplateDisambiguator() {
+            string source = """
+                public partial class Outer<TState> {
+                    public struct Cache {
+                        public static void Call<TValue>(int typeIndex, TValue value) {
+                        }
+                    }
+                }
+
+                public class Fixture<TState> {
+                    public void Invoke<TValue>(int typeIndex, TValue value) {
+                        Outer<TState>.Cache.Call<TValue>(typeIndex, value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("Cache_1<TState>::template Call<TValue>(typeIndex, value)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures non-runtime generic types named Buffer keep their generated static-owner surface instead of being remapped to System.Buffer.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericBufferStaticCall_UsesGeneratedOwnerInsteadOfRuntimeBuffer() {
+            string source = """
+                public struct Buffer<T> {
+                    public static T Pick(T value) {
+                        return value;
+                    }
+                }
+
+                public class Gate {
+                    public int Read(int value) {
+                        return Buffer<int>.Pick(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.cpp"));
+
+            Assert.Contains("#include \"Buffer_1.hpp\"", sourceOutput);
+            Assert.Contains("Buffer_1<int32_t>::Pick(value)", sourceOutput);
+            Assert.DoesNotContain("Buffer::Pick(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"system/buffer.hpp\"", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref-return static calls on generated generic Buffer owners preserve the emitted generic owner name instead of collapsing to System.Buffer.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericBufferRefReturnStaticCall_UsesGeneratedOwnerInsteadOfRuntimeBuffer() {
+            string source = """
+                public struct Buffer<T> {
+                    public T Value;
+
+                    public static ref T Get(ref Buffer<byte> values, int index) {
+                        return ref values.Value;
+                    }
+                }
+
+                public struct Batch {
+                    public Buffer<byte> Values;
+                }
+
+                public static class Reader {
+                    public static ref Item Read(ref Batch batch, int index) {
+                        return ref Buffer<Item>.Get(ref batch.Values, index);
+                    }
+                }
+
+                public struct Item {
+                    public int Value;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
+
+            Assert.Contains("Buffer_1<Item>::Get__ref0(batch.Values, index)", sourceOutput);
+            Assert.DoesNotContain("Buffer::Get__ref0(batch.Values, index)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"system/buffer.hpp\"", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generic declaration-pattern casts do not add an extra pointer layer when the generic argument already lowers as a pointer type.
         /// </summary>
         [Fact]
@@ -4896,21 +7526,2601 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures C# <c>as</c> expressions lower to native cast helpers instead of leaking raw C# syntax into generated C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAsExpressionInLocalAssignment_UsesNativeTryCast() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Component {
+                }
+
+                public class DirectionalLightComponent : Component {
+                }
+
+                public class Entity {
+                    public List<Component> Components { get; set; }
+                }
+
+                public class DemoDiscLightToggleComponent {
+                    public DirectionalLightComponent Capture(Entity entity, int componentIndex) {
+                        return entity.Components[componentIndex] as DirectionalLightComponent;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string generatedSource = File.ReadAllText(Path.Combine(output.OutputPath, "DemoDiscLightToggleComponent.cpp"));
+
+            Assert.Contains("return he_cpp_try_cast<DirectionalLightComponent>((*entity->get_Components())[componentIndex]);", generatedSource);
+            Assert.DoesNotContain(" as DirectionalLightComponent", generatedSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref-parameter declarations to generated types rely on forward declarations in headers so cyclic value-type signatures do not force recursive includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefParameterToGeneratedType_UsesForwardDeclarationOnlyInHeader() {
+            string source = """
+                public struct Payload {
+                    public int Value;
+                }
+
+                public static class Gate {
+                    public static void Touch(ref Payload payload) {
+                        payload.Value++;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.cpp"));
+
+            Assert.Contains("class Payload;", header);
+            Assert.DoesNotContain("#include \"Payload.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"Payload.hpp\"", sourceOutput);
+            Assert.Contains("::Payload& payload", output.GeneratedText);
+        }
+
+        /// <summary>
+        /// Ensures user-defined ref-return indexers lower to generated get_Item accessors instead of assuming a native operator[] exists on every converted type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefReturnIndexer_UsesGeneratedGetItemAccessor() {
+            string source = """
+                public struct Buffer {
+                    int[] values;
+
+                    public Buffer(int[] values) {
+                        this.values = values;
+                    }
+
+                    public ref int this[int index] {
+                        get {
+                            return ref values[index];
+                        }
+                    }
+                }
+
+                public static class Gate {
+                    public static int Read(Buffer buffer, int index) {
+                        return buffer[index];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Buffer.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.cpp"));
+
+            Assert.Contains("int32_t& get_Item(int32_t index);", header);
+            Assert.Contains("return buffer.get_Item(index);", sourceOutput);
+            Assert.DoesNotContain("buffer[index]", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer-backed fields keep native pointer member access instead of degrading to value-member syntax when invoking methods.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerFieldMethodAccess_UsesPointerMemberAccess() {
+            string source = """
+                public unsafe struct Sink {
+                    public void Touch() {
+                    }
+                }
+
+                public unsafe class Owner {
+                    Sink* sink;
+
+                    public void Run() {
+                        sink->Touch();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Owner.cpp"));
+
+            Assert.Contains("this->sink->Touch();", sourceOutput);
+            Assert.DoesNotContain("this->sink.Touch();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested generated types qualify outer static members so out-of-class native method definitions keep access to the containing type contract.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedTypeAccessingOuterStaticMember_QualifiesContainingType() {
+            string source = """
+                public partial class Bodies {
+                    public const int BodyReferenceMask = 7;
+
+                    public struct Enumerator {
+                        public int Read(int encodedBodyIndex) {
+                            return encodedBodyIndex & BodyReferenceMask;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Enumerator.cpp"));
+
+            Assert.Contains("Bodies::BodyReferenceMask", sourceOutput);
+            Assert.DoesNotContain("encodedBodyIndex & BodyReferenceMask;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures default expressions for value types lower to value initialization instead of an invalid null token.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeDefaultExpression_EmitsValueInitialization() {
+            string source = """
+                public struct Token {
+                    public int Value;
+                }
+
+                public class Factory {
+                    public Token Make() {
+                        Token token = default(Token);
+                        return token;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Factory.cpp"));
+
+            Assert.Contains("Token()", sourceOutput);
+            Assert.DoesNotContain("= null;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures pointer-backed native list fields still lower indexer access through the dereferenced value receiver instead of applying pointer member access twice.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithListFieldIndexerAccess_UsesDereferencedDirectIndexerCall() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Inventory {
+                    List<int> items;
+
+                    public int ReadLast() {
+                        return items[items.Count - 1];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Inventory.cpp"));
+
+            Assert.Contains("(*this->items).get_Item", sourceOutput);
+            Assert.DoesNotContain("(*this->items)->get_Item", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref locals bound from element-access indexers keep the underlying value-type tracking so subsequent member access stays direct.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefElementAccessLocal_UsesDirectMemberAccess() {
+            string source = """
+                public struct Location {
+                    public int Index;
+                }
+
+                public struct Buffer {
+                    Location[] items;
+
+                    public Buffer(Location[] items) {
+                        this.items = items;
+                    }
+
+                    public ref Location this[int index] {
+                        get {
+                            return ref items[index];
+                        }
+                    }
+                }
+
+                public class Fixture {
+                    public int Read(Buffer buffer, int index) {
+                        ref var location = ref buffer[index];
+                        return location.Index;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("auto& location = buffer.get_Item(index);", sourceOutput);
+            Assert.Contains("return location.Index;", sourceOutput);
+            Assert.DoesNotContain("return location->Index;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures by-ref overloads receive distinct emitted names so lvalue calls do not become ambiguous in native overload resolution.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueAndRefOverloads_EmitsDistinctNativeMethodNames() {
+            string source = """
+                public class OverloadFixture {
+                    public bool Contains(int value) {
+                        return true;
+                    }
+
+                    public bool Contains(ref int value) {
+                        return false;
+                    }
+
+                    public bool Read(ref int value) {
+                        return Contains(value) || Contains(ref value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "OverloadFixture.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "OverloadFixture.cpp"));
+
+            Assert.Contains("bool Contains(int32_t value);", headerOutput);
+            Assert.Contains("bool Contains__ref0(int32_t& value);", headerOutput);
+            Assert.Contains("Contains(value)", sourceOutput);
+            Assert.Contains("Contains__ref0", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures qualified static overload calls preserve the exact emitted by-out suffix selected by Roslyn invocation binding.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedStaticOutOverload_EmitsBoundNativeMethodName() {
+            string source = """
+                public static class Resolver {
+                    public static int Pick(int a, int b, int c, int d, int e) {
+                        return e;
+                    }
+
+                    public static int Pick(int a, int b, int c, int d, out int e) {
+                        e = d;
+                        return e;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run() {
+                        return Resolver.Pick(1, 2, 3, 4, out int value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Resolver::Pick__out4(1, 2, 3, 4, value)", sourceOutput);
+            Assert.DoesNotContain("Resolver::Pick(1, 2, 3, 4, value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures qualified static overload calls on value types preserve the emitted by-out suffix selected by Roslyn invocation binding.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedStructStaticOutOverload_EmitsBoundNativeMethodName() {
+            string source = """
+                public struct Resolver {
+                    public static int Pick(int a, int b, int c, int d, int e) {
+                        return e;
+                    }
+
+                    public static int Pick(int a, int b, int c, int d, out int e) {
+                        e = d;
+                        return e;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run() {
+                        return Resolver.Pick(1, 2, 3, 4, out int value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Resolver::Pick__out4(1, 2, 3, 4, value)", sourceOutput);
+            Assert.DoesNotContain("Resolver::Pick(1, 2, 3, 4, value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures qualified static overload calls on value types preserve mixed ref and out suffixes selected by Roslyn invocation binding.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedStructStaticRefOutOverload_EmitsBoundNativeMethodName() {
+            string source = """
+                public struct Resolver {
+                    public static void Rotate(int axis, int angle, out int result) {
+                        result = axis + angle;
+                    }
+
+                    public static void Rotate(ref int axis, int angle, out int result) {
+                        result = axis - angle;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run(int axis, int angle) {
+                        Resolver.Rotate(axis, angle, out int result);
+                        return result;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Resolver::Rotate__out2(axis, angle, result)", sourceOutput);
+            Assert.DoesNotContain("Resolver::Rotate(axis, angle, result)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures qualified static overload calls on value types preserve mixed ref and out suffixes when native runtime metadata is loaded.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithQualifiedStructStaticRefOutOverloadAndNativeRuntimeMetadata_EmitsBoundNativeMethodName() {
+            string source = """
+                public struct Resolver {
+                    public static void Rotate(int axis, int angle, out int result) {
+                        result = axis + angle;
+                    }
+
+                    public static void Rotate(ref int axis, int angle, out int result) {
+                        result = axis - angle;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run(int axis, int angle) {
+                        Resolver.Rotate(axis, angle, out int result);
+                        return result;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, loadNativeRuntimeMetadata: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Resolver::Rotate__out2(axis, angle, result)", sourceOutput);
+            Assert.DoesNotContain("Resolver::Rotate(axis, angle, result)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures instance member overload calls preserve emitted by-ref and by-out suffixes instead of falling back to the unsuffixed method name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMemberRefOutOverload_EmitsBoundNativeMethodName() {
+            string source = """
+                public class Table {
+                    public bool TryGetValue(int key, out int value) {
+                        value = key;
+                        return true;
+                    }
+
+                    public bool TryGetValue(ref int key, out int value) {
+                        value = key + 1;
+                        return false;
+                    }
+                }
+
+                public class Fixture {
+                    Table table = new Table();
+
+                    public bool Run(ref int key) {
+                        return table.TryGetValue(ref key, out int value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->table->TryGetValue__ref0_out1(key, value)", sourceOutput);
+            Assert.DoesNotContain("this->table->TryGetValue(key, value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated generic container overload calls preserve emitted by-out suffixes without affecting framework dictionary calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericMemberOutOverload_EmitsBoundNativeMethodName() {
+            string source = """
+                public class Table<TKey, TValue> {
+                    public bool TryGetValue(TKey key, out TValue value) {
+                        value = default(TValue);
+                        return true;
+                    }
+
+                    public bool TryGetValue(ref TKey key, out TValue value) {
+                        value = default(TValue);
+                        return false;
+                    }
+                }
+
+                public class Fixture {
+                    Table<int, int> table = new Table<int, int>();
+
+                    public bool Run(int key) {
+                        return table.TryGetValue(key, out int value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->table->TryGetValue__out1(key, value)", sourceOutput);
+            Assert.DoesNotContain("this->table->TryGetValue(key, value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures static generic generated helper calls preserve ref-based emitted names and source includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStaticGenericRefHelperInvocation_EmitsIncludedSuffixedTarget() {
+            string source = """
+                using static Gatherer;
+
+                public static class Gatherer {
+                    public static ref T GetOffsetInstance<T>(ref T value, int index) {
+                        return ref value;
+                    }
+
+                    public static ref T GetFirst<T>(ref T value) {
+                        return ref value;
+                    }
+                }
+
+                public struct Payload {
+                    public int Value;
+                }
+
+                public class Fixture {
+                    public int Run() {
+                        Payload payload = default(Payload);
+                        ref var target = ref GetOffsetInstance<Payload>(ref payload, 0);
+                        GetFirst<int>(ref target.Value) = 3;
+                        return target.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"Gatherer.hpp\"", sourceOutput);
+            Assert.Contains("Gatherer::GetOffsetInstance__ref0<Payload>(payload, 0)", sourceOutput);
+            Assert.Contains("Gatherer::GetFirst__ref0<int32_t>(target.Value) = 3;", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures out discards lower to generated temporary locals instead of an undeclared underscore identifier.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOutDiscardInvocation_EmitsGeneratedDiscardTemporary() {
+            string source = """
+                public static class Helper {
+                    public static void Read(out int left, out int right) {
+                        left = 1;
+                        right = 2;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run() {
+                        Helper.Read(out _, out int value);
+                        return value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("int32_t __discard_", sourceOutput);
+            Assert.Contains("Helper::Read__out0_out1(__discard_", sourceOutput);
+            Assert.DoesNotContain("out _", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("(_,", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures rebindable ref locals lower to pointer-backed aliases so later <c>ref</c> reassignments stay valid in C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRebindableRefLocal_EmitsPointerBackedAlias() {
+            string source = """
+                public struct Pair {
+                    public int Left;
+                    public int Right;
+                }
+
+                public class Fixture {
+                    public int Run() {
+                        Pair pair = default(Pair);
+                        pair.Left = 1;
+                        pair.Right = 2;
+                        ref var target = ref pair.Left;
+                        target = ref pair.Right;
+                        return target;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("auto* target = &pair.Left;", sourceOutput);
+            Assert.Contains("target = &pair.Right;", sourceOutput);
+            Assert.Contains("return (*target);", sourceOutput);
+            Assert.DoesNotContain("target = ;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic member invocations on dependent receivers emit the required <c>template</c> disambiguator.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentReceiverGenericInvocation_EmitsTemplateDisambiguator() {
+            string source = """
+                public interface IExtractor {
+                    void Capture<T>(ref T value);
+                }
+
+                public class Fixture<TExtractor> where TExtractor : IExtractor {
+                    public void Run(ref TExtractor extractor, ref int value) {
+                        extractor.Capture<int>(ref value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("extractor.template Capture__ref0<int32_t>(value);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures generic base-member invocations qualify through the instantiated generated base type instead of an unbound simple base name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericBaseTemplateInvocation_UsesInstantiatedBaseTypeQualifier() {
+            string source = """
+                public class Base<TState> {
+                    protected void Copy<TValue>(TValue value) {
+                    }
+                }
+
+                public class Fixture<TState> : Base<TState> {
+                    public void Run(int value) {
+                        base.Copy<int>(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("Base_1<TState>::template Copy<int32_t>(value);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Base::template Copy<int32_t>(value);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures dependent receivers do not emit the C++ <c>template</c> disambiguator for nongeneric member calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentReceiverNonGenericInvocation_DoesNotEmitTemplateDisambiguator() {
+            string source = """
+                public interface IComparerRef<T> {
+                    int Compare(ref T left, ref T right);
+                }
+
+                public class Fixture<TComparer> where TComparer : IComparerRef<int> {
+                    public int Run(ref TComparer comparer, ref int left, ref int right) {
+                        return comparer.Compare(ref left, ref right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.DoesNotContain(".template Compare__ref0_ref1", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("->template Compare__ref0_ref1", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested generated base interfaces inherit the implicit outer generic arguments required by the emitted type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedGenericBaseInterface_EmitsOuterTypeArgumentsInInheritanceClause() {
+            string source = """
+                public class Outer<TA, TB> {
+                    public interface IWorker {
+                        void Run();
+                    }
+
+                    public class Worker : IWorker {
+                        public void Run() {
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Worker_2.hpp"));
+
+            Assert.Contains("class Worker_2 : public ::IWorker_2<TA, TB>", headerOutput);
+        }
+
+        /// <summary>
+        /// Ensures constructor base initializers use the emitted generic base type name rather than the unspecialized source type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericBaseConstructorInitializer_UsesSpecializedBaseTypeName() {
+            string source = """
+                public class Base<TA, TB> {
+                    public Base(int value) {
+                    }
+                }
+
+                public class Derived : Base<int, string> {
+                    public Derived() : base(1) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Derived.cpp"));
+
+            Assert.Contains("Derived::Derived() : ::Base_2<int32_t, std::string>(1)", sourceOutput);
+            Assert.DoesNotContain(": Base(1)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures numeric literals with digit separators normalize to portable C++ tokens instead of invalid literal suffixes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDigitSeparatedNumericLiterals_RemovesUnderscores() {
+            string source = """
+                public class Fixture {
+                    public ulong ReadMask() {
+                        return 0xFFFF_FFFF_FFFF_FFFF;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("0xFFFFFFFFFFFFFFFF", sourceOutput);
+            Assert.DoesNotContain("_FFFF_", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures user-defined conversion operators become generated helper calls when native invocation arguments require the conversion.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUserDefinedConversionInvocationArgument_EmitsGeneratedConversionHelperCall() {
+            string source = """
+                using System;
+
+                public struct QuickLike {
+                    public int[] Buffer;
+                    public int Count;
+
+                    public static implicit operator ReadOnlySpan<int>(QuickLike value) {
+                        return new ReadOnlySpan<int>(value.Buffer, 0, value.Count);
+                    }
+                }
+
+                public static class Consumer {
+                    public static int Take(ReadOnlySpan<int> values) {
+                        return values.Length;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run(QuickLike value) {
+                        return Consumer.Take(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string fixtureSourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string quickLikeSourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "QuickLike.cpp"));
+
+            Assert.Contains("Consumer::Take(QuickLike::op_Implicit_to_ReadOnlySpan_1(value))", fixtureSourceOutput);
+            Assert.Contains("ReadOnlySpan<int32_t>", quickLikeSourceOutput);
+            Assert.Contains("QuickLike::op_Implicit_to_ReadOnlySpan_1(::QuickLike value)", quickLikeSourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures primitive single-precision helper calls lower to the MathF runtime surface instead of invalid primitive static member access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveSingleMinMagnitude_UsesMathFRuntimeHelper() {
+            string source = """
+                public class Fixture {
+                    public float ClampTowardZero(float value, float limit) {
+                        return float.MinMagnitude(value, limit);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("MathF::MinMagnitude(value, limit)", sourceOutput);
+            Assert.DoesNotContain("float::MinMagnitude", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic type arguments used only inside method bodies still register source includes for generated target types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitGenericBodyTypeArgument_EmitsGeneratedSourceInclude() {
+            string source = """
+                public class Constraint {
+                }
+
+                public class Host {
+                    public void Register<T>() {
+                    }
+                }
+
+                public class Fixture {
+                    public void Run(Host host) {
+                        host.Register<Constraint>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"Constraint.hpp\"", sourceOutput);
+            Assert.Contains("host->Register<Constraint>()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic type arguments imported through one using directive still register generated source includes for body-only method calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImportedExplicitGenericBodyTypeArgument_EmitsGeneratedSourceInclude() {
+            string source = """
+                namespace BepuPhysics.Constraints {
+                    public struct Constraint {
+                    }
+                }
+
+                namespace BepuPhysics {
+                    using BepuPhysics.Constraints;
+
+                    public class Host {
+                        public void Register<T>() {
+                        }
+                    }
+
+                    public class Fixture {
+                        public void Run(Host host) {
+                            host.Register<Constraint>();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"Constraint.hpp\"", sourceOutput);
+            Assert.Contains("host->Register<Constraint>()", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures static member calls from a function body emit one source include for the owning generated type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStaticBodyMemberAccess_EmitsOwningTypeSourceInclude() {
+            string source = """
+                namespace Example {
+                    public class SceneMapComponent {
+                        public static string ResolveSceneId(string sceneId) {
+                            return sceneId + "_resolved";
+                        }
+                    }
+
+                    public class Consumer {
+                        public string Resolve(string sceneId) {
+                            return SceneMapComponent.ResolveSceneId(sceneId);
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Consumer.cpp"));
+
+            Assert.Contains("#include \"SceneMapComponent.hpp\"", sourceOutput);
+            Assert.Contains("SceneMapComponent::ResolveSceneId(sceneId)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures body-only instance method calls do not get mistaken for generated type dependencies that emit nonexistent source includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInstanceMethodCall_DoesNotEmitMethodNameSourceInclude() {
+            string source = """
+                public class Widget {
+                    bool disposed;
+
+                    public void Touch() {
+                        ThrowIfDisposed();
+                    }
+
+                    void ThrowIfDisposed() {
+                        if (disposed) {
+                            throw new System.InvalidOperationException();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.DoesNotContain("#include \"ThrowIfDisposed.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->ThrowIfDisposed();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic base-type arguments that are themselves generated generic types emit the correct instantiated include path.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericInheritanceTypeArgument_EmitsGeneratedGenericInclude() {
+            string source = """
+                public class Functions<TLeft, TRight> {
+                }
+
+                public class Base<TValue> {
+                }
+
+                public class Payload {
+                }
+
+                public class Derived : Base<Functions<Payload, Payload>> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Derived.hpp"));
+
+            Assert.Contains("template <typename TLeft, typename TRight> class Functions_2;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Functions_2<::Payload*, ::Payload*>", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inherited property bridges scope through the instantiated generic base type instead of an unbound template name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInheritedGenericBasePropertyBridge_UsesInstantiatedBaseQualifier() {
+            string source = """
+                public class Base<TValue> {
+                    public virtual bool Enabled => true;
+                }
+
+                public class Mid<TValue> : Base<TValue> {
+                }
+
+                public class Payload {
+                }
+
+                public class Derived : Mid<Payload> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Derived.cpp"));
+
+            Assert.DoesNotContain("this->Base_1::get_Enabled()", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Base_1<::Payload*>::get_Enabled()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures case-only type-name differences do not force lowercase generated value types to change their emitted C++ identifier, while file stems remain Windows-safe.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAutoPropertyOnCaseCollidedLowercaseValueType_PreservesCaseSensitiveEmittedTypeName() {
+            string source = """
+                namespace helengine {
+                    public struct int2 {
+                        public int X;
+                        public int Y;
+
+                        public int2(int x, int y) {
+                            X = x;
+                            Y = y;
+                        }
+                    }
+
+                    public class RoundedRectComponent {
+                        public int2 Size { get; set; }
+                    }
+
+                    public class DebugOverlayComponent {
+                        public int2 Padding { get; set; } = new int2(8, 6);
+
+                        public void Configure(RoundedRectComponent roundedRectComponent) {
+                            roundedRectComponent.Size = new int2(200, 80);
+                        }
+                    }
+                }
+
+                namespace BepuUtilities {
+                    public struct Int2 {
+                        public int X;
+                        public int Y;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugOverlayComponent.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugOverlayComponent.cpp"));
+            string bepuHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BepuUtilities_Int2.hpp"));
+
+            Assert.Contains("#include \"helengine_int2.hpp\"", headerOutput);
+            Assert.Contains("::int2 Padding;", headerOutput);
+            Assert.Contains("void set_Padding(::int2 value);", headerOutput);
+            Assert.Contains("DebugOverlayComponent() : Padding(::int2(8, 6))", sourceOutput);
+            Assert.Contains("roundedRectComponent->set_Size(::int2(200, 80));", sourceOutput);
+            Assert.Contains("class Int2", bepuHeaderOutput);
+            Assert.DoesNotContain("::helengine_int2 Padding;", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("set_Padding(::helengine_int2 value)", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures lowercase generated types emit one namespace-qualified alias header so separately converted project graphs can reference the same managed type through either emitted name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLowercaseValueType_EmitsNamespaceQualifiedAliasHeader() {
+            string source = """
+                namespace helengine {
+                    public struct int2 {
+                        public int X;
+                        public int Y;
+
+                        public int2(int x, int y) {
+                            X = x;
+                            Y = y;
+                        }
+                    }
+
+                    public class OverlayBox {
+                        public int2 Padding { get; set; } = new int2(8, 6);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string aliasHeaderPath = Path.Combine(output.OutputPath, "helengine_helengine_int2.hpp");
+
+            Assert.True(File.Exists(aliasHeaderPath));
+            Assert.Contains("#include \"helengine_int2.hpp\"", File.ReadAllText(aliasHeaderPath));
+            Assert.Contains("using helengine_int2 = int2;", File.ReadAllText(aliasHeaderPath));
+        }
+
+        /// <summary>
+        /// Ensures tuple deconstruction declarations emit concrete locals before assigning tuple members from the returned value.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTupleDeconstructionDeclaration_EmitsLocalTupleElementAssignments() {
+            string source = """
+                public class Fixture {
+                    public (int, int) Prepare() {
+                        return (3, 5);
+                    }
+
+                    public int Run() {
+                        var (left, right) = Prepare();
+                        return left + right;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("const auto __deconstruct_", sourceOutput);
+            Assert.Contains("int32_t left = __deconstruct_", sourceOutput);
+            Assert.Contains("->Item1", sourceOutput);
+            Assert.Contains("int32_t right = __deconstruct_", sourceOutput);
+            Assert.Contains("->Item2", sourceOutput);
+            Assert.DoesNotContain("(left, right) =", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures overloaded local method invocations keep the resolved non-generic overload instead of falling back to a same-name ref-suffixed helper.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOverloadedInvocation_PrefersResolvedNonGenericOverload() {
+            string source = """
+                public class Fixture {
+                    public void Work(int value, int other) {
+                    }
+
+                    public void Work<T>(int value, int other, ref T state) {
+                    }
+
+                    public void Run() {
+                        Work(1, 2);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->Work(1, 2);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Work__ref2(1, 2)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures overloaded instance method groups assigned to delegates emit one typed method-pointer cast so std::bind_front selects the intended overload.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOverloadedDelegateMethodGroup_EmitsTypedMethodPointerCast() {
+            string source = """
+                using System;
+
+                public class Fixture {
+                    Action<int> handler;
+
+                    public void Bind() {
+                        handler = Work;
+                    }
+
+                    void Work(int value) {
+                    }
+
+                    void Work(int value, string text) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("static_cast<void (Fixture::*)(int32_t)>(&Fixture::Work)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("std::bind_front(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures optional value-type parameters with a default literal emit one value construction rather than nullptr.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOptionalValueTypeDefault_EmitsValueConstruction() {
+            string source = """
+                public struct Handle {
+                }
+
+                public class Fixture {
+                    public void Consume(Handle handle = default) {
+                    }
+
+                    public void Run() {
+                        Consume();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->Consume(Handle());", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Consume(nullptr)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures omitted optional unmanaged pointer parameters stay nullptr instead of lowering to one pointer pseudo-construction.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOptionalPointerDefault_EmitsNullptr() {
+            string source = """
+                public unsafe class Fixture {
+                    public void Consume(void* context = null) {
+                    }
+
+                    public void Run() {
+                        Consume();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->Consume(nullptr);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("void*()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures extension-method invocations lower to one static helper call with the receiver as the first argument instead of an instance call with duplicated optional parameters.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReducedExtensionInvocation_EmitsStaticHelperCall() {
+            string source = """
+                public static class Helpers {
+                    public static void Validate(this int value, int laneCount = -1) {
+                    }
+
+                    public static void Run(int value, int laneCount) {
+                        value.Validate(laneCount);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Helpers.cpp"));
+
+            Assert.Contains("Helpers::Validate(value, laneCount);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("value.Validate(laneCount, -1)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit-type tuple deconstruction declarations emit one temporary tuple followed by typed local assignments instead of one invalid ValueTuple assignment target.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTypedTupleDeconstructionDeclaration_EmitsTypedLocalAssignments() {
+            string source = """
+                public class Fixture {
+                    (int, int) Prepare() {
+                        return (3, 4);
+                    }
+
+                    public int Run() {
+                        (int left, int right) = Prepare();
+                        return left + right;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("const auto __deconstruct_", sourceOutput);
+            Assert.Contains("int32_t left = __deconstruct_", sourceOutput);
+            Assert.Contains("int32_t right = __deconstruct_", sourceOutput);
+            Assert.DoesNotContain("new ValueTuple<int32_t, int32_t>(left, right) =", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures null-conditional instance method statements lower to one explicit null guard instead of preserving raw conditional-access syntax.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConditionalAccessMethodInvocation_EmitsNullGuardedCall() {
+            string source = """
+                public class Child {
+                    public void Ping() {
+                    }
+                }
+
+                public class Fixture {
+                    public void Run(Child value) {
+                        value?.Ping();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("if (value != nullptr)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("value->Ping();", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("?.Ping()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures null-conditional abstract generic calls use the generated runtime dispatch chain inside the null guard instead of direct unresolved base-template calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConditionalAccessAbstractGenericInvocationAndMultipleImplementations_UsesRuntimeDispatchChain() {
+            string source = """
+                public abstract class WorkerBase {
+                    public abstract void Execute<T>(ref int value);
+                }
+
+                public sealed class WorkerA : WorkerBase {
+                    public override void Execute<T>(ref int value) {
+                        value++;
+                    }
+                }
+
+                public sealed class WorkerB : WorkerBase {
+                    public override void Execute<T>(ref int value) {
+                        value += 2;
+                    }
+                }
+
+                public static class WorkerFactory {
+                    public static WorkerBase Create(bool useB) {
+                        return useB ? new WorkerB() : new WorkerA();
+                    }
+                }
+
+                public class Fixture {
+                    public void Run(WorkerBase value, ref int count) {
+                        value?.Execute<int>(ref count);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("if (value != nullptr)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("dynamic_cast<::WorkerA*>(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("dynamic_cast<::WorkerB*>(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("heCppDispatchImpl->Execute__ref0<int32_t>(count)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("value->Execute__ref0<int32_t>(count)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures reference-type ToString calls without one generated override lower through the runtime string helper instead of assuming a missing member function.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReferenceTypeToStringWithoutOverride_UsesRuntimeStringHelper() {
+            string source = """
+                public class Accessor {
+                }
+
+                public class Fixture {
+                    Accessor value;
+
+                    public string Run() {
+                        return "existing: " + value.ToString();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("String::ToJoinString(this->value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->value->ToString()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures reference-type interpolations without one generated ToString override lower through the runtime string helper instead of assuming a missing member function.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReferenceTypeInterpolation_UsesRuntimeStringHelper() {
+            string source = """
+                public class Accessor {
+                }
+
+                public class Fixture {
+                    Accessor value;
+
+                    public string Run() {
+                        return $"existing: {value}";
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("String::ToJoinString(this->value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->value->ToString()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref locals initialized from ref conditional expressions preserve both branches instead of dropping the referenced targets.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefConditionalExpression_EmitsReferencedBranches() {
+            string source = """
+                public class Fixture {
+                    int left;
+                    int right;
+
+                    public ref int Pick(bool useLeft) {
+                        ref var selected = ref useLeft ? ref left : ref right;
+                        return ref selected;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("auto& selected = useLeft ? this->left : this->right;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(" ?  : ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures object initializer field assignments keep the authored member name when it collides with the containing generic type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithObjectInitializerMemberNameCollision_UsesDirectMemberName() {
+            string source = """
+                public struct Filter<T> {
+                    public Fixture<T> Fixture;
+                    public int Value;
+                }
+
+                public class Fixture<T> {
+                    public Filter<T> Create() {
+                        return new Filter<T> { Fixture = this, Value = 4 };
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("__object_", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains(".Fixture = this;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(".&Fixture_1<T>::Fixture", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures member access on parenthesized value-type expressions preserves direct access instead of degrading to pointer-style access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithParenthesizedValueTypeMemberAccess_UsesDotAccess() {
+            string source = """
+                public struct Vec {
+                    public float X;
+
+                    public float Length() {
+                        return X;
+                    }
+
+                    public static Vec operator -(Vec left, Vec right) {
+                        return left;
+                    }
+                }
+
+                public class Fixture {
+                    public float Run(Vec left, Vec right) {
+                        return (left - right).Length();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("(left - right).Length()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("(left - right)->Length()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures member access on parenthesized value-type expressions formed from dereferenced pointers still uses direct access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDereferencedPointerValueTypeMemberAccess_UsesDotAccess() {
+            string source = """
+                public unsafe struct Vec {
+                    public float X;
+
+                    public float Length() {
+                        return X;
+                    }
+
+                    public static Vec operator -(Vec left, Vec right) {
+                        return left;
+                    }
+                }
+
+                public unsafe class Fixture {
+                    public float Run(Vec* left, Vec* right) {
+                        return (*left - *right).Length();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("(*left - *right).Length()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("(*left - *right)->Length()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures primitive positive-infinity static members lower through the portable number runtime instead of unresolved pseudo-members.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitivePositiveInfinityMemberAccess_UsesNumberRuntimeInfinity() {
+            string source = """
+                public class Fixture {
+                    public float Run() {
+                        return float.PositiveInfinity;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Number::PositiveInfinity<float>()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float::PositiveInfinity", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures System.Math inverse cosine calls lower to the portable math runtime surface.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMathAcosCall_UsesRuntimeMathSurface() {
+            string source = """
+                public class Fixture {
+                    public double Run(double value) {
+                        return System.Math.Acos(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Math::Acos(value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures NativeMemory static allocation helpers lower to the portable runtime surface instead of unresolved managed symbols.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeMemoryStaticCall_UsesRuntimeNativeMemorySurface() {
+            string source = """
+                public unsafe class Fixture {
+                    public void* Run() {
+                        return System.Runtime.InteropServices.NativeMemory.AlignedAlloc((nuint)16, (nuint)8);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("NativeMemory::AlignedAlloc", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures parenthesized lambda expressions lower to native lambdas instead of preserving raw C# arrow syntax.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithParenthesizedLambdaExpression_EmitsNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public class Fixture {
+                    public Mapper Create() {
+                        return (int value) => value + 1;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("[&](int32_t value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("=>", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures simple lambda expressions lower to native lambdas instead of preserving raw C# arrow syntax.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSimpleLambdaExpression_EmitsNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public class Fixture {
+                    public Mapper Create() {
+                        return value => value + 1;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("[&](int32_t value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("=>", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures simple lambdas used as constructor arguments preserve the closing invocation syntax around the emitted native lambda.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSimpleLambdaConstructorArgument_ClosesInvocationAfterNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public class Holder {
+                    public Holder(Mapper map) {
+                    }
+                }
+
+                public class Fixture {
+                    public Holder Create() {
+                        return new Holder(value => value + 1);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("new ::Holder([&](int32_t value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures direct delegate wrapper construction from a simple lambda closes the generated invocation after the native lambda body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSimpleLambdaDelegateConstruction_ClosesInvocationAfterNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public class Fixture {
+                    public Mapper Create() {
+                        return new Mapper(value => value + 1);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("new ::Mapper([&](int32_t value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures direct delegate wrapper construction from a captured lambda still closes the generated invocation after the native lambda body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCapturedLambdaDelegateConstruction_ClosesInvocationAfterNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public class Fixture {
+                    public Mapper Create(int[] copy) {
+                        return new Mapper(substepIndex => copy[substepIndex]);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("new ::Mapper([&](int32_t substepIndex)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures assigning a directly-constructed captured delegate preserves the closing invocation after the native lambda body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCapturedLambdaDelegateAssignment_ClosesInvocationAfterNativeLambda() {
+            string source = """
+                public delegate int Mapper(int index);
+
+                public struct Fixture {
+                    public Mapper Scheduler;
+
+                    public Fixture(int[] copy) {
+                        Scheduler = new Mapper(substepIndex => copy[substepIndex]);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->Scheduler = new ::Mapper([&](int32_t substepIndex)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures mixed numeric clamp calls preserve the dominant floating-point overload instead of emitting ambiguous integer literals.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFloatClampBounds_EmitsFloatingPointArguments() {
+            string source = """
+                public static class MathHelper {
+                    public static float Clamp(float value, float minValue, float maxValue) {
+                        return value;
+                    }
+                }
+
+                public class Fixture {
+                    public float Run(float value) {
+                        return MathHelper.Clamp(value, -1, 1);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("MathHelper::Clamp(value, -1.0f, 1.0f)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures ref-reinterpreted value receivers preserve instance method calls instead of inventing missing ref-suffixed methods.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefUnsafeValueMethodCall_UsesExistingInstanceMethod() {
+            string source = """
+                public struct Vec {
+                    public float X;
+
+                    public float Length() {
+                        return X;
+                    }
+                }
+
+                public static class UnsafeShim {
+                    public static ref TTo As<TFrom, TTo>(ref TFrom value) {
+                        throw new System.NotImplementedException();
+                    }
+                }
+
+                public static class Helper {
+                    public static float Read(ref Vec value) {
+                        return UnsafeShim.As<Vec, Vec>(ref value).Length();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Helper.cpp"));
+
+            Assert.Contains(".Length()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Length__ref0()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures the real System.Runtime.CompilerServices.Unsafe intrinsic path preserves instance method calls on the reinterpreted ref receiver.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRuntimeUnsafeValueMethodCall_UsesExistingInstanceMethod() {
+            string source = """
+                namespace System.Runtime.CompilerServices {
+                    public static class Unsafe {
+                        public static ref TTo As<TFrom, TTo>(ref TFrom value) {
+                            throw new global::System.NotImplementedException();
+                        }
+                    }
+                }
+
+                public struct Vec {
+                    public float X;
+
+                    public float Length() {
+                        return X;
+                    }
+                }
+
+                public static class Helper {
+                    public static float Read(ref Vec value) {
+                        return System.Runtime.CompilerServices.Unsafe.As<Vec, Vec>(ref value).Length();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Helper.cpp"));
+
+            Assert.Contains(".Length()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Length__ref0()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures BEPU-style captured delegate construction in a value-type constructor closes after the native lambda body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSolveDescriptionStyleCapturedDelegateConstruction_ClosesInvocationAfterNativeLambda() {
+            string source = """
+                public delegate int SubstepVelocityIterationScheduler(int substepIndex);
+
+                public struct SolveDescription {
+                    public SubstepVelocityIterationScheduler VelocityIterationScheduler;
+
+                    public SolveDescription(System.ReadOnlySpan<int> substepVelocityIterations) {
+                        int[] copy = substepVelocityIterations.ToArray();
+                        VelocityIterationScheduler = new SubstepVelocityIterationScheduler(substepIndex => copy[substepIndex]);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SolveDescription.cpp"));
+
+            Assert.Contains("this->VelocityIterationScheduler = new ::SubstepVelocityIterationScheduler([&](int32_t substepIndex)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures BEPU-style delegate construction remains closed when the delegate type and consumer live in separate source files.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCrossFileSolveDescriptionDelegateConstruction_ClosesInvocationAfterNativeLambda() {
+            IReadOnlyDictionary<string, string> sources = new Dictionary<string, string> {
+                ["SubstepVelocityIterationScheduler.cs"] = """
+                    namespace BepuPhysics {
+                        public delegate int SubstepVelocityIterationScheduler(int substepIndex);
+                    }
+                    """,
+                ["Buffer.cs"] = """
+                    namespace BepuUtilities.Memory {
+                        public struct Buffer<T> {
+                            public T[] Values;
+
+                            public static implicit operator System.ReadOnlySpan<T>(Buffer<T> buffer) {
+                                return buffer.Values;
+                            }
+                        }
+                    }
+                    """,
+                ["SolveDescription.cs"] = """
+                    using BepuUtilities.Memory;
+                    using System;
+
+                    namespace BepuPhysics {
+                        public struct SolveDescription {
+                            public int VelocityIterationCount;
+                            public int SubstepCount;
+                            public int FallbackBatchThreshold;
+                            public SubstepVelocityIterationScheduler VelocityIterationScheduler;
+
+                            public const int DefaultFallbackBatchThreshold = 64;
+
+                            public SolveDescription(ReadOnlySpan<int> substepVelocityIterations, int fallbackVelocityIterationCount = 1, int fallbackBatchThreshold = DefaultFallbackBatchThreshold) {
+                                SubstepCount = substepVelocityIterations.Length;
+                                VelocityIterationCount = fallbackVelocityIterationCount;
+                                FallbackBatchThreshold = fallbackBatchThreshold;
+                                var copy = substepVelocityIterations.ToArray();
+                                VelocityIterationScheduler = new SubstepVelocityIterationScheduler(substepIndex => copy[substepIndex]);
+                            }
+
+                            public static implicit operator SolveDescription(Buffer<int> substepVelocityIterations) {
+                                return new SolveDescription(substepVelocityIterations);
+                            }
+                        }
+                    }
+                    """
+            };
+
+            ConversionOutput output = RunConversion(sources);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SolveDescription.cpp"));
+
+            Assert.Contains("this->VelocityIterationScheduler = new ::SubstepVelocityIterationScheduler([&](int32_t substepIndex)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures lambda assignments to delegate-typed targets do not leave partial delegate-construction wrappers behind.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDelegateLambdaAssignment_EmitsClosedDelegateWrapper() {
+            string source = """
+                public delegate int SubstepVelocityIterationScheduler(int substepIndex);
+
+                public struct SolveDescription {
+                    public SubstepVelocityIterationScheduler VelocityIterationScheduler;
+
+                    public SolveDescription(System.ReadOnlySpan<int> substepVelocityIterations) {
+                        int[] copy = substepVelocityIterations.ToArray();
+                        VelocityIterationScheduler = substepIndex => copy[substepIndex];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SolveDescription.cpp"));
+
+            Assert.Contains("this->VelocityIterationScheduler = new ::SubstepVelocityIterationScheduler([&](int32_t substepIndex)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("});", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures multiple for-loop incrementors stay comma separated so native update clauses remain valid.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMultipleForIncrementors_EmitsCommaSeparatedUpdates() {
+            string source = """
+                public static class LoopGate {
+                    public static void Step(int l, int p, int q, int r) {
+                        int j = r;
+                        int i = l;
+                        for (int k = l; k < p; k++, j--) {
+                        }
+
+                        for (int k = r - 1; k > q; k--, i++) {
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "LoopGate.cpp"));
+
+            Assert.Contains("for (int32_t k = l; k < p; k++, j--)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("for (int32_t k = r - 1; k > q; k--, i++)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("k++j--", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("k--i++", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures switch expressions lower to a native conditional expression instead of dropping the initializer body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSwitchExpressionInitializer_EmitsConditionalExpression() {
+            string source = """
+                public unsafe struct SwitchGate {
+                    public static int* Pick(int selector, int* first, int* second, int* third) {
+                        int* result = selector switch {
+                            0 => first,
+                            1 => second,
+                            _ => third
+                        };
+                        return result;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "SwitchGate.cpp"));
+
+            Assert.Contains("int32_t *result =", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t *result = ;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("? ", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures span locals backed by stackalloc initializers emit a concrete backing array and span view.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSpanStackAllocInitializer_EmitsBackingArrayAndSpanView() {
+            string source = """
+                public struct BodyHandle {
+                    public int Value;
+                }
+
+                public static class StackAllocGate {
+                    public static System.Span<BodyHandle> Create(BodyHandle first, BodyHandle second) {
+                        System.Span<BodyHandle> bodyHandles = stackalloc BodyHandle[] { first, second };
+                        return bodyHandles;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "StackAllocGate.cpp"));
+
+            Assert.Contains("bodyHandles_stackalloc[2]", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("bodyHandles_stackalloc[0] = first;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("bodyHandles_stackalloc[1] = second;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("bodyHandles_stackalloc, 2)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures runtime span constructions in generic implicit operators stay globally qualified so native parsing does not misread the template-id.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericSpanImplicitOperators_QualifiesRuntimeSpanConstruction() {
+            string source = """
+                public struct QuickList<T> {
+                    public T[] Values;
+
+                    public static implicit operator System.ReadOnlySpan<T>(QuickList<T> list) {
+                        return new System.ReadOnlySpan<T>(list.Values);
+                    }
+
+                    public static implicit operator System.Span<T>(QuickList<T> list) {
+                        return new System.Span<T>(list.Values);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "QuickList_1.cpp"));
+
+            Assert.Contains("return ::ReadOnlySpan<T>(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("return ::Span<T>(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures System.Array.Clear lowers to the runtime array helper instead of a missing generated static member.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemArrayClear_UsesRuntimeArrayHelper() {
+            string source = """
+                public class Fixture {
+                    public void Run(int[] values) {
+                        System.Array.Clear(values, 0, values.Length);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Array<int32_t>::Clear(values, 0, values->get_Length())", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures while-loop out-var conditions emit the required local declaration before the loop header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithWhileOutVarCondition_DeclaresVariableBeforeLoop() {
+            string source = """
+                public class StackLike {
+                    int Value;
+                    bool HasValue;
+
+                    public StackLike(int value) {
+                        Value = value;
+                        HasValue = true;
+                    }
+
+                    public bool TryPop(out int next) {
+                        next = Value;
+                        bool result = HasValue;
+                        HasValue = false;
+                        return result;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run(StackLike stack) {
+                        int sum = 0;
+                        while (stack.TryPop(out var next)) {
+                            sum += next;
+                        }
+
+                        return sum;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("int32_t next;", sourceOutput);
+            Assert.Contains("while (stack->TryPop__out0(next))", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures copied runtime templates expose the console and regex accessors required by generated tooling code.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_CopiesRuntimeTemplatesWithConsoleAndRegexCollectionHelpers() {
+            string source = """
+                public class Fixture {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string consoleHeaderPath = Path.Combine(output.OutputPath, "system", "console.hpp");
+            string regexHeaderPath = Path.Combine(output.OutputPath, "system", "text", "regular_expressions", "regex.hpp");
+            string consoleHeader = File.ReadAllText(consoleHeaderPath);
+            string regexHeader = File.ReadAllText(regexHeaderPath);
+
+            Assert.Contains("static bool Write(const std::string& text);", consoleHeader);
+            Assert.Contains("static bool WriteLine();", consoleHeader);
+            Assert.Contains("static std::string ReadLine();", consoleHeader);
+            Assert.Contains("GroupAccessor get_Item(const std::string& name) const", regexHeader);
+            Assert.Contains("Match get_Item(int32_t index) const", regexHeader);
+        }
+
+        /// <summary>
+        /// Ensures invocation overload resolution prefers exact argument types instead of reusing the first same-arity candidate.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSameArityOverloads_UsesExactGeneratedSuffix() {
+            string source = """
+                public struct Handle {
+                    public int Value;
+
+                    public Handle(int value) {
+                        Value = value;
+                    }
+                }
+
+                public struct Collector {
+                    public int Tag;
+                }
+
+                public class Fixture {
+                    public void Enumerate(ref int value, ref Collector collector) {
+                        collector.Tag = 1;
+                    }
+
+                    public void Enumerate(Handle value, ref Collector collector) {
+                        collector.Tag = 2;
+                    }
+
+                    public int Run(Handle value) {
+                        var collector = new Collector();
+                        Enumerate(value, ref collector);
+                        return collector.Tag;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("this->Enumerate__ref1(value, collector);", sourceOutput);
+            Assert.DoesNotContain("this->Enumerate__ref0_ref1(value, collector);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures C# const fields emit inline native constants so integral constants stay usable in headers without forcing constexpr strings.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConstField_EmitsInlineNativeConstantField() {
+            string source = """
+                public class Fixture {
+                    public const int MaximumBodiesPerConstraint = 4;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.Contains("inline static const int32_t MaximumBodiesPerConstraint = 4;", headerOutput);
+            Assert.DoesNotContain("static int32_t MaximumBodiesPerConstraint;", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic overload invocations emit the exact ref-suffix chosen by Roslyn instead of reusing the first same-arity candidate.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericSameArityOverloads_UsesExactGeneratedSuffix() {
+            string source = """
+                public interface IForEach<T> {
+                    void LoopBody(T value);
+                }
+
+                public struct Handle {
+                    public int Value;
+                }
+
+                public struct Batch {
+                }
+
+                public class Enumerator : IForEach<int> {
+                    public void LoopBody(int value) {
+                    }
+                }
+
+                public class Fixture {
+                    public void Enumerate<TEnumerator>(Handle handle, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void Enumerate<TEnumerator>(ref Batch batch, int indexInBatch, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void Run(Handle handle, Enumerator enumerator) {
+                        Enumerate<Enumerator>(handle, ref enumerator);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Enumerate__ref1<", sourceOutput);
+            Assert.Contains("(handle, enumerator);", sourceOutput);
+            Assert.DoesNotContain("Enumerate__ref0_ref2<", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures inferred generic overload invocations that mix member-access and ref arguments keep the correct emitted ref suffix on both overload shapes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInferredGenericMixedArityOverloads_UsesExactGeneratedSuffixForEachCallShape() {
+            string source = """
+                public interface IForEach<T> {
+                    void LoopBody(T value);
+                }
+
+                public struct ConstraintHandle {
+                    public int Value;
+                }
+
+                public struct TypeBatch {
+                }
+
+                public struct ConstraintReference {
+                    public ConstraintHandle ConnectingConstraintHandle;
+                }
+
+                public class Enumerator : IForEach<int> {
+                    public void LoopBody(int value) {
+                    }
+                }
+
+                public class Fixture {
+                    public void EnumerateConnectedDynamicBodies<TEnumerator>(ref TypeBatch typeBatch, int indexInTypeBatch, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void EnumerateConnectedDynamicBodies<TEnumerator>(ConstraintHandle constraintHandle, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void EnumerateConnectedRawBodyReferences<TEnumerator>(ConstraintHandle constraintHandle, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void EnumerateConnectedRawBodyReferences<TEnumerator>(ref TypeBatch typeBatch, int indexInTypeBatch, ref TEnumerator enumerator) where TEnumerator : IForEach<int> {
+                    }
+
+                    public void Run(ConstraintReference constraint, ref TypeBatch typeBatch, int indexInTypeBatch, Enumerator enumerator) {
+                        EnumerateConnectedDynamicBodies(constraint.ConnectingConstraintHandle, ref enumerator);
+                        EnumerateConnectedRawBodyReferences(ref typeBatch, indexInTypeBatch, ref enumerator);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("EnumerateConnectedDynamicBodies__ref1<Enumerator*>(constraint.ConnectingConstraintHandle, enumerator);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("EnumerateConnectedRawBodyReferences__ref0_ref2<Enumerator*>(typeBatch, indexInTypeBatch, enumerator);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("EnumerateConnectedDynamicBodies__ref0_ref2<Enumerator*>", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("EnumerateConnectedRawBodyReferences__ref1<Enumerator*>(typeBatch, indexInTypeBatch, enumerator);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures local identifiers that collide with C++ keywords are remapped to safe emitted names.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithKeywordNamedLocal_EmitsSafeIdentifier() {
+            string source = """
+                public static class Fixture {
+                    public static int Run(int value) {
+                        var unsigned = value + 1;
+                        return unsigned;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("int32_t unsigned_ = value + 1;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("return unsigned_;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("int32_t unsigned = value + 1;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures nested structs inside static classes preserve every declared field in generated output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedStructFields_PreservesTrailingFieldDeclarations() {
+            string source = """
+                public struct FieldA {
+                }
+
+                public struct FieldB {
+                }
+
+                public struct FieldC {
+                }
+
+                public static class Fixture {
+                    public struct Payload {
+                        public FieldA LinearA;
+                        public FieldB AngularA;
+                        public FieldC AngularB;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Payload.hpp"));
+
+            Assert.Contains("::FieldA LinearA;", header, StringComparison.Ordinal);
+            Assert.Contains("::FieldB AngularA;", header, StringComparison.Ordinal);
+            Assert.Contains("::FieldC AngularB;", header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures constructor calls select the by-value overload unambiguously when a matching ref overload also exists.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefAndValueConstructors_WrapsByValueArgumentToAvoidNativeAmbiguity() {
+            string source = """
+                public struct Lane {
+                    public int Value;
+                }
+
+                public struct Wide {
+                    public Lane X;
+
+                    public Wide(ref Lane lane) {
+                        X = lane;
+                    }
+
+                    public Wide(Lane lane) {
+                        X = lane;
+                    }
+                }
+
+                public static class Fixture {
+                    public static Wide Run(Lane lane) {
+                        return new Wide(lane);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("return ::Wide(::Lane(lane));", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return ::Wide(lane);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures constructor overload resolution also keeps by-value creation unambiguous when the argument is sourced from a field access.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefAndValueConstructorsFromFieldAccess_WrapsByValueArgumentToAvoidNativeAmbiguity() {
+            string source = """
+                public struct Lane {
+                    public int Value;
+                }
+
+                public struct Wide {
+                    public Lane X;
+
+                    public Wide(ref Lane lane) {
+                        X = lane;
+                    }
+
+                    public Wide(Lane lane) {
+                        X = lane;
+                    }
+                }
+
+                public class Fixture {
+                    public Lane Radius;
+
+                    public Wide Run() {
+                        return new Wide(Radius);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("return ::Wide(::Lane(this->Radius));", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return ::Wide(this->Radius);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures a selected ref constructor overload still lowers unambiguously when an equivalent by-value overload exists.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSelectedRefConstructorAndCompetingValueOverload_CastsArgumentToReference() {
+            string source = """
+                public struct Lane {
+                    public int Value;
+                }
+
+                public struct Wide {
+                    public Lane X;
+
+                    public Wide(ref Lane lane) {
+                        X = lane;
+                    }
+
+                    public Wide(Lane lane) {
+                        X = lane;
+                    }
+                }
+
+                public class Fixture {
+                    public Lane Radius;
+
+                    public Wide Run() {
+                        return new Wide(ref Radius);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("return ::Wide(static_cast<::Lane&>(this->Radius));", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return ::Wide(this->Radius);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures unqualified member-template calls inside generic classes use the dependent <c>this->template</c> form required by C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericClassMemberTemplateCall_EmitsThisTemplateQualifier() {
+            string source = """
+                public class Fixture<T> {
+                    public void Copy<TItem>(TItem value) {
+                    }
+
+                    public void Run(T value) {
+                        Copy<T>(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("this->template Copy<T>(value);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures nested types with the same leaf name under different outer types emit distinct generated names and files.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedTypeLeafNameCollision_UsesContainingTypeQualifiedGeneratedNames() {
+            ConversionOutput output = RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["TangentFriction.cs"] = """
+                    namespace BepuPhysics.Constraints.Contact {
+                        public class TangentFriction {
+                            public struct Jacobians {
+                                public int AngularA;
+                                public int LinearA;
+                            }
+                        }
+                    }
+                    """,
+                ["TangentFrictionOneBody.cs"] = """
+                    namespace BepuPhysics.Constraints.Contact {
+                        public class TangentFrictionOneBody {
+                            public struct Jacobians {
+                                public int AngularA;
+                                public int LinearA;
+                                public int AngularB;
+                            }
+                        }
+                    }
+                    """,
+                ["Fixture.cs"] = """
+                    namespace BepuPhysics.Constraints.Contact {
+                        public class Fixture {
+                            public TangentFriction.Jacobians Pair;
+                            public TangentFrictionOneBody.Jacobians Single;
+                        }
+                    }
+                    """
+            });
+
+            string tangentHeaderPath = Path.Combine(output.OutputPath, "BepuPhysics_Constraints_Contact_TangentFriction_Jacobians.hpp");
+            string oneBodyHeaderPath = Path.Combine(output.OutputPath, "BepuPhysics_Constraints_Contact_TangentFrictionOneBody_Jacobians.hpp");
+
+            Assert.True(File.Exists(tangentHeaderPath));
+            Assert.True(File.Exists(oneBodyHeaderPath));
+
+            string tangentHeader = File.ReadAllText(tangentHeaderPath);
+            string oneBodyHeader = File.ReadAllText(oneBodyHeaderPath);
+            string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.Contains("class BepuPhysics_Constraints_Contact_TangentFriction_Jacobians", tangentHeader);
+            Assert.Contains("class BepuPhysics_Constraints_Contact_TangentFrictionOneBody_Jacobians", oneBodyHeader);
+            Assert.DoesNotContain("AngularB", tangentHeader, StringComparison.Ordinal);
+            Assert.Contains("AngularB", oneBodyHeader);
+            Assert.Contains("::BepuPhysics_Constraints_Contact_TangentFriction_Jacobians Pair;", fixtureHeader);
+            Assert.Contains("::BepuPhysics_Constraints_Contact_TangentFrictionOneBody_Jacobians Single;", fixtureHeader);
+        }
+
+        /// <summary>
+        /// Ensures nested type references written as bare identifiers inside their containing type still resolve through the full nested Roslyn identity.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBareNestedTypeIdentifierInContainingType_UsesContainingTypeQualifiedGeneratedName() {
+            ConversionOutput output = RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["TangentFriction.cs"] = """
+                    namespace BepuPhysics.Constraints.Contact {
+                        public class TangentFriction {
+                            public struct Jacobians {
+                                public int AngularA;
+                                public int LinearA;
+                                public int AngularB;
+                            }
+
+                            public static void Apply(Jacobians jacobians) {
+                                jacobians.AngularB = 1;
+                            }
+                        }
+                    }
+                    """,
+                ["TangentFrictionOneBody.cs"] = """
+                    namespace BepuPhysics.Constraints.Contact {
+                        public class TangentFrictionOneBody {
+                            public struct Jacobians {
+                                public int AngularA;
+                                public int LinearA;
+                            }
+                        }
+                    }
+                    """
+            });
+
+            string tangentSource = File.ReadAllText(Path.Combine(output.OutputPath, "TangentFriction.cpp"));
+
+            Assert.Contains("::BepuPhysics_Constraints_Contact_TangentFriction_Jacobians jacobians", tangentSource);
+            Assert.Contains("jacobians.AngularB = 1;", tangentSource);
+            Assert.DoesNotContain("::BepuPhysics_Constraints_Contact_Jacobians jacobians", tangentSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures unconstrained generic null comparisons lower through the portable runtime helper instead of emitting raw nullptr comparisons that fail for value-type instantiations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUnconstrainedGenericNullComparison_UsesPortableNullHelper() {
+            string source = """
+                public class Fixture<TComparer> {
+                    public bool HasComparer(TComparer comparer) {
+                        return comparer != null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("return !he_cpp_is_null(comparer);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("comparer != nullptr", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit interface property implementations remain publicly callable in generated C++ so interface-constrained generic code can access them.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitInterfacePropertyImplementation_EmitsPublicGetter() {
+            ConversionOutput output = RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["ICounted.cs"] = """
+                    public interface ICounted<TManifold> where TManifold : struct, ICounted<TManifold> {
+                        int Count { get; }
+                    }
+                    """,
+                ["Manifold.cs"] = """
+                    public struct Manifold : ICounted<Manifold> {
+                        public int Count;
+
+                        int ICounted<Manifold>.Count => Count;
+                    }
+                    """,
+                ["Fixture.cs"] = """
+                    public class Fixture {
+                        public bool Any<TManifold>(TManifold manifold) where TManifold : struct, ICounted<TManifold> {
+                            return manifold.Count > 0;
+                        }
+                    }
+                    """
+            });
+
+            string manifoldHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Manifold.hpp"));
+            string fixtureSource = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("int32_t get_Count();", manifoldHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("private:\r\n    int32_t get_Count();", manifoldHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("private:\n    int32_t get_Count();", manifoldHeader, StringComparison.Ordinal);
+            Assert.Contains("return manifold.get_Count() > 0;", fixtureSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(string source) {
+        static ConversionOutput RunConversion(string source, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false) {
+            return RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["Fixture.cs"] = source
+            }, allowUnsafe, loadNativeRuntimeMetadata);
+        }
+
+        /// <summary>
+        /// Runs the C++ converter against one temporary single-file project using explicit type remaps and returns the generated output bundle.
+        /// </summary>
+        /// <param name="source">C# source file content to convert.</param>
+        /// <param name="typeRemaps">Configured source-to-target type remaps used by the conversion run.</param>
+        /// <returns>Output folder, parsed report, and generated textual output.</returns>
+        static ConversionOutput RunConversionWithTypeRemaps(string source, IReadOnlyDictionary<string, string> typeRemaps) {
+            return RunConversionWithTypeRemaps(
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["Fixture.cs"] = source
+                },
+                typeRemaps);
+        }
+
+        /// <summary>
+        /// Runs the C++ converter against a temporary multi-file project and returns the generated output bundle.
+        /// </summary>
+        /// <param name="sources">Source file content keyed by relative file name.</param>
+        /// <returns>Output folder, parsed report, and generated textual output.</returns>
+        static ConversionOutput RunConversion(IReadOnlyDictionary<string, string> sources, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
-            string sourcePath = Path.Combine(rootPath, "Fixture.cs");
             string outputPath = Path.Combine(rootPath, "out");
 
             Directory.CreateDirectory(rootPath);
-            File.WriteAllText(projectPath, CreateProjectFile());
-            File.WriteAllText(sourcePath, source);
+            File.WriteAllText(projectPath, CreateProjectFile(allowUnsafe));
+            foreach (KeyValuePair<string, string> source in sources) {
+                File.WriteAllText(Path.Combine(rootPath, source.Key), source.Value);
+            }
 
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+            options.LoadNativeRuntimeMetadata = loadNativeRuntimeMetadata;
+            options.WriteConversionReport = true;
+
+            CPPConversionRules rules = new CPPConversionRules();
+            CPPCodeConverter converter = new CPPCodeConverter(rules, options);
+            converter.AddCsproj(projectPath);
+            converter.WriteOutput(outputPath);
+
+            string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
+            JsonDocument report = JsonDocument.Parse(File.ReadAllText(reportPath));
+            string generatedText = ReadGeneratedOutput(outputPath);
+            return new ConversionOutput(outputPath, generatedText, report);
+        }
+
+        /// <summary>
+        /// Runs the C++ converter against a temporary project using explicit type remaps and returns the generated output bundle.
+        /// </summary>
+        /// <param name="sources">Source file content keyed by relative file name.</param>
+        /// <param name="typeRemaps">Configured source-to-target type remaps used by the conversion run.</param>
+        /// <returns>Output folder, parsed report, and generated textual output.</returns>
+        static ConversionOutput RunConversionWithTypeRemaps(IReadOnlyDictionary<string, string> sources, IReadOnlyDictionary<string, string> typeRemaps) {
+            string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
+            string projectPath = Path.Combine(rootPath, "Fixture.csproj");
+            string outputPath = Path.Combine(rootPath, "out");
+
+            Directory.CreateDirectory(rootPath);
+            File.WriteAllText(projectPath, CreateProjectFile(false));
+            foreach (KeyValuePair<string, string> source in sources) {
+                File.WriteAllText(Path.Combine(rootPath, source.Key), source.Value);
+            }
+
+            CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+            options.TypeRemaps = typeRemaps;
             options.LoadNativeRuntimeMetadata = false;
             options.WriteConversionReport = true;
 
@@ -4929,17 +10139,18 @@ namespace cs2.cpp.tests {
         /// Creates a minimal SDK-style project file for temporary converter fixtures.
         /// </summary>
         /// <returns>Project file content suitable for Roslyn-based analysis.</returns>
-        static string CreateProjectFile() {
-            return """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net9.0</TargetFramework>
-                    <LangVersion>preview</LangVersion>
-                    <ImplicitUsings>enable</ImplicitUsings>
-                    <Nullable>disable</Nullable>
-                  </PropertyGroup>
-                </Project>
-                """;
+        static string CreateProjectFile(bool allowUnsafe) {
+            string allowUnsafeElement = allowUnsafe ? "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n" : string.Empty;
+            return
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
+                "  <PropertyGroup>\n" +
+                "    <TargetFramework>net9.0</TargetFramework>\n" +
+                "    <LangVersion>preview</LangVersion>\n" +
+                "    <ImplicitUsings>enable</ImplicitUsings>\n" +
+                "    <Nullable>disable</Nullable>\n" +
+                allowUnsafeElement +
+                "  </PropertyGroup>\n" +
+                "</Project>\n";
         }
 
         /// <summary>

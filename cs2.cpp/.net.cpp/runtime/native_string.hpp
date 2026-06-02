@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <typeinfo>
+#include <utility>
 #include <vector>
 
 #include "array.hpp"
@@ -22,6 +24,14 @@ enum class StringComparison {
 enum class StringSplitOptions {
     None,
     RemoveEmptyEntries
+};
+
+template <typename TValue, typename = void>
+struct he_cpp_has_to_string_method : std::false_type {
+};
+
+template <typename TValue>
+struct he_cpp_has_to_string_method<TValue, std::void_t<decltype(std::declval<TValue*>()->ToString())>> : std::true_type {
 };
 
 /// <summary>
@@ -411,8 +421,6 @@ public:
 
         return result;
     }
-
-private:
     static size_t FindNextSeparator(const std::string& value, const Array<char>* separators, size_t startIndex) {
         if (separators == nullptr || separators->Length <= 0) {
             return value.find_first_of(" \t\r\n", startIndex);
@@ -451,7 +459,23 @@ private:
     }
 
     template <typename TValue>
-    static std::string ToJoinString(const TValue& value) {
+    static std::enable_if_t<std::is_pointer_v<TValue>, std::string> ToJoinString(const TValue& value) {
+        if (value == nullptr) {
+            return std::string();
+        }
+
+        using PointeeType = std::remove_pointer_t<TValue>;
+        if constexpr (he_cpp_has_to_string_method<PointeeType>::value) {
+            return value->ToString();
+        }
+
+        return std::string(typeid(PointeeType).name());
+    }
+
+    template <typename TValue>
+    static std::enable_if_t<!std::is_pointer_v<TValue> && !std::is_arithmetic_v<TValue>, std::string> ToJoinString(const TValue& value) {
         return value;
     }
+
+private:
 };

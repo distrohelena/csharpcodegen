@@ -48,6 +48,78 @@ public:
         }
     }
 
+    static void Copy(const Array<T>* source, int32_t sourceIndex, Array<T>* destination, int32_t destinationIndex, int32_t length) {
+        if (source == nullptr || destination == nullptr || length <= 0) {
+            return;
+        }
+
+        if (sourceIndex < 0) {
+            sourceIndex = 0;
+        }
+
+        if (destinationIndex < 0) {
+            destinationIndex = 0;
+        }
+
+        if (sourceIndex >= source->Length || destinationIndex >= destination->Length) {
+            return;
+        }
+
+        int32_t sourceAvailable = source->Length - sourceIndex;
+        int32_t destinationAvailable = destination->Length - destinationIndex;
+        int32_t copyLength = std::min(length, std::min(sourceAvailable, destinationAvailable));
+        if (copyLength <= 0) {
+            return;
+        }
+
+        if (source == destination && destinationIndex > sourceIndex) {
+            for (int32_t index = copyLength - 1; index >= 0; --index) {
+                (*destination)[destinationIndex + index] = (*source)[sourceIndex + index];
+            }
+            return;
+        }
+
+        for (int32_t index = 0; index < copyLength; ++index) {
+            (*destination)[destinationIndex + index] = (*source)[sourceIndex + index];
+        }
+    }
+
+    static void Resize(Array<T>*& array, int32_t newLength) {
+        if (newLength < 0) {
+            newLength = 0;
+        }
+
+        Array<T>* resized = new Array<T>(newLength);
+        if (array != nullptr) {
+            Copy(array, resized, std::min(array->Length, newLength));
+        }
+
+        if (array != nullptr && array != Empty()) {
+            delete array;
+        }
+
+        array = resized;
+    }
+
+    static void Clear(Array<T>* array, int32_t index, int32_t length) {
+        if (array == nullptr || array->Data == nullptr || length <= 0) {
+            return;
+        }
+
+        if (index < 0) {
+            index = 0;
+        }
+
+        if (index >= array->Length) {
+            return;
+        }
+
+        int32_t clearLength = std::min(length, array->Length - index);
+        for (int32_t elementIndex = 0; elementIndex < clearLength; ++elementIndex) {
+            array->Data[index + elementIndex] = T();
+        }
+    }
+
     int32_t get_Length() const {
         return Length;
     }

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 
 /// <summary>
@@ -78,6 +79,36 @@ public:
     /// <returns>True when the value is infinite; otherwise false.</returns>
     static bool IsInfinity(double value) {
         return std::isinf(value);
+    }
+
+    /// <summary>
+    /// Returns a positive-infinity value for the requested floating-point type.
+    /// </summary>
+    /// <typeparam name="T">Floating-point type whose positive infinity should be returned.</typeparam>
+    /// <returns>Positive-infinity constant for <typeparamref name="T"/>.</returns>
+    template <typename T>
+    static T PositiveInfinity() {
+        return std::numeric_limits<T>::infinity();
+    }
+
+    /// <summary>
+    /// Returns a negative-infinity value for the requested floating-point type.
+    /// </summary>
+    /// <typeparam name="T">Floating-point type whose negative infinity should be returned.</typeparam>
+    /// <returns>Negative-infinity constant for <typeparamref name="T"/>.</returns>
+    template <typename T>
+    static T NegativeInfinity() {
+        return -std::numeric_limits<T>::infinity();
+    }
+
+    /// <summary>
+    /// Returns a quiet NaN value for the requested floating-point type.
+    /// </summary>
+    /// <typeparam name="T">Floating-point type whose NaN constant should be returned.</typeparam>
+    /// <returns>Quiet NaN constant for <typeparamref name="T"/>.</returns>
+    template <typename T>
+    static T NaN() {
+        return std::numeric_limits<T>::quiet_NaN();
     }
 
     /// <summary>

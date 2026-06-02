@@ -1,5 +1,6 @@
 using System.Text.Json;
 using cs2.cpp;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests {
     /// <summary>
@@ -50,7 +51,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"runtime/native_equatable.hpp\"", vectorHeader);
             Assert.DoesNotContain("#include \"IEquatable.hpp\"", vectorHeader, StringComparison.Ordinal);
-            Assert.Contains("class Vector3 : public IEquatable", vectorHeader);
+            Assert.Contains("IEquatable", vectorHeader);
             AssertRuntimeRequirement(output.Report, "NativeEquatable");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_equatable.hpp")));
         }
@@ -186,6 +187,356 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures System.Buffer resolves to a runtime header that exposes the static MemoryCopy surface used by generated unsafe code.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemBufferMemoryCopyUsage_UsesRuntimeBufferHeader() {
+            string source = """
+                using System;
+
+                public unsafe class Copier {
+                    public void Copy(void* source, void* destination, int byteCount) {
+                        Buffer.MemoryCopy(source, destination, byteCount, byteCount);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Copier.cpp"));
+            string bufferRuntimePath = Path.Combine(output.OutputPath, "system", "buffer.hpp");
+            string bufferRuntime = File.ReadAllText(bufferRuntimePath);
+
+            Assert.Contains("#include \"system/buffer.hpp\"", sourceOutput);
+            Assert.DoesNotContain("#include \"Buffer.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Buffer::MemoryCopy(source, destination, byteCount, byteCount)", sourceOutput);
+            Assert.Contains("class Buffer", bufferRuntime, StringComparison.Ordinal);
+            Assert.Contains("static void MemoryCopy", bufferRuntime, StringComparison.Ordinal);
+            Assert.True(File.Exists(bufferRuntimePath));
+        }
+
+        /// <summary>
+        /// Ensures the portable intrinsics runtime exposes the compare and mask helpers required by generated BEPU bundle indexing code.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEmptyClass_CopiesPortableIntrinsicsCompareAndMaskSurface() {
+            string source = """
+                public class RuntimeSeed {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string avxRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "x86", "avx.hpp"));
+            string sseRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "x86", "sse.hpp"));
+            string vector128Runtime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector128.hpp"));
+            string vector256Runtime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector256.hpp"));
+            string funcRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "func.hpp"));
+            string spanRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_span.hpp"));
+            string nullableRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_nullable.hpp"));
+
+            Assert.Contains("static Vector256<T> CompareGreaterThan", avxRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector256<T> CompareLessThanOrEqual", avxRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector256<T> Reciprocal", avxRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector256<T> ReciprocalSqrt", avxRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector128_1<T> CompareGreaterThan", sseRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector128_1<T> CompareLessThanOrEqual", sseRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector128_1<T> Reciprocal", sseRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector128_1<T> ReciprocalSqrt", sseRuntime, StringComparison.Ordinal);
+            Assert.Contains("static int32_t MoveMask", sseRuntime, StringComparison.Ordinal);
+            Assert.Contains("static Vector128_1<T> As(const Vector128_1<T>& value)", vector128Runtime, StringComparison.Ordinal);
+            Assert.Contains("static Vector256<T> As(const Vector256<T>& value)", vector256Runtime, StringComparison.Ordinal);
+            Assert.Contains("class Func<TResult>", funcRuntime, StringComparison.Ordinal);
+            Assert.Contains("TResult operator()() const", funcRuntime, StringComparison.Ordinal);
+            Assert.Contains("Array<T>* ToArray() const", spanRuntime, StringComparison.Ordinal);
+            Assert.Contains("bool operator==(std::nullptr_t) const", nullableRuntime, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures the shared native runtime exposes the array resizing, ranged copy, debug fail, and message-bearing NotImplementedException contracts required by generated BEPU output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEmptyClass_CopiesNativeRuntimeHelperContracts() {
+            string source = """
+                public class RuntimeSeed {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string arrayRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "array.hpp"));
+            string debugRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "diagnostics", "debug.hpp"));
+            string notImplementedRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "not_implemented_exception.hpp"));
+
+            Assert.Contains("static void Resize(Array<T>*& array, int32_t newLength)", arrayRuntime, StringComparison.Ordinal);
+            Assert.Contains("static void Copy(const Array<T>* source, int32_t sourceIndex, Array<T>* destination, int32_t destinationIndex, int32_t length)", arrayRuntime, StringComparison.Ordinal);
+            Assert.Contains("static void Fail(const std::string& message)", debugRuntime, StringComparison.Ordinal);
+            Assert.Contains("explicit NotImplementedException(const std::string& message)", notImplementedRuntime, StringComparison.Ordinal);
+            Assert.Contains("explicit NotImplementedException(const char* message)", notImplementedRuntime, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures caller-provided qualified type remaps can redirect System.Numerics references onto generated project-owned math types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConfiguredSystemNumericsRemap_UsesGeneratedMathHeaders() {
+            string source = """
+                namespace helengine {
+                    public struct float3 {
+                    }
+
+                    public struct float4 {
+                    }
+                }
+
+                public class Pose {
+                    public System.Numerics.Quaternion Orientation;
+                    public System.Numerics.Vector3 Position;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(
+                source,
+                options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector3"] = "helengine.float3",
+                    ["System.Numerics.Quaternion"] = "helengine.float4"
+                });
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
+
+            Assert.Contains("#include \"helengine_float4.hpp\"", headerOutput);
+            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"Quaternion.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures System.Threading.AutoResetEvent resolves to the built-in runtime header instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAutoResetEventField_UsesRuntimeAutoResetEventHeader() {
+            string source = """
+                using System.Threading;
+
+                public class WorkerState {
+                    public AutoResetEvent Signal;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "WorkerState.hpp"));
+
+            Assert.Contains("#include \"system/threading/auto_reset_event.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"AutoResetEvent.hpp\"", headerOutput, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "AutoResetEvent");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "auto_reset_event.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures the shared Span runtime exposes indexer helpers and buffer-backed constructors required by generated BEPU buffer/span interop.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSpanUsage_UsesRuntimeSpanBufferInteropSurface() {
+            string source = """
+                public class SpanOwner {
+                    public int First(Span<int> values) {
+                        return values[0];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_span.hpp"));
+
+            Assert.Contains("T& get_Item(int32_t index)", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("const T& get_Item(int32_t index) const", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("Span(TBuffer buffer)", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("ReadOnlySpan(TBuffer buffer)", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("Data(buffer.Memory)", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("buffer.get_Length()", runtimeHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures Vector256 and x86 intrinsic helpers resolve to portable runtime headers instead of missing synthetic generated includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemRuntimeIntrinsicsVector256Usage_UsesRuntimeIntrinsicsHeaders() {
+            string source = """
+                using System.Runtime.Intrinsics;
+                using System.Runtime.Intrinsics.X86;
+
+                public unsafe class WideIntrinsics {
+                    public static Vector256<float> Load(float* source) {
+                        return Avx.IsSupported ? Avx.LoadAlignedVector256(source) : Vector256<float>.Zero;
+                    }
+
+                    public static bool SupportsSse() {
+                        return Sse.IsSupported;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "WideIntrinsics.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "WideIntrinsics.cpp"));
+
+            Assert.Contains("#include \"system/runtime/intrinsics/vector256.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/runtime/intrinsics/x86/avx.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("#include \"system/runtime/intrinsics/x86/sse.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Vector256.hpp\"", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Avx.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Sse.hpp\"", sourceOutput, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeVector256");
+            AssertRuntimeRequirement(output.Report, "Avx");
+            AssertRuntimeRequirement(output.Report, "Sse");
+        }
+
+        /// <summary>
+        /// Ensures the portable vector runtime exposes the bridge helpers BEPU uses between Vector, Vector128, and Vector256.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemNumericsVectorIntrinsicBridgeUsage_ProvidesPortableBridgeHelpers() {
+            string source = """
+                using System.Numerics;
+                using System.Runtime.Intrinsics.X86;
+
+                public static class WideIntrinsics {
+                    public static Vector<float> RoundTrip(Vector<float> value) {
+                        return Avx.IsSupported ? value.AsVector256().AsVector() : value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string vectorHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "numerics", "vector.hpp"));
+            string vector256Header = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector256.hpp"));
+
+            Assert.Contains("Vector256<T> AsVector256() const;", vectorHeader, StringComparison.Ordinal);
+            Assert.Contains("template <typename TTo>\n    Vector256<TTo> AsVector256() const;", vectorHeader, StringComparison.Ordinal);
+            Assert.Contains("Vector_1<T> AsVector() const", vector256Header, StringComparison.Ordinal);
+            Assert.Contains("Vector256<int32_t> AsInt32() const", vector256Header, StringComparison.Ordinal);
+            Assert.Contains("Vector128_1<TTo> GetLower() const", vector256Header, StringComparison.Ordinal);
+            Assert.Contains("Vector128_1<TTo> GetUpper() const", vector256Header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures Vector128 exposes a portable raw-value bridge for remapped engine value types such as float3.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithVector128RawValueBridgeUsage_ProvidesPortableValueOverload() {
+            string source = """
+                using System.Numerics;
+                using System.Runtime.Intrinsics;
+
+                namespace helengine {
+                    public struct float3 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                    }
+                }
+
+                public static class BoundsGate {
+                    public static Vector128<float> Promote(helengine.float3 value) {
+                        return Vector128.AsVector128(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(
+                source,
+                options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector3"] = "helengine.float3"
+                });
+            string vector128Header = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector128.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BoundsGate.cpp"));
+
+            Assert.Contains("template <typename TValue>\n    static Vector128_1<float> AsVector128(const TValue& value)", vector128Header, StringComparison.Ordinal);
+            Assert.Contains("Vector128::AsVector128(value)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures caller-provided qualified type remaps also cover source files that reference the mapped type through a using directive.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUsingImportedSystemNumericsRemap_UsesGeneratedMathHeaders() {
+            string source = """
+                using System.Numerics;
+
+                namespace helengine {
+                    public struct float3 {
+                    }
+                }
+
+                public class Pose {
+                    public Vector3 Position;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(
+                source,
+                options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector3"] = "helengine.float3"
+                });
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
+
+            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures caller-provided qualified type remaps also cover unqualified static/member usages collected from method bodies.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUsingImportedSystemNumericsBodyUsageRemap_UsesGeneratedMathHeaders() {
+            string source = """
+                using System.Numerics;
+
+                namespace helengine {
+                    public struct float3 {
+                        public static float Dot(float3 first, float3 second) {
+                            return 0f;
+                        }
+                    }
+                }
+
+                public class Pose {
+                    public float Magnitude(Vector3 value) {
+                        return Vector3.Dot(value, value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(
+                source,
+                options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector3"] = "helengine.float3"
+                });
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.cpp"));
+
+            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("float3::Dot(value, value)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures native-sized integer aliases lower to built-in pointer-width types without synthetic generated includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeSizedIntegerAliases_UsesPointerWidthNativeTypes() {
+            string source = """
+                public class WindowHost {
+                    public void Attach(nint handle, nuint token) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "WindowHost.hpp"));
+
+            Assert.Contains("void Attach(intptr_t handle, uintptr_t token);", headerOutput);
+            Assert.DoesNotContain("#include \"nint.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"nuint.hpp\"", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures managed array length access lowers through the lightweight runtime getter contract.
         /// </summary>
         [Fact]
@@ -239,7 +590,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("value.get_Value()", sourceOutput);
             Assert.Contains("elapsed.get_TotalMilliseconds()", sourceOutput);
             Assert.Contains("bool get_HasValue() const", nullableHeader);
-            Assert.Contains("T get_Value() const", nullableHeader);
+            Assert.Contains("const T& get_Value() const", nullableHeader);
             Assert.Contains("double get_TotalMilliseconds() const", dateTimeHeader);
             AssertRuntimeRequirement(output.Report, "NativeNullable");
             AssertRuntimeRequirement(output.Report, "NativeDateTime");
@@ -382,6 +733,31 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures NotImplementedException resolves through the dedicated runtime include instead of a missing synthetic type header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNotImplementedException_UsesRuntimeNotImplementedExceptionHeader() {
+            string source = """
+                using System;
+
+                public static class GuardGate {
+                    public static void Fail() {
+                        throw new NotImplementedException();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.cpp"));
+
+            Assert.Contains("#include \"system/not_implemented_exception.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"NotImplementedException.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("throw new NotImplementedException()", sourceOutput, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NotImplementedException");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "not_implemented_exception.hpp")));
+        }
+
+        /// <summary>
         /// Ensures MemoryStream resolves to the runtime surface that supports byte-array constructors and ToArray output.
         /// </summary>
         [Fact]
@@ -488,7 +864,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("DateTime GetStamp()", output.GeneratedText);
             Assert.Contains("DateTime::Now()", output.GeneratedText);
             Assert.Contains("DateTime::UtcNow()", output.GeneratedText);
-            Assert.Contains(".TotalMilliseconds > 500", output.GeneratedText);
+            Assert.Contains(".get_TotalMilliseconds() > 500", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeDateTime");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_datetime.hpp")));
         }
@@ -618,7 +994,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("new Stack<", output.GeneratedText);
             Assert.Contains("frames->Push(", output.GeneratedText);
             Assert.Contains("frames->Peek()", output.GeneratedText);
-            Assert.Contains("return frames->Count;", output.GeneratedText);
+            Assert.Contains("return frames->get_Count();", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeStack");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_stack.hpp")));
         }
@@ -681,7 +1057,7 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("#include \"StreamReader.hpp\"", header, StringComparison.Ordinal);
             Assert.Contains("StreamReader *reader = new StreamReader(stream, Encoding::UTF8, true, 1024, true);", output.GeneratedText);
             Assert.Contains("return reader->ReadToEnd();", output.GeneratedText);
-            Assert.DoesNotContain("reader->Dispose();", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("reader->Dispose();", output.GeneratedText);
             Assert.DoesNotContain("System->Text->Encoding->UTF8", output.GeneratedText, StringComparison.Ordinal);
             AssertRuntimeRequirement(output.Report, "StreamReader");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "io", "stream-reader.hpp")));
@@ -727,7 +1103,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("static Regex Pattern;", output.GeneratedText);
             Assert.Contains("MatchCollection matches = Pattern.Matches(source);", output.GeneratedText);
             Assert.Contains("Match match = matches[matchIndex];", output.GeneratedText);
-            Assert.Contains("match.Groups[\"value\"].Value", output.GeneratedText);
+            Assert.Contains("match.get_Groups()[\"value\"].get_Value()", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "Regex");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "text", "regular_expressions", "regex.hpp")));
         }
@@ -783,6 +1159,67 @@ namespace cs2.cpp.tests {
             Assert.Contains("::Event CursorEvent", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeEvent");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_event.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures custom delegate declarations lower to callable runtime aliases instead of empty synthetic delegate classes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCustomDelegateDeclaration_UsesRuntimeDelegateAlias() {
+            string source = """
+                public delegate void RefinementScheduler(int frameIndex, out int rootRefinementSize, out bool usePriorityQueue);
+
+                public static class BroadPhase {
+                    public static void Default(int frameIndex, out int rootRefinementSize, out bool usePriorityQueue) {
+                        rootRefinementSize = frameIndex;
+                        usePriorityQueue = frameIndex > 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string delegateHeader = File.ReadAllText(Path.Combine(output.OutputPath, "RefinementScheduler.hpp"));
+
+            Assert.Contains("#include \"system/delegate.hpp\"", delegateHeader, StringComparison.Ordinal);
+            Assert.Contains("using RefinementScheduler = Delegate<void, int32_t, int32_t&, bool&>;", delegateHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("class RefinementScheduler", delegateHeader, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "Delegate");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "delegate.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures delegate invocation preserves inline out-variable declarations by hoisting them before the call expression.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDelegateInvocationOutVarDeclarations_HoistsArgumentsBeforeCall() {
+            string source = """
+                public delegate void RefinementScheduler(int frameIndex, out int rootRefinementSize, out bool usePriorityQueue);
+
+                public static class BroadPhase {
+                    public static RefinementScheduler ActiveRefinementSchedule { get; set; }
+
+                    public static void Default(int frameIndex, out int rootRefinementSize, out bool usePriorityQueue) {
+                        rootRefinementSize = frameIndex;
+                        usePriorityQueue = frameIndex > 0;
+                    }
+
+                    public static void Initialize() {
+                        ActiveRefinementSchedule = Default;
+                    }
+
+                    public static void Update() {
+                        ActiveRefinementSchedule(1, out var rootRefinementSize, out var usePriorityQueue);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BroadPhase.cpp"));
+
+            Assert.Contains("int32_t rootRefinementSize;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("bool usePriorityQueue;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("(*BroadPhase::get_ActiveRefinementSchedule())(1, rootRefinementSize, usePriorityQueue);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("BroadPhase::set_ActiveRefinementSchedule(new RefinementScheduler(&BroadPhase::Default__out1_out2));", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -878,6 +1315,328 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures System.Numerics.Vector&lt;T&gt; resolves to one generic runtime header instead of a synthetic generated header and preserves the emitted static helper surface used by BEPU.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemNumericsVectorUsage_UsesRuntimeVectorHeader() {
+            string source = """
+                using System.Numerics;
+
+                public static class VectorGate {
+                    public static Vector<float> Select(Vector<int> mask, Vector<float> left, Vector<float> right) {
+                        return Vector.ConditionalSelect(mask, left, right);
+                    }
+
+                    public static int Width() {
+                        return Vector<float>.Count;
+                    }
+
+                    public static Vector<int> Compare(Vector<float> left, Vector<float> right) {
+                        return Vector.LessThan(left, right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "VectorGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "VectorGate.cpp"));
+
+            Assert.Contains("#include \"system/numerics/vector.hpp\"", header);
+            Assert.DoesNotContain("#include \"Vector.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("Vector_1<float>", output.GeneratedText);
+            Assert.Contains("Vector_1<int32_t>", output.GeneratedText);
+            Assert.Contains("Vector::ConditionalSelect", sourceOutput);
+            Assert.Contains("Vector::LessThan", sourceOutput);
+            Assert.Contains("Vector_1<float>::get_Count()", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "NativeVector");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "numerics", "vector.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Numerics.Vector&lt;T&gt; constructors preserve span-backed initialization required by BEPU bundle setup.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemNumericsVectorSpanConstructor_UsesRuntimeVectorSpanSurface() {
+            string source = """
+                using System;
+                using System.Numerics;
+
+                public static class VectorGate {
+                    public static Vector<float> Read(Span<float> values) {
+                        return new Vector<float>(values);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "VectorGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "VectorGate.cpp"));
+
+            Assert.Contains("#include \"system/numerics/vector.hpp\"", header);
+            Assert.Contains("#include \"runtime/native_span.hpp\"", header);
+            Assert.Contains("return Vector_1<float>(values);", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "NativeVector");
+            AssertRuntimeRequirement(output.Report, "NativeSpan");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "numerics", "vector.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures nested runtime generic rendering preserves the portable System.Numerics.Vector runtime type even when it appears inside another generic container.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedSystemNumericsVectorUsage_PreservesRuntimeGenericTypeInsideOuterGeneric() {
+            string source = """
+                using System.Numerics;
+
+                public struct Buffer<T> {
+                }
+
+                public class VectorBucket {
+                    public Buffer<Vector<int>> Masks { get; set; }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "VectorBucket.hpp"));
+
+            Assert.Contains("#include \"system/numerics/vector.hpp\"", header);
+            Assert.Contains("Buffer_1<Vector_1<int32_t>>", output.GeneratedText);
+            Assert.DoesNotContain("Buffer_1<Vector<int32_t>>", output.GeneratedText, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeVector");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "numerics", "vector.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Collections.Generic.KeyValuePair&lt;TKey, TValue&gt; resolves to a shared runtime header instead of a missing synthetic generated include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemCollectionsGenericKeyValuePairUsage_UsesRuntimeHeader() {
+            string source = """
+                using System.Collections.Generic;
+
+                public static class PairGate {
+                    public static KeyValuePair<int, string> Make(int key, string value) {
+                        return new KeyValuePair<int, string>(key, value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "PairGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PairGate.cpp"));
+
+            Assert.Contains("#include \"system/collections/generic/key_value_pair.hpp\"", header);
+            Assert.DoesNotContain("#include \"KeyValuePair.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("KeyValuePair<int32_t, std::string>", output.GeneratedText);
+            Assert.Contains("return KeyValuePair<int32_t, std::string>(key, value);", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "NativeKeyValuePair");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "collections", "generic", "key_value_pair.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures System.Runtime.Intrinsics.Vector128 and Sse41 resolve to portable runtime headers instead of synthetic generated includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemRuntimeIntrinsicsVector128Usage_UsesRuntimeIntrinsicsHeaders() {
+            string source = """
+                using System.Runtime.Intrinsics;
+                using System.Runtime.Intrinsics.X86;
+
+                public static class IntrinsicsGate {
+                    public static Vector128<float> Blend(Vector128<float> left, Vector128<float> right) {
+                        if (Sse41.IsSupported) {
+                            return Sse41.Blend(left, right, 0b1000);
+                        }
+
+                        return Vector128.ConditionalSelect(Vector128.Create(-1, -1, -1, 0).As<int, float>(), left, right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "IntrinsicsGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "IntrinsicsGate.cpp"));
+
+            Assert.Contains("#include \"system/runtime/intrinsics/vector128.hpp\"", header);
+            Assert.Contains("#include \"system/runtime/intrinsics/x86/sse41.hpp\"", header);
+            Assert.DoesNotContain("#include \"Vector128.hpp\"", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Sse41.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("Vector128_1<float>", output.GeneratedText);
+            Assert.Contains("Vector128::ConditionalSelect", sourceOutput);
+            Assert.Contains("Sse41::Blend", sourceOutput);
+            AssertRuntimeRequirement(output.Report, "NativeVector128");
+            AssertRuntimeRequirement(output.Report, "Sse41");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector128.hpp")));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "x86", "sse41.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures generic IEnumerator contracts resolve to the shared runtime header instead of a missing synthetic generated include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemCollectionsGenericIEnumeratorUsage_UsesRuntimeEnumeratorHeader() {
+            string source = """
+                using System.Collections.Generic;
+
+                public struct Counter : IEnumerator<int> {
+                    int value;
+
+                    public int Current => value;
+
+                    object System.Collections.IEnumerator.Current => value;
+
+                    public void Dispose() {
+                    }
+
+                    public bool MoveNext() {
+                        value++;
+                        return value < 4;
+                    }
+
+                    public void Reset() {
+                        value = 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Counter.hpp"));
+
+            Assert.Contains("#include \"system/collections/generic/ienumerator.hpp\"", header);
+            Assert.DoesNotContain("#include \"IEnumerator.hpp\"", header, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "collections", "generic", "ienumerator.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeIEnumerator");
+        }
+
+        /// <summary>
+        /// Ensures generic IEnumerable contracts resolve to the shared runtime header instead of relying on missing synthetic generated includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemCollectionsGenericIEnumerableUsage_UsesRuntimeEnumerableHeader() {
+            string source = """
+                using System.Collections;
+                using System.Collections.Generic;
+
+                public class CounterEnumerable : IEnumerable<int> {
+                    public Counter GetEnumerator() {
+                        return new Counter();
+                    }
+
+                    IEnumerator IEnumerable.GetEnumerator() {
+                        return GetEnumerator();
+                    }
+
+                    IEnumerator<int> IEnumerable<int>.GetEnumerator() {
+                        return GetEnumerator();
+                    }
+                }
+
+                public struct Counter : IEnumerator<int> {
+                    int value;
+
+                    public int Current => value;
+
+                    object IEnumerator.Current => value;
+
+                    public void Dispose() {
+                    }
+
+                    public bool MoveNext() {
+                        value++;
+                        return value < 4;
+                    }
+
+                    public void Reset() {
+                        value = 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "CounterEnumerable.hpp"));
+
+            Assert.Contains("#include \"system/collections/generic/ienumerable.hpp\"", header);
+            Assert.DoesNotContain("#include \"IEnumerable.hpp\"", header, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "collections", "generic", "ienumerable.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeIEnumerable");
+        }
+
+        /// <summary>
+        /// Ensures System.Collections.Generic.List&lt;T&gt; runtime output exposes managed indexer helpers required by converted element-access call sites.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemCollectionsGenericListIndexerUsage_EmitsRuntimeIndexerSurface() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Inventory {
+                    public int Read(List<int> values, int index) {
+                        return values[index];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_list.hpp"));
+
+            Assert.Contains("#include \"runtime/native_list.hpp\"", output.GeneratedText);
+            Assert.Contains("T& get_Item(int32_t index)", runtimeHeader);
+            Assert.Contains("const T& get_Item(int32_t index) const", runtimeHeader);
+            Assert.Contains("void set_Item(int32_t index, const T& value)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures System.Collections.Generic.Dictionary&lt;TKey, TValue&gt; runtime output exposes managed indexer helpers required by converted element-access call sites.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemCollectionsGenericDictionaryIndexerUsage_EmitsRuntimeIndexerSurface() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Inventory {
+                    public int Read(Dictionary<string, int> values, string key) {
+                        return values[key];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_dictionary.hpp"));
+
+            Assert.Contains("#include \"runtime/native_dictionary.hpp\"", output.GeneratedText);
+            Assert.Contains("TValue& get_Item(const TKey& key)", runtimeHeader);
+            Assert.Contains("const TValue& get_Item(const TKey& key) const", runtimeHeader);
+            Assert.Contains("void set_Item(const TKey& key, const TValue& value)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures System.Threading.SpinLock resolves to the shared runtime header instead of a missing synthetic generated include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemThreadingSpinLockUsage_UsesRuntimeHeader() {
+            string source = """
+                using System.Threading;
+
+                public class Gate {
+                    SpinLock sync;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Gate.hpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "threading", "spin_lock.hpp"));
+
+            Assert.Contains("#include \"system/threading/spin_lock.hpp\"", header);
+            Assert.DoesNotContain("#include \"SpinLock.hpp\"", header, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "SpinLock");
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "spin_lock.hpp")));
+            Assert.Contains("std::atomic<bool>", runtimeHeader);
+            Assert.DoesNotContain("atomic_flag", runtimeHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+
+        /// <summary>
         /// Ensures Func delegates resolve to the native system helper header instead of a synthetic generated header.
         /// </summary>
         [Fact]
@@ -902,6 +1661,370 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("#include \"Func.hpp\"", header, StringComparison.Ordinal);
             Assert.Contains("Func<Stream*, T>* reader", output.GeneratedText);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "func.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures unmanaged function-pointer signatures lower to the portable runtime wrapper instead of degrading to object pointers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFunctionPointerField_UsesRuntimeFunctionPointerHeader() {
+            string source = """
+                public unsafe interface IThreadDispatcher {
+                }
+
+                public unsafe struct Task {
+                    public delegate*<long, void*, int, IThreadDispatcher, void> Function;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "Task.hpp"));
+
+            Assert.Contains("#include \"runtime/function_pointer.hpp\"", header);
+            Assert.DoesNotContain("object* Function", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("FunctionPointer<void, int64_t, void*, int32_t, ::IThreadDispatcher*> Function;", output.GeneratedText);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "function_pointer.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeFunctionPointer");
+        }
+
+        /// <summary>
+        /// Ensures unmanaged function-pointer initializers emit one qualified address-of expression for generic static methods.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericStaticFunctionPointerInitializer_EmitsSingleQualifiedAddressOf() {
+            string source = """
+                public unsafe class ThunkHolder<T> {
+                    public static readonly delegate*<int, void> Handler = &Handle;
+
+                    static void Handle(int value) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ThunkHolder_1.cpp"));
+
+            Assert.Contains("FunctionPointer<void, int32_t> ThunkHolder_1<T>::Handler =", sourceOutput);
+            Assert.Contains("&ThunkHolder_1<T>::Handle", sourceOutput);
+            Assert.DoesNotContain("&&ThunkHolder_1", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures unmanaged function-pointer wrappers preserve ref and out parameter shapes in their generic argument lists.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithFunctionPointerByRefParameters_PreservesReferenceGenericArguments() {
+            string source = """
+                public unsafe struct ChildEnumerator {
+                }
+
+                public unsafe struct Triangle {
+                }
+
+                public unsafe class MeshReductionThunks {
+                    public static readonly delegate*<void*, int, int, ref ChildEnumerator, void> FindLocalOverlaps = &FindLocalOverlapsImpl;
+                    public static readonly delegate*<void*, int, out Triangle, void> GetLocalChild = &GetLocalChildImpl;
+
+                    static void FindLocalOverlapsImpl(void* mesh, int min, int max, ref ChildEnumerator enumerator) {
+                    }
+
+                    static void GetLocalChildImpl(void* mesh, int childIndex, out Triangle triangle) {
+                        triangle = default;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MeshReductionThunks.cpp"));
+
+            Assert.Contains("FunctionPointer<void, void*, int32_t, int32_t, ::ChildEnumerator&> MeshReductionThunks::FindLocalOverlaps", sourceOutput);
+            Assert.Contains("FunctionPointer<void, void*, int32_t, ::Triangle&> MeshReductionThunks::GetLocalChild", sourceOutput);
+            Assert.Contains("static_cast<void (*)(void*, int32_t, int32_t, ChildEnumerator&)>(&MeshReductionThunks::FindLocalOverlapsImpl__ref3)", sourceOutput);
+            Assert.Contains("static_cast<void (*)(void*, int32_t, Triangle&)>(&MeshReductionThunks::GetLocalChildImpl__out2)", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures System.Threading.Interlocked resolves to the portable runtime helper header instead of a missing generated type include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemThreadingInterlockedUsage_UsesRuntimeInterlockedHeader() {
+            string source = """
+                using System.Threading;
+
+                public class Counter {
+                    int Value;
+
+                    public int Next() {
+                        return Interlocked.Increment(ref Value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            Assert.Contains("#include \"system/threading/interlocked.hpp\"", output.GeneratedText);
+            Assert.DoesNotContain("#include \"Interlocked.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "interlocked.hpp")));
+            AssertRuntimeRequirement(output.Report, "Interlocked");
+        }
+
+        /// <summary>
+        /// Ensures pointer-only pointee types used exclusively inside method bodies stay as forward declarations in headers to avoid circular value-type includes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerPointeeUsedOnlyInMethodBody_KeepsHeaderOnForwardDeclaration() {
+            string source = """
+                public struct Task {
+                    public int Value;
+                }
+
+                public unsafe struct TaskContinuation {
+                    public Task OnCompleted;
+                }
+
+                public unsafe struct ContinuationHandle {
+                    TaskContinuation* continuation;
+
+                    public int Read() {
+                        return continuation->OnCompleted.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "ContinuationHandle.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContinuationHandle.cpp"));
+
+            Assert.Contains("class TaskContinuation;", header);
+            Assert.DoesNotContain("#include \"TaskContinuation.hpp\"", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Task.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"TaskContinuation.hpp\"", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures System.Threading.SpinWait resolves to the portable runtime helper header instead of a missing generated type include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemThreadingSpinWaitUsage_UsesRuntimeSpinWaitHeader() {
+            string source = """
+                using System.Threading;
+
+                public class Waiter {
+                    public void Wait() {
+                        var waiter = new SpinWait();
+                        waiter.SpinOnce(-1);
+                        waiter.Reset();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            Assert.Contains("#include \"system/threading/spin_wait.hpp\"", output.GeneratedText);
+            Assert.DoesNotContain("#include \"SpinWait.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "spin_wait.hpp")));
+            AssertRuntimeRequirement(output.Report, "SpinWait");
+        }
+
+        /// <summary>
+        /// Ensures System.Threading.Volatile resolves to the portable runtime helper header instead of a missing generated type include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemThreadingVolatileUsage_UsesRuntimeVolatileHeader() {
+            string source = """
+                using System.Threading;
+
+                public static class Fixture {
+                    public static int Run(ref int syncIndex, ref int completedWorkBlockCount) {
+                        Volatile.Write(ref syncIndex, 1);
+                        return Volatile.Read(ref completedWorkBlockCount);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"system/threading/volatile.hpp\"", output.GeneratedText);
+            Assert.DoesNotContain("#include \"Volatile.hpp\"", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("Volatile::Write(syncIndex, 1)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Volatile::Read(completedWorkBlockCount)", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "volatile.hpp")));
+            AssertRuntimeRequirement(output.Report, "Volatile");
+        }
+
+        /// <summary>
+        /// Ensures dependent generic null comparisons resolve through the portable runtime helper header so value-type instantiations do not emit invalid nullptr operators.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentGenericNullComparison_UsesRuntimeNullHelperHeader() {
+            string source = """
+                public class Fixture<TComparer> {
+                    public bool HasComparer(TComparer comparer) {
+                        return comparer != null;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("#include \"runtime/native_null.hpp\"", output.GeneratedText);
+            Assert.Contains("return !he_cpp_is_null(comparer);", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_null.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeNullComparison");
+        }
+
+        /// <summary>
+        /// Ensures the portable Volatile runtime surface accepts convertible scalar literals without template deduction conflicts.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_CopiesVolatileRuntimeTemplateWithConvertibleWriteOverload() {
+            string source = """
+                public class EmptyGate {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string volatileHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "threading", "volatile.hpp"));
+
+            Assert.Contains("template <typename T, typename TValue>", volatileHeader, StringComparison.Ordinal);
+            Assert.Contains("atomicLocation.store(static_cast<T>(value), std::memory_order_release);", volatileHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures dependent generic hash-code calls resolve through the portable runtime helper header instead of leaking invalid direct member syntax for primitive instantiations.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDependentGenericGetHashCode_UsesRuntimeHashHelperHeader() {
+            string source = """
+                public class Fixture<TValue> {
+                    public int Hash(TValue value) {
+                        return value.GetHashCode();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("#include \"runtime/native_hash.hpp\"", output.GeneratedText);
+            Assert.Contains("return he_cpp_get_hash_code(value);", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_hash.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeHashCode");
+        }
+
+        /// <summary>
+        /// Ensures System.Random resolves to the portable runtime helper header instead of a missing generated type include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSystemRandomUsage_UsesRuntimeRandomHeader() {
+            string source = """
+                using System;
+
+                public abstract class RandomGate {
+                    public abstract int Pick(Random random, int maxValue);
+                }
+
+                public class RandomGateImpl : RandomGate {
+                    public override int Pick(Random random, int maxValue) {
+                        return random.Next(maxValue);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RandomGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RandomGateImpl.cpp"));
+
+            Assert.Contains("#include \"system/random.hpp\"", headerOutput);
+            Assert.DoesNotContain("#include \"Random.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("return random->Next(maxValue);", sourceOutput);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "random.hpp")));
+            AssertRuntimeRequirement(output.Report, "Random");
+        }
+
+        /// <summary>
+        /// Ensures MemoryMarshal resolves to the portable runtime helper instead of a missing generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMemoryMarshalSpanCast_UsesRuntimeMemoryMarshalHeader() {
+            string source = """
+                using System;
+                using System.Runtime.InteropServices;
+
+                public struct Handle {
+                    public int Value;
+
+                    public Handle(int value) {
+                        Value = value;
+                    }
+                }
+
+                public class Fixture {
+                    public int Run(Span<Handle> handles) {
+                        return MemoryMarshal.Cast<Handle, int>(handles).Length;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"system/runtime/interopservices/memory_marshal.hpp\"", sourceOutput);
+            Assert.Contains("MemoryMarshal::Cast<Handle,int32_t>(handles)", sourceOutput);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "runtime", "interopservices", "memory_marshal.hpp")));
+            AssertRuntimeRequirement(output.Report, "MemoryMarshal");
+        }
+
+        /// <summary>
+        /// Ensures pointer-based span construction stays a raw unmanaged view instead of allocating and element-converting composite source structs.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPointerBasedSpanConstruction_UsesRawPointerViewRuntimeSurface() {
+            string source = """
+                public class RuntimeSeed {
+                    public int Value;
+
+                    public int Run() {
+                        return Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_span.hpp"));
+
+            Assert.Contains("Data(reinterpret_cast<T*>(data))", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("Data(reinterpret_cast<const T*>(data))", runtimeHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("InitializeOwnedBuffer(data, length);", runtimeHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures Vector512 resolves to the portable runtime helper surface instead of an undeclared intrinsic type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithVector512Usage_UsesRuntimeVector512Header() {
+            string source = """
+                using System;
+                using System.Runtime.Intrinsics;
+
+                public class Fixture {
+                    public ulong Run() {
+                        var zero = Vector512<ulong>.Zero;
+                        var mask = Vector512.Equals(zero, Vector512<ulong>.AllBitsSet);
+                        return Vector512.ExtractMostSignificantBits(mask);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("#include \"system/runtime/intrinsics/vector512.hpp\"", sourceOutput);
+            Assert.Contains("Vector512Runtime::Equals<uint64_t>", sourceOutput);
+            Assert.Contains("Vector512Runtime::ExtractMostSignificantBits<uint64_t>", sourceOutput);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector512.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeVector512");
         }
 
         /// <summary>

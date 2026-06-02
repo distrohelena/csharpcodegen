@@ -133,6 +133,10 @@ public:
 
         return GroupAccessor(&iterator->second);
     }
+
+    GroupAccessor get_Item(const std::string& name) const {
+        return operator[](name);
+    }
 };
 
 /// <summary>
@@ -191,6 +195,10 @@ public:
     /// <returns>The resolved match value.</returns>
     Match operator[](int32_t index) const {
         return matches[static_cast<std::size_t>(index)];
+    }
+
+    Match get_Item(int32_t index) const {
+        return operator[](index);
     }
 
     int32_t get_Count() const {

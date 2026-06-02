@@ -47,9 +47,25 @@ namespace cs2.core {
             CurrentFunction = null;
 
             CurrentClass = new ConversionClass();
+            CurrentClass.Program = Program;
             Program.Classes.Add(CurrentClass);
             classes.Add(CurrentClass);
             return CurrentClass;
+        }
+
+        public ConversionClass PushClass(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                throw new ArgumentNullException(nameof(conversionClass));
+            }
+
+            CurrentVar = null;
+            CurrentFunction = null;
+            if (conversionClass.Program == null) {
+                conversionClass.Program = Program;
+            }
+            CurrentClass = conversionClass;
+            classes.Add(conversionClass);
+            return conversionClass;
         }
 
         public void PopClass() {
@@ -69,7 +85,9 @@ namespace cs2.core {
                 throw new NotSupportedException();
             }
 
-            CurrentVar = new ConversionVariable();
+            CurrentVar = new ConversionVariable {
+                SourceOrder = CurrentClass.Variables.Count
+            };
             CurrentClass.Variables.Add(CurrentVar);
             return CurrentVar;
         }

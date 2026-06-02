@@ -24,6 +24,8 @@ namespace cs2.cpp {
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
         internal ConversionProgram Program => program;
+        Compilation instantiatedGeneratedTypeCompilation;
+        IReadOnlyList<INamedTypeSymbol> instantiatedGeneratedTypes;
 
         protected override string[] PreProcessorSymbols { get { return preprocessorSymbols; } }
         internal bool IncludeProjectPreprocessorSymbols => includeProjectPreprocessorSymbols;
@@ -47,6 +49,7 @@ namespace cs2.cpp {
 
             tsProgram = new CPPProgram(rules);
             program = tsProgram;
+            PopulateConfiguredTypeMap(program, Options.TypeRemaps);
 
             context = new ConversionContext(program);
 
@@ -62,6 +65,76 @@ namespace cs2.cpp {
             targetFramework = "";
 
             ResetRunState();
+        }
+
+        /// <summary>
+        /// Copies caller-provided type remaps into the shared conversion program and adds safe unique leaf-name aliases for code paths that only retain one unqualified type name.
+        /// </summary>
+        /// <param name="conversionProgram">Program that receives the remap table.</param>
+        /// <param name="configuredTypeRemaps">Caller-provided source-to-target remaps.</param>
+        static void PopulateConfiguredTypeMap(ConversionProgram conversionProgram, IReadOnlyDictionary<string, string> configuredTypeRemaps) {
+            if (conversionProgram == null || configuredTypeRemaps == null || configuredTypeRemaps.Count == 0) {
+                return;
+            }
+
+            Dictionary<string, int> leafCounts = new(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, string> typeRemap in configuredTypeRemaps) {
+                if (string.IsNullOrWhiteSpace(typeRemap.Key) || string.IsNullOrWhiteSpace(typeRemap.Value)) {
+                    continue;
+                }
+
+                conversionProgram.TypeMap[typeRemap.Key] = typeRemap.Value;
+                string leafTypeName = GetLeafTypeName(typeRemap.Key);
+                if (string.IsNullOrWhiteSpace(leafTypeName) || string.Equals(leafTypeName, typeRemap.Key, StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                if (!leafCounts.ContainsKey(leafTypeName)) {
+                    leafCounts[leafTypeName] = 0;
+                }
+
+                leafCounts[leafTypeName]++;
+            }
+
+            foreach (KeyValuePair<string, string> typeRemap in configuredTypeRemaps) {
+                if (string.IsNullOrWhiteSpace(typeRemap.Key) || string.IsNullOrWhiteSpace(typeRemap.Value)) {
+                    continue;
+                }
+
+                string leafTypeName = GetLeafTypeName(typeRemap.Key);
+                if (string.IsNullOrWhiteSpace(leafTypeName) ||
+                    string.Equals(leafTypeName, typeRemap.Key, StringComparison.Ordinal) ||
+                    !leafCounts.TryGetValue(leafTypeName, out int leafCount) ||
+                    leafCount != 1 ||
+                    conversionProgram.TypeMap.ContainsKey(leafTypeName)) {
+                    continue;
+                }
+
+                conversionProgram.TypeMap[leafTypeName] = typeRemap.Value;
+            }
+        }
+
+        /// <summary>
+        /// Extracts the leaf type token from one caller-provided source type key.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Qualified source type name.</param>
+        /// <returns>Leaf type token without namespace or nested-type prefixes.</returns>
+        static string GetLeafTypeName(string qualifiedTypeName) {
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            int separatorIndex = qualifiedTypeName.LastIndexOf('.');
+            if (separatorIndex >= 0 && separatorIndex < qualifiedTypeName.Length - 1) {
+                return qualifiedTypeName[(separatorIndex + 1)..];
+            }
+
+            int nestedSeparatorIndex = qualifiedTypeName.LastIndexOf('+');
+            if (nestedSeparatorIndex >= 0 && nestedSeparatorIndex < qualifiedTypeName.Length - 1) {
+                return qualifiedTypeName[(nestedSeparatorIndex + 1)..];
+            }
+
+            return qualifiedTypeName;
         }
 
         /// <summary>
@@ -343,6 +416,8 @@ namespace cs2.cpp {
             assemblyName = string.Empty;
             version = string.Empty;
             targetFramework = string.Empty;
+            instantiatedGeneratedTypeCompilation = null;
+            instantiatedGeneratedTypes = null;
 
             Report.Reset();
             BuildUsageReport = new CPPBuildUsageReport();
@@ -368,6 +443,57 @@ namespace cs2.cpp {
             Report.AssemblyVersion = version;
             Report.TargetFramework = targetFramework;
             SynchronizeRunState();
+        }
+
+        /// <summary>
+        /// Gets the concrete generated class instantiations explicitly created in one compilation so runtime generic dispatch can target closed native types.
+        /// </summary>
+        /// <param name="compilation">Compilation to scan for object creation sites.</param>
+        /// <returns>Distinct concrete generated types instantiated by the compilation.</returns>
+        internal IReadOnlyList<INamedTypeSymbol> GetInstantiatedGeneratedTypes(Compilation compilation) {
+            if (compilation == null) {
+                return Array.Empty<INamedTypeSymbol>();
+            }
+
+            if (ReferenceEquals(instantiatedGeneratedTypeCompilation, compilation) && instantiatedGeneratedTypes != null) {
+                return instantiatedGeneratedTypes;
+            }
+
+            List<INamedTypeSymbol> resolvedTypes = new List<INamedTypeSymbol>();
+            HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
+                SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
+                SyntaxNode root = syntaxTree.GetRoot();
+
+                foreach (ObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()) {
+                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                }
+
+                foreach (ImplicitObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>()) {
+                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                }
+            }
+
+            instantiatedGeneratedTypeCompilation = compilation;
+            instantiatedGeneratedTypes = resolvedTypes;
+            return instantiatedGeneratedTypes;
+        }
+
+        void AddInstantiatedGeneratedType(ITypeSymbol typeSymbol, List<INamedTypeSymbol> resolvedTypes, HashSet<string> seenTypeNames) {
+            if (typeSymbol is not INamedTypeSymbol namedTypeSymbol ||
+                namedTypeSymbol.TypeKind != TypeKind.Class ||
+                namedTypeSymbol.IsAbstract ||
+                Program?.FindGeneratedClass(namedTypeSymbol) == null) {
+                return;
+            }
+
+            string qualifiedTypeName = namedTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (!seenTypeNames.Add(qualifiedTypeName)) {
+                return;
+            }
+
+            resolvedTypes.Add(namedTypeSymbol);
         }
 
         /// <summary>
@@ -486,7 +612,7 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                string filePath = Path.Combine(folder, cl.GetEmittedTypeName());
+                string filePath = Path.Combine(folder, cl.GetEmittedFileStem(program));
                 string headerPath = filePath + ".hpp";
                 string codePath = filePath + ".cpp";
 
@@ -506,20 +632,125 @@ namespace cs2.cpp {
                     string.Equals(candidate.Name, cl.Name, StringComparison.Ordinal) &&
                     (candidate.GenericArgs == null || candidate.GenericArgs.Count == 0));
 
-                if (cl.GenericArgs != null && cl.GenericArgs.Count > 0 && !hasNonGenericSibling) {
+                bool hasCompatibilityHeaderStemCollision = reachabilityPlan.Types.Any(candidate =>
+                    !ReferenceEquals(candidate, cl) &&
+                    !candidate.IsNative &&
+                    string.Equals(candidate.GetEmittedFileStem(program), cl.Name, StringComparison.Ordinal));
+                if (!string.Equals(cl.GetEmittedFileStem(program), cl.Name, StringComparison.Ordinal)
+                    && !(cl.GenericArgs != null && cl.GenericArgs.Count > 0 && hasNonGenericSibling)
+                    && !hasCompatibilityHeaderStemCollision) {
                     string compatibilityHeaderPath = Path.Combine(folder, cl.Name + ".hpp");
                     using (StreamWriter compatibilityHeaderWriter = new StreamWriter(compatibilityHeaderPath, false)) {
                         compatibilityHeaderWriter.WriteLine("#pragma once");
-                        compatibilityHeaderWriter.WriteLine($"#include \"{cl.GetEmittedTypeName()}.hpp\"");
+                        compatibilityHeaderWriter.WriteLine($"#include \"{cl.GetEmittedFileStem(program)}.hpp\"");
                     }
 
                     TrackEmittedFile(compatibilityHeaderPath);
                 }
 
+                WriteNamespaceQualifiedLowercaseAliasHeader(folder, cl);
                 TrackEmittedFile(headerPath);
                 TrackEmittedFile(codePath);
                 Report.EmittedTypeCount++;
             }
+        }
+
+        /// <summary>
+        /// Emits one alias header for lowercase generated types so independently converted project graphs can reference either the local emitted name or the namespace-qualified collision-safe name.
+        /// </summary>
+        /// <param name="folder">Output folder that receives generated headers.</param>
+        /// <param name="conversionClass">Generated class whose lowercase emitted name may require a compatibility alias.</param>
+        void WriteNamespaceQualifiedLowercaseAliasHeader(string folder, ConversionClass conversionClass) {
+            if (!TryGetNamespaceQualifiedLowercaseAliasInfo(conversionClass, out string aliasTypeName, out string aliasFileStem)) {
+                return;
+            }
+
+            string aliasHeaderPath = Path.Combine(folder, aliasFileStem + ".hpp");
+            if (File.Exists(aliasHeaderPath)) {
+                return;
+            }
+
+            using (StreamWriter aliasHeaderWriter = new StreamWriter(aliasHeaderPath, false)) {
+                aliasHeaderWriter.WriteLine("#pragma once");
+                aliasHeaderWriter.WriteLine($"#include \"{conversionClass.GetEmittedFileStem(program)}.hpp\"");
+                if (conversionClass.GenericArgs != null && conversionClass.GenericArgs.Count > 0) {
+                    aliasHeaderWriter.WriteLine($"template <{string.Join(", ", conversionClass.GenericArgs.Select(argument => $"typename {argument}"))}>");
+                    aliasHeaderWriter.WriteLine($"using {aliasTypeName} = {conversionClass.GetEmittedTypeName()}<{string.Join(", ", conversionClass.GenericArgs)}>;");
+                } else {
+                    aliasHeaderWriter.WriteLine($"using {aliasTypeName} = {conversionClass.GetEmittedTypeName()};");
+                }
+            }
+
+            TrackEmittedFile(aliasHeaderPath);
+        }
+
+        /// <summary>
+        /// Determines whether one generated type needs a namespace-qualified alias header to stay stable when another conversion pass qualifies the emitted C++ type name for the same managed type.
+        /// </summary>
+        /// <param name="conversionClass">Generated class to inspect.</param>
+        /// <param name="aliasTypeName">Receives the qualified alias type name when one is needed.</param>
+        /// <param name="aliasFileStem">Receives the generated header stem for the alias when one is needed.</param>
+        /// <returns>True when an alias header should be emitted; otherwise false.</returns>
+        bool TryGetNamespaceQualifiedLowercaseAliasInfo(ConversionClass conversionClass, out string aliasTypeName, out string aliasFileStem) {
+            aliasTypeName = string.Empty;
+            aliasFileStem = string.Empty;
+
+            if (conversionClass?.TypeSymbol == null) {
+                return false;
+            }
+
+            string baseEmittedTypeName = (conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0)
+                ? conversionClass.Name
+                : $"{conversionClass.Name}_{conversionClass.GenericArgs.Count}";
+            if (!StartsWithLowercaseLetter(baseEmittedTypeName)) {
+                return false;
+            }
+
+            string namespacePrefix = GetNamespacePrefix(conversionClass);
+            if (string.IsNullOrWhiteSpace(namespacePrefix)) {
+                return false;
+            }
+
+            aliasTypeName = $"{namespacePrefix}_{baseEmittedTypeName}";
+            if (string.Equals(aliasTypeName, conversionClass.GetEmittedTypeName(), StringComparison.Ordinal)) {
+                aliasTypeName = string.Empty;
+                return false;
+            }
+
+            aliasFileStem = StartsWithLowercaseLetter(aliasTypeName)
+                ? $"{namespacePrefix}_{aliasTypeName}"
+                : aliasTypeName;
+            return true;
+        }
+
+        /// <summary>
+        /// Returns whether one generated identifier begins with a lowercase ASCII letter.
+        /// </summary>
+        /// <param name="identifier">Identifier to inspect.</param>
+        /// <returns>True when the identifier begins with a lowercase ASCII letter; otherwise false.</returns>
+        static bool StartsWithLowercaseLetter(string identifier) {
+            if (string.IsNullOrWhiteSpace(identifier)) {
+                return false;
+            }
+
+            return identifier[0] >= 'a' && identifier[0] <= 'z';
+        }
+
+        /// <summary>
+        /// Builds the namespace-derived identifier prefix used by generated collision-safe type names.
+        /// </summary>
+        /// <param name="conversionClass">Generated class whose containing namespace should be encoded.</param>
+        /// <returns>Sanitized namespace-derived prefix, or an empty string when none is available.</returns>
+        static string GetNamespacePrefix(ConversionClass conversionClass) {
+            string namespaceName = conversionClass?.TypeSymbol?.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(namespaceName) || namespaceName == "<global namespace>") {
+                return string.Empty;
+            }
+
+            return namespaceName
+                .Replace("global::", string.Empty, StringComparison.Ordinal)
+                .Replace('.', '_')
+                .Replace(':', '_');
         }
 
         /// <summary>
@@ -532,7 +763,8 @@ namespace cs2.cpp {
                 return false;
             }
 
-            return !string.Equals(conversionClass.Name, "NativeFreeFunctionAttribute", StringComparison.Ordinal);
+            return !string.Equals(conversionClass.Name, "NativeFreeFunctionAttribute", StringComparison.Ordinal) &&
+                !string.Equals(conversionClass.Name, "NativeNoEscapeAttribute", StringComparison.Ordinal);
         }
 
         /// <summary>

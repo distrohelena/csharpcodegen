@@ -4,9 +4,16 @@ namespace cs2.core {
     public class ConversionClass {
         public string Name { get; set; }
 
+        public ConversionProgram Program { get; set; }
+
         public MemberDeclarationType DeclarationType { get; set; }
 
         public bool IsNative { get; set; }
+        public bool IsValueType { get; set; }
+        public bool HasExplicitLayout { get; set; }
+        public bool HasSequentialStructLayout { get; set; }
+        public int SequentialStructLayoutPack { get; set; }
+        public int SequentialStructLayoutSize { get; set; }
         public List<string> Extensions { get; set; }
 
         public List<string> ReferencedClasses { get; set; }
@@ -24,7 +31,13 @@ namespace cs2.core {
 
         public ConversionClass() {
             Name = string.Empty;
+            Program = null;
             DeclarationType = MemberDeclarationType.Class;
+            IsValueType = false;
+            HasExplicitLayout = false;
+            HasSequentialStructLayout = false;
+            SequentialStructLayoutPack = 0;
+            SequentialStructLayoutSize = 0;
             Variables = new List<ConversionVariable>();
             Functions = new List<ConversionFunction>();
             Extensions = new List<string>();

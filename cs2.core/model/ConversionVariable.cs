@@ -1,9 +1,11 @@
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cs2.core {
     public class ConversionVariable {
         public string Name { get; set; }
         public string Remap { get; set; }
+        public SemanticModel Semantic { get; set; }
         /// <summary>
         /// Gets or sets the class name to emit when remapping static member access.
         /// </summary>
@@ -22,9 +24,31 @@ namespace cs2.core {
 
         public bool IsAbstract { get; set; }
         public bool IsStatic { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether one generated field originated from a C# const declaration.
+        /// </summary>
+        public bool IsConst { get; set; }
         public bool IsOverride { get; set; }
         public bool IsGet { get; set; }
         public bool IsSet { get; set; }
+        public bool HasExplicitLayoutOffset { get; set; }
+        public int ExplicitLayoutOffset { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether one generated property getter should return a constant native reference.
+        /// </summary>
+        public bool ReturnsConstReference { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether one generated property getter should return a mutable native reference.
+        /// </summary>
+        public bool ReturnsReference { get; set; }
+        /// <summary>
+        /// Gets or sets the declaration order captured during preprocessing so native emission can preserve field layout.
+        /// </summary>
+        public int SourceOrder { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether one ref local must lower as a pointer-backed alias because later assignments rebind the alias rather than writing through it.
+        /// </summary>
+        public bool IsRebindableReferenceLocal { get; set; }
         public ParameterModifier Modifier { get; set; }
 
         public string? Assignment { get; set; }

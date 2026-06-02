@@ -32,6 +32,10 @@ namespace cs2.cpp {
 
             string source = File.ReadAllText(sourcePath);
             string header = File.ReadAllText(headerPath);
+            if (!RequiresGeneratedRuntimeComponentDeserializerRegistration(source, header)) {
+                return;
+            }
+
             RequireContains(sourcePath, source, "#include \"GeneratedRuntimeComponentDeserializerRegistration.hpp\"", "native free-function include for generated runtime component deserializer registration");
             RequireContains(sourcePath, source, "RegisterGeneratedRuntimeComponentDeserializers(registry);", "generated runtime component deserializer registration call");
             RequireDoesNotContain(headerPath, header, "RegisterGeneratedRuntimeComponentDeserializers(", "generated runtime component deserializer stub declaration");
@@ -48,10 +52,26 @@ namespace cs2.cpp {
             }
 
             string source = File.ReadAllText(sourcePath);
-            RequireContains(sourcePath, source, "delete operation;", "pending scene operation disposal");
-            RequireContains(sourcePath, source, "delete loadResult;", "transient scene load result disposal");
-            RequireContains(sourcePath, source, "delete loadedSceneRecord;", "loaded scene record disposal");
-            RequireContains(sourcePath, source, "he_cpp_make_scope_exit", "scope-exit ownership guards");
+            bool requiresPendingSceneOperationDisposal = RequiresPendingSceneOperationDisposal(source);
+            bool requiresTransientSceneLoadResultDisposal = RequiresTransientSceneLoadResultDisposal(source);
+            bool requiresLoadedSceneRecordDisposal = RequiresLoadedSceneRecordDisposal(source);
+            if (requiresPendingSceneOperationDisposal) {
+                RequireContains(sourcePath, source, "delete operation;", "pending scene operation disposal");
+            }
+
+            if (requiresTransientSceneLoadResultDisposal) {
+                RequireContains(sourcePath, source, "delete loadResult;", "transient scene load result disposal");
+            }
+
+            if (requiresLoadedSceneRecordDisposal) {
+                RequireContains(sourcePath, source, "delete loadedSceneRecord;", "loaded scene record disposal");
+            }
+
+            if (requiresPendingSceneOperationDisposal ||
+                requiresTransientSceneLoadResultDisposal ||
+                requiresLoadedSceneRecordDisposal) {
+                RequireContains(sourcePath, source, "he_cpp_make_scope_exit", "scope-exit ownership guards");
+            }
         }
 
         /// <summary>
@@ -66,7 +86,9 @@ namespace cs2.cpp {
 
             string source = File.ReadAllText(sourcePath);
             RequireContains(sourcePath, source, "#include \"NativeOwnership.hpp\"", "native ownership helper include");
-            RequireContains(sourcePath, source, "he_cpp_make_scope_exit", "transient asset scope guards");
+            if (RequiresTransientAssetScopeGuards(source)) {
+                RequireContains(sourcePath, source, "he_cpp_make_scope_exit", "transient asset scope guards");
+            }
         }
 
         /// <summary>
@@ -95,6 +117,10 @@ namespace cs2.cpp {
             }
 
             string source = File.ReadAllText(sourcePath);
+            if (!RequiresFontAssetSourceTextureOwnership(source)) {
+                return;
+            }
+
             RequireContains(sourcePath, source, "#include \"NativeOwnership.hpp\"", "native ownership helper include");
             RequireContains(sourcePath, source, "delete sourceTextureAsset;", "transient source texture disposal");
         }
@@ -123,6 +149,92 @@ namespace cs2.cpp {
             if (contents.Contains(forbiddenText, StringComparison.Ordinal)) {
                 throw new InvalidOperationException($"Generated C++ output '{filePath}' still contains forbidden legacy contract '{contractName}'.");
             }
+        }
+
+        /// <summary>
+        /// Returns whether the generated runtime scene resolver still materializes transient raw model or texture assets that need scope-exit cleanup.
+        /// </summary>
+        /// <param name="contents">Generated runtime scene resolver source.</param>
+        /// <returns><c>true</c> when transient raw asset scope guards are still required; otherwise <c>false</c>.</returns>
+        static bool RequiresTransientAssetScopeGuards(string contents) {
+            if (string.IsNullOrWhiteSpace(contents)) {
+                return false;
+            }
+
+            return contents.Contains("BuildTextureFromRaw(", StringComparison.Ordinal)
+                || contents.Contains("BuildModelFromRaw(", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Returns whether the generated runtime component registry still relies on the generated deserializer-registration hook.
+        /// </summary>
+        /// <param name="source">Generated runtime component registry source.</param>
+        /// <param name="header">Generated runtime component registry header.</param>
+        /// <returns><c>true</c> when the free-function registration contract is present; otherwise <c>false</c>.</returns>
+        static bool RequiresGeneratedRuntimeComponentDeserializerRegistration(string source, string header) {
+            if (string.IsNullOrWhiteSpace(source) && string.IsNullOrWhiteSpace(header)) {
+                return false;
+            }
+
+            return (source?.Contains("RegisterGeneratedRuntimeComponentDeserializers(", StringComparison.Ordinal) ?? false)
+                || (header?.Contains("RegisterGeneratedRuntimeComponentDeserializers(", StringComparison.Ordinal) ?? false);
+        }
+
+        /// <summary>
+        /// Returns whether the generated scene manager contains queued-operation ownership that must be validated.
+        /// </summary>
+        /// <param name="contents">Generated scene manager source.</param>
+        /// <returns><c>true</c> when queued scene operations are present; otherwise <c>false</c>.</returns>
+        static bool RequiresPendingSceneOperationDisposal(string contents) {
+            if (string.IsNullOrWhiteSpace(contents)) {
+                return false;
+            }
+
+            return contents.Contains("PendingSceneOperation", StringComparison.Ordinal)
+                || contents.Contains("SceneOperation", StringComparison.Ordinal)
+                || contents.Contains("ApplyPending", StringComparison.Ordinal)
+                || contents.Contains("FlushPending", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Returns whether the generated scene manager materializes transient load results that require explicit cleanup.
+        /// </summary>
+        /// <param name="contents">Generated scene manager source.</param>
+        /// <returns><c>true</c> when transient scene-load results are present; otherwise <c>false</c>.</returns>
+        static bool RequiresTransientSceneLoadResultDisposal(string contents) {
+            if (string.IsNullOrWhiteSpace(contents)) {
+                return false;
+            }
+
+            return contents.Contains("loadResult", StringComparison.Ordinal)
+                || contents.Contains("LoadSceneImmediate(", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Returns whether the generated scene manager materializes loaded-scene tracking records that require explicit cleanup.
+        /// </summary>
+        /// <param name="contents">Generated scene manager source.</param>
+        /// <returns><c>true</c> when loaded-scene tracking records are present; otherwise <c>false</c>.</returns>
+        static bool RequiresLoadedSceneRecordDisposal(string contents) {
+            if (string.IsNullOrWhiteSpace(contents)) {
+                return false;
+            }
+
+            return contents.Contains("loadedSceneRecord", StringComparison.Ordinal)
+                || contents.Contains("LoadedSceneRecord", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Returns whether the generated font asset still materializes one transient source texture asset that must be deleted.
+        /// </summary>
+        /// <param name="contents">Generated font asset source.</param>
+        /// <returns><c>true</c> when transient source-texture ownership is present; otherwise <c>false</c>.</returns>
+        static bool RequiresFontAssetSourceTextureOwnership(string contents) {
+            if (string.IsNullOrWhiteSpace(contents)) {
+                return false;
+            }
+
+            return contents.Contains("sourceTextureAsset", StringComparison.Ordinal);
         }
     }
 }

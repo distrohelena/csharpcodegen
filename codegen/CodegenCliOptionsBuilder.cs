@@ -43,8 +43,42 @@ public static class CodegenCliOptionsBuilder {
             options.AdditionalPreprocessorSymbols = additionalSymbols
                 .Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
+        if (TryGetStringOption(parsedArguments.SelectedOptions, "type-remaps", out string typeRemaps)) {
+            options.TypeRemaps = ParseTypeRemaps(typeRemaps);
+        }
 
         return options;
+    }
+
+    /// <summary>
+    /// Parses one caller-provided source-to-target type remap string into a normalized lookup table.
+    /// </summary>
+    /// <param name="serializedTypeRemaps">Delimited remap string in `source=target` form.</param>
+    /// <returns>Parsed remap dictionary keyed by source type name.</returns>
+    static IReadOnlyDictionary<string, string> ParseTypeRemaps(string serializedTypeRemaps) {
+        Dictionary<string, string> typeRemaps = new(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(serializedTypeRemaps)) {
+            return typeRemaps;
+        }
+
+        string[] assignments = serializedTypeRemaps.Split(['|', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (int index = 0; index < assignments.Length; index++) {
+            string assignment = assignments[index];
+            int equalsIndex = assignment.IndexOf('=');
+            if (equalsIndex <= 0 || equalsIndex == assignment.Length - 1) {
+                throw new ArgumentException($"The 'type-remaps' option expects 'source=target' assignments. Invalid entry: '{assignment}'.");
+            }
+
+            string sourceTypeName = assignment[..equalsIndex].Trim();
+            string targetTypeName = assignment[(equalsIndex + 1)..].Trim();
+            if (string.IsNullOrWhiteSpace(sourceTypeName) || string.IsNullOrWhiteSpace(targetTypeName)) {
+                throw new ArgumentException($"The 'type-remaps' option expects non-empty source and target names. Invalid entry: '{assignment}'.");
+            }
+
+            typeRemaps[sourceTypeName] = targetTypeName;
+        }
+
+        return typeRemaps;
     }
 
     /// <summary>

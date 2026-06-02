@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
@@ -88,6 +89,11 @@ namespace cs2.cpp {
         public override ExpressionResult ProcessExpression(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> lines, List<ExpressionResult> refTypes = null) {
             if (expression is SizeOfExpressionSyntax sizeOfExpression) {
                 return ProcessSizeOfExpression(semantic, context, sizeOfExpression, lines);
+            }
+
+            if (expression is IsPatternExpressionSyntax isPatternExpression &&
+                TryProcessDeclarationPatternExpression(semantic, context, isPatternExpression, lines, out ExpressionResult declarationPatternResult)) {
+                return declarationPatternResult;
             }
 
             if (expression is BinaryExpressionSyntax binaryExpression &&
@@ -179,6 +185,107 @@ namespace cs2.cpp {
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
         }
 
+        ExpressionResult ProcessAsTypeExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binaryExpression,
+            List<string> lines) {
+            VariableType targetType;
+            if (binaryExpression.Right is TypeSyntax typeSyntax) {
+                targetType = VariableUtil.GetVarType(typeSyntax, semantic);
+            } else {
+                targetType = VariableUtil.GetVarType(binaryExpression.Right.ToString());
+            }
+
+            CPPTypeData targetTypeData;
+            VariableType cppTargetType = ConvertToCPPType(targetType, out targetTypeData);
+
+            List<string> sourceLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult sourceResult = ProcessExpression(semantic, context, binaryExpression.Left, sourceLines);
+            context.PopClass(start);
+            if (!sourceResult.Processed) {
+                return sourceResult;
+            }
+
+            RegisterRuntimeRequirement("NativeCast");
+
+            string targetTypeName = cppTargetType.ToCPPString(context.Program);
+            lines.Add($"he_cpp_try_cast<{targetTypeName}>(");
+            lines.AddRange(sourceLines);
+            lines.Add(")");
+            return new ExpressionResult(true, VariablePath.Unknown, targetType);
+        }
+
+        bool TryProcessDeclarationPatternExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            IsPatternExpressionSyntax isPatternExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            if (isPatternExpression.Pattern is not DeclarationPatternSyntax declarationPattern ||
+                declarationPattern.Designation is not SingleVariableDesignationSyntax designation) {
+                return false;
+            }
+
+            VariableType declaredType = VariableUtil.GetVarType(declarationPattern.Type, semantic);
+            CPPTypeData declaredTypeData;
+            VariableType cppDeclaredType = ConvertToCPPType(declaredType, out declaredTypeData);
+
+            List<string> sourceLines = new List<string>();
+            int sourceStart = context.DepthClass;
+            ExpressionResult sourceResult = ProcessExpression(semantic, context, isPatternExpression.Expression, sourceLines);
+            context.PopClass(sourceStart);
+            if (!sourceResult.Processed) {
+                result = sourceResult;
+                return true;
+            }
+
+            string declaredTypeName = cppDeclaredType.ToCPPString(context.Program);
+            string variableName = designation.Identifier.Text;
+            string sourceExpression = string.Concat(sourceLines);
+            List<string> beforeLines = sourceResult.BeforeLines != null
+                ? new List<string>(sourceResult.BeforeLines)
+                : new List<string>();
+
+            FunctionStack currentFunction = context.GetCurrentFunction();
+            ConversionVariable conversionVariable = null;
+            if (currentFunction != null) {
+                conversionVariable = new ConversionVariable();
+                conversionVariable.Name = variableName;
+                conversionVariable.VarType = declaredType;
+            }
+
+            if (declaredTypeData.IsPointer || IsReferencePatternType(semantic, declarationPattern.Type, declaredType)) {
+                RegisterRuntimeRequirement("NativeCast");
+
+                beforeLines.Add($"{declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
+                lines.Add($"{variableName} != nullptr");
+            } else {
+                string pointerName = $"__pattern_{variableName}";
+
+                beforeLines.Add($"{declaredTypeName}* {pointerName} = static_cast<{declaredTypeName}*>({sourceExpression});\n");
+                if (conversionVariable != null) {
+                    conversionVariable.Remap = $"(*{pointerName})";
+                }
+
+                lines.Add($"{pointerName} != nullptr");
+            }
+
+            if (conversionVariable != null) {
+                currentFunction.Stack.Add(conversionVariable);
+            }
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"), beforeLines);
+            if (conversionVariable != null) {
+                result.Variable = conversionVariable;
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Processes a block without re-appending expression prelude and epilogue lines that are already handled at the statement level.
         /// </summary>
@@ -217,6 +324,13 @@ namespace cs2.cpp {
                 }
 
                 StatementSyntax statement = statements[index];
+                if (statement is BlockSyntax nestedBlock) {
+                    lines.Add("{\n");
+                    ProcessBlock(semantic, context, nestedBlock, lines, depth);
+                    lines.Add("}\n");
+                    continue;
+                }
+
                 int start = context.DepthClass;
                 ProcessStatement(semantic, context, statement, lines, depth);
                 context.PopClass(start);
@@ -274,6 +388,11 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessStatement(SemanticModel semantic, LayerContext context, StatementSyntax statement, List<string> lines, int depth = 1) {
             if (statement is ExpressionStatementSyntax expressionStatement &&
                 TryProcessConditionalDelegateInvocationStatement(semantic, context, expressionStatement.Expression, lines)) {
+                return new ExpressionResult(true);
+            }
+
+            if (statement is ExpressionStatementSyntax conditionalInvocationExpressionStatement &&
+                TryProcessConditionalMethodInvocationStatement(semantic, context, conditionalInvocationExpressionStatement.Expression, lines)) {
                 return new ExpressionResult(true);
             }
 
@@ -594,6 +713,149 @@ namespace cs2.cpp {
             return true;
         }
 
+        bool TryProcessConditionalMethodInvocationStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines) {
+            if (expression is not ConditionalAccessExpressionSyntax conditionalAccess ||
+                conditionalAccess.WhenNotNull is not InvocationExpressionSyntax invocation) {
+                return false;
+            }
+
+            if (invocation.Expression is MemberBindingExpressionSyntax memberBinding &&
+                memberBinding.Name is IdentifierNameSyntax memberBindingIdentifier &&
+                string.Equals(memberBindingIdentifier.Identifier.Text, "Invoke", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (invocation.Expression is not MemberBindingExpressionSyntax &&
+                invocation.Expression is not MemberAccessExpressionSyntax) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, conditionalAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
+                receiverTypeSymbol == null ||
+                receiverTypeSymbol.IsValueType ||
+                receiverTypeSymbol.SpecialType == SpecialType.System_String) {
+                return false;
+            }
+
+            List<string> receiverLines = new List<string>();
+            int startReceiver = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, conditionalAccess.Expression, receiverLines);
+            context.PopClass(startReceiver);
+            if (!receiverResult.Processed) {
+                return false;
+            }
+
+            if (receiverResult.BeforeLines != null &&
+                receiverResult.BeforeLines.Count > 0) {
+                lines.AddRange(receiverResult.BeforeLines);
+            }
+
+            lines.Add("if (");
+            lines.AddRange(receiverLines);
+            lines.Add(" != nullptr)\n{\n");
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocation);
+            if (!TryProcessConditionalMultiImplementationGenericInvocation(
+                    semantic,
+                    context,
+                    invocation,
+                    invokedMethodSymbol,
+                    receiverTypeSymbol,
+                    receiverLines,
+                    lines)) {
+                lines.AddRange(receiverLines);
+                lines.Add("->");
+                AppendConditionalAccessInvocationTarget(semantic, context, conditionalAccess.Expression, invocation, lines);
+                lines.Add("(");
+                AppendInvocationArguments(semantic, context, invocation.ArgumentList.Arguments, lines);
+                lines.Add(");\n");
+            }
+
+            lines.Add("}\n");
+
+            if (receiverResult.AfterLines != null &&
+                receiverResult.AfterLines.Count > 0) {
+                lines.AddRange(receiverResult.AfterLines);
+            }
+
+            return true;
+        }
+
+        void AppendConditionalAccessInvocationTarget(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax receiverExpression,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines) {
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (invokedMethodSymbol != null &&
+                TryResolveGeneratedContainingClass(invokedMethodSymbol, out _)) {
+                if (ShouldEmitDependentTemplateQualifier(invokedMethodSymbol, ReceiverRequiresDependentTemplateQualifier(semantic, receiverExpression))) {
+                    lines.Add("template ");
+                }
+
+                lines.Add(GetEmittedFunctionName(invokedMethodSymbol));
+                AppendInvocationGenericArgumentsFromSyntax(semantic, context, invocationExpression.Expression, lines);
+                return;
+            }
+
+            if (invocationExpression.Expression is MemberBindingExpressionSyntax memberBindingExpression) {
+                ProcessExpression(semantic, context, memberBindingExpression.Name, lines);
+                return;
+            }
+
+            if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccessExpression) {
+                ProcessExpression(semantic, context, memberAccessExpression.Name, lines);
+            }
+        }
+
+        bool TryProcessConditionalMultiImplementationGenericInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            ITypeSymbol receiverTypeSymbol,
+            List<string> receiverLines,
+            List<string> lines) {
+            if (invokedMethodSymbol == null ||
+                !invokedMethodSymbol.IsGenericMethod) {
+                return false;
+            }
+
+            List<ConversionClass> matchingDefinitions = ResolveGeneratedGenericInvocationDefinitions(receiverTypeSymbol, invokedMethodSymbol.OriginalDefinition);
+            if (matchingDefinitions.Count <= 1) {
+                return false;
+            }
+
+            List<INamedTypeSymbol> implementationTypeSymbols = ResolveGeneratedGenericInvocationConcreteImplementations(semantic.Compilation, receiverTypeSymbol, invokedMethodSymbol.OriginalDefinition);
+            if (implementationTypeSymbols.Count <= 1) {
+                return false;
+            }
+
+            List<string> beforeLines = new List<string>();
+            List<string> invocationLines = new List<string>();
+            if (!TryAppendMultiImplementationGenericInvocationExpression(
+                    semantic,
+                    context,
+                    invocationExpression,
+                    invokedMethodSymbol,
+                    string.Concat(receiverLines),
+                    implementationTypeSymbols,
+                    beforeLines,
+                    invocationLines,
+                    out _)) {
+                return false;
+            }
+
+            lines.AddRange(beforeLines);
+            lines.AddRange(invocationLines);
+            lines.Add(";\n");
+            return true;
+        }
+
         /// <summary>
         /// Lowers a C# unchecked statement by preserving its lexical scope and emitting only the enclosed block statements.
         /// </summary>
@@ -787,6 +1049,18 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryProcessTupleAssignmentExpression(semantic, context, assignment, lines)) {
+                return;
+            }
+
+            if (TryProcessRebindableRefLocalAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
+            if (TryProcessRefReturnPropertyAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             if (TryProcessComputedPropertyAssignment(semantic, context, assignment, lines)) {
                 return;
             }
@@ -824,6 +1098,9 @@ namespace cs2.cpp {
             }
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
                 lines.Add("std::string()");
+            } else if (TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
+            } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
+            } else if (TryAppendArrayAsListAssignmentValue(semantic, context, assignment, rightLines, lines)) {
             } else {
                 lines.AddRange(rightLines);
             }
@@ -831,6 +1108,184 @@ namespace cs2.cpp {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
+        }
+
+        bool TryProcessTupleAssignmentExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                lines == null ||
+                assignment.Kind() != SyntaxKind.SimpleAssignmentExpression ||
+                assignment.Left is not TupleExpressionSyntax &&
+                assignment.Left is not DeclarationExpressionSyntax { Designation: ParenthesizedVariableDesignationSyntax }) {
+                return false;
+            }
+
+            ParenthesizedVariableDesignationSyntax tupleDesignation = null;
+            TupleExpressionSyntax tupleAssignmentTarget = assignment.Left as TupleExpressionSyntax;
+            if (tupleAssignmentTarget == null &&
+                assignment.Left is DeclarationExpressionSyntax declarationExpression &&
+                declarationExpression.Designation is ParenthesizedVariableDesignationSyntax declarationDesignation) {
+                tupleDesignation = declarationDesignation;
+            }
+
+            int targetElementCount = tupleAssignmentTarget?.Arguments.Count ?? tupleDesignation?.Variables.Count ?? 0;
+            if (targetElementCount == 0) {
+                return false;
+            }
+
+            List<string> rightLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+            context.PopClass(startDepth);
+            if (!rightResult.Processed) {
+                return false;
+            }
+
+            VariableType tupleType = ResolveTupleDeconstructionType(semantic, context, assignment.Right, rightResult);
+            if (tupleType?.Type != VariableDataType.Tuple ||
+                tupleType.GenericArgs.Count < targetElementCount) {
+                return false;
+            }
+
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
+            string temporaryName = CreateTemporaryName("__deconstruct");
+            lines.Add($"const auto {temporaryName} = ");
+            lines.AddRange(rightLines);
+            lines.Add(";\n");
+
+            string tupleMemberAccessOperator = ".";
+            FunctionStack functionStack = context.GetCurrentFunction();
+            for (int index = 0; index < targetElementCount; index++) {
+                string targetName = null;
+                VariableType declaredTargetType = null;
+                bool discardTarget = false;
+                if (tupleAssignmentTarget != null) {
+                    if (!TryResolveTupleAssignmentTarget(
+                        semantic,
+                        tupleAssignmentTarget.Arguments[index].Expression,
+                        out targetName,
+                        out declaredTargetType,
+                        out discardTarget)) {
+                        return false;
+                    }
+
+                    if (discardTarget) {
+                        continue;
+                    }
+                } else if (tupleDesignation?.Variables[index] is SingleVariableDesignationSyntax singleVariableDesignation) {
+                    targetName = singleVariableDesignation.Identifier.Text;
+                }
+
+                if (string.IsNullOrWhiteSpace(targetName)) {
+                    return false;
+                }
+
+                VariableType elementType = tupleType.GenericArgs[index];
+                VariableType targetType = declaredTargetType ?? elementType;
+                RegisterGeneratedTypeReferences(context, targetType);
+
+                ConversionVariable trackedVariable = functionStack?.Stack?.FindLast(candidate => candidate.Name == targetName);
+                if (trackedVariable == null) {
+                    CPPTypeData elementTypeData;
+                    VariableType cppElementType = ConvertToCPPType(targetType, out elementTypeData);
+                    string pointerSuffix = elementTypeData.IsPointer ? "*" : string.Empty;
+                    string declarationTypeName = QualifyRenderedCppTypeName(cppElementType.ToCPPString(context.Program), context);
+                    lines.Add($"{declarationTypeName}{pointerSuffix} {targetName} = {temporaryName}{tupleMemberAccessOperator}Item{index + 1};\n");
+
+                    functionStack?.Stack?.Add(new ConversionVariable {
+                        Name = targetName,
+                        VarType = targetType
+                    });
+                } else {
+                    lines.Add($"{targetName} = {temporaryName}{tupleMemberAccessOperator}Item{index + 1};\n");
+                }
+            }
+
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                lines.AddRange(rightResult.AfterLines);
+            }
+
+            return true;
+        }
+
+        static bool TryResolveTupleAssignmentTarget(
+            SemanticModel semantic,
+            ExpressionSyntax targetExpression,
+            out string targetName,
+            out VariableType declaredTargetType,
+            out bool discardTarget) {
+            targetName = null;
+            declaredTargetType = null;
+            discardTarget = false;
+
+            if (targetExpression is IdentifierNameSyntax targetIdentifier) {
+                targetName = targetIdentifier.Identifier.Text;
+                return true;
+            }
+
+            if (targetExpression is not DeclarationExpressionSyntax declarationExpression) {
+                return false;
+            }
+
+            if (declarationExpression.Designation is DiscardDesignationSyntax) {
+                discardTarget = true;
+                return true;
+            }
+
+            if (declarationExpression.Designation is not SingleVariableDesignationSyntax singleVariableDesignation) {
+                return false;
+            }
+
+            targetName = singleVariableDesignation.Identifier.Text;
+            declaredTargetType = ResolveDeclarationExpressionVariableType(semantic, declarationExpression, singleVariableDesignation);
+            return true;
+        }
+
+        bool TryProcessRebindableRefLocalAssignment(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                lines == null ||
+                assignment.Kind() != SyntaxKind.SimpleAssignmentExpression ||
+                assignment.Right is not RefExpressionSyntax refExpression ||
+                assignment.Left is not IdentifierNameSyntax leftIdentifier ||
+                semantic.GetSymbolInfo(leftIdentifier).Symbol is not ILocalSymbol) {
+                return false;
+            }
+
+            ConversionVariable stackVariable = context.GetCurrentFunction()?.Stack?.FindLast(candidate => candidate.Name == leftIdentifier.Identifier.Text);
+            if (stackVariable == null ||
+                !stackVariable.IsRebindableReferenceLocal) {
+                return false;
+            }
+
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, refExpression.Expression, rightLines);
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
+            lines.Add(leftIdentifier.Identifier.Text);
+            lines.Add(" = &");
+            lines.AddRange(rightLines);
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                lines.Add(";\n");
+                lines.AddRange(rightResult.AfterLines);
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -854,6 +1309,148 @@ namespace cs2.cpp {
 
             return TryGetAssignmentTargetTypeSymbol(semantic, leftExpression, out ITypeSymbol leftTypeSymbol)
                 && IsStringTypeSymbol(leftTypeSymbol);
+        }
+
+        /// <summary>
+        /// Wraps array-backed right-hand assignment values as native lists when the assignment target expects one IReadOnlyList-like contract.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the active document.</param>
+        /// <param name="context">Conversion context used to resolve runtime type tokens.</param>
+        /// <param name="assignment">Assignment being lowered.</param>
+        /// <param name="rightLines">Already-lowered right-hand expression tokens.</param>
+        /// <param name="lines">Output buffer receiving the converted assignment value.</param>
+        /// <returns><c>true</c> when one native list wrapper was emitted; otherwise <c>false</c>.</returns>
+        bool TryAppendArrayAsListAssignmentValue(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> rightLines,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                rightLines == null ||
+                lines == null ||
+                assignment.Kind() != SyntaxKind.SimpleAssignmentExpression ||
+                !TryGetAssignmentTargetTypeSymbol(semantic, assignment.Left, out ITypeSymbol leftTypeSymbol) ||
+                !IsListFamilyTypeSymbol(leftTypeSymbol) ||
+                !TryResolveArrayElementTypeSymbol(semantic, assignment.Right, out ITypeSymbol arrayElementTypeSymbol)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeList");
+            VariableType elementType = VariableUtil.GetVarType(arrayElementTypeSymbol);
+            string elementTypeName = GetCppTypeToken(elementType, context.Program);
+            lines.Add($"new List<{elementTypeName}>(");
+            lines.AddRange(rightLines);
+            lines.Add(")");
+            return true;
+        }
+
+        bool TryAppendDelegateMethodGroupAssignmentValue(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                lines == null ||
+                assignment.Kind() != SyntaxKind.SimpleAssignmentExpression ||
+                !TryGetAssignmentTargetTypeSymbol(semantic, assignment.Left, out ITypeSymbol leftTypeSymbol) ||
+                leftTypeSymbol.TypeKind != TypeKind.Delegate) {
+                return false;
+            }
+
+            IMethodSymbol methodGroupSymbol = ResolveMethodSymbol(semantic.GetSymbolInfo(assignment.Right));
+            if (methodGroupSymbol == null) {
+                return false;
+            }
+
+            return TryAppendDelegateWrapperConstruction(
+                semantic,
+                context,
+                leftTypeSymbol,
+                methodGroupSymbol,
+                assignment.Right,
+                lines);
+        }
+
+        bool TryGetDelegateLambdaWrapperTypeName(
+            INamedTypeSymbol delegateTypeSymbol,
+            LayerContext context,
+            out string delegateWrapperTypeName) {
+            delegateWrapperTypeName = string.Empty;
+            if (delegateTypeSymbol == null || context == null) {
+                return false;
+            }
+
+            if (TryGetFrameworkThreadDelegateWrapperTypeName(delegateTypeSymbol, context, out delegateWrapperTypeName)) {
+                return true;
+            }
+
+            if (delegateTypeSymbol.TypeKind == TypeKind.Delegate &&
+                !string.Equals(delegateTypeSymbol.Name, "Action", StringComparison.Ordinal) &&
+                !string.Equals(delegateTypeSymbol.Name, "Func", StringComparison.Ordinal)) {
+                delegateWrapperTypeName = GetCustomDelegateWrapperTypeName(delegateTypeSymbol, context);
+                return !string.IsNullOrWhiteSpace(delegateWrapperTypeName);
+            }
+
+            IMethodSymbol invokeMethod = delegateTypeSymbol.DelegateInvokeMethod;
+            if (invokeMethod == null) {
+                return false;
+            }
+
+            if (IsActionTypeSymbol(delegateTypeSymbol) && invokeMethod.ReturnsVoid) {
+                List<string> actionArgumentTypes = new List<string>();
+                foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
+                    actionArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                }
+
+                delegateWrapperTypeName = $"Action<{string.Join(", ", actionArgumentTypes)}>";
+                return true;
+            }
+
+            if (!IsFuncTypeSymbol(delegateTypeSymbol) || invokeMethod.ReturnsVoid) {
+                return false;
+            }
+
+            List<string> funcArgumentTypes = new List<string>();
+            foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
+                funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+            }
+
+            funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(invokeMethod.ReturnType), context.Program));
+            delegateWrapperTypeName = $"Func<{string.Join(", ", funcArgumentTypes)}>";
+            return true;
+        }
+
+        bool TryAppendDelegateLambdaAssignmentValue(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> rightLines,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                rightLines == null ||
+                lines == null ||
+                assignment.Kind() != SyntaxKind.SimpleAssignmentExpression ||
+                assignment.Right is not AnonymousFunctionExpressionSyntax ||
+                !TryGetAssignmentTargetTypeSymbol(semantic, assignment.Left, out ITypeSymbol leftTypeSymbol) ||
+                leftTypeSymbol is not INamedTypeSymbol namedDelegateTypeSymbol ||
+                namedDelegateTypeSymbol.TypeKind != TypeKind.Delegate ||
+                !TryGetDelegateLambdaWrapperTypeName(namedDelegateTypeSymbol, context, out string delegateWrapperTypeName)) {
+                return false;
+            }
+
+            lines.Add("new ");
+            lines.Add(QualifyRenderedCppTypeName(delegateWrapperTypeName, context));
+            lines.Add("(");
+            lines.AddRange(rightLines);
+            lines.Add(")");
+            return true;
         }
 
         /// <summary>
@@ -968,9 +1565,17 @@ namespace cs2.cpp {
 
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             string name = identifier.ToString();
+            if (string.Equals(name, "_", StringComparison.Ordinal) &&
+                identifier.Parent is ArgumentSyntax discardArgument &&
+                !string.IsNullOrEmpty(discardArgument.RefKindKeyword.ToString())) {
+                lines.Add(GetDiscardTemporaryName(identifier));
+                return new ExpressionResult(true);
+            }
+
             bool isMethod = false;
             bool emitMethodGroupPointer = false;
-            bool isQualifiedMemberName = identifier.Parent is MemberAccessExpressionSyntax qualifiedMemberAccess &&
+            MemberAccessExpressionSyntax qualifiedMemberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+            bool isQualifiedMemberName = qualifiedMemberAccess != null &&
                 ReferenceEquals(qualifiedMemberAccess.Name, identifier);
 
             ISymbol nsSymbol;
@@ -978,6 +1583,19 @@ namespace cs2.cpp {
                 nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
             } catch (ArgumentException) {
                 nsSymbol = null;
+            }
+
+            if (nsSymbol == null &&
+                isQualifiedMemberName) {
+                try {
+                    nsSymbol = semantic.GetSymbolInfo(qualifiedMemberAccess).Symbol;
+                } catch (ArgumentException) {
+                    nsSymbol = null;
+                }
+            }
+
+            if (TryResolveInvocationTargetMethodSymbol(semantic, identifier, out IMethodSymbol invocationTargetMethodSymbol)) {
+                nsSymbol = invocationTargetMethodSymbol;
             }
 
             if (nsSymbol is IAliasSymbol aliasSymbol) {
@@ -999,8 +1617,26 @@ namespace cs2.cpp {
                 }
             }
 
+            if ((nsSymbol == null || nsSymbol is INamedTypeSymbol || nsSymbol is INamespaceSymbol) &&
+                !isQualifiedMemberName) {
+                INamedTypeSymbol enclosingTypeSymbol = semantic.GetEnclosingSymbol(identifier.SpanStart)?.ContainingType;
+                if (enclosingTypeSymbol != null) {
+                    ISymbol enclosingMemberSymbol = enclosingTypeSymbol.GetMembers(name)
+                        .FirstOrDefault(member => member is IPropertySymbol || member is IFieldSymbol || member is IMethodSymbol);
+                    if (enclosingMemberSymbol != null) {
+                        nsSymbol = enclosingMemberSymbol;
+                    }
+                }
+            }
+
             if (nsSymbol is IMethodSymbol methodSymbol) {
                 isMethod = true;
+            }
+
+            ConversionFunction resolvedGeneratedMethod = null;
+            if (nsSymbol is IMethodSymbol resolvedMethodSymbol &&
+                TryResolveGeneratedFunction(resolvedMethodSymbol, out ConversionFunction generatedMethod)) {
+                resolvedGeneratedMethod = generatedMethod;
             }
 
             string propertyGetterCallName = string.Empty;
@@ -1041,7 +1677,7 @@ namespace cs2.cpp {
             }
 
             // function from the current class
-            ConversionFunction? classFn = currentClass?.Functions.Find(c => c.Name == name);
+            ConversionFunction? classFn = resolvedGeneratedMethod ?? currentClass?.Functions.Find(c => c.Name == name);
 
             bool paramsMatch = classFn?.InParameters?.Count == refTypes?.Count;
 
@@ -1121,7 +1757,7 @@ namespace cs2.cpp {
             ConversionVariable? functionInVar = currentFn?.Function.InParameters?.Find(c => c.Name == name);
 
             // current stack
-            ConversionVariable? stackVar = currentFn?.Stack.Find(c => c.Name == name);
+            ConversionVariable? stackVar = currentFn?.Stack.FindLast(c => c.Name == name);
 
             var matchingVars = new List<ConversionVariable>();
             context.Function.ForEach(fn => {
@@ -1131,15 +1767,40 @@ namespace cs2.cpp {
                 }
             });
 
+            string emittedIdentifierName = stackVar?.Remap ?? functionInVar?.Remap ?? CPPIdentifierSanitizer.SanitizeIdentifier(name);
+            if (stackVar?.IsRebindableReferenceLocal == true) {
+                emittedIdentifierName = $"(*{emittedIdentifierName})";
+            }
+            bool emitTemplateDisambiguator = ShouldEmitTemplateDisambiguatorForIdentifier(semantic, identifier, nsSymbol);
+
             if (currentClass == null) {
-                lines.Add(name);
+                lines.Add(emittedIdentifierName);
             } else {
+                string staticContainingTypeAccessName = TryResolveUnqualifiedStaticContainingTypeAccessName(
+                    context,
+                    currentClass,
+                    nsSymbol,
+                    classVar,
+                    functionInVar,
+                    matchingVars.Count,
+                    isQualifiedMemberName);
+                if (!string.IsNullOrWhiteSpace(staticContainingTypeAccessName)) {
+                    lines.Add(staticContainingTypeAccessName);
+                    lines.Add("::");
+                }
+
                 bool isResolvedPropertyAccessor = !string.IsNullOrEmpty(propertyGetterCallName) &&
                     nsSymbol is IPropertySymbol;
+                bool isResolvedInstanceMemberSymbol = nsSymbol is IFieldSymbol ||
+                    nsSymbol is IPropertySymbol ||
+                    nsSymbol is IMethodSymbol;
                 bool isClassVar = ((classVar != null || isResolvedPropertyAccessor) &&
                     functionInVar == null &&
                     matchingVars.Count == 0) ||
                     (classFn != null &&
+                    functionInVar == null &&
+                    matchingVars.Count == 0) ||
+                    (isResolvedInstanceMemberSymbol &&
                     functionInVar == null &&
                     matchingVars.Count == 0);
 
@@ -1195,6 +1856,7 @@ namespace cs2.cpp {
                     }
                 }
 
+                ConversionFunction emittedFunction = resolvedGeneratedMethod ?? classFn;
                 if (classFn == null || string.IsNullOrEmpty(classFn.Remap)) {
                     ConversionVariable? varOnClass = currentClass.Variables.FirstOrDefault(c => c.Name == name);
                     if (emitMethodGroupPointer) {
@@ -1203,6 +1865,14 @@ namespace cs2.cpp {
 
                     if (!string.IsNullOrEmpty(propertyGetterCallName)) {
                         lines.Add(propertyGetterCallName);
+                    } else if (emittedFunction != null) {
+                        if (emitTemplateDisambiguator) {
+                            lines.Add("template ");
+                        }
+
+                        lines.Add(GetEmittedFunctionName(emittedFunction));
+                    } else if (stackVar != null || functionInVar != null) {
+                        lines.Add(emittedIdentifierName);
                     } else if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
                         lines.Add(name);
                     } else {
@@ -1211,6 +1881,10 @@ namespace cs2.cpp {
                 } else {
                     if (emitMethodGroupPointer) {
                         lines.Add($"&{currentClass.GetEmittedTypeName()}::");
+                    }
+
+                    if (emitTemplateDisambiguator) {
+                        lines.Add("template ");
                     }
 
                     lines.Add(GetEmittedFunctionName(classFn));
@@ -1267,12 +1941,101 @@ namespace cs2.cpp {
             return new ExpressionResult(true, varPath, null);
         }
 
+        bool TryResolveInvocationTargetMethodSymbol(SemanticModel semantic, IdentifierNameSyntax identifier, out IMethodSymbol methodSymbol) {
+            methodSymbol = null;
+            if (identifier == null) {
+                return false;
+            }
+
+            if (identifier.Parent is InvocationExpressionSyntax directInvocation &&
+                ReferenceEquals(directInvocation.Expression, identifier)) {
+                methodSymbol = ResolveInvokedMethodSymbol(semantic, directInvocation);
+                return methodSymbol != null;
+            }
+
+            if (identifier.Parent is MemberAccessExpressionSyntax memberAccess &&
+                ReferenceEquals(memberAccess.Name, identifier) &&
+                memberAccess.Parent is InvocationExpressionSyntax memberInvocation &&
+                ReferenceEquals(memberInvocation.Expression, memberAccess)) {
+                methodSymbol = ResolveInvokedMethodSymbol(semantic, memberInvocation);
+                return methodSymbol != null;
+            }
+
+            return false;
+        }
+
         static string GetEmittedFunctionName(ConversionFunction function) {
             if (function == null) {
                 return string.Empty;
             }
 
-            return function.Name;
+            return function.Name + GetRefModifierSuffix(function);
+        }
+
+        static string GetEmittedFunctionName(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return string.Empty;
+            }
+
+            return methodSymbol.Name + GetRefModifierSuffix(methodSymbol);
+        }
+
+        static string GetConversionOperatorFunctionName(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return string.Empty;
+            }
+
+            string operatorPrefix = methodSymbol.Name switch {
+                "op_Implicit" => "op_Implicit_to_",
+                "op_Explicit" => "op_Explicit_to_",
+                _ => methodSymbol.Name + "_to_"
+            };
+
+            string targetName = methodSymbol.ReturnType?.OriginalDefinition?.MetadataName
+                ?? methodSymbol.ReturnType?.MetadataName
+                ?? methodSymbol.ReturnType?.Name
+                ?? "Unknown";
+            return operatorPrefix + targetName.Replace('`', '_');
+        }
+
+        static string GetRefModifierSuffix(ConversionFunction function) {
+            if (function?.InParameters == null || function.InParameters.Count == 0) {
+                return string.Empty;
+            }
+
+            List<string> suffixParts = new List<string>();
+            for (int index = 0; index < function.InParameters.Count; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                if ((parameter.Modifier & ParameterModifier.Ref) != 0) {
+                    suffixParts.Add($"ref{index}");
+                } else if ((parameter.Modifier & ParameterModifier.Out) != 0) {
+                    suffixParts.Add($"out{index}");
+                }
+            }
+
+            return suffixParts.Count == 0
+                ? string.Empty
+                : "__" + string.Join("_", suffixParts);
+        }
+
+        static string GetRefModifierSuffix(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null || methodSymbol.Parameters.Length == 0) {
+                return string.Empty;
+            }
+
+            List<string> suffixParts = new List<string>();
+            for (int index = 0; index < methodSymbol.Parameters.Length; index++) {
+                IParameterSymbol parameter = methodSymbol.Parameters[index];
+                if (parameter.RefKind == RefKind.Ref) {
+                    suffixParts.Add($"ref{index}");
+                } else if (parameter.RefKind == RefKind.Out) {
+                    suffixParts.Add($"out{index}");
+                }
+            }
+
+            return suffixParts.Count == 0
+                ? string.Empty
+                : "__" + string.Join("_", suffixParts);
         }
 
         protected override ExpressionResult ProcessObjectCreationExpressionSyntax(SemanticModel semantic, LayerContext context, ObjectCreationExpressionSyntax objectCreation, List<string> lines) {
@@ -1285,8 +2048,60 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
             }
 
+            if (TryProcessDelegateObjectCreationExpression(semantic, context, objectCreation, lines, out VariableType delegateObjectCreationType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+            }
+
             int diagnosticCount = GetDiagnosticCount();
             BuildObjectCreationExpression(semantic, context, objectCreation, lines);
+
+            return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
+        }
+
+        protected override ExpressionResult ProcessImplicitObjectCreationExpressionSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax implicitObjectCreation,
+            List<string> lines) {
+            ITypeSymbol createdTypeSymbol = semantic.GetTypeInfo(implicitObjectCreation).Type ?? semantic.GetTypeInfo(implicitObjectCreation).ConvertedType;
+            if (createdTypeSymbol == null) {
+                return new ExpressionResult(false);
+            }
+
+            TypeSyntax explicitTypeSyntax = SyntaxFactory.ParseTypeName(createdTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+
+            if (TryProcessDelegateObjectCreationExpression(
+                semantic,
+                context,
+                explicitTypeSyntax,
+                createdTypeSymbol,
+                implicitObjectCreation.ArgumentList,
+                lines,
+                out VariableType delegateObjectCreationType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+            }
+
+            if (implicitObjectCreation.Initializer is InitializerExpressionSyntax initializer &&
+                IsObjectInitializer(initializer)) {
+                return ProcessObjectInitializerCreation(
+                    semantic,
+                    context,
+                    explicitTypeSyntax,
+                    createdTypeSymbol,
+                    implicitObjectCreation.ArgumentList,
+                    initializer,
+                    lines);
+            }
+
+            int diagnosticCount = GetDiagnosticCount();
+            BuildObjectCreationExpression(
+                semantic,
+                context,
+                explicitTypeSyntax,
+                createdTypeSymbol,
+                implicitObjectCreation.ArgumentList,
+                null,
+                lines);
 
             return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
         }
@@ -1355,6 +2170,24 @@ namespace cs2.cpp {
             ObjectCreationExpressionSyntax objectCreation,
             InitializerExpressionSyntax initializer,
             List<string> lines) {
+            return ProcessObjectInitializerCreation(
+                semantic,
+                context,
+                objectCreation.Type,
+                ResolveObjectCreationTypeSymbol(semantic, objectCreation),
+                objectCreation.ArgumentList,
+                initializer,
+                lines);
+        }
+
+        ExpressionResult ProcessObjectInitializerCreation(
+            SemanticModel semantic,
+            LayerContext context,
+            TypeSyntax objectCreationTypeSyntax,
+            ITypeSymbol objectCreationTypeSymbol,
+            ArgumentListSyntax argumentList,
+            InitializerExpressionSyntax initializer,
+            List<string> lines) {
             string objectName = CreateTemporaryName("__object");
 
             lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
@@ -1362,7 +2195,14 @@ namespace cs2.cpp {
             lines.Add(objectName);
             lines.Add(" = ");
 
-            ExpressionResult result = BuildObjectCreationExpression(semantic, context, objectCreation, lines);
+            ExpressionResult result = BuildObjectCreationExpression(
+                semantic,
+                context,
+                objectCreationTypeSyntax,
+                objectCreationTypeSymbol,
+                argumentList,
+                null,
+                lines);
             lines.Add(";\n");
             string memberAccessOperator = UsesDirectMemberAccess(result) ? "." : "->";
 
@@ -1371,7 +2211,7 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                if (TryAppendObjectInitializerSetterAssignment(semantic, context, objectCreation, objectName, memberAccessOperator, assignment, lines)) {
+                if (TryAppendObjectInitializerSetterAssignment(semantic, context, objectCreationTypeSyntax, objectName, memberAccessOperator, assignment, lines)) {
                     continue;
                 }
 
@@ -1404,6 +2244,11 @@ namespace cs2.cpp {
             LayerContext context,
             ExpressionSyntax expression,
             List<string> lines) {
+            if (expression is IdentifierNameSyntax identifierName) {
+                lines.Add(identifierName.Identifier.Text);
+                return;
+            }
+
             string targetText = RenderExpressionText(semantic, context, expression);
             targetText = StripObjectInitializerReceiverPrefix(targetText);
             lines.Add(targetText);
@@ -1443,12 +2288,30 @@ namespace cs2.cpp {
             LayerContext context,
             ObjectCreationExpressionSyntax objectCreation,
             List<string> lines) {
-            if (IsSystemObjectType(semantic, objectCreation.Type)) {
+            return BuildObjectCreationExpression(
+                semantic,
+                context,
+                objectCreation.Type,
+                ResolveObjectCreationTypeSymbol(semantic, objectCreation),
+                objectCreation.ArgumentList,
+                objectCreation,
+                lines);
+        }
+
+        ExpressionResult BuildObjectCreationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            TypeSyntax objectCreationTypeSyntax,
+            ITypeSymbol objectCreationTypeSymbol,
+            ArgumentListSyntax argumentList,
+            ObjectCreationExpressionSyntax semanticObjectCreation,
+            List<string> lines) {
+            if (IsSystemObjectType(semantic, objectCreationTypeSyntax)) {
                 lines.Add("new char[1]");
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
             }
 
-            if (TryProcessStringObjectCreation(semantic, context, objectCreation, lines, out VariableType stringObjectCreationType)) {
+            if (TryProcessStringObjectCreation(semantic, context, objectCreationTypeSyntax, argumentList, lines, out VariableType stringObjectCreationType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, stringObjectCreationType);
             }
 
@@ -1457,12 +2320,14 @@ namespace cs2.cpp {
             VariableType cppType = sourceType;
             bool hasConvertedType = false;
             CPPTypeData cppTypeData = default;
-            string objectCreationTypeName = objectCreation.Type.ToString();
-            ITypeSymbol objectCreationTypeSymbol = ResolveObjectCreationTypeSymbol(semantic, objectCreation);
+            string objectCreationTypeName = objectCreationTypeSyntax.ToString();
             int generatedTypeArity = objectCreationTypeSymbol is INamedTypeSymbol namedObjectCreationTypeSymbol
                 ? namedObjectCreationTypeSymbol.TypeArguments.Length
                 : 0;
-            ConversionClass explicitGeneratedClass = context.Program.FindGeneratedClass(objectCreationTypeName, generatedTypeArity);
+            ConversionClass explicitGeneratedClass = objectCreationTypeSymbol is INamedTypeSymbol namedGeneratedObjectCreationTypeSymbol
+                ? context.Program.FindGeneratedClass(namedGeneratedObjectCreationTypeSymbol)
+                : null;
+            explicitGeneratedClass ??= context.Program.FindGeneratedClass(objectCreationTypeName, generatedTypeArity);
             bool hasRuntimeObjectTypeMapping = TryMapObjectCreationRuntimeTypeName(
                 objectCreationTypeName,
                 objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
@@ -1478,11 +2343,14 @@ namespace cs2.cpp {
 
                 sourceType = VariableUtil.GetVarType(runtimeObjectTypeName);
             } else if (explicitGeneratedClass != null) {
-                sourceType = VariableUtil.GetVarType(objectCreation.Type, semantic);
+                sourceType = objectCreationTypeSymbol != null
+                    ? VariableUtil.GetVarType(objectCreationTypeSymbol)
+                    : VariableUtil.GetVarType(objectCreationTypeSyntax, semantic);
             } else {
                 if (objectCreationTypeSymbol != null) {
                     sourceType = VariableUtil.GetVarType(objectCreationTypeSymbol);
-                } else if (TryGetExpressionTypeSymbol(semantic, objectCreation, out ITypeSymbol createdTypeSymbol)) {
+                } else if (semanticObjectCreation != null &&
+                    TryGetExpressionTypeSymbol(semantic, semanticObjectCreation, out ITypeSymbol createdTypeSymbol)) {
                     sourceType = VariableUtil.GetVarType(createdTypeSymbol);
                 }
             }
@@ -1494,25 +2362,26 @@ namespace cs2.cpp {
             }
 
             bool emitHeapAllocation = !hasConvertedType
-                ? !(IsValueRuntimeTypeName(objectCreation.Type.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
+                ? !(IsValueRuntimeTypeName(objectCreationTypeSyntax.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
                 : cppTypeData.IsPointer;
-            IMethodSymbol constructorSymbol = ResolveObjectCreationConstructorSymbol(semantic, objectCreation);
+            IMethodSymbol constructorSymbol = semanticObjectCreation != null
+                ? ResolveObjectCreationConstructorSymbol(semantic, semanticObjectCreation)
+                : ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, argumentList);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
                 ? constructorSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
-            int explicitArgumentCount = objectCreation.ArgumentList?.Arguments.Count ?? 0;
+            int explicitArgumentCount = argumentList?.Arguments.Count ?? 0;
             bool hasOptionalConstructorArguments = constructorParameterSymbols.Length > explicitArgumentCount &&
                 constructorParameterSymbols.Skip(explicitArgumentCount).Any(parameter => parameter.HasExplicitDefaultValue);
             bool requiresStableArgumentEvaluation = explicitArgumentCount > 1 &&
-                objectCreation.ArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
-
+                argumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
             if (requiresStableArgumentEvaluation) {
                 lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
 
                 List<string> temporaryArgumentNames = new List<string>();
                 List<string> constructorBeforeLines = new List<string>();
                 for (int i = 0; i < explicitArgumentCount; i++) {
-                    ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
+                    ArgumentSyntax arg = argumentList.Arguments[i];
                     string temporaryName = CreateTemporaryName("__ctor_arg");
                     List<string> argumentExpressionLines = new List<string>();
 
@@ -1555,7 +2424,7 @@ namespace cs2.cpp {
                 AppendObjectCreationTypePrefix(
                     semantic,
                     context,
-                    objectCreation,
+                    objectCreationTypeSyntax,
                     lines,
                     emitHeapAllocation,
                     hasConvertedType,
@@ -1565,7 +2434,25 @@ namespace cs2.cpp {
                     runtimeObjectTypeName);
                 lines.Add("(");
                 for (int i = 0; i < temporaryArgumentNames.Count; i++) {
-                    lines.Add(temporaryArgumentNames[i]);
+                    IParameterSymbol parameterSymbol = i < constructorParameterSymbols.Length
+                        ? constructorParameterSymbols[i]
+                        : null;
+                    if (ShouldCastConstructorArgumentForReferenceOverload(constructorSymbol, i, parameterSymbol)) {
+                        AppendConstructorReferenceDisambiguation(
+                            context,
+                            parameterSymbol,
+                            new List<string> { temporaryArgumentNames[i] },
+                            lines);
+                    } else if (ShouldWrapConstructorArgumentForByValueOverload(constructorSymbol, i, parameterSymbol)) {
+                        AppendConstructorByValueDisambiguation(
+                            context,
+                            parameterSymbol,
+                            new List<string> { temporaryArgumentNames[i] },
+                            lines);
+                    } else {
+                        lines.Add(temporaryArgumentNames[i]);
+                    }
+
                     if (i != temporaryArgumentNames.Count - 1 ||
                         (i == temporaryArgumentNames.Count - 1 && hasOptionalConstructorArguments)) {
                         lines.Add(", ");
@@ -1581,7 +2468,7 @@ namespace cs2.cpp {
             AppendObjectCreationTypePrefix(
                 semantic,
                 context,
-                objectCreation,
+                objectCreationTypeSyntax,
                 lines,
                 emitHeapAllocation,
                 hasConvertedType,
@@ -1591,9 +2478,9 @@ namespace cs2.cpp {
                 runtimeObjectTypeName);
             lines.Add("(");
             List<string> argumentLines = new List<string>();
-            if (objectCreation.ArgumentList != null) {
-                for (int i = 0; i < objectCreation.ArgumentList.Arguments.Count; i++) {
-                    ArgumentSyntax arg = objectCreation.ArgumentList.Arguments[i];
+            if (argumentList != null) {
+                for (int i = 0; i < argumentList.Arguments.Count; i++) {
+                    ArgumentSyntax arg = argumentList.Arguments[i];
                     List<string> argumentExpressionLines = new List<string>();
 
                     int startArg = context.DepthClass;
@@ -1606,6 +2493,7 @@ namespace cs2.cpp {
                     List<string> beforeLines = argumentResult.BeforeLines != null
                         ? new List<string>(argumentResult.BeforeLines)
                         : new List<string>();
+                    int argumentStartIndex = argumentLines.Count;
                     AppendInvocationArgument(
                         semantic,
                         context,
@@ -1616,12 +2504,18 @@ namespace cs2.cpp {
                         beforeLines,
                         argumentLines);
 
+                    if (ShouldCastConstructorArgumentForReferenceOverload(constructorSymbol, i, parameterSymbol)) {
+                        CastConstructorArgumentRangeToReference(context, parameterSymbol, argumentLines, argumentStartIndex);
+                    } else if (ShouldWrapConstructorArgumentForByValueOverload(constructorSymbol, i, parameterSymbol)) {
+                        WrapConstructorArgumentRange(context, parameterSymbol, argumentLines, argumentStartIndex);
+                    }
+
                     if (beforeLines.Count > 0) {
                         lines.AddRange(beforeLines);
                     }
 
-                    if (i != objectCreation.ArgumentList.Arguments.Count - 1 ||
-                        (i == objectCreation.ArgumentList.Arguments.Count - 1 && hasOptionalConstructorArguments)) {
+                    if (i != argumentList.Arguments.Count - 1 ||
+                        (i == argumentList.Arguments.Count - 1 && hasOptionalConstructorArguments)) {
                         argumentLines.Add(", ");
                     }
                 }
@@ -1633,10 +2527,268 @@ namespace cs2.cpp {
             return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
         }
 
-        void AppendObjectCreationTypePrefix(
+        static bool ShouldWrapConstructorArgumentForByValueOverload(
+            IMethodSymbol constructorSymbol,
+            int argumentIndex,
+            IParameterSymbol parameterSymbol) {
+            if (constructorSymbol == null ||
+                constructorSymbol.MethodKind != MethodKind.Constructor ||
+                parameterSymbol == null ||
+                parameterSymbol.RefKind != RefKind.None ||
+                argumentIndex < 0 ||
+                argumentIndex >= constructorSymbol.Parameters.Length ||
+                constructorSymbol.ContainingType == null) {
+                return false;
+            }
+
+            foreach (IMethodSymbol candidate in constructorSymbol.ContainingType.InstanceConstructors) {
+                if (candidate == null ||
+                    SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, constructorSymbol.OriginalDefinition) ||
+                    candidate.Parameters.Length != constructorSymbol.Parameters.Length ||
+                    candidate.Parameters[argumentIndex].RefKind != RefKind.Ref) {
+                    continue;
+                }
+
+                bool parametersMatch = true;
+                for (int parameterIndex = 0; parameterIndex < constructorSymbol.Parameters.Length; parameterIndex++) {
+                    IParameterSymbol selectedParameter = constructorSymbol.Parameters[parameterIndex];
+                    IParameterSymbol candidateParameter = candidate.Parameters[parameterIndex];
+                    if (!SymbolEqualityComparer.Default.Equals(selectedParameter.Type, candidateParameter.Type)) {
+                        parametersMatch = false;
+                        break;
+                    }
+
+                    if (parameterIndex != argumentIndex &&
+                        selectedParameter.RefKind != candidateParameter.RefKind) {
+                        parametersMatch = false;
+                        break;
+                    }
+                }
+
+                if (parametersMatch) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool ShouldCastConstructorArgumentForReferenceOverload(
+            IMethodSymbol constructorSymbol,
+            int argumentIndex,
+            IParameterSymbol parameterSymbol) {
+            if (constructorSymbol == null ||
+                constructorSymbol.MethodKind != MethodKind.Constructor ||
+                parameterSymbol == null ||
+                parameterSymbol.RefKind != RefKind.Ref ||
+                argumentIndex < 0 ||
+                argumentIndex >= constructorSymbol.Parameters.Length ||
+                constructorSymbol.ContainingType == null) {
+                return false;
+            }
+
+            foreach (IMethodSymbol candidate in constructorSymbol.ContainingType.InstanceConstructors) {
+                if (candidate == null ||
+                    SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, constructorSymbol.OriginalDefinition) ||
+                    candidate.Parameters.Length != constructorSymbol.Parameters.Length ||
+                    candidate.Parameters[argumentIndex].RefKind != RefKind.None) {
+                    continue;
+                }
+
+                bool parametersMatch = true;
+                for (int parameterIndex = 0; parameterIndex < constructorSymbol.Parameters.Length; parameterIndex++) {
+                    IParameterSymbol selectedParameter = constructorSymbol.Parameters[parameterIndex];
+                    IParameterSymbol candidateParameter = candidate.Parameters[parameterIndex];
+                    if (!SymbolEqualityComparer.Default.Equals(selectedParameter.Type, candidateParameter.Type)) {
+                        parametersMatch = false;
+                        break;
+                    }
+
+                    if (parameterIndex != argumentIndex &&
+                        selectedParameter.RefKind != candidateParameter.RefKind) {
+                        parametersMatch = false;
+                        break;
+                    }
+                }
+
+                if (parametersMatch) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void WrapConstructorArgumentRange(
+            LayerContext context,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentLines,
+            int startIndex) {
+            if (parameterSymbol == null ||
+                argumentLines == null ||
+                startIndex < 0 ||
+                startIndex >= argumentLines.Count) {
+                return;
+            }
+
+            List<string> existingArgumentLines = argumentLines.GetRange(startIndex, argumentLines.Count - startIndex);
+            argumentLines.RemoveRange(startIndex, argumentLines.Count - startIndex);
+            AppendConstructorByValueDisambiguation(context, parameterSymbol, existingArgumentLines, argumentLines);
+        }
+
+        void CastConstructorArgumentRangeToReference(
+            LayerContext context,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentLines,
+            int startIndex) {
+            if (parameterSymbol == null ||
+                argumentLines == null ||
+                startIndex < 0 ||
+                startIndex >= argumentLines.Count) {
+                return;
+            }
+
+            List<string> existingArgumentLines = argumentLines.GetRange(startIndex, argumentLines.Count - startIndex);
+            argumentLines.RemoveRange(startIndex, argumentLines.Count - startIndex);
+            AppendConstructorReferenceDisambiguation(context, parameterSymbol, existingArgumentLines, argumentLines);
+        }
+
+        void AppendConstructorByValueDisambiguation(
+            LayerContext context,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentExpressionLines,
+            List<string> lines) {
+            VariableType parameterType = VariableUtil.GetVarType(parameterSymbol.Type);
+            VariableType cppParameterType = ConvertToCPPType(parameterType, out CPPTypeData cppTypeData);
+            string parameterTypeName = QualifyRenderedCppTypeName(cppParameterType.ToCPPString(context.Program), context);
+            lines.Add(parameterTypeName);
+            lines.Add("(");
+            lines.AddRange(argumentExpressionLines);
+            lines.Add(")");
+        }
+
+        void AppendConstructorReferenceDisambiguation(
+            LayerContext context,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentExpressionLines,
+            List<string> lines) {
+            VariableType parameterType = VariableUtil.GetVarType(parameterSymbol.Type);
+            VariableType cppParameterType = ConvertToCPPType(parameterType, out CPPTypeData cppTypeData);
+            string parameterTypeName = QualifyRenderedCppTypeName(cppParameterType.ToCPPString(context.Program), context);
+            lines.Add("static_cast<");
+            lines.Add(parameterTypeName);
+            lines.Add("&>(");
+            lines.AddRange(argumentExpressionLines);
+            lines.Add(")");
+        }
+
+        bool TryProcessDelegateObjectCreationExpression(
             SemanticModel semantic,
             LayerContext context,
             ObjectCreationExpressionSyntax objectCreation,
+            List<string> lines,
+            out VariableType delegateObjectCreationType) {
+            return TryProcessDelegateObjectCreationExpression(
+                semantic,
+                context,
+                objectCreation?.Type,
+                ResolveObjectCreationTypeSymbol(semantic, objectCreation),
+                objectCreation?.ArgumentList,
+                lines,
+                out delegateObjectCreationType);
+        }
+
+        bool TryProcessDelegateObjectCreationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            TypeSyntax objectCreationTypeSyntax,
+            ITypeSymbol objectCreationTypeSymbol,
+            ArgumentListSyntax argumentList,
+            List<string> lines,
+            out VariableType delegateObjectCreationType) {
+            delegateObjectCreationType = null;
+            if (semantic == null ||
+                context == null ||
+                objectCreationTypeSyntax == null ||
+                objectCreationTypeSymbol is not INamedTypeSymbol namedDelegateTypeSymbol ||
+                namedDelegateTypeSymbol.TypeKind != TypeKind.Delegate ||
+                lines == null) {
+                return false;
+            }
+
+            delegateObjectCreationType = VariableUtil.GetVarType(namedDelegateTypeSymbol);
+            RegisterGeneratedTypeReferences(context, delegateObjectCreationType);
+            VariableType cppType = ConvertToCPPType(delegateObjectCreationType, out CPPTypeData typeData);
+            string emittedDelegateTypeName = cppType != null
+                ? QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context)
+                : QualifyRenderedCppTypeName(GetCustomDelegateWrapperTypeName(namedDelegateTypeSymbol, context), context);
+
+            if (typeData.IsPointer) {
+                lines.Add("new ");
+            }
+
+            lines.Add(emittedDelegateTypeName);
+            lines.Add("(");
+
+            if (argumentList != null) {
+                for (int argumentIndex = 0; argumentIndex < argumentList.Arguments.Count; argumentIndex++) {
+                    ArgumentSyntax argument = argumentList.Arguments[argumentIndex];
+                    if (!TryAppendDelegateObjectCreationArgument(semantic, context, argument.Expression, lines)) {
+                        int argumentStart = context.DepthClass;
+                        ProcessExpression(semantic, context, argument.Expression, lines);
+                        context.PopClass(argumentStart);
+                    }
+
+                    if (argumentIndex < argumentList.Arguments.Count - 1) {
+                        lines.Add(", ");
+                    }
+                }
+            }
+
+            lines.Add(")");
+            return true;
+        }
+
+        bool TryAppendDelegateObjectCreationArgument(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax argumentExpression,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                argumentExpression == null ||
+                lines == null ||
+                argumentExpression is AnonymousFunctionExpressionSyntax ||
+                !ReferenceEquals(argumentExpression.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            IMethodSymbol methodGroupSymbol = ResolveMethodSymbol(semantic.GetSymbolInfo(argumentExpression));
+            if (methodGroupSymbol == null) {
+                return false;
+            }
+
+            if (methodGroupSymbol.IsStatic) {
+                lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+                return true;
+            }
+
+            if (!TryResolveBoundDelegateReceiverText(semantic, context, argumentExpression, methodGroupSymbol, out string receiverText)) {
+                return false;
+            }
+
+            lines.Add("std::bind_front(");
+            lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+            lines.Add(", ");
+            lines.Add(receiverText);
+            lines.Add(")");
+            return true;
+        }
+
+        void AppendObjectCreationTypePrefix(
+            SemanticModel semantic,
+            LayerContext context,
+            TypeSyntax objectCreationTypeSyntax,
             List<string> lines,
             bool emitHeapAllocation,
             bool hasConvertedType,
@@ -1653,30 +2805,47 @@ namespace cs2.cpp {
             } else if (explicitGeneratedClass != null) {
                 lines.Add(QualifyRenderedCppTypeName(explicitGeneratedClass.GetEmittedTypeName(), context));
             } else if (hasConvertedType) {
-                lines.Add(QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context));
+                lines.Add(QualifyObjectCreationTypeName(cppType.ToCPPString(context.Program), context));
             } else if (hasRuntimeObjectTypeMapping) {
                 lines.Add(runtimeObjectTypeName);
             } else {
                 int startDepth = context.DepthClass;
-                ProcessExpression(semantic, context, objectCreation.Type, lines);
+                ProcessExpression(semantic, context, objectCreationTypeSyntax, lines);
                 context.PopClass(startDepth);
             }
+        }
+
+        string QualifyObjectCreationTypeName(string renderedTypeName, LayerContext context) {
+            string qualifiedTypeName = QualifyRenderedCppTypeName(renderedTypeName, context);
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName) ||
+                qualifiedTypeName.StartsWith("::", StringComparison.Ordinal)) {
+                return qualifiedTypeName;
+            }
+
+            if (qualifiedTypeName.StartsWith("Span<", StringComparison.Ordinal) ||
+                qualifiedTypeName.StartsWith("ReadOnlySpan<", StringComparison.Ordinal) ||
+                qualifiedTypeName.StartsWith("Array<", StringComparison.Ordinal)) {
+                return $"::{qualifiedTypeName}";
+            }
+
+            return qualifiedTypeName;
         }
 
         bool TryProcessStringObjectCreation(
             SemanticModel semantic,
             LayerContext context,
-            ObjectCreationExpressionSyntax objectCreation,
+            TypeSyntax objectCreationTypeSyntax,
+            ArgumentListSyntax argumentList,
             List<string> lines,
             out VariableType resultType) {
             resultType = null;
 
-            if (!IsStringRuntimeTypeReference(semantic, objectCreation.Type) ||
-                objectCreation.ArgumentList?.Arguments.Count != 1) {
+            if (!IsStringRuntimeTypeReference(semantic, objectCreationTypeSyntax) ||
+                argumentList?.Arguments.Count != 1) {
                 return false;
             }
 
-            ArgumentSyntax sourceArgument = objectCreation.ArgumentList.Arguments[0];
+            ArgumentSyntax sourceArgument = argumentList.Arguments[0];
             if (!TryGetExpressionTypeSymbol(semantic, sourceArgument.Expression, out ITypeSymbol sourceTypeSymbol) ||
                 sourceTypeSymbol is not IArrayTypeSymbol sourceArrayTypeSymbol ||
                 sourceArrayTypeSymbol.ElementType.SpecialType != SpecialType.System_Char) {
@@ -1692,6 +2861,14 @@ namespace cs2.cpp {
         }
 
         static ITypeSymbol ResolveObjectCreationTypeSymbol(SemanticModel semantic, ObjectCreationExpressionSyntax objectCreation) {
+            if (semantic == null || objectCreation == null) {
+                return null;
+            }
+
+            if (!ReferenceEquals(objectCreation.SyntaxTree, semantic.SyntaxTree)) {
+                return ResolveObjectCreationTypeSymbolFromText(semantic, objectCreation.Type?.ToString());
+            }
+
             if (semantic?.GetOperation(objectCreation) is IObjectCreationOperation objectCreationOperation) {
                 if (!IsWeakRecoveredTypeSymbol(objectCreationOperation.Constructor?.ContainingType)) {
                     return objectCreationOperation.Constructor.ContainingType;
@@ -1729,18 +2906,145 @@ namespace cs2.cpp {
         IMethodSymbol ResolveObjectCreationConstructorSymbol(SemanticModel semantic, ObjectCreationExpressionSyntax objectCreation) {
             int argumentCount = objectCreation.ArgumentList?.Arguments.Count ?? 0;
 
+            if (semantic == null || objectCreation == null) {
+                return null;
+            }
+
+            if (!ReferenceEquals(objectCreation.SyntaxTree, semantic.SyntaxTree)) {
+                if (ResolveObjectCreationTypeSymbol(semantic, objectCreation) is INamedTypeSymbol fallbackNamedTypeSymbol) {
+                    return fallbackNamedTypeSymbol.InstanceConstructors
+                        .FirstOrDefault(constructorSymbol => CanMethodMatchInvocationArguments(constructorSymbol, argumentCount));
+                }
+
+                return null;
+            }
+
+            SymbolInfo objectCreationSymbolInfo = semantic.GetSymbolInfo(objectCreation);
+            IMethodSymbol candidateConstructorSymbol = ResolveBestObjectCreationCandidateMethodSymbol(semantic, objectCreation, objectCreationSymbolInfo, argumentCount);
+            if (candidateConstructorSymbol != null) {
+                return candidateConstructorSymbol;
+            }
+
             if (semantic.GetOperation(objectCreation) is IObjectCreationOperation objectCreationOperation &&
                 CanMethodMatchInvocationArguments(objectCreationOperation.Constructor, argumentCount)) {
                 return objectCreationOperation.Constructor;
             }
 
-            SymbolInfo objectCreationSymbolInfo = semantic.GetSymbolInfo(objectCreation);
             IMethodSymbol constructorSymbol = ResolveMethodSymbol(objectCreationSymbolInfo);
             if (CanMethodMatchInvocationArguments(constructorSymbol, argumentCount)) {
                 return constructorSymbol;
             }
 
-            return ResolveBestInvocationCandidateMethodSymbol(objectCreationSymbolInfo, argumentCount);
+            return ResolveBestObjectCreationCandidateMethodSymbol(semantic, objectCreation, objectCreationSymbolInfo, argumentCount) ??
+                ResolveBestInvocationCandidateMethodSymbol(objectCreationSymbolInfo, argumentCount);
+        }
+
+        static IMethodSymbol ResolveObjectCreationConstructorSymbol(ITypeSymbol objectCreationTypeSymbol, ArgumentListSyntax argumentList) {
+            if (objectCreationTypeSymbol is not INamedTypeSymbol namedTypeSymbol) {
+                return null;
+            }
+
+            int argumentCount = argumentList?.Arguments.Count ?? 0;
+            return namedTypeSymbol.InstanceConstructors
+                .FirstOrDefault(constructorSymbol => CanMethodMatchInvocationArguments(constructorSymbol, argumentCount));
+        }
+
+        static ITypeSymbol ResolveObjectCreationTypeSymbolFromText(SemanticModel semantic, string typeName) {
+            if (semantic?.Compilation == null || string.IsNullOrWhiteSpace(typeName)) {
+                return null;
+            }
+
+            string normalizedTypeName = typeName.Replace("global::", string.Empty, StringComparison.Ordinal);
+            ITypeSymbol resolvedTypeSymbol = semantic.Compilation.GetTypeByMetadataName(normalizedTypeName);
+            if (resolvedTypeSymbol != null) {
+                return resolvedTypeSymbol;
+            }
+
+            string simpleTypeName = normalizedTypeName.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            if (string.IsNullOrWhiteSpace(simpleTypeName)) {
+                return null;
+            }
+
+            foreach (INamedTypeSymbol candidateTypeSymbol in semantic.Compilation.GetSymbolsWithName(simpleTypeName).OfType<INamedTypeSymbol>()) {
+                if (string.Equals(candidateTypeSymbol.ToDisplayString(), normalizedTypeName, StringComparison.Ordinal) ||
+                    string.Equals(candidateTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), $"global::{normalizedTypeName}", StringComparison.Ordinal)) {
+                    return candidateTypeSymbol;
+                }
+            }
+
+            return null;
+        }
+
+        static IMethodSymbol ResolveBestObjectCreationCandidateMethodSymbol(
+            SemanticModel semantic,
+            ObjectCreationExpressionSyntax objectCreation,
+            SymbolInfo symbolInfo,
+            int argumentCount) {
+            return symbolInfo.CandidateSymbols
+                .OfType<IMethodSymbol>()
+                .Select(candidateMethodSymbol => new {
+                    Method = candidateMethodSymbol,
+                    Score = ScoreObjectCreationCandidateMethod(semantic, objectCreation, candidateMethodSymbol, argumentCount)
+                })
+                .Where(candidate => candidate.Score >= 0)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenByDescending(candidate => candidate.Method.Parameters.Length == argumentCount)
+                .ThenByDescending(candidate => candidate.Method.Parameters.Length)
+                .Select(candidate => candidate.Method)
+                .FirstOrDefault();
+        }
+
+        static int ScoreObjectCreationCandidateMethod(
+            SemanticModel semantic,
+            ObjectCreationExpressionSyntax objectCreation,
+            IMethodSymbol methodSymbol,
+            int argumentCount) {
+            if (!CanMethodMatchInvocationArguments(methodSymbol, argumentCount)) {
+                return -1;
+            }
+
+            int score = methodSymbol.Parameters.Length == argumentCount ? 1000 : 0;
+            SeparatedSyntaxList<ArgumentSyntax> arguments = objectCreation.ArgumentList?.Arguments ?? default;
+            for (int argumentIndex = 0; argumentIndex < arguments.Count; argumentIndex++) {
+                IParameterSymbol parameterSymbol = ResolveInvocationParameter(methodSymbol, argumentIndex);
+                if (parameterSymbol == null) {
+                    return -1;
+                }
+
+                if (!MatchesArgumentModifier(arguments[argumentIndex], parameterSymbol)) {
+                    return -1;
+                }
+
+                ITypeSymbol argumentTypeSymbol = semantic.GetTypeInfo(arguments[argumentIndex].Expression).ConvertedType ??
+                    semantic.GetTypeInfo(arguments[argumentIndex].Expression).Type;
+                if (argumentTypeSymbol == null) {
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(argumentTypeSymbol, parameterSymbol.Type)) {
+                    score += 100;
+                    continue;
+                }
+
+                Conversion conversion = semantic.ClassifyConversion(arguments[argumentIndex].Expression, parameterSymbol.Type);
+                if (!conversion.Exists) {
+                    return -1;
+                }
+
+                if (conversion.IsIdentity) {
+                    score += 90;
+                } else if (conversion.IsImplicit) {
+                    score += 60;
+                } else if (conversion.IsReference) {
+                    score += 40;
+                } else if (conversion.IsBoxing || conversion.IsUnboxing) {
+                    score += 20;
+                } else {
+                    score += 1;
+                }
+            }
+
+            return score;
         }
 
         static bool TryMapObjectCreationRuntimeTypeName(
@@ -1888,7 +3192,13 @@ namespace cs2.cpp {
                 lines.Add(GetContainingTypeAccessName(context, staticReceiverTypeSymbol));
                 result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(staticReceiverTypeSymbol));
             } else {
-                result = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+                List<string> receiverLines = new List<string>();
+                result = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+                if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                    lines.AddRange(result.BeforeLines);
+                }
+
+                lines.AddRange(receiverLines);
             }
 
             if (result.Processed) {
@@ -1941,6 +3251,9 @@ namespace cs2.cpp {
                     (memberAccess.Expression is ElementAccessExpressionSyntax elementAccessExpression &&
                      UsesDirectMemberAccess(semantic, elementAccessExpression.Expression)) ||
                     UsesDirectMemberAccess(memberSymbol);
+                if (IsPointerBackedExpressionType(context, semantic, memberAccess.Expression, result.Type)) {
+                    useDirectMemberAccess = false;
+                }
 
                 IPropertySymbol resolvedPropertySymbol = memberSymbol as IPropertySymbol;
                 if (resolvedPropertySymbol == null &&
@@ -1959,7 +3272,8 @@ namespace cs2.cpp {
                     return new ExpressionResult(true, propertyPath, propertyType);
                 }
 
-                if (memberAccess.Name is IdentifierNameSyntax memberIdentifier &&
+                if (memberSymbol == null &&
+                    memberAccess.Name is IdentifierNameSyntax memberIdentifier &&
                     TryResolveGeneratedPropertyGetter(context, semantic, memberAccess.Expression, memberIdentifier.Identifier.Text, out VariableType generatedPropertyType)) {
                     AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
                     lines.Add($"get_{memberIdentifier.Identifier.Text}()");
@@ -1981,12 +3295,85 @@ namespace cs2.cpp {
                     return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
                 }
 
-                ExpressionResult memberNameResult = ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
+                ConversionClass staticReceiverGeneratedClass = useStaticAccess
+                    ? TryResolveGeneratedReceiverClass(context, result.Type)
+                    : null;
+
+                if (memberAccess.Parent is InvocationExpressionSyntax containingInvocation &&
+                    ReferenceEquals(containingInvocation.Expression, memberAccess)) {
+                    IMethodSymbol invokedMemberMethodSymbol = ResolveInvokedMethodSymbol(semantic, containingInvocation);
+                    if (invokedMemberMethodSymbol != null &&
+                        (TryResolveGeneratedContainingClass(invokedMemberMethodSymbol, out _) ||
+                         staticReceiverGeneratedClass != null)) {
+                        if (ShouldEmitDependentTemplateQualifier(invokedMemberMethodSymbol, ReceiverRequiresDependentTemplateQualifier(semantic, memberAccess.Expression))) {
+                            lines.Add("template ");
+                        }
+
+                        lines.Add(GetEmittedFunctionName(invokedMemberMethodSymbol));
+                        AppendInvocationGenericArgumentsFromSyntax(semantic, context, containingInvocation.Expression, lines);
+                        VariableType resolvedInvocationType = ResolveMemberAccessResultType(invokedMemberMethodSymbol) ?? VariableUtil.GetVarType(invokedMemberMethodSymbol.ReturnType);
+                        VariablePath resolvedInvocationPath = ResolveMemberAccessResultPath(useStaticAccess, result.VarPath, invokedMemberMethodSymbol);
+                        return new ExpressionResult(true, resolvedInvocationPath, resolvedInvocationType);
+                    }
+                }
+
+                if (useStaticAccess &&
+                    result.Type?.IsEnum == true &&
+                    memberAccess.Name is IdentifierNameSyntax enumMemberIdentifier) {
+                    lines.Add(enumMemberIdentifier.Identifier.Text);
+                    return new ExpressionResult(true, VariablePath.Static, result.Type);
+                }
+
+                ConversionClass receiverGeneratedClass = !useStaticAccess
+                    ? TryResolveGeneratedReceiverClass(context, result.Type)
+                    : staticReceiverGeneratedClass;
+                ExpressionResult memberNameResult = ProcessMemberNameWithReceiverContext(
+                    semantic,
+                    context,
+                    memberAccess.Name,
+                    lines,
+                    refTypes,
+                    receiverGeneratedClass);
                 VariableType resolvedMemberType = ResolveMemberAccessResultType(memberSymbol) ?? memberNameResult.Type;
                 VariablePath resolvedMemberPath = ResolveMemberAccessResultPath(useStaticAccess, result.VarPath, memberSymbol);
                 return new ExpressionResult(memberNameResult.Processed, resolvedMemberPath, resolvedMemberType, memberNameResult.BeforeLines, memberNameResult.AfterLines);
             }
             return ProcessExpression(semantic, context, memberAccess.Name, lines, refTypes);
+        }
+
+        ExpressionResult ProcessMemberNameWithReceiverContext(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax memberNameExpression,
+            List<string> lines,
+            List<ExpressionResult> refTypes,
+            ConversionClass receiverGeneratedClass) {
+            int startDepth = context.DepthClass;
+            if (receiverGeneratedClass != null) {
+                context.AddClass(receiverGeneratedClass);
+            }
+
+            ExpressionResult memberNameResult = ProcessExpression(semantic, context, memberNameExpression, lines, refTypes);
+            context.PopClass(startDepth);
+            return memberNameResult;
+        }
+
+        ConversionClass TryResolveGeneratedReceiverClass(LayerContext context, VariableType receiverType) {
+            if (context?.Program == null || receiverType == null) {
+                return null;
+            }
+
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(receiverType);
+            if (generatedClass != null) {
+                return generatedClass;
+            }
+
+            VariableType cppReceiverType = ConvertToCPPType(receiverType, out _);
+            if (cppReceiverType == null) {
+                return null;
+            }
+
+            return context.Program.FindGeneratedClass(cppReceiverType);
         }
 
         bool TryProcessComputedPropertyAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
@@ -2034,6 +3421,9 @@ namespace cs2.cpp {
                     IsDirectMemberAccessType(trackedReceiverType) ||
                     (memberAccess.Expression is ElementAccessExpressionSyntax elementAccessExpression &&
                      UsesDirectMemberAccess(semantic, elementAccessExpression.Expression));
+                if (IsPointerBackedExpressionType(context, semantic, memberAccess.Expression, receiverResult.Type)) {
+                    useDirectMemberAccess = false;
+                }
                 AppendMemberAccessSeparator(lines, useStaticAccess, receiverResult.VarPath, useDirectMemberAccess);
             } else {
                 return false;
@@ -2042,12 +3432,83 @@ namespace cs2.cpp {
             lines.Add($"set_{propertyName}(");
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
                 lines.Add("std::string()");
+            } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else {
                 int rightStartDepth = context.Class.Count;
-                ProcessExpression(semantic, context, assignment.Right, lines);
+                List<string> rightLines = new List<string>();
+                ProcessExpression(semantic, context, assignment.Right, rightLines);
                 context.PopClass(rightStartDepth);
+                if (!TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
+                    lines.AddRange(rightLines);
+                }
             }
             lines.Add(")");
+            return true;
+        }
+
+        bool TryProcessRefReturnPropertyAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                !TryGetAssignedPropertySymbol(semantic, assignment.Left, out IPropertySymbol propertySymbol) ||
+                propertySymbol.SetMethod != null ||
+                (!propertySymbol.ReturnsByRef && !propertySymbol.ReturnsByRefReadonly)) {
+                return false;
+            }
+
+            string propertyName = propertySymbol.Name;
+            if (assignment.Left is IdentifierNameSyntax) {
+                if (propertySymbol.IsStatic) {
+                    lines.Add(GetContainingTypeAccessName(context, propertySymbol.ContainingType));
+                    lines.Add("::");
+                } else {
+                    lines.Add("this->");
+                }
+            } else if (assignment.Left is MemberAccessExpressionSyntax memberAccess) {
+                int startDepth = context.Class.Count;
+                ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, lines);
+                context.PopClass(startDepth);
+
+                bool useStaticAccess = receiverResult.VarPath == VariablePath.Static || memberAccess.Expression is BaseExpressionSyntax;
+                if (!useStaticAccess) {
+                    ISymbol? receiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+                    if (receiverSymbol is IAliasSymbol receiverAliasSymbol) {
+                        receiverSymbol = receiverAliasSymbol.Target;
+                    }
+
+                    if (receiverSymbol is INamespaceSymbol || receiverSymbol is INamedTypeSymbol) {
+                        useStaticAccess = true;
+                    }
+                }
+
+                bool useDirectMemberAccess = UsesDirectMemberAccess(receiverResult) ||
+                    UsesDirectMemberAccess(semantic, memberAccess.Expression) ||
+                    TryResolveTrackedExpressionVariableType(context, memberAccess.Expression, out VariableType trackedReceiverType) &&
+                    IsDirectMemberAccessType(trackedReceiverType) ||
+                    (memberAccess.Expression is ElementAccessExpressionSyntax elementAccessExpression &&
+                     UsesDirectMemberAccess(semantic, elementAccessExpression.Expression));
+                if (IsPointerBackedExpressionType(context, semantic, memberAccess.Expression, receiverResult.Type)) {
+                    useDirectMemberAccess = false;
+                }
+
+                AppendMemberAccessSeparator(lines, useStaticAccess, receiverResult.VarPath, useDirectMemberAccess);
+            } else {
+                return false;
+            }
+
+            lines.Add($"get_{propertyName}()");
+            lines.Add(" = ");
+            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
+                lines.Add("std::string()");
+            } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
+            } else {
+                int rightStartDepth = context.Class.Count;
+                List<string> rightLines = new List<string>();
+                ProcessExpression(semantic, context, assignment.Right, rightLines);
+                context.PopClass(rightStartDepth);
+                if (!TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
+                    lines.AddRange(rightLines);
+                }
+            }
+
             return true;
         }
 
@@ -2141,12 +3602,38 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
-            ConversionClass generatedClass = context.Program.FindGeneratedClass(containingTypeSymbol.Name, containingTypeSymbol.TypeArguments.Length);
-            if (generatedClass != null) {
-                return generatedClass.GetEmittedTypeName();
+            VariableType sourceType = VariableUtil.GetVarType(containingTypeSymbol);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            string accessName = cppType.ToCPPString(context.Program);
+
+            if (string.IsNullOrWhiteSpace(accessName)) {
+                return containingTypeSymbol.Name;
             }
 
-            return containingTypeSymbol.Name;
+            return TrimStaticTypeAccessName(accessName);
+        }
+
+        /// <summary>
+        /// Normalizes a converted static type token so it can safely precede a C++ scope-resolution operator.
+        /// </summary>
+        /// <param name="accessName">Converted type token.</param>
+        /// <returns>Type token without leading global qualifiers or pointer suffixes.</returns>
+        static string TrimStaticTypeAccessName(string accessName) {
+            if (string.IsNullOrWhiteSpace(accessName)) {
+                return string.Empty;
+            }
+
+            string normalizedAccessName = accessName.Trim();
+            while (normalizedAccessName.StartsWith("::", StringComparison.Ordinal)) {
+                normalizedAccessName = normalizedAccessName[2..];
+            }
+
+            while (normalizedAccessName.EndsWith("*", StringComparison.Ordinal)) {
+                normalizedAccessName = normalizedAccessName[..^1].TrimEnd();
+            }
+
+            return normalizedAccessName;
         }
 
         static void AppendMemberAccessSeparator(List<string> lines, bool useStaticAccess, VariablePath receiverPath, bool useDirectMemberAccess) {
@@ -2245,7 +3732,7 @@ namespace cs2.cpp {
             return true;
         }
 
-        static bool TryProcessPrimitiveLimitMemberAccess(
+        bool TryProcessPrimitiveLimitMemberAccess(
             MemberAccessExpressionSyntax memberAccess,
             List<string> lines,
             out VariableType resultType) {
@@ -2261,6 +3748,10 @@ namespace cs2.cpp {
                     identifierName.Identifier.Text,
                     out string limitLiteral)) {
                 return false;
+            }
+
+            if (limitLiteral.StartsWith("Number::", StringComparison.Ordinal)) {
+                RegisterRuntimeRequirement("Number");
             }
 
             lines.Add(limitLiteral);
@@ -2283,6 +3774,15 @@ namespace cs2.cpp {
                         case "MinValue":
                             limitLiteral = "-3.4028234663852886e38f";
                             return true;
+                        case "PositiveInfinity":
+                            limitLiteral = "Number::PositiveInfinity<float>()";
+                            return true;
+                        case "NegativeInfinity":
+                            limitLiteral = "Number::NegativeInfinity<float>()";
+                            return true;
+                        case "NaN":
+                            limitLiteral = "Number::NaN<float>()";
+                            return true;
                     }
                     break;
                 case "double":
@@ -2292,6 +3792,15 @@ namespace cs2.cpp {
                             return true;
                         case "MinValue":
                             limitLiteral = "-1.7976931348623157e308";
+                            return true;
+                        case "PositiveInfinity":
+                            limitLiteral = "Number::PositiveInfinity<double>()";
+                            return true;
+                        case "NegativeInfinity":
+                            limitLiteral = "Number::NegativeInfinity<double>()";
+                            return true;
+                        case "NaN":
+                            limitLiteral = "Number::NaN<double>()";
                             return true;
                     }
                     break;
@@ -2405,15 +3914,60 @@ namespace cs2.cpp {
                 (string.Equals(memberName, "IsPositiveInfinity", StringComparison.Ordinal) ||
                  string.Equals(memberName, "IsNaN", StringComparison.Ordinal) ||
                  string.Equals(memberName, "IsInfinity", StringComparison.Ordinal));
-            if (!isSupportedNumberMember) {
+            if (isSupportedNumberMember) {
+                RegisterRuntimeRequirement("Number");
+                lines.Add("Number::");
+                lines.Add(memberName);
+                resultType = VariableUtil.GetVarType("object");
+                return true;
+            }
+
+            if (!TryMapPrimitiveMathRuntimeMember(receiverSpecialType, memberName)) {
                 return false;
             }
 
-            RegisterRuntimeRequirement("Number");
-            lines.Add("Number::");
+            RegisterRuntimeRequirement("Math");
+            if (receiverSpecialType == SpecialType.System_Single) {
+                lines.Add("MathF::");
+            } else {
+                lines.Add("Math::");
+            }
             lines.Add(memberName);
-            resultType = VariableUtil.GetVarType("object");
+            resultType = receiverSpecialType switch {
+                SpecialType.System_Int32 => VariableUtil.GetVarType("int"),
+                SpecialType.System_Single => VariableUtil.GetVarType("float"),
+                SpecialType.System_Double => VariableUtil.GetVarType("double"),
+                _ => VariableUtil.GetVarType("object")
+            };
             return true;
+        }
+
+        static bool TryMapPrimitiveMathRuntimeMember(SpecialType receiverSpecialType, string memberName) {
+            if (receiverSpecialType != SpecialType.System_Int32 &&
+                receiverSpecialType != SpecialType.System_Single &&
+                receiverSpecialType != SpecialType.System_Double) {
+                return false;
+            }
+
+            return memberName switch {
+                "Abs" => true,
+                "Acos" => true,
+                "Atan2" => true,
+                "Ceiling" => true,
+                "Clamp" => true,
+                "Floor" => true,
+                "IsFinite" => true,
+                "Log2" => true,
+                "Max" => true,
+                "Min" => true,
+                "MinMagnitude" => true,
+                "Round" => true,
+                "Sin" => true,
+                "Cos" => true,
+                "Sqrt" => true,
+                "Tan" => true,
+                _ => false
+            };
         }
 
         /// <summary>
@@ -2564,14 +4118,23 @@ namespace cs2.cpp {
             int tupleElementIndex = -1;
             ITypeSymbol tupleElementTypeSymbol = null;
             VariableType tupleElementVariableType = null;
+            bool resolvedFromTrackedTupleVariable = false;
             if (!TryResolveTupleMemberAccessSymbol(semantic, memberAccess, out tupleElementIndex, out tupleElementTypeSymbol) &&
-                !TryResolveTupleMemberVariableType(context, memberAccess.Expression, identifierName.Identifier.Text, out tupleElementIndex, out tupleElementVariableType) &&
+                !(resolvedFromTrackedTupleVariable = TryResolveTupleMemberVariableType(context, memberAccess.Expression, identifierName.Identifier.Text, out tupleElementIndex, out tupleElementVariableType)) &&
                 !TryResolveTupleMemberTypeSymbol(semantic, memberAccess.Expression, identifierName.Identifier.Text, out tupleElementIndex, out tupleElementTypeSymbol)) {
                     return false;
             }
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
-            string memberAccessOperator = UsesDirectMemberAccess(semantic, memberAccess.Expression) ? "." : "->";
+            bool receiverIsRefLocal = IsRefLocalExpression(semantic, memberAccess.Expression);
+            bool trackedReceiverUsesDirectAccess = TryResolveTrackedExpressionVariableType(context, memberAccess.Expression, out VariableType trackedReceiverType) &&
+                IsDirectMemberAccessType(trackedReceiverType);
+            string memberAccessOperator = receiverIsRefLocal ||
+                resolvedFromTrackedTupleVariable ||
+                trackedReceiverUsesDirectAccess ||
+                UsesDirectMemberAccess(semantic, memberAccess.Expression)
+                ? "."
+                : "->";
             lines.Add($"{receiverText}{memberAccessOperator}Item{tupleElementIndex + 1}");
             resultType = tupleElementTypeSymbol != null
                 ? VariableUtil.GetVarType(tupleElementTypeSymbol)
@@ -2710,6 +4273,33 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Determines whether one expression resolves to a Roslyn ref local so tuple members can preserve direct value-slot access.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="expression">Expression to inspect.</param>
+        /// <returns><c>true</c> when the expression resolves to a ref local; otherwise <c>false</c>.</returns>
+        static bool IsRefLocalExpression(SemanticModel semantic, ExpressionSyntax expression) {
+            if (semantic == null || expression == null) {
+                return false;
+            }
+
+            if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                return IsRefLocalExpression(semantic, parenthesizedExpression.Expression);
+            }
+
+            if (expression is CastExpressionSyntax castExpression) {
+                return IsRefLocalExpression(semantic, castExpression.Expression);
+            }
+
+            if (expression is not IdentifierNameSyntax identifierName) {
+                return false;
+            }
+
+            return semantic.GetSymbolInfo(identifierName).Symbol is ILocalSymbol localSymbol &&
+                localSymbol.RefKind != RefKind.None;
+        }
+
+        /// <summary>
         /// Maps a tuple member name to its zero-based tuple element index and type.
         /// </summary>
         /// <param name="namedTupleType">Tuple type that owns the requested member.</param>
@@ -2754,6 +4344,10 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryResolveStaticRuntimeType(semantic, receiverExpression, out _, out _)) {
+                return;
+            }
+
             ConversionClass currentClass = context.Class[0];
 
             string referencedTypeName = string.Empty;
@@ -2784,6 +4378,58 @@ namespace cs2.cpp {
                 !currentClass.ReferencedClasses.Contains(referencedTypeName)) {
                 currentClass.ReferencedClasses.Add(referencedTypeName);
             }
+        }
+
+        void RegisterGeneratedTypeDependency(LayerContext context, string referencedTypeName) {
+            ConversionClass currentClass = context?.GetCurrentClass();
+            if (currentClass == null || string.IsNullOrWhiteSpace(referencedTypeName)) {
+                return;
+            }
+
+            if (!currentClass.ReferencedClasses.Contains(referencedTypeName)) {
+                currentClass.ReferencedClasses.Add(referencedTypeName);
+            }
+        }
+
+        void AppendInvocationGenericArgumentsFromSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax invocationTargetExpression,
+            List<string> lines) {
+            GenericNameSyntax genericName = invocationTargetExpression switch {
+                GenericNameSyntax targetGenericName => targetGenericName,
+                MemberAccessExpressionSyntax { Name: GenericNameSyntax targetGenericName } => targetGenericName,
+                MemberBindingExpressionSyntax { Name: GenericNameSyntax targetGenericName } => targetGenericName,
+                _ => null
+            };
+            if (genericName == null) {
+                return;
+            }
+
+            lines.Add("<");
+            for (int index = 0; index < genericName.TypeArgumentList.Arguments.Count; index++) {
+                if (index > 0) {
+                    lines.Add(",");
+                }
+
+                TypeSyntax genericArgumentSyntax = genericName.TypeArgumentList.Arguments[index];
+                VariableType genericArgumentType = VariableUtil.GetVarType(genericArgumentSyntax, semantic);
+                RegisterGeneratedTypeReferences(context, genericArgumentType);
+                ITypeSymbol genericArgumentTypeSymbol = semantic.GetTypeInfo(genericArgumentSyntax).Type;
+                if (genericArgumentTypeSymbol is INamedTypeSymbol namedGenericArgumentTypeSymbol) {
+                    ConversionClass symbolResolvedGeneratedClass = context.Program.FindGeneratedClass(namedGenericArgumentTypeSymbol);
+                    if (symbolResolvedGeneratedClass != null) {
+                        RegisterGeneratedTypeDependency(context, symbolResolvedGeneratedClass.GetEmittedTypeName());
+                    }
+                }
+                string renderedGenericArgumentType = RenderConvertedGenericArgumentType(semantic, context, genericArgumentSyntax);
+                ConversionClass renderedGeneratedClass = context.Program.FindGeneratedClass(renderedGenericArgumentType, genericArgumentType.GenericArgs.Count);
+                if (renderedGeneratedClass != null) {
+                    RegisterGeneratedTypeDependency(context, renderedGeneratedClass.GetEmittedTypeName());
+                }
+                lines.Add(renderedGenericArgumentType);
+            }
+            lines.Add(">");
         }
 
         protected override ExpressionResult ProcessInvocationExpressionSyntax(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocationExpression, List<string> lines) {
@@ -2819,8 +4465,16 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, nativeStringType);
             }
 
+            if (TryProcessUnsafeInvocation(semantic, context, invocationExpression, lines, out VariableType unsafeInvocationType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, unsafeInvocationType);
+            }
+
             if (TryProcessNativeFreeFunctionInvocation(semantic, context, invocationExpression, lines, out VariableType nativeFreeFunctionType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, nativeFreeFunctionType);
+            }
+
+            if (TryProcessSystemArrayInvocation(semantic, context, invocationExpression, lines, out VariableType systemArrayInvocationType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, systemArrayInvocationType);
             }
 
             if (TryProcessDirectoryInvocation(semantic, context, invocationExpression, lines, out VariableType directoryInvocationType)) {
@@ -2829,6 +4483,10 @@ namespace cs2.cpp {
 
             if (TryProcessPrimitiveGetHashCodeInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveGetHashCodeType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, primitiveGetHashCodeType);
+            }
+
+            if (TryProcessPrimitiveCompareToInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveCompareToType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, primitiveCompareToType);
             }
 
             if (TryProcessNativeToStringInvocation(semantic, context, invocationExpression, lines, out VariableType nativeToStringType)) {
@@ -2843,64 +4501,134 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, delegateInvocationType);
             }
 
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (TryProcessReducedExtensionInvocation(semantic, context, invocationExpression, invokedMethodSymbol, lines, out ExpressionResult reducedExtensionResult)) {
+                return reducedExtensionResult;
+            }
+
+            if (TryProcessMultiImplementationGenericInvocation(semantic, context, invocationExpression, invokedMethodSymbol, lines, out VariableType multiImplementationInvocationType, out List<string> multiImplementationBeforeLines)) {
+                return new ExpressionResult(true, VariablePath.Unknown, multiImplementationInvocationType, multiImplementationBeforeLines);
+            }
+
             List<string> argLines = ["("];
             int count = 0;
             List<ExpressionResult> types = new List<ExpressionResult>();
-            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokedMethodSymbol != null
                 ? invokedMethodSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
 
             List<string> beforeLines = new List<string>();
 
-            foreach (var arg in invocationExpression.ArgumentList.Arguments) {
-                string refKeyword = arg.RefKindKeyword.ToString();
-                bool isRef = false;
-                if (refKeyword != "") {
-                    isRef = true;
+            if (parameterSymbols.Length > 0 &&
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                ArgumentSyntax[] alignedArguments = AlignInvocationArguments(invocationExpression.ArgumentList.Arguments, parameterSymbols);
+                bool wroteAnyArgument = false;
+                for (int parameterIndex = 0; parameterIndex < parameterSymbols.Length; ++parameterIndex) {
+                    IParameterSymbol parameterSymbol = parameterSymbols[parameterIndex];
+                    ArgumentSyntax argument = alignedArguments[parameterIndex];
+                    if (argument == null) {
+                        if (!parameterSymbol.HasExplicitDefaultValue) {
+                            continue;
+                        }
+
+                        if (wroteAnyArgument) {
+                            argLines.Add(", ");
+                        }
+
+                        AppendOptionalArgumentDefaultValue(parameterSymbol, argLines);
+                        wroteAnyArgument = true;
+                        continue;
+                    }
+
+                    List<string> argumentExpressionLines = new List<string>();
+                    int startArg = context.DepthClass;
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
+                    context.PopClass(startArg);
+                    types.Add(argumentResult);
+                    if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                        beforeLines.AddRange(argumentResult.BeforeLines);
+                    }
+
+                    if (wroteAnyArgument) {
+                        argLines.Add(", ");
+                    }
+
+                    AppendInvocationArgument(
+                        semantic,
+                        context,
+                        argument.Expression,
+                        argumentExpressionLines,
+                        parameterSymbol,
+                        invokedMethodSymbol,
+                        beforeLines,
+                        argLines);
+
+                    if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    }
+
+                    wroteAnyArgument = true;
+                }
+            } else {
+                foreach (var arg in invocationExpression.ArgumentList.Arguments) {
+                    string refKeyword = arg.RefKindKeyword.ToString();
+                    bool isRef = false;
+                    if (refKeyword != "") {
+                        isRef = true;
+                    }
+
+                    List<string> argumentExpressionLines = new List<string>();
+                    int startArg = context.DepthClass;
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
+                    context.PopClass(startArg);
+                    types.Add(argumentResult);
+                    if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                        beforeLines.AddRange(argumentResult.BeforeLines);
+                    }
+
+                    IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
+                    AppendInvocationArgument(
+                        semantic,
+                        context,
+                        arg.Expression,
+                        argumentExpressionLines,
+                        parameterSymbol,
+                        invokedMethodSymbol,
+                        beforeLines,
+                        argLines);
+
+                    if (isRef) {
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, beforeLines);
+                    }
+
+                    count++;
+                    if (count != invocationExpression.ArgumentList.Arguments.Count ||
+                        (parameterSymbols.Length > invocationExpression.ArgumentList.Arguments.Count &&
+                         parameterSymbols.Skip(invocationExpression.ArgumentList.Arguments.Count).Any(parameter => parameter.HasExplicitDefaultValue))) {
+                        argLines.Add(", ");
+                    }
                 }
 
-                List<string> argumentExpressionLines = new List<string>();
-                int startArg = context.DepthClass;
-                ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
-                context.PopClass(startArg);
-                types.Add(argumentResult);
-                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    beforeLines.AddRange(argumentResult.BeforeLines);
-                }
-
-                IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
-                AppendInvocationArgument(
-                    semantic,
-                    context,
-                    arg.Expression,
-                    argumentExpressionLines,
-                    parameterSymbol,
-                    invokedMethodSymbol,
-                    beforeLines,
-                    argLines);
-
-                if (isRef) {
-                    AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, beforeLines);
-                }
-
-                count++;
-                if (count != invocationExpression.ArgumentList.Arguments.Count ||
-                    (parameterSymbols.Length > invocationExpression.ArgumentList.Arguments.Count &&
-                     parameterSymbols.Skip(invocationExpression.ArgumentList.Arguments.Count).Any(parameter => parameter.HasExplicitDefaultValue))) {
-                    argLines.Add(", ");
-                }
+                AppendOptionalInvocationArguments(parameterSymbols, invocationExpression.ArgumentList.Arguments.Count, argLines);
             }
-
-            AppendOptionalInvocationArguments(parameterSymbols, invocationExpression.ArgumentList.Arguments.Count, argLines);
             argLines.Add(")");
 
             List<string> invocationTargetLines = new List<string>();
             int start = context.DepthClass;
-            ExpressionResult result = ProcessExpression(semantic, context, invocationExpression.Expression, invocationTargetLines, types);
-            context.PopClass(start);
+            ExpressionResult result;
+            if (TryProcessGeneratedStaticImportedInvocationTarget(semantic, context, invocationExpression, invokedMethodSymbol, invocationTargetLines, out ExpressionResult generatedInvocationTargetResult)) {
+                result = generatedInvocationTargetResult;
+            } else {
+                result = ProcessExpression(semantic, context, invocationExpression.Expression, invocationTargetLines, types);
+                context.PopClass(start);
+            }
             if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
                 beforeLines.AddRange(result.BeforeLines);
+            }
+
+            if (invokedMethodSymbol != null) {
+                TryRewriteGenericInterfaceInvocationTarget(semantic, context, invocationExpression, invokedMethodSymbol, invocationTargetLines, beforeLines);
             }
 
             if (invokedMethodSymbol != null) {
@@ -2917,6 +4645,786 @@ namespace cs2.cpp {
 
             lines.AddRange(invocationTargetLines);
             return result;
+        }
+
+        bool TryProcessSystemArrayInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType invocationType) {
+            invocationType = null;
+
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (invokedMethodSymbol?.ContainingType == null ||
+                !string.Equals(invokedMethodSymbol.ContainingType.ToDisplayString(), "System.Array", StringComparison.Ordinal) ||
+                !string.Equals(invokedMethodSymbol.Name, "Clear", StringComparison.Ordinal) ||
+                invocationExpression.ArgumentList.Arguments.Count != 3 ||
+                !TryResolveArrayElementTypeSymbol(semantic, invocationExpression.ArgumentList.Arguments[0].Expression, out ITypeSymbol elementTypeSymbol)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeArray");
+            VariableType elementType = VariableUtil.GetVarType(elementTypeSymbol);
+            RegisterGeneratedTypeReferences(context, elementType);
+            string elementTypeName = GetCppTypeToken(elementType, context.Program);
+
+            List<string> beforeLines = new List<string>();
+            List<string> invocationLines = new List<string> {
+                $"Array<{elementTypeName}>::Clear("
+            };
+
+            for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
+                List<string> argumentExpressionLines = new List<string>();
+                int argumentStart = context.DepthClass;
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
+                context.PopClass(argumentStart);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
+
+                IParameterSymbol parameterSymbol = argumentIndex < invokedMethodSymbol.Parameters.Length
+                    ? invokedMethodSymbol.Parameters[argumentIndex]
+                    : null;
+                AppendInvocationArgument(
+                    semantic,
+                    context,
+                    argument.Expression,
+                    argumentExpressionLines,
+                    parameterSymbol,
+                    invokedMethodSymbol,
+                    beforeLines,
+                    invocationLines);
+
+                if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
+                    invocationLines.Add(", ");
+                }
+            }
+
+            invocationLines.Add(")");
+            if (beforeLines.Count > 0) {
+                lines.AddRange(beforeLines);
+            }
+
+            lines.AddRange(invocationLines);
+            invocationType = VariableUtil.GetVarType("void");
+            return true;
+        }
+
+        bool TryProcessReducedExtensionInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            IMethodSymbol extensionMethodSymbol = invokedMethodSymbol?.ReducedFrom;
+            if (extensionMethodSymbol == null &&
+                invokedMethodSymbol?.IsExtensionMethod == true) {
+                ISymbol receiverSymbol = semantic.GetSymbolInfo(memberAccess.Expression).Symbol;
+                if (receiverSymbol is IAliasSymbol receiverAliasSymbol) {
+                    receiverSymbol = receiverAliasSymbol.Target;
+                }
+
+                if (receiverSymbol is not INamespaceSymbol &&
+                    receiverSymbol is not INamedTypeSymbol) {
+                    extensionMethodSymbol = invokedMethodSymbol;
+                }
+            }
+
+            if (extensionMethodSymbol == null) {
+                return false;
+            }
+
+            List<string> beforeLines = new List<string>();
+            List<string> invocationLines = new List<string>();
+            List<string> receiverLines = new List<string>();
+            RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(extensionMethodSymbol.ContainingType));
+
+            int receiverStart = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(receiverStart);
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            invocationLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
+            invocationLines.Add("::");
+            invocationLines.Add(GetEmittedFunctionName(extensionMethodSymbol));
+            AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationLines);
+            invocationLines.Add("(");
+
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> extensionParameters = extensionMethodSymbol.Parameters;
+            IParameterSymbol receiverParameterSymbol = extensionParameters.Length > 0 ? extensionParameters[0] : null;
+            AppendInvocationArgument(
+                semantic,
+                context,
+                memberAccess.Expression,
+                receiverLines,
+                receiverParameterSymbol,
+                extensionMethodSymbol,
+                beforeLines,
+                invocationLines);
+
+            if (invocationExpression.ArgumentList.Arguments.Count > 0) {
+                invocationLines.Add(", ");
+            }
+
+            for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
+                List<string> argumentExpressionLines = new List<string>();
+                int argumentStart = context.DepthClass;
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
+                context.PopClass(argumentStart);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
+
+                IParameterSymbol parameterSymbol = argumentIndex + 1 < extensionParameters.Length
+                    ? extensionParameters[argumentIndex + 1]
+                    : null;
+                AppendInvocationArgument(
+                    semantic,
+                    context,
+                    argument.Expression,
+                    argumentExpressionLines,
+                    parameterSymbol,
+                    extensionMethodSymbol,
+                    beforeLines,
+                    invocationLines);
+
+                if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                }
+
+                if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
+                    invocationLines.Add(", ");
+                }
+            }
+
+            invocationLines.Add(")");
+            if (beforeLines.Count > 0) {
+                lines.AddRange(beforeLines);
+            }
+
+            lines.AddRange(invocationLines);
+            result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+            return true;
+        }
+
+        bool TryProcessGeneratedStaticImportedInvocationTarget(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invokedMethodSymbol == null ||
+                !invokedMethodSymbol.IsStatic ||
+                !TryResolveGeneratedContainingClass(invokedMethodSymbol, out ConversionClass generatedClass)) {
+                return false;
+            }
+
+            if (invocationExpression.Expression is not IdentifierNameSyntax &&
+                invocationExpression.Expression is not GenericNameSyntax) {
+                return false;
+            }
+
+            RegisterGeneratedTypeDependency(context, generatedClass.Name);
+            lines.Add(GetContainingTypeAccessName(context, invokedMethodSymbol.ContainingType));
+            lines.Add("::");
+            if (RequiresDependentTemplateQualifier(invokedMethodSymbol)) {
+                lines.Add("template ");
+            }
+
+            lines.Add(GetEmittedFunctionName(invokedMethodSymbol));
+            AppendInvocationGenericArgumentsFromSyntax(semantic, context, invocationExpression.Expression, lines);
+
+            VariableType invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
+            result = new ExpressionResult(true, VariablePath.Static, invocationType);
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers System.Runtime.CompilerServices.Unsafe intrinsics to explicit native helper calls so generated output does not depend on unresolved managed helper classes.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the invoked method symbol.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="lines">Output line buffer that receives the lowered expression.</param>
+        /// <param name="resultType">Resolved expression result type.</param>
+        /// <returns><c>true</c> when the invocation was handled as an Unsafe intrinsic; otherwise <c>false</c>.</returns>
+        bool TryProcessUnsafeInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("void");
+            IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (!IsUnsafeIntrinsicMethod(methodSymbol)) {
+                return false;
+            }
+
+            EnsureUnsafeShimInclude(context);
+
+            if (string.Equals(methodSymbol.Name, "SizeOf", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 1 &&
+                invocationExpression.ArgumentList.Arguments.Count == 0) {
+                VariableType targetType = VariableUtil.GetVarType(methodSymbol.TypeArguments[0]);
+                RegisterGeneratedTypeReferences(context, targetType);
+                lines.Add("he_cpp_unsafe_size_of<");
+                lines.Add(RenderUnsafeHelperTypeName(context, targetType));
+                lines.Add(">()");
+                resultType = VariableUtil.GetVarType("int");
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "SkipInit", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 1) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[0];
+                if (argument.Expression is DeclarationExpressionSyntax declarationExpression &&
+                    declarationExpression.Designation is SingleVariableDesignationSyntax) {
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, null, lines);
+                }
+
+                lines.Add("(void)0");
+                resultType = VariableUtil.GetVarType("void");
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "As", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 2 &&
+                invocationExpression.ArgumentList.Arguments.Count == 1) {
+                VariableType targetType = VariableUtil.GetVarType(methodSymbol.TypeArguments[1]);
+                RegisterGeneratedTypeReferences(context, targetType);
+                lines.Add("he_cpp_unsafe_as<");
+                lines.Add(RenderUnsafeHelperTypeName(context, targetType));
+                lines.Add(">(");
+                lines.Add(RenderUnsafeSourceExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0]));
+                lines.Add(")");
+                resultType = targetType;
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "AsRef", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 1 &&
+                invocationExpression.ArgumentList.Arguments.Count == 1) {
+                VariableType targetType = VariableUtil.GetVarType(methodSymbol.TypeArguments[0]);
+                RegisterGeneratedTypeReferences(context, targetType);
+                lines.Add("he_cpp_unsafe_as_ref<");
+                lines.Add(RenderUnsafeHelperTypeName(context, targetType));
+                lines.Add(">(");
+                lines.Add(RenderUnsafeSourceExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0]));
+                lines.Add(")");
+                resultType = targetType;
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "AsPointer", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 1 &&
+                invocationExpression.ArgumentList.Arguments.Count == 1) {
+                VariableType targetType = VariableUtil.GetVarType(methodSymbol.TypeArguments[0]);
+                RegisterGeneratedTypeReferences(context, targetType);
+                lines.Add("he_cpp_unsafe_as_pointer<");
+                lines.Add(RenderUnsafeHelperTypeName(context, targetType));
+                lines.Add(">(");
+                lines.Add(RenderUnsafeSourceExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0]));
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("object");
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "Add", StringComparison.Ordinal) &&
+                methodSymbol.TypeArguments.Length == 1 &&
+                invocationExpression.ArgumentList.Arguments.Count == 2) {
+                VariableType targetType = VariableUtil.GetVarType(methodSymbol.TypeArguments[0]);
+                RegisterGeneratedTypeReferences(context, targetType);
+                lines.Add("he_cpp_unsafe_add<");
+                lines.Add(RenderUnsafeHelperTypeName(context, targetType));
+                lines.Add(">(");
+                lines.Add(RenderUnsafeSourceExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0]));
+                lines.Add(", ");
+                lines.Add(RenderExpressionText(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression));
+                lines.Add(")");
+                resultType = targetType;
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "InitBlockUnaligned", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 3) {
+                lines.Add("he_cpp_unsafe_init_block_unaligned(");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("void");
+                return true;
+            }
+
+            if (string.Equals(methodSymbol.Name, "CopyBlockUnaligned", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 3) {
+                lines.Add("he_cpp_unsafe_copy_block_unaligned(");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("void");
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether one invoked method belongs to System.Runtime.CompilerServices.Unsafe.
+        /// </summary>
+        /// <param name="methodSymbol">Resolved method symbol to inspect.</param>
+        /// <returns><c>true</c> when the method belongs to the Unsafe intrinsic helper; otherwise <c>false</c>.</returns>
+        static bool IsUnsafeIntrinsicMethod(IMethodSymbol methodSymbol) {
+            if (methodSymbol?.ContainingType == null) {
+                return false;
+            }
+
+            string containingTypeName = methodSymbol.ContainingType.ToDisplayString();
+            return string.Equals(containingTypeName, "System.Runtime.CompilerServices.Unsafe", StringComparison.Ordinal) ||
+                string.Equals(containingTypeName, "global::System.Runtime.CompilerServices.Unsafe", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures the current generated type includes the Unsafe shim so native helper declarations are available wherever Unsafe intrinsics were lowered.
+        /// </summary>
+        /// <param name="context">Current lowering context.</param>
+        void EnsureUnsafeShimInclude(LayerContext context) {
+            ConversionClass currentClass = context.GetCurrentClass();
+            if (currentClass == null || currentClass.SourceIncludes.Contains("runtime/native_unsafe.hpp", StringComparer.Ordinal)) {
+                return;
+            }
+
+            currentClass.SourceIncludes.Add("runtime/native_unsafe.hpp");
+        }
+
+        /// <summary>
+        /// Renders one C++ helper type name for a lowered Unsafe intrinsic generic argument.
+        /// </summary>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="variableType">Converted variable type to render.</param>
+        /// <returns>Qualified C++ type token suitable for helper template arguments.</returns>
+        string RenderUnsafeHelperTypeName(LayerContext context, VariableType variableType) {
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(variableType, out typeData);
+            return QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context);
+        }
+
+        /// <summary>
+        /// Renders one Unsafe intrinsic source expression, adding an address-of operator when the source argument is not already pointer-shaped in native output.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the invocation argument.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="argument">Unsafe intrinsic argument that supplies the source storage.</param>
+        /// <returns>Rendered source expression that native helper templates can reinterpret safely.</returns>
+        string RenderUnsafeSourceExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ArgumentSyntax argument) {
+            string expressionText = RenderExpressionText(semantic, context, argument.Expression);
+            if (string.IsNullOrWhiteSpace(expressionText)) {
+                return expressionText;
+            }
+
+            if (argument.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword) ||
+                argument.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword) ||
+                argument.RefOrOutKeyword.IsKind(SyntaxKind.InKeyword)) {
+                return $"&({expressionText})";
+            }
+
+            if (TryGetExpressionTypeSymbol(semantic, argument.Expression, out ITypeSymbol argumentTypeSymbol)) {
+                VariableType argumentType = VariableUtil.GetVarType(argumentTypeSymbol);
+                ConvertToCPPType(argumentType, out CPPTypeData argumentTypeData);
+                if (argumentTypeData.IsPointer) {
+                    return expressionText;
+                }
+            }
+
+            return $"&({expressionText})";
+        }
+
+        /// <summary>
+        /// Rewrites generic interface or abstract-base method invocations to the sole generated concrete implementation when C++ cannot represent the source-side virtual generic contract directly.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve receiver metadata.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="invokedMethodSymbol">Resolved source method symbol.</param>
+        /// <param name="invocationTargetLines">Target token buffer to rewrite in place.</param>
+        /// <param name="beforeLines">Before-lines buffer that receives any receiver temporaries produced by the rewrite.</param>
+        /// <returns><c>true</c> when the invocation target was rewritten; otherwise <c>false</c>.</returns>
+        bool TryProcessMultiImplementationGenericInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> lines,
+            out VariableType invocationType,
+            out List<string> expressionBeforeLines) {
+            invocationType = null;
+            expressionBeforeLines = null;
+            if (invokedMethodSymbol == null ||
+                !invokedMethodSymbol.IsGenericMethod ||
+                !TryResolveGeneratedGenericInvocationImplementations(semantic, context, invocationExpression, invokedMethodSymbol, out string receiverText, out List<INamedTypeSymbol> implementationTypeSymbols, out List<string> beforeLines)) {
+                return false;
+            }
+
+            if (!TryAppendMultiImplementationGenericInvocationExpression(
+                    semantic,
+                    context,
+                    invocationExpression,
+                    invokedMethodSymbol,
+                    receiverText,
+                    implementationTypeSymbols,
+                    beforeLines,
+                    lines,
+                    out invocationType)) {
+                return false;
+            }
+
+            expressionBeforeLines = beforeLines.Count > 0 ? beforeLines : null;
+            return true;
+        }
+
+        bool TryAppendMultiImplementationGenericInvocationExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            string receiverText,
+            List<INamedTypeSymbol> implementationTypeSymbols,
+            List<string> beforeLines,
+            List<string> lines,
+            out VariableType invocationType) {
+            invocationType = null;
+            if (invokedMethodSymbol == null ||
+                string.IsNullOrWhiteSpace(receiverText) ||
+                implementationTypeSymbols == null ||
+                implementationTypeSymbols.Count <= 1) {
+                return false;
+            }
+
+            List<string> argLines = BuildInvocationArgumentList(semantic, context, invocationExpression, invokedMethodSymbol, beforeLines);
+            ConversionClass currentClass = GetOwningEmissionClass(context);
+            foreach (INamedTypeSymbol implementationTypeSymbol in implementationTypeSymbols) {
+                ConversionClass implementationClass = context.Program.FindGeneratedClass(implementationTypeSymbol);
+                if (currentClass != null && implementationClass != null) {
+                    string emittedTypeName = implementationClass.GetEmittedTypeName();
+                    if (!currentClass.ReferencedClasses.Contains(emittedTypeName, StringComparer.Ordinal)) {
+                        currentClass.ReferencedClasses.Add(emittedTypeName);
+                    }
+
+                    string includePath = implementationClass.GetEmittedFileStem(context.Program) + ".hpp";
+                    if (!currentClass.SourceIncludes.Contains(includePath, StringComparer.Ordinal)) {
+                        currentClass.SourceIncludes.Add(includePath);
+                    }
+                }
+
+                RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(implementationTypeSymbol));
+            }
+
+            if (currentClass != null &&
+                !currentClass.SourceIncludes.Contains("runtime/native_exceptions.hpp", StringComparer.Ordinal)) {
+                currentClass.SourceIncludes.Add("runtime/native_exceptions.hpp");
+            }
+
+            string emittedFunctionName = GetEmittedFunctionName(invokedMethodSymbol);
+            if (invokedMethodSymbol.ReturnType != null && invokedMethodSymbol.ReturnType.SpecialType != SpecialType.System_Void) {
+                invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
+                VariableType convertedInvocationType = ConvertToCPPType(invocationType, out CPPTypeData invocationTypeData);
+                string returnTypeName = QualifyRenderedCppTypeName(convertedInvocationType.ToCPPString(context.Program), context);
+                if (invocationTypeData.IsPointer) {
+                    returnTypeName += "*";
+                }
+                lines.Add("([&]() -> ");
+                lines.Add(returnTypeName);
+                lines.Add(" {\n");
+            } else {
+                invocationType = VariableUtil.GetVarType("void");
+                lines.Add("([&]() {\n");
+            }
+
+            foreach (INamedTypeSymbol implementationTypeSymbol in implementationTypeSymbols) {
+                string implementationTypeName = QualifyRenderedCppTypeName(RenderQualifiedContainingTypeName(implementationTypeSymbol, context), context);
+                lines.Add("if (auto heCppDispatchImpl = dynamic_cast<");
+                lines.Add(implementationTypeName);
+                lines.Add("*>(");
+                lines.Add(receiverText);
+                lines.Add(")) {\n");
+                if (invokedMethodSymbol.ReturnType != null && invokedMethodSymbol.ReturnType.SpecialType != SpecialType.System_Void) {
+                    lines.Add("return ");
+                }
+
+                lines.Add("heCppDispatchImpl->");
+                lines.Add(emittedFunctionName);
+                AppendConcreteDispatchInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, lines);
+                lines.AddRange(argLines);
+                lines.Add(";\n");
+                if (invokedMethodSymbol.ReturnType == null || invokedMethodSymbol.ReturnType.SpecialType == SpecialType.System_Void) {
+                    lines.Add("return;\n");
+                }
+
+                lines.Add("}\n");
+            }
+
+            lines.Add("throw new NotSupportedException(\"No generated implementation matched generic dispatch receiver.\");\n");
+            lines.Add("})()");
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves the owning emitted class for dependency registration even when temporary receiver/base scopes have been pushed onto the context stack.
+        /// </summary>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>The outermost emitted class when available; otherwise the current class.</returns>
+        static ConversionClass GetOwningEmissionClass(LayerContext context) {
+            if (context == null) {
+                return null;
+            }
+
+            foreach (ConversionClass conversionClass in context.Class) {
+                if (conversionClass != null) {
+                    return conversionClass;
+                }
+            }
+
+            return context.GetCurrentClass();
+        }
+
+        /// <summary>
+        /// Builds one emitted invocation argument list while preserving ref/out setup lines that must execute before the call.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the invocation.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation whose arguments should be rendered.</param>
+        /// <param name="invokedMethodSymbol">Resolved target method symbol.</param>
+        /// <param name="beforeLines">Before-lines buffer that receives any argument setup temporaries.</param>
+        /// <returns>Rendered argument list including parentheses.</returns>
+        List<string> BuildInvocationArgumentList(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> beforeLines) {
+            List<string> argLines = ["("];
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokedMethodSymbol != null
+                ? invokedMethodSymbol.Parameters
+                : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
+
+            if (parameterSymbols.Length > 0 &&
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                ArgumentSyntax[] alignedArguments = AlignInvocationArguments(invocationExpression.ArgumentList.Arguments, parameterSymbols);
+                bool wroteAnyArgument = false;
+                for (int parameterIndex = 0; parameterIndex < parameterSymbols.Length; ++parameterIndex) {
+                    IParameterSymbol parameterSymbol = parameterSymbols[parameterIndex];
+                    ArgumentSyntax argument = alignedArguments[parameterIndex];
+                    if (argument == null) {
+                        if (!parameterSymbol.HasExplicitDefaultValue) {
+                            continue;
+                        }
+
+                        if (wroteAnyArgument) {
+                            argLines.Add(", ");
+                        }
+
+                        AppendOptionalArgumentDefaultValue(parameterSymbol, argLines);
+                        wroteAnyArgument = true;
+                        continue;
+                    }
+
+                    if (wroteAnyArgument) {
+                        argLines.Add(", ");
+                    }
+
+                    List<string> argumentExpressionLines = new List<string>();
+                    AppendInvocationArgument(
+                        semantic,
+                        context,
+                        argument.Expression,
+                        argumentExpressionLines,
+                        parameterSymbol,
+                        invokedMethodSymbol,
+                        beforeLines,
+                        argLines);
+
+                    if (argument.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword) || argument.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword)) {
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    }
+
+                    wroteAnyArgument = true;
+                }
+
+                if (wroteAnyArgument &&
+                    parameterSymbols.Skip(invocationExpression.ArgumentList.Arguments.Count).Any(parameter => parameter.HasExplicitDefaultValue)) {
+                    argLines.Add(", ");
+                }
+
+                AppendOptionalInvocationArguments(parameterSymbols, invocationExpression.ArgumentList.Arguments.Count, argLines);
+            } else {
+                int count = 0;
+                foreach (ArgumentSyntax arg in invocationExpression.ArgumentList.Arguments) {
+                    bool isRef = arg.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword) || arg.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword);
+                    List<string> argumentExpressionLines = new List<string>();
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
+                    if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                        beforeLines.AddRange(argumentResult.BeforeLines);
+                    }
+
+                    IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
+                    AppendInvocationArgument(
+                        semantic,
+                        context,
+                        arg.Expression,
+                        argumentExpressionLines,
+                        parameterSymbol,
+                        invokedMethodSymbol,
+                        beforeLines,
+                        argLines);
+
+                    if (isRef) {
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, beforeLines);
+                    }
+
+                    count++;
+                    if (count != invocationExpression.ArgumentList.Arguments.Count ||
+                        (parameterSymbols.Length > invocationExpression.ArgumentList.Arguments.Count &&
+                         parameterSymbols.Skip(invocationExpression.ArgumentList.Arguments.Count).Any(parameter => parameter.HasExplicitDefaultValue))) {
+                        argLines.Add(", ");
+                    }
+                }
+
+                AppendOptionalInvocationArguments(parameterSymbols, invocationExpression.ArgumentList.Arguments.Count, argLines);
+            }
+
+            argLines.Add(")");
+            return argLines;
+        }
+
+        /// <summary>
+        /// Resolves one generic invocation that requires runtime dispatch across multiple generated implementations and captures the evaluated receiver text.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve receiver metadata.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="invokedMethodSymbol">Resolved source method symbol.</param>
+        /// <param name="receiverText">Receives the receiver expression text to dispatch against.</param>
+        /// <param name="implementationTypeSymbols">Receives the concrete implementation types that satisfy the method contract.</param>
+        /// <param name="beforeLines">Receives any receiver-evaluation setup lines.</param>
+        /// <returns><c>true</c> when runtime dispatch should be emitted; otherwise <c>false</c>.</returns>
+        bool TryResolveGeneratedGenericInvocationImplementations(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            out string receiverText,
+            out List<INamedTypeSymbol> implementationTypeSymbols,
+            out List<string> beforeLines) {
+            receiverText = string.Empty;
+            implementationTypeSymbols = null;
+            beforeLines = new List<string>();
+
+            if (!TryResolveGenericInvocationReceiver(semantic, context, invocationExpression, invokedMethodSymbol, out ExpressionSyntax receiverExpression, out ITypeSymbol receiverTypeSymbol, out string implicitReceiverText)) {
+                return false;
+            }
+
+            List<ConversionClass> matchingDefinitions = ResolveGeneratedGenericInvocationDefinitions(receiverTypeSymbol, invokedMethodSymbol.OriginalDefinition);
+            if (matchingDefinitions.Count <= 1) {
+                return false;
+            }
+
+            implementationTypeSymbols = ResolveGeneratedGenericInvocationConcreteImplementations(semantic.Compilation, receiverTypeSymbol, invokedMethodSymbol.OriginalDefinition);
+            if (implementationTypeSymbols.Count <= 1) {
+                return false;
+            }
+
+            if (receiverExpression == null) {
+                receiverText = implicitReceiverText;
+                return true;
+            }
+
+            List<string> receiverLines = new List<string>();
+            int receiverStartDepth = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, receiverExpression, receiverLines);
+            context.PopClass(receiverStartDepth);
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            string renderedReceiverText = string.Concat(receiverLines);
+            if (IsSimpleRuntimeDispatchReceiver(receiverExpression)) {
+                receiverText = renderedReceiverText;
+                return true;
+            }
+
+            string receiverTemporaryName = CreateTemporaryName("heCppDispatchReceiver");
+            beforeLines.Add($"auto {receiverTemporaryName} = {renderedReceiverText};\n");
+            receiverText = receiverTemporaryName;
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether one receiver expression can be reused directly inside multiple dispatch branches without introducing repeated side effects.
+        /// </summary>
+        /// <param name="receiverExpression">Receiver syntax to inspect.</param>
+        /// <returns><c>true</c> when the receiver can be reused directly; otherwise <c>false</c>.</returns>
+        static bool IsSimpleRuntimeDispatchReceiver(ExpressionSyntax receiverExpression) {
+            return receiverExpression is ThisExpressionSyntax ||
+                receiverExpression is IdentifierNameSyntax ||
+                receiverExpression is MemberAccessExpressionSyntax;
+        }
+
+        bool TryRewriteGenericInterfaceInvocationTarget(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            List<string> invocationTargetLines,
+            List<string> beforeLines) {
+            if (!invokedMethodSymbol.IsGenericMethod ||
+                invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                !TryResolveGeneratedGenericInvocationImplementation(semantic, memberAccess.Expression, invokedMethodSymbol, out ConversionClass implementationClass)) {
+                return false;
+            }
+
+            List<string> rewrittenReceiverLines = new List<string>();
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, rewrittenReceiverLines);
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            ConversionClass currentClass = GetOwningEmissionClass(context);
+            if (currentClass != null && implementationClass != null) {
+                string emittedTypeName = implementationClass.GetEmittedTypeName();
+                if (!currentClass.ReferencedClasses.Contains(emittedTypeName, StringComparer.Ordinal)) {
+                    currentClass.ReferencedClasses.Add(emittedTypeName);
+                }
+
+                string includePath = implementationClass.GetEmittedFileStem(context.Program) + ".hpp";
+                if (!currentClass.SourceIncludes.Contains(includePath, StringComparer.Ordinal)) {
+                    currentClass.SourceIncludes.Add(includePath);
+                }
+            }
+
+            RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(implementationClass.TypeSymbol));
+
+            invocationTargetLines.Clear();
+            invocationTargetLines.Add("static_cast<");
+            invocationTargetLines.Add(implementationClass.GetEmittedTypeName());
+            invocationTargetLines.Add("*>(");
+            invocationTargetLines.AddRange(rewrittenReceiverLines);
+            invocationTargetLines.Add(")");
+            invocationTargetLines.Add("->");
+            invocationTargetLines.Add(GetEmittedFunctionName(invokedMethodSymbol));
+            return true;
         }
 
         bool TryProcessReferenceEqualsInvocation(
@@ -3135,6 +5643,22 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (parameterSymbol != null &&
+                TryAppendUserDefinedConversionInvocationArgument(
+                    semantic,
+                    context,
+                    argumentExpression,
+                    argumentExpressionLines,
+                    parameterSymbol,
+                    argumentLines)) {
+                return;
+            }
+
+            if (parameterSymbol != null &&
+                TryAppendTargetTypedNumericLiteralInvocationArgument(argumentExpression, parameterSymbol, argumentLines)) {
+                return;
+            }
+
             if (TryAppendScopedTemporaryInvocationArgument(
                 semantic,
                 context,
@@ -3147,27 +5671,130 @@ namespace cs2.cpp {
                 return;
             }
 
-            IMethodSymbol methodGroupSymbol = ResolveMethodSymbol(semantic.GetSymbolInfo(argumentExpression));
+            IMethodSymbol methodGroupSymbol = null;
+            if (semantic != null &&
+                argumentExpression != null &&
+                ReferenceEquals(argumentExpression.SyntaxTree, semantic.SyntaxTree) &&
+                argumentExpression is not AnonymousFunctionExpressionSyntax) {
+                methodGroupSymbol = ResolveMethodSymbol(semantic.GetSymbolInfo(argumentExpression));
+            }
+
             if (parameterSymbol != null &&
                 methodGroupSymbol != null &&
                 TryGetDelegateWrapperTypeName(parameterSymbol.Type, methodGroupSymbol, context, out string delegateWrapperTypeName)) {
+                List<string> delegateConstructionLines = new List<string>();
+                if (!TryAppendDelegateWrapperConstruction(
+                    semantic,
+                    context,
+                    parameterSymbol.Type,
+                    methodGroupSymbol,
+                    argumentExpression,
+                    delegateConstructionLines)) {
+                    delegateConstructionLines.Add($"new {delegateWrapperTypeName}(");
+                    delegateConstructionLines.Add(string.Concat(argumentExpressionLines));
+                    delegateConstructionLines.Add(")");
+                }
+
                 if (ShouldScopeDeleteDelegateInvocationArgument(invokedMethodSymbol, parameterSymbol)) {
                     string temporaryName = CreateTemporaryName("__delegateArg");
-                    beforeLines.Add($"auto {temporaryName} = new {delegateWrapperTypeName}(");
-                    beforeLines.Add(string.Concat(argumentExpressionLines));
-                    beforeLines.Add(");\n");
+                    beforeLines.Add($"auto {temporaryName} = ");
+                    beforeLines.Add(string.Concat(delegateConstructionLines));
+                    beforeLines.Add(";\n");
                     AppendDeleteGuard(beforeLines, temporaryName, "__delegateArgDeleteGuard");
                     argumentLines.Add(temporaryName);
                     return;
                 }
 
-                argumentLines.Add($"new {delegateWrapperTypeName}(");
-                argumentLines.Add(string.Concat(argumentExpressionLines));
-                argumentLines.Add(")");
+                argumentLines.AddRange(delegateConstructionLines);
+                return;
+            }
+
+            if (TryAppendThisInvocationArgument(context, argumentExpression, parameterSymbol, argumentLines)) {
                 return;
             }
 
             argumentLines.AddRange(argumentExpressionLines);
+        }
+
+        /// <summary>
+        /// Preserves value-type `this` arguments for ref-like calls even when temporary receiver dispatch rewrites have changed the active class scope.
+        /// </summary>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="argumentExpression">Invocation argument expression being rendered.</param>
+        /// <param name="parameterSymbol">Resolved target parameter metadata.</param>
+        /// <param name="argumentLines">Destination token buffer for the rendered argument.</param>
+        /// <returns><c>true</c> when the argument was handled directly; otherwise <c>false</c>.</returns>
+        bool TryAppendThisInvocationArgument(
+            LayerContext context,
+            ExpressionSyntax argumentExpression,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentLines) {
+            if (context == null ||
+                argumentExpression is not ThisExpressionSyntax ||
+                parameterSymbol == null ||
+                parameterSymbol.RefKind == RefKind.None) {
+                return false;
+            }
+
+            ConversionClass owningClass = GetOwningEmissionClass(context);
+            if (owningClass?.TypeSymbol?.IsValueType == true) {
+                argumentLines.Add("(*this)");
+            } else {
+                argumentLines.Add("this");
+            }
+
+            return true;
+        }
+
+        bool TryAppendTargetTypedNumericLiteralInvocationArgument(
+            ExpressionSyntax argumentExpression,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentLines) {
+            if (argumentExpression == null || parameterSymbol?.Type == null || argumentLines == null) {
+                return false;
+            }
+
+            if (!TryRewriteTargetTypedNumericLiteral(argumentExpression, parameterSymbol.Type, out string rewrittenLiteral)) {
+                return false;
+            }
+
+            argumentLines.Add(rewrittenLiteral);
+            return true;
+        }
+
+        bool TryAppendUserDefinedConversionInvocationArgument(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax argumentExpression,
+            List<string> argumentExpressionLines,
+            IParameterSymbol parameterSymbol,
+            List<string> argumentLines) {
+            if (semantic == null ||
+                context == null ||
+                argumentExpression == null ||
+                argumentExpressionLines == null ||
+                parameterSymbol?.Type == null ||
+                argumentLines == null ||
+                !ReferenceEquals(argumentExpression.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            Conversion conversion = semantic.ClassifyConversion(argumentExpression, parameterSymbol.Type);
+            if (!conversion.IsUserDefined ||
+                conversion.MethodSymbol is not IMethodSymbol conversionMethodSymbol ||
+                conversionMethodSymbol.MethodKind != MethodKind.Conversion ||
+                !TryResolveGeneratedContainingClass(conversionMethodSymbol, out ConversionClass generatedClass)) {
+                return false;
+            }
+
+            RegisterGeneratedTypeDependency(context, generatedClass.Name);
+            argumentLines.Add(GetContainingTypeAccessName(context, conversionMethodSymbol.ContainingType));
+            argumentLines.Add("::");
+            argumentLines.Add(GetConversionOperatorFunctionName(conversionMethodSymbol));
+            argumentLines.Add("(");
+            argumentLines.AddRange(argumentExpressionLines);
+            argumentLines.Add(")");
+            return true;
         }
 
         bool TryAppendScopedTemporaryInvocationArgument(
@@ -3427,6 +6054,28 @@ namespace cs2.cpp {
             lines.Add(">");
         }
 
+        void AppendConcreteDispatchInvocationTypeArgumentsIfNeeded(
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            LayerContext context,
+            List<string> lines) {
+            if (!invokedMethodSymbol.IsGenericMethod ||
+                invokedMethodSymbol.TypeArguments.Length == 0 ||
+                InvocationUsesUnresolvedMethodTypeParameters(invokedMethodSymbol)) {
+                return;
+            }
+
+            lines.Add("<");
+            for (int index = 0; index < invokedMethodSymbol.TypeArguments.Length; index++) {
+                lines.Add(GetCppTypeToken(VariableUtil.GetVarType(invokedMethodSymbol.TypeArguments[index]), context.Program));
+                if (index < invokedMethodSymbol.TypeArguments.Length - 1) {
+                    lines.Add(", ");
+                }
+            }
+
+            lines.Add(">");
+        }
+
         static bool InvocationHasExplicitTypeArguments(InvocationExpressionSyntax invocationExpression) {
             return invocationExpression.Expression is GenericNameSyntax ||
                 invocationExpression.Expression is MemberAccessExpressionSyntax { Name: GenericNameSyntax } ||
@@ -3523,6 +6172,15 @@ namespace cs2.cpp {
         void AppendOptionalArgumentDefaultValue(IParameterSymbol parameterSymbol, List<string> argumentLines) {
             object explicitDefaultValue = parameterSymbol.ExplicitDefaultValue;
             if (explicitDefaultValue == null) {
+                if (parameterSymbol.Type != null &&
+                    parameterSymbol.Type.IsValueType &&
+                    parameterSymbol.Type.TypeKind != TypeKind.Pointer &&
+                    parameterSymbol.Type.TypeKind != TypeKind.FunctionPointer) {
+                    argumentLines.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), codeConverter.Program));
+                    argumentLines.Add("()");
+                    return;
+                }
+
                 argumentLines.Add("nullptr");
                 return;
             }
@@ -3545,6 +6203,43 @@ namespace cs2.cpp {
             argumentLines.Add(Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture));
         }
 
+        static ArgumentSyntax[] AlignInvocationArguments(
+            SeparatedSyntaxList<ArgumentSyntax> arguments,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols) {
+            ArgumentSyntax[] alignedArguments = new ArgumentSyntax[parameterSymbols.Length];
+            int nextPositionalParameterIndex = 0;
+
+            foreach (ArgumentSyntax argument in arguments) {
+                if (argument.NameColon != null) {
+                    string parameterName = argument.NameColon.Name.Identifier.Text;
+                    for (int parameterIndex = 0; parameterIndex < parameterSymbols.Length; ++parameterIndex) {
+                        if (!string.Equals(parameterSymbols[parameterIndex].Name, parameterName, StringComparison.Ordinal)) {
+                            continue;
+                        }
+
+                        alignedArguments[parameterIndex] = argument;
+                        break;
+                    }
+
+                    continue;
+                }
+
+                while (nextPositionalParameterIndex < alignedArguments.Length &&
+                       alignedArguments[nextPositionalParameterIndex] != null) {
+                    ++nextPositionalParameterIndex;
+                }
+
+                if (nextPositionalParameterIndex >= alignedArguments.Length) {
+                    break;
+                }
+
+                alignedArguments[nextPositionalParameterIndex] = argument;
+                ++nextPositionalParameterIndex;
+            }
+
+            return alignedArguments;
+        }
+
         bool TryProcessNativeArrayInvocation(
             SemanticModel semantic,
             LayerContext context,
@@ -3565,7 +6260,7 @@ namespace cs2.cpp {
                 methodSymbol.IsStatic &&
                 string.Equals(methodSymbol.Name, "Copy", StringComparison.Ordinal) &&
                 string.Equals(methodSymbol.ContainingType?.Name, "Array", StringComparison.Ordinal) &&
-                invocationExpression.ArgumentList.Arguments.Count == 3 &&
+                (invocationExpression.ArgumentList.Arguments.Count == 3 || invocationExpression.ArgumentList.Arguments.Count == 5) &&
                 TryResolveArrayElementTypeSymbol(semantic, invocationExpression.ArgumentList.Arguments[0].Expression, out ITypeSymbol copyElementTypeSymbol)) {
                 codeConverter?.RegisterRuntimeRequirement("NativeArray");
                 string copyElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(copyElementTypeSymbol), context.Program);
@@ -3574,15 +6269,41 @@ namespace cs2.cpp {
                 lines.Add(")");
                 resultType = VariableUtil.GetVarType("void");
                 return true;
+            } else if (methodSymbol != null &&
+                methodSymbol.IsStatic &&
+                string.Equals(methodSymbol.Name, "Resize", StringComparison.Ordinal) &&
+                string.Equals(methodSymbol.ContainingType?.Name, "Array", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 2 &&
+                TryResolveArrayElementTypeSymbol(semantic, invocationExpression.ArgumentList.Arguments[0].Expression, out ITypeSymbol resizeElementTypeSymbol)) {
+                codeConverter?.RegisterRuntimeRequirement("NativeArray");
+                string resizeElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(resizeElementTypeSymbol), context.Program);
+                lines.Add($"Array<{resizeElementTypeName}>::Resize(");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("void");
+                return true;
             } else if (invocationExpression.Expression is MemberAccessExpressionSyntax copyMemberAccess &&
                 string.Equals(copyMemberAccess.Expression.ToString(), "Array", StringComparison.Ordinal) &&
                 copyMemberAccess.Name is IdentifierNameSyntax copyIdentifierName &&
                 string.Equals(copyIdentifierName.Identifier.Text, "Copy", StringComparison.Ordinal) &&
-                invocationExpression.ArgumentList.Arguments.Count == 3 &&
+                (invocationExpression.ArgumentList.Arguments.Count == 3 || invocationExpression.ArgumentList.Arguments.Count == 5) &&
                 TryResolveArrayElementTypeSymbol(semantic, invocationExpression.ArgumentList.Arguments[0].Expression, out ITypeSymbol copySyntaxElementTypeSymbol)) {
                 codeConverter?.RegisterRuntimeRequirement("NativeArray");
                 string copyElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(copySyntaxElementTypeSymbol), context.Program);
                 lines.Add($"Array<{copyElementTypeName}>::Copy(");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("void");
+                return true;
+            } else if (invocationExpression.Expression is MemberAccessExpressionSyntax resizeMemberAccess &&
+                string.Equals(resizeMemberAccess.Expression.ToString(), "Array", StringComparison.Ordinal) &&
+                resizeMemberAccess.Name is IdentifierNameSyntax resizeIdentifierName &&
+                string.Equals(resizeIdentifierName.Identifier.Text, "Resize", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 2 &&
+                TryResolveArrayElementTypeSymbol(semantic, invocationExpression.ArgumentList.Arguments[0].Expression, out ITypeSymbol resizeSyntaxElementTypeSymbol)) {
+                codeConverter?.RegisterRuntimeRequirement("NativeArray");
+                string resizeElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(resizeSyntaxElementTypeSymbol), context.Program);
+                lines.Add($"Array<{resizeElementTypeName}>::Resize(");
                 AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
                 lines.Add(")");
                 resultType = VariableUtil.GetVarType("void");
@@ -3644,12 +6365,42 @@ namespace cs2.cpp {
             ExpressionSyntax expression,
             IParameterSymbol parameterSymbol,
             List<string> beforeLines) {
-            if (expression is not DeclarationExpressionSyntax declarationExpression ||
-                declarationExpression.Designation is not SingleVariableDesignationSyntax singleVariableDesignation) {
+            if (expression is IdentifierNameSyntax discardIdentifier &&
+                string.Equals(discardIdentifier.Identifier.Text, "_", StringComparison.Ordinal)) {
+                ITypeSymbol discardIdentifierTypeSymbol = TryResolveOutArgumentTypeSymbol(semantic, expression, parameterSymbol);
+                VariableType discardIdentifierVariableType = VariableUtil.GetVarType(discardIdentifierTypeSymbol ?? semantic.GetTypeInfo(expression).Type);
+                CPPTypeData discardIdentifierTypeData;
+                VariableType discardIdentifierCppType = ConvertToCPPType(discardIdentifierVariableType, out discardIdentifierTypeData);
+                string discardIdentifierPointerSuffix = discardIdentifierTypeData.IsPointer ? "*" : string.Empty;
+                RegisterGeneratedTypeReferences(context, discardIdentifierVariableType);
+                string discardIdentifierTypeName = QualifyRenderedCppTypeName(discardIdentifierCppType.ToCPPString(context.Program), context);
+                beforeLines.Add($"{discardIdentifierTypeName}{discardIdentifierPointerSuffix} {GetDiscardTemporaryName(discardIdentifier)};\n");
+                return;
+            }
+
+            if (expression is not DeclarationExpressionSyntax declarationExpression) {
                 return;
             }
 
             ITypeSymbol inferredOutTypeSymbol = TryResolveOutArgumentTypeSymbol(semantic, expression, parameterSymbol);
+            if (declarationExpression.Designation is DiscardDesignationSyntax) {
+                VariableType discardVariableType = declarationExpression.Type is IdentifierNameSyntax discardDeclarationIdentifier &&
+                    string.Equals(discardDeclarationIdentifier.Identifier.Text, "var", StringComparison.Ordinal) &&
+                    inferredOutTypeSymbol != null
+                    ? VariableUtil.GetVarType(inferredOutTypeSymbol)
+                    : VariableUtil.GetVarType(inferredOutTypeSymbol ?? semantic.GetTypeInfo(declarationExpression).Type);
+                CPPTypeData discardTypeData;
+                VariableType discardCppType = ConvertToCPPType(discardVariableType, out discardTypeData);
+                string discardPointerSuffix = discardTypeData.IsPointer ? "*" : string.Empty;
+                RegisterGeneratedTypeReferences(context, discardVariableType);
+                string discardTypeName = QualifyRenderedCppTypeName(discardCppType.ToCPPString(context.Program), context);
+                beforeLines.Add($"{discardTypeName}{discardPointerSuffix} {GetDiscardTemporaryName(declarationExpression)};\n");
+                return;
+            }
+
+            if (declarationExpression.Designation is not SingleVariableDesignationSyntax singleVariableDesignation) {
+                return;
+            }
 
             VariableType variableType = declarationExpression.Type is IdentifierNameSyntax declarationIdentifier &&
                 string.Equals(declarationIdentifier.Identifier.Text, "var", StringComparison.Ordinal) &&
@@ -3661,8 +6412,8 @@ namespace cs2.cpp {
             string pointerSuffix = typeData.IsPointer ? "*" : string.Empty;
             RegisterGeneratedTypeReferences(context, variableType);
             string typeName = QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context);
-
-            beforeLines.Add($"{typeName}{pointerSuffix} {singleVariableDesignation.Identifier.Text};\n");
+            string emittedIdentifier = ResolveTrackedIdentifierEmissionName(context, singleVariableDesignation.Identifier.Text);
+            beforeLines.Add($"{typeName}{pointerSuffix} {emittedIdentifier};\n");
         }
 
         bool TryProcessNativeStringInvocation(
@@ -4016,11 +6767,50 @@ namespace cs2.cpp {
                 resultType = VariableUtil.GetVarType(invokeMethodSymbol.ReturnType);
             }
 
+            List<string> beforeLines = new List<string>();
             string delegateText = RenderExpressionText(semantic, context, invocationExpression.Expression);
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokeMethodSymbol != null
+                ? invokeMethodSymbol.Parameters
+                : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
+            List<string> argumentLines = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; ++argumentIndex) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
+                List<string> argumentExpressionLines = new List<string>();
+                int argumentStart = context.DepthClass;
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
+                context.PopClass(argumentStart);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
+
+                IParameterSymbol parameterSymbol = argumentIndex < parameterSymbols.Length ? parameterSymbols[argumentIndex] : null;
+                AppendInvocationArgument(
+                    semantic,
+                    context,
+                    argument.Expression,
+                    argumentExpressionLines,
+                    parameterSymbol,
+                    invokeMethodSymbol,
+                    beforeLines,
+                    argumentLines);
+
+                if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                }
+
+                if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
+                    argumentLines.Add(", ");
+                }
+            }
+
+            if (beforeLines.Count > 0) {
+                lines.AddRange(beforeLines);
+            }
+
             lines.Add("(*");
             lines.Add(delegateText);
             lines.Add(")(");
-            AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+            lines.AddRange(argumentLines);
             lines.Add(")");
             return true;
         }
@@ -4063,6 +6853,10 @@ namespace cs2.cpp {
             }
 
             string typeName = variableType.TypeName ?? string.Empty;
+            if (string.Equals(typeName, "FunctionPointer", StringComparison.Ordinal)) {
+                return false;
+            }
+
             if (typeName.Contains("Func", StringComparison.Ordinal) ||
                 typeName.Contains("Action", StringComparison.Ordinal)) {
                 return true;
@@ -4071,6 +6865,12 @@ namespace cs2.cpp {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(variableType, out typeData);
             string cppTypeName = cppType.ToCPPString(context.Program);
+            if (string.Equals(cppTypeName, "FunctionPointer", StringComparison.Ordinal) ||
+                cppTypeName.StartsWith("FunctionPointer<", StringComparison.Ordinal) ||
+                cppTypeName.Contains("::FunctionPointer<", StringComparison.Ordinal)) {
+                return false;
+            }
+
             return cppTypeName.StartsWith("Func<", StringComparison.Ordinal) ||
                 cppTypeName.StartsWith("Action<", StringComparison.Ordinal) ||
                 cppTypeName.Contains("::Func<", StringComparison.Ordinal) ||
@@ -4103,6 +6903,14 @@ namespace cs2.cpp {
             }
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            if (receiverTypeSymbol is ITypeParameterSymbol) {
+                RegisterRuntimeRequirement("NativeHashCode");
+                lines.Add("he_cpp_get_hash_code(");
+                lines.Add(receiverText);
+                lines.Add(")");
+                return true;
+            }
+
             if (receiverTypeSymbol.TypeKind == TypeKind.Enum) {
                 lines.Add($"static_cast<int32_t>({receiverText})");
                 return true;
@@ -4131,8 +6939,152 @@ namespace cs2.cpp {
                 SpecialType.System_UInt32 or
                 SpecialType.System_Int64 or
                 SpecialType.System_UInt64 or
+                SpecialType.System_IntPtr or
+                SpecialType.System_UIntPtr or
                 SpecialType.System_Single or
                 SpecialType.System_Double;
+        }
+
+        bool TryProcessPrimitiveCompareToInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("int");
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax identifierName ||
+                !string.Equals(identifierName.Identifier.Text, "CompareTo", StringComparison.Ordinal) ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
+                receiverTypeSymbol == null) {
+                IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+                receiverTypeSymbol = invokedMethodSymbol?.ReceiverType;
+            }
+
+            if (receiverTypeSymbol == null || !IsPrimitiveGetHashCodeReceiverType(receiverTypeSymbol)) {
+                return false;
+            }
+
+            string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            string argumentText = RenderExpressionText(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression);
+            lines.Add($"(({receiverText}) < ({argumentText}) ? -1 : (({receiverText}) > ({argumentText}) ? 1 : 0))");
+            return true;
+        }
+
+        static bool RequiresDependentTemplateQualifier(IMethodSymbol methodSymbol) {
+            return methodSymbol?.IsGenericMethod == true &&
+                ContainsTypeParameter(methodSymbol.ContainingType);
+        }
+
+        /// <summary>
+        /// Determines whether one invocation target needs the C++ dependent-template disambiguator.
+        /// </summary>
+        /// <param name="methodSymbol">Resolved method being invoked.</param>
+        /// <param name="receiverIsDependent">Whether the invocation receiver is dependent on template parameters.</param>
+        /// <returns><c>true</c> when the invocation names a dependent member template; otherwise <c>false</c>.</returns>
+        static bool ShouldEmitDependentTemplateQualifier(IMethodSymbol methodSymbol, bool receiverIsDependent) {
+            return methodSymbol?.IsGenericMethod == true &&
+                (receiverIsDependent || ContainsTypeParameter(methodSymbol.ContainingType));
+        }
+
+        static bool ReceiverRequiresDependentTemplateQualifier(SemanticModel semantic, ExpressionSyntax receiverExpression) {
+            if (semantic == null ||
+                receiverExpression == null ||
+                !ReferenceEquals(receiverExpression.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverExpression).ConvertedType ?? semantic.GetTypeInfo(receiverExpression).Type;
+            return ContainsTypeParameter(receiverTypeSymbol);
+        }
+
+        static bool ContainsTypeParameter(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            if (typeSymbol is ITypeParameterSymbol) {
+                return true;
+            }
+
+            if (typeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
+                return ContainsTypeParameter(arrayTypeSymbol.ElementType);
+            }
+
+            if (typeSymbol is IPointerTypeSymbol pointerTypeSymbol) {
+                return ContainsTypeParameter(pointerTypeSymbol.PointedAtType);
+            }
+
+            if (typeSymbol is not INamedTypeSymbol namedTypeSymbol) {
+                return false;
+            }
+
+            foreach (ITypeSymbol typeArgument in namedTypeSymbol.TypeArguments) {
+                if (ContainsTypeParameter(typeArgument)) {
+                    return true;
+                }
+            }
+
+            if (namedTypeSymbol.ContainingType != null &&
+                ContainsTypeParameter(namedTypeSymbol.ContainingType)) {
+                return true;
+            }
+
+            return false;
+        }
+
+        bool ShouldEmitTemplateDisambiguatorForIdentifier(
+            SemanticModel semantic,
+            IdentifierNameSyntax identifier,
+            ISymbol symbol) {
+            if (semantic == null ||
+                identifier?.Parent is not MemberAccessExpressionSyntax memberAccess ||
+                !ReferenceEquals(memberAccess.Name, identifier) ||
+                memberAccess.Parent is not InvocationExpressionSyntax invocationExpression ||
+                !ReferenceEquals(invocationExpression.Expression, memberAccess)) {
+                return false;
+            }
+
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (invokedMethodSymbol == null || !invokedMethodSymbol.IsGenericMethod) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).ConvertedType ?? semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (receiverTypeSymbol != null && ContainsTypeParameter(receiverTypeSymbol)) {
+                return true;
+            }
+
+            return ContainsTypeParameter(invokedMethodSymbol.ContainingType);
+        }
+
+        bool ShouldEmitTemplateDisambiguatorForGenericName(
+            SemanticModel semantic,
+            GenericNameSyntax genericName) {
+            if (semantic == null ||
+                genericName?.Parent is not MemberAccessExpressionSyntax memberAccess ||
+                !ReferenceEquals(memberAccess.Name, genericName) ||
+                memberAccess.Parent is not InvocationExpressionSyntax invocationExpression ||
+                !ReferenceEquals(invocationExpression.Expression, memberAccess)) {
+                return false;
+            }
+
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (invokedMethodSymbol == null || !invokedMethodSymbol.IsGenericMethod) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(memberAccess.Expression).ConvertedType ?? semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (receiverTypeSymbol != null && ContainsTypeParameter(receiverTypeSymbol)) {
+                return true;
+            }
+
+            return ContainsTypeParameter(invokedMethodSymbol.ContainingType);
         }
 
         bool TryProcessSha256Invocation(
@@ -4235,12 +7187,39 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (ShouldEmitRuntimeObjectToString(receiverTypeSymbol, toStringMethodSymbol)) {
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add($"String::ToJoinString({receiverText})");
+                return true;
+            }
+
             if (!IsNativeToStringTypeSymbol(receiverTypeSymbol)) {
                 return false;
             }
 
             lines.Add($"std::to_string({receiverText})");
             return true;
+        }
+
+        static bool ShouldEmitRuntimeObjectToString(ITypeSymbol receiverTypeSymbol, IMethodSymbol toStringMethodSymbol) {
+            if (receiverTypeSymbol == null ||
+                receiverTypeSymbol.IsValueType ||
+                receiverTypeSymbol.SpecialType == SpecialType.System_String ||
+                receiverTypeSymbol.SpecialType == SpecialType.System_Char ||
+                receiverTypeSymbol.TypeKind == TypeKind.Enum) {
+                return false;
+            }
+
+            if (toStringMethodSymbol == null) {
+                return receiverTypeSymbol.IsReferenceType;
+            }
+
+            if (toStringMethodSymbol.ContainingType?.SpecialType == SpecialType.System_Object) {
+                return true;
+            }
+
+            return !toStringMethodSymbol.IsOverride &&
+                receiverTypeSymbol.IsReferenceType;
         }
 
         static bool TryResolvePathSeparatorToStringInvocation(ExpressionSyntax expression, out string memberName) {
@@ -4329,23 +7308,28 @@ namespace cs2.cpp {
             }
 
             SymbolInfo invocationSymbolInfo = semantic.GetSymbolInfo(invocationExpression);
+            IMethodSymbol candidateMethodSymbol = ResolveBestInvocationCandidateMethodSymbol(semantic, invocationExpression, invocationSymbolInfo, argumentCount);
+            if (candidateMethodSymbol != null) {
+                return candidateMethodSymbol;
+            }
+
             IMethodSymbol methodSymbol = ResolveMethodSymbol(invocationSymbolInfo);
             if (CanMethodMatchInvocationArguments(methodSymbol, argumentCount)) {
                 return methodSymbol;
             }
 
-            IMethodSymbol candidateMethodSymbol = ResolveBestInvocationCandidateMethodSymbol(invocationSymbolInfo, argumentCount);
+            SymbolInfo expressionSymbolInfo = semantic.GetSymbolInfo(invocationExpression.Expression);
+            candidateMethodSymbol = ResolveBestInvocationCandidateMethodSymbol(semantic, invocationExpression, expressionSymbolInfo, argumentCount);
             if (candidateMethodSymbol != null) {
                 return candidateMethodSymbol;
             }
 
-            SymbolInfo expressionSymbolInfo = semantic.GetSymbolInfo(invocationExpression.Expression);
             methodSymbol = ResolveMethodSymbol(expressionSymbolInfo);
             if (CanMethodMatchInvocationArguments(methodSymbol, argumentCount)) {
                 return methodSymbol;
             }
 
-            return ResolveBestInvocationCandidateMethodSymbol(expressionSymbolInfo, argumentCount);
+            return null;
         }
 
         static IMethodSymbol ResolveMethodSymbol(SymbolInfo symbolInfo) {
@@ -4368,14 +7352,118 @@ namespace cs2.cpp {
             return null;
         }
 
+        static IMethodSymbol ResolveBestInvocationCandidateMethodSymbol(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            SymbolInfo symbolInfo,
+            int argumentCount) {
+            return symbolInfo.CandidateSymbols
+                .OfType<IMethodSymbol>()
+                .Select(candidateMethodSymbol => new {
+                    Method = candidateMethodSymbol,
+                    Score = ScoreInvocationCandidateMethod(semantic, invocationExpression, candidateMethodSymbol, argumentCount)
+                })
+                .Where(candidate => candidate.Score >= 0)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenByDescending(candidate => candidate.Method.Parameters.Length == argumentCount)
+                .ThenByDescending(candidate => candidate.Method.Parameters.Length)
+                .ThenBy(candidate => candidate.Method.IsGenericMethod)
+                .Select(candidate => candidate.Method)
+                .FirstOrDefault();
+        }
+
         static IMethodSymbol ResolveBestInvocationCandidateMethodSymbol(SymbolInfo symbolInfo, int argumentCount) {
             return symbolInfo.CandidateSymbols
                 .OfType<IMethodSymbol>()
                 .Where(candidateMethodSymbol => CanMethodMatchInvocationArguments(candidateMethodSymbol, argumentCount))
                 .OrderByDescending(candidateMethodSymbol => candidateMethodSymbol.Parameters.Length == argumentCount)
                 .ThenByDescending(candidateMethodSymbol => candidateMethodSymbol.Parameters.Length)
-                .ThenByDescending(candidateMethodSymbol => candidateMethodSymbol.IsGenericMethod)
+                .ThenBy(candidateMethodSymbol => candidateMethodSymbol.IsGenericMethod)
                 .FirstOrDefault();
+        }
+
+        static int ScoreInvocationCandidateMethod(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol methodSymbol,
+            int argumentCount) {
+            if (!CanMethodMatchInvocationArguments(methodSymbol, argumentCount)) {
+                return -1;
+            }
+
+            int score = methodSymbol.Parameters.Length == argumentCount ? 1000 : 0;
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocationExpression.ArgumentList.Arguments;
+            for (int argumentIndex = 0; argumentIndex < arguments.Count; argumentIndex++) {
+                IParameterSymbol parameterSymbol = ResolveInvocationParameter(methodSymbol, argumentIndex);
+                if (parameterSymbol == null) {
+                    return -1;
+                }
+
+                if (!MatchesArgumentModifier(arguments[argumentIndex], parameterSymbol)) {
+                    return -1;
+                }
+
+                ITypeSymbol argumentTypeSymbol = semantic.GetTypeInfo(arguments[argumentIndex].Expression).ConvertedType ??
+                    semantic.GetTypeInfo(arguments[argumentIndex].Expression).Type;
+                if (argumentTypeSymbol == null) {
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(argumentTypeSymbol, parameterSymbol.Type)) {
+                    score += 100;
+                    continue;
+                }
+
+                Conversion conversion = semantic.ClassifyConversion(arguments[argumentIndex].Expression, parameterSymbol.Type);
+                if (!conversion.Exists) {
+                    return -1;
+                }
+
+                if (conversion.IsIdentity) {
+                    score += 90;
+                } else if (conversion.IsImplicit) {
+                    score += 60;
+                } else if (conversion.IsReference) {
+                    score += 40;
+                } else if (conversion.IsBoxing || conversion.IsUnboxing) {
+                    score += 20;
+                } else {
+                    score += 1;
+                }
+            }
+
+            return score;
+        }
+
+        static IParameterSymbol ResolveInvocationParameter(IMethodSymbol methodSymbol, int argumentIndex) {
+            if (methodSymbol == null || methodSymbol.Parameters.Length == 0) {
+                return null;
+            }
+
+            if (methodSymbol.Parameters.Last().IsParams &&
+                argumentIndex >= methodSymbol.Parameters.Length - 1) {
+                return methodSymbol.Parameters.Last();
+            }
+
+            return argumentIndex < methodSymbol.Parameters.Length
+                ? methodSymbol.Parameters[argumentIndex]
+                : null;
+        }
+
+        static bool MatchesArgumentModifier(ArgumentSyntax argumentSyntax, IParameterSymbol parameterSymbol) {
+            RefKind argumentRefKind = argumentSyntax?.RefKindKeyword.Kind() switch {
+                SyntaxKind.RefKeyword => RefKind.Ref,
+                SyntaxKind.OutKeyword => RefKind.Out,
+                SyntaxKind.InKeyword => RefKind.In,
+                _ => RefKind.None
+            };
+
+            return parameterSymbol.RefKind switch {
+                RefKind.Ref => argumentRefKind == RefKind.Ref,
+                RefKind.Out => argumentRefKind == RefKind.Out,
+                RefKind.In => argumentRefKind == RefKind.In || argumentRefKind == RefKind.None,
+                _ => argumentRefKind == RefKind.None
+            };
         }
 
         static bool CanMethodMatchInvocationArguments(IMethodSymbol methodSymbol, int argumentCount) {
@@ -4670,6 +7758,10 @@ namespace cs2.cpp {
                 return ProcessCoalesceThrowExpression(semantic, context, binary, throwExpression, lines);
             }
 
+            if (binary.IsKind(SyntaxKind.AsExpression)) {
+                return ProcessAsTypeExpression(semantic, context, binary, lines);
+            }
+
             if (binary.IsKind(SyntaxKind.CoalesceExpression) &&
                 TryProcessStringCoalesceExpression(semantic, context, binary, lines, out ExpressionResult stringCoalesceResult)) {
                 return stringCoalesceResult;
@@ -4690,6 +7782,10 @@ namespace cs2.cpp {
             }
 
             if (TryProcessStringNullComparison(semantic, context, binary, lines)) {
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+            }
+
+            if (TryProcessDependentNullComparison(semantic, context, binary, lines)) {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
             }
 
@@ -5104,6 +8200,55 @@ namespace cs2.cpp {
             return true;
         }
 
+        bool TryProcessDependentNullComparison(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binary,
+            List<string> lines) {
+            if (!binary.IsKind(SyntaxKind.NotEqualsExpression) &&
+                !binary.IsKind(SyntaxKind.EqualsExpression)) {
+                return false;
+            }
+
+            ExpressionSyntax valueSide = null;
+            if (binary.Left is LiteralExpressionSyntax leftLiteral &&
+                leftLiteral.IsKind(SyntaxKind.NullLiteralExpression)) {
+                valueSide = binary.Right;
+            } else if (binary.Right is LiteralExpressionSyntax rightLiteral &&
+                rightLiteral.IsKind(SyntaxKind.NullLiteralExpression)) {
+                valueSide = binary.Left;
+            }
+
+            if (valueSide == null ||
+                !TryGetExpressionTypeSymbol(semantic, valueSide, out ITypeSymbol valueTypeSymbol) ||
+                !ShouldUsePortableNullComparisonHelper(valueTypeSymbol)) {
+                return false;
+            }
+
+            List<string> valueLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, valueSide, valueLines);
+            context.PopClass(startDepth);
+
+            RegisterRuntimeRequirement("NativeNullComparison");
+            if (binary.IsKind(SyntaxKind.NotEqualsExpression)) {
+                lines.Add("!");
+            }
+
+            lines.Add("he_cpp_is_null(");
+            lines.AddRange(valueLines);
+            lines.Add(")");
+            return true;
+        }
+
+        static bool ShouldUsePortableNullComparisonHelper(ITypeSymbol valueTypeSymbol) {
+            if (valueTypeSymbol is not ITypeParameterSymbol typeParameterSymbol) {
+                return false;
+            }
+
+            return !typeParameterSymbol.HasReferenceTypeConstraint;
+        }
+
         /// <summary>
         /// Determines whether a lowered expression should be treated as a managed string for native comparison helpers.
         /// </summary>
@@ -5236,13 +8381,30 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessGenericNameSyntax(SemanticModel semantic, LayerContext context, GenericNameSyntax generic, List<string> lines) {
-            lines.Add(generic.Identifier.ToString());
+            bool qualifyWithThis = TryResolveGenericInvocationMethodSymbol(semantic, generic, out IMethodSymbol methodSymbol) &&
+                ShouldQualifyGenericInvocationWithThis(context, methodSymbol, generic);
+            if (qualifyWithThis) {
+                lines.Add("this->");
+            }
+
+            if (qualifyWithThis || ShouldEmitTemplateDisambiguatorForGenericName(semantic, generic)) {
+                lines.Add("template ");
+            }
+
+            if (TryResolveGenericInvocationFunctionByArguments(semantic, context, generic, out ConversionFunction resolvedGeneratedFunction)) {
+                lines.Add(GetEmittedFunctionName(resolvedGeneratedFunction));
+            } else if (methodSymbol != null) {
+                lines.Add(GetEmittedFunctionName(methodSymbol));
+            } else {
+                lines.Add(generic.Identifier.ToString());
+            }
 
             lines.Add("<");
 
             int count = generic.TypeArgumentList.Arguments.Count;
             int i = 0;
             foreach (var genType in generic.TypeArgumentList.Arguments) {
+                RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(genType, semantic));
                 lines.Add(RenderConvertedGenericArgumentType(semantic, context, genType));
 
                 if (i < count - 1) {
@@ -5252,6 +8414,161 @@ namespace cs2.cpp {
                 i++;
             }
             lines.Add(">");
+        }
+
+        static bool ShouldQualifyGenericInvocationWithThis(LayerContext context, IMethodSymbol methodSymbol, GenericNameSyntax genericName) {
+            ConversionClass currentClass = context?.GetCurrentClass();
+            if (currentClass == null ||
+                context.GetCurrentFunction()?.Function?.IsStatic == true ||
+                methodSymbol == null ||
+                methodSymbol.IsStatic ||
+                genericName?.Parent is not InvocationExpressionSyntax) {
+                return false;
+            }
+
+            return currentClass.GenericArgs?.Count > 0;
+        }
+
+        bool TryResolveGenericInvocationMethodSymbol(SemanticModel semantic, GenericNameSyntax genericName, out IMethodSymbol methodSymbol) {
+            methodSymbol = null;
+            if (genericName == null) {
+                return false;
+            }
+
+            InvocationExpressionSyntax invocationExpression = genericName.Parent switch {
+                InvocationExpressionSyntax genericDirectInvocation when ReferenceEquals(genericDirectInvocation.Expression, genericName) => genericDirectInvocation,
+                MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax genericMemberInvocation } genericMemberAccess when ReferenceEquals(genericMemberAccess.Name, genericName) && ReferenceEquals(genericMemberInvocation.Expression, genericMemberAccess) => genericMemberInvocation,
+                MemberBindingExpressionSyntax { Parent: ConditionalAccessExpressionSyntax genericConditionalAccess } genericMemberBinding when ReferenceEquals(genericMemberBinding.Name, genericName) && genericConditionalAccess.Parent is InvocationExpressionSyntax genericConditionalInvocation && ReferenceEquals(genericConditionalInvocation.Expression, genericConditionalAccess) => genericConditionalInvocation,
+                _ => null
+            };
+
+            if (invocationExpression != null) {
+                SymbolInfo genericNameSymbolInfo = semantic.GetSymbolInfo(genericName);
+                methodSymbol = ResolveBestInvocationCandidateMethodSymbol(semantic, invocationExpression, genericNameSymbolInfo, invocationExpression.ArgumentList.Arguments.Count);
+                if (methodSymbol != null) {
+                    return true;
+                }
+
+                methodSymbol = ResolveMethodSymbol(genericNameSymbolInfo);
+                if (CanMethodMatchInvocationArguments(methodSymbol, invocationExpression.ArgumentList.Arguments.Count)) {
+                    return true;
+                }
+            }
+
+            if (genericName.Parent is InvocationExpressionSyntax directInvocation &&
+                ReferenceEquals(directInvocation.Expression, genericName)) {
+                methodSymbol = ResolveInvokedMethodSymbol(semantic, directInvocation);
+                return methodSymbol != null;
+            }
+
+            if (genericName.Parent is MemberAccessExpressionSyntax memberAccess &&
+                ReferenceEquals(memberAccess.Name, genericName) &&
+                memberAccess.Parent is InvocationExpressionSyntax memberInvocation &&
+                ReferenceEquals(memberInvocation.Expression, memberAccess)) {
+                methodSymbol = ResolveInvokedMethodSymbol(semantic, memberInvocation);
+                return methodSymbol != null;
+            }
+
+            if (genericName.Parent is MemberBindingExpressionSyntax memberBinding &&
+                ReferenceEquals(memberBinding.Name, genericName) &&
+                memberBinding.Parent is ConditionalAccessExpressionSyntax conditionalAccess &&
+                conditionalAccess.Parent is InvocationExpressionSyntax conditionalInvocation &&
+                ReferenceEquals(conditionalInvocation.Expression, conditionalAccess)) {
+                methodSymbol = ResolveInvokedMethodSymbol(semantic, conditionalInvocation);
+                return methodSymbol != null;
+            }
+
+            return false;
+        }
+
+        bool TryResolveGenericInvocationFunctionByArguments(
+            SemanticModel semantic,
+            LayerContext context,
+            GenericNameSyntax genericName,
+            out ConversionFunction function) {
+            function = null;
+            if (context?.GetCurrentClass() == null ||
+                genericName == null) {
+                return false;
+            }
+
+            InvocationExpressionSyntax invocationExpression = genericName.Parent switch {
+                InvocationExpressionSyntax directInvocation when ReferenceEquals(directInvocation.Expression, genericName) => directInvocation,
+                MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax memberInvocation } memberAccess when ReferenceEquals(memberAccess.Name, genericName) && ReferenceEquals(memberInvocation.Expression, memberAccess) => memberInvocation,
+                _ => null
+            };
+            if (invocationExpression == null) {
+                return false;
+            }
+
+            ConversionClass currentClass = context.GetCurrentClass();
+            List<VariableType> argumentTypes = invocationExpression.ArgumentList.Arguments
+                .Select(argument => ResolveInvocationArgumentType(semantic, argument.Expression))
+                .ToList();
+
+            function = currentClass.Functions.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, genericName.Identifier.Text, StringComparison.Ordinal) &&
+                candidate.InParameters?.Count == invocationExpression.ArgumentList.Arguments.Count &&
+                (candidate.GenericParameters?.Count ?? 0) == genericName.TypeArgumentList.Arguments.Count &&
+                MatchesGenericInvocationArguments(currentClass, candidate, invocationExpression.ArgumentList.Arguments, argumentTypes));
+            return function != null;
+        }
+
+        static VariableType ResolveInvocationArgumentType(SemanticModel semantic, ExpressionSyntax expression) {
+            ITypeSymbol argumentTypeSymbol = semantic.GetTypeInfo(expression).ConvertedType ??
+                semantic.GetTypeInfo(expression).Type;
+            return argumentTypeSymbol != null
+                ? VariableUtil.GetVarType(argumentTypeSymbol)
+                : new VariableType();
+        }
+
+        static bool MatchesGenericInvocationArguments(
+            ConversionClass currentClass,
+            ConversionFunction function,
+            SeparatedSyntaxList<ArgumentSyntax> arguments,
+            List<VariableType> argumentTypes) {
+            for (int index = 0; index < arguments.Count; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                if (!MatchesArgumentSyntaxModifier(parameter, arguments[index])) {
+                    return false;
+                }
+
+                if (IsOpenGenericParameter(currentClass, function, parameter.VarType)) {
+                    continue;
+                }
+
+                VariableType argumentType = argumentTypes[index];
+                if (!MatchesParameterType(parameter.VarType, argumentType)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool MatchesArgumentSyntaxModifier(ConversionVariable parameter, ArgumentSyntax argumentSyntax) {
+            bool isRef = (parameter.Modifier & ParameterModifier.Ref) != 0;
+            bool isOut = (parameter.Modifier & ParameterModifier.Out) != 0;
+            bool isIn = (parameter.Modifier & ParameterModifier.In) != 0;
+
+            return argumentSyntax?.RefKindKeyword.Kind() switch {
+                SyntaxKind.RefKeyword => isRef && !isOut,
+                SyntaxKind.OutKeyword => isOut,
+                SyntaxKind.InKeyword => isIn || (!isRef && !isOut),
+                _ => !isRef && !isOut
+            };
+        }
+
+        static bool IsOpenGenericParameter(ConversionClass currentClass, ConversionFunction function, VariableType parameterType) {
+            if (parameterType == null || string.IsNullOrWhiteSpace(parameterType.TypeName)) {
+                return false;
+            }
+
+            if (function?.GenericParameters?.Contains(parameterType.TypeName) == true) {
+                return true;
+            }
+
+            return currentClass?.GenericArgs?.Contains(parameterType.TypeName) == true;
         }
 
         protected override void ProcessImplicitArrayCreationExpression(SemanticModel semantic, LayerContext context, ImplicitArrayCreationExpressionSyntax implicitArray, List<string> lines) {
@@ -5283,6 +8600,7 @@ namespace cs2.cpp {
 
         protected override void ProcessTypeOfExpression(SemanticModel semantic, LayerContext context, TypeOfExpressionSyntax typeOfExpression, List<string> lines) {
             VariableType sourceType = VariableUtil.GetVarType(typeOfExpression.Type, semantic);
+            RegisterGeneratedTypeReferences(context, sourceType);
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(sourceType, out typeData);
             string cppTypeName = cppType.ToCPPString(context.Program);
@@ -5317,20 +8635,113 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessSimpleLambdaExpression(SemanticModel semantic, LayerContext context, SimpleLambdaExpressionSyntax simpleLambda, List<string> lines) {
-            // Add the parameter of the lambda
-            lines.Add(simpleLambda.Parameter.Identifier.Text);
+            AppendNativeLambda(
+                semantic,
+                context,
+                simpleLambda,
+                new[] { simpleLambda.Parameter },
+                simpleLambda.Body,
+                lines);
+        }
 
-            // Add the arrow (=>) for TypeScript arrow function
-            lines.Add(" => ");
-
-            // Process the body of the lambda, which could be an expression or a block
-            if (simpleLambda.Body is ExpressionSyntax) {
-                ProcessExpression(semantic, context, (ExpressionSyntax)simpleLambda.Body, lines);
-            } else if (simpleLambda.Body is BlockSyntax) {
-                lines.Add("{\n");
-                ProcessStatement(semantic, context, (BlockSyntax)simpleLambda.Body, lines);
-                lines.Add("}\n");
+        protected override ExpressionResult ProcessSwitchExpressionSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchExpressionSyntax switchExpression,
+            List<string> lines) {
+            if (semantic == null || context == null || switchExpression == null || lines == null || switchExpression.Arms.Count == 0) {
+                return new ExpressionResult(false);
             }
+
+            List<string> governingExpressionLines = new List<string>();
+            int governingStart = context.DepthClass;
+            ExpressionResult governingResult = ProcessExpression(semantic, context, switchExpression.GoverningExpression, governingExpressionLines);
+            context.PopClass(governingStart);
+            if (!governingResult.Processed) {
+                return new ExpressionResult(false);
+            }
+
+            List<string> beforeLines = governingResult.BeforeLines != null
+                ? new List<string>(governingResult.BeforeLines)
+                : new List<string>();
+            VariableType resultType = null;
+
+            lines.Add("(");
+            for (int armIndex = 0; armIndex < switchExpression.Arms.Count; armIndex++) {
+                SwitchExpressionArmSyntax arm = switchExpression.Arms[armIndex];
+                bool isDiscardArm = arm.Pattern is DiscardPatternSyntax;
+                if (!isDiscardArm) {
+                    if (!TryAppendSwitchArmCondition(semantic, context, switchExpression, arm, governingExpressionLines, lines)) {
+                        return new ExpressionResult(false);
+                    }
+
+                    lines.Add(" ? ");
+                }
+
+                List<string> armValueLines = new List<string>();
+                int armStart = context.DepthClass;
+                ExpressionResult armResult = ProcessExpression(semantic, context, arm.Expression, armValueLines);
+                context.PopClass(armStart);
+                if (!armResult.Processed) {
+                    return new ExpressionResult(false);
+                }
+
+                if (armResult.BeforeLines != null && armResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(armResult.BeforeLines);
+                }
+
+                resultType ??= armResult.Type;
+                lines.AddRange(armValueLines);
+
+                if (!isDiscardArm) {
+                    lines.Add(" : ");
+                }
+            }
+
+            lines.Add(")");
+            return beforeLines.Count > 0
+                ? new ExpressionResult(true, VariablePath.Unknown, resultType, beforeLines)
+                : new ExpressionResult(true, VariablePath.Unknown, resultType);
+        }
+
+        bool TryAppendSwitchArmCondition(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchExpressionSyntax switchExpression,
+            SwitchExpressionArmSyntax arm,
+            List<string> governingExpressionLines,
+            List<string> lines) {
+            if (arm.Pattern is ConstantPatternSyntax constantPattern) {
+                lines.Add("(");
+                lines.AddRange(governingExpressionLines);
+                lines.Add(" == ");
+                int constantStart = context.DepthClass;
+                ExpressionResult constantResult = ProcessExpression(semantic, context, constantPattern.Expression, lines);
+                context.PopClass(constantStart);
+                lines.Add(")");
+                return constantResult.Processed;
+            }
+
+            if (arm.Pattern is DeclarationPatternSyntax declarationPattern &&
+                declarationPattern.Designation is DiscardDesignationSyntax &&
+                declarationPattern.Type is not null) {
+                List<string> typeCheckLines = new List<string>();
+                int typeCheckStart = context.DepthClass;
+                ExpressionResult typeCheckResult = ProcessExpression(semantic, context, declarationPattern.Type, typeCheckLines);
+                context.PopClass(typeCheckStart);
+                if (!typeCheckResult.Processed) {
+                    return false;
+                }
+
+                lines.Add("dynamic_cast<");
+                lines.AddRange(typeCheckLines);
+                lines.Add("*>(");
+                lines.AddRange(governingExpressionLines);
+                lines.Add(") != nullptr");
+                return true;
+            }
+
+            return false;
         }
 
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
@@ -5474,10 +8885,15 @@ namespace cs2.cpp {
 
         protected override void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines) {
             ConversionClass? currentClass = context.GetCurrentClass();
-            string baseClassName = currentClass?.Extensions?.FirstOrDefault() ?? currentClass?.Name ?? "base";
+            INamedTypeSymbol baseTypeSymbol = semantic?.GetTypeInfo(baseExpression).Type as INamedTypeSymbol;
+            string baseClassName = baseTypeSymbol != null
+                ? GetContainingTypeAccessName(context, baseTypeSymbol)
+                : currentClass?.Extensions?.FirstOrDefault() ?? currentClass?.Name ?? "base";
             lines.Add(baseClassName);
 
-            ConversionClass? baseClass = context.Program.Classes.FirstOrDefault(c => c.Name == baseClassName);
+            ConversionClass? baseClass = baseTypeSymbol != null
+                ? context.Program.FindGeneratedClass(baseTypeSymbol)
+                : context.Program.Classes.FirstOrDefault(c => c.Name == baseClassName);
             context.AddClass(baseClass ?? currentClass);
         }
 
@@ -5529,7 +8945,10 @@ namespace cs2.cpp {
             tupleType = RefineTupleExpressionTypeFromArgumentResults(tupleType, argumentResults);
             RegisterGeneratedTypeReferences(context, tupleType);
 
-            lines.Add("new ");
+            bool emitByValue = true;
+            if (!emitByValue) {
+                lines.Add("new ");
+            }
             lines.Add(QualifyRenderedCppTypeName(tupleType.ToCPPString(context.Program), context));
             lines.Add("(");
 
@@ -5542,6 +8961,72 @@ namespace cs2.cpp {
             }
 
             lines.Add(")");
+        }
+
+        /// <summary>
+        /// Determines whether one tuple expression should emit a direct native value construction instead of a heap allocation.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the tuple expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="tupleExpression">Tuple expression being lowered.</param>
+        /// <returns><c>true</c> when the tuple literal targets a direct native value slot; otherwise <c>false</c>.</returns>
+        bool ShouldEmitTupleExpressionByValue(
+            SemanticModel semantic,
+            LayerContext context,
+            TupleExpressionSyntax tupleExpression) {
+            if (tupleExpression?.Parent is not AssignmentExpressionSyntax assignmentExpression ||
+                assignmentExpression.Right != tupleExpression) {
+                return false;
+            }
+
+            return IsDirectTupleAssignmentTarget(semantic, context, assignmentExpression.Left);
+        }
+
+        /// <summary>
+        /// Determines whether one assignment target writes into direct native storage suitable for by-value tuple construction.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the assignment target.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="targetExpression">Assignment target receiving the tuple literal.</param>
+        /// <returns><c>true</c> when the target is backed by direct native value storage; otherwise <c>false</c>.</returns>
+        bool IsDirectTupleAssignmentTarget(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax targetExpression) {
+            if (targetExpression == null) {
+                return false;
+            }
+
+            if (targetExpression is ElementAccessExpressionSyntax elementAccessExpression) {
+                return IsDirectTupleAssignmentReceiver(semantic, context, elementAccessExpression.Expression);
+            }
+
+            if (targetExpression is MemberAccessExpressionSyntax memberAccessExpression) {
+                return IsDirectTupleAssignmentReceiver(semantic, context, memberAccessExpression.Expression);
+            }
+
+            if (targetExpression is IdentifierNameSyntax identifierName) {
+                return IsRefLocalExpression(semantic, identifierName);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether one receiver expression uses direct native member access so tuple writes land in value storage instead of pointer-backed objects.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the receiver expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="receiverExpression">Receiver expression to inspect.</param>
+        /// <returns><c>true</c> when the receiver resolves to direct native storage; otherwise <c>false</c>.</returns>
+        bool IsDirectTupleAssignmentReceiver(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax receiverExpression) {
+            return receiverExpression != null &&
+                ((TryResolveTrackedExpressionVariableType(context, receiverExpression, out VariableType trackedReceiverType) &&
+                  IsDirectMemberAccessType(trackedReceiverType)) ||
+                 UsesDirectMemberAccess(semantic, receiverExpression));
         }
 
         /// <summary>
@@ -5829,18 +9314,16 @@ namespace cs2.cpp {
 
 
         protected override void ProcessDefaultExpression(SemanticModel semantic, LayerContext context, DefaultExpressionSyntax defaultExpression, List<string> lines) {
-            var type = defaultExpression.Type.ToString();
+            VariableType sourceType = VariableUtil.GetVarType(defaultExpression.Type, semantic);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
 
-            // Add the default value based on the type
-            if (type == "int" || type == "float" || type == "double" || type == "decimal" || type == "long" || type == "short" || type == "byte") {
-                lines.Add("0");
-            } else if (type == "bool") {
-                lines.Add("false");
-            } else if (type == "char") {
-                lines.Add("'\\0'");
-            } else {
-                lines.Add("null"); // Default to null for reference types or unknown types
+            if (typeData.IsPointer) {
+                lines.Add("nullptr");
+                return;
             }
+
+            lines.Add($"{QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context)}()");
         }
 
         protected override ExpressionResult ProcessInterpolatedStringExpression(SemanticModel semantic, LayerContext context, InterpolatedStringExpressionSyntax interpolatedString, List<string> lines) {
@@ -5892,7 +9375,9 @@ namespace cs2.cpp {
             }
 
             List<string> interpolationLines = new List<string>();
+            int interpolationDepth = context.DepthClass;
             ExpressionResult interpolationResult = ProcessExpression(semantic, context, expression, interpolationLines);
+            context.PopClass(interpolationDepth);
 
             string expressionText = string.Concat(interpolationLines);
             VariableType expressionType = interpolationResult.Type ?? ResolveInterpolationType(semantic, expression);
@@ -5904,6 +9389,22 @@ namespace cs2.cpp {
             if ((expressionType == null || IsWeakVariableType(expressionType)) &&
                 TryResolveTrackedExpressionVariableType(context, expression, out VariableType trackedExpressionType)) {
                 expressionType = trackedExpressionType;
+            }
+
+            if (expression is IdentifierNameSyntax identifierName &&
+                context?.GetCurrentClass() != null) {
+                ISymbol identifierSymbol = semantic.GetSymbolInfo(identifierName).Symbol;
+                if (identifierSymbol is IAliasSymbol identifierAliasSymbol) {
+                    identifierSymbol = identifierAliasSymbol.Target;
+                }
+
+                if ((identifierSymbol == null || identifierSymbol is INamedTypeSymbol || identifierSymbol is INamespaceSymbol) &&
+                    TryResolveGeneratedPropertyAccessor(context.GetCurrentClass(), identifierName.Identifier.Text, "get_", out ConversionFunction accessorFunction)) {
+                    expressionText = $"this->{accessorFunction.Name}()";
+                    if (accessorFunction.ReturnType != null) {
+                        expressionType = accessorFunction.ReturnType;
+                    }
+                }
             }
 
             if (expressionType.Type == VariableDataType.String ||
@@ -5943,7 +9444,13 @@ namespace cs2.cpp {
                 return $"std::to_string({expressionText})";
             }
 
-            return $"{expressionText}->ToString()";
+            if (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol toStringTypeSymbol) &&
+                toStringTypeSymbol.IsValueType) {
+                return $"{expressionText}.ToString()";
+            }
+
+            RegisterRuntimeRequirement("NativeString");
+            return $"String::ToJoinString({expressionText})";
         }
 
         bool IsNativeTypeNamePropertyAccess(SemanticModel semantic, ExpressionSyntax expression) {
@@ -5971,6 +9478,12 @@ namespace cs2.cpp {
         string GetCppTypeToken(VariableType sourceType, ConversionProgram program) {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            if (sourceType != null &&
+                (sourceType.Type == VariableDataType.Tuple ||
+                 string.Equals(sourceType.TypeName, "ValueTuple", StringComparison.Ordinal))) {
+                return cppType.ToCPPString(program);
+            }
+
             if (typeData.IsPointer) {
                 return $"{cppType.ToCPPString(program)}*";
             }
@@ -6045,6 +9558,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
+            if (TryProcessIndexerElementAccessExpression(semantic, context, elementAccess, lines)) {
+                return;
+            }
+
             bool shouldDereferenceElementAccess = ShouldDereferenceElementAccessExpression(semantic, elementAccess.Expression);
             if (shouldDereferenceElementAccess) {
                 lines.Add("(*");
@@ -6064,6 +9581,17 @@ namespace cs2.cpp {
 
             // Process the index argument
             foreach (var argument in elementAccess.ArgumentList.Arguments) {
+                if (TryAppendIndexFromEndElementAccessArgument(
+                    semantic,
+                    context,
+                    elementAccess.Expression,
+                    shouldDereferenceElementAccess,
+                    false,
+                    argument.Expression,
+                    lines)) {
+                    continue;
+                }
+
                 startClass = context.DepthClass;
                 ProcessExpression(semantic, context, argument.Expression, lines);
                 context.PopClass(startClass);
@@ -6074,6 +9602,121 @@ namespace cs2.cpp {
             lines.Add("]");
 
             context.LoadClass(saved);
+        }
+
+        /// <summary>
+        /// Lowers user-defined indexer access to generated get_Item calls so converted types do not need ad hoc native operator[] support.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="elementAccess">Indexer access being lowered.</param>
+        /// <param name="lines">Output token buffer that receives emitted C++.</param>
+        /// <returns><c>true</c> when the element access resolved to an indexer property and was lowered directly; otherwise, <c>false</c>.</returns>
+        bool TryProcessIndexerElementAccessExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ElementAccessExpressionSyntax elementAccess,
+            List<string> lines) {
+            if (semantic == null || elementAccess == null) {
+                return false;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(elementAccess).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is not IPropertySymbol propertySymbol || !propertySymbol.IsIndexer) {
+                return false;
+            }
+
+            if (TryGetExpressionTypeSymbol(semantic, elementAccess.Expression, out ITypeSymbol receiverTypeSymbol) &&
+                receiverTypeSymbol?.SpecialType == SpecialType.System_String) {
+                return false;
+            }
+
+            bool shouldDereferenceElementAccess = ShouldDereferenceElementAccessExpression(semantic, elementAccess.Expression);
+            if (shouldDereferenceElementAccess) {
+                lines.Add("(*");
+            }
+
+            int startClass = context.DepthClass;
+            ProcessExpression(semantic, context, elementAccess.Expression, lines);
+            List<ConversionClass> saved = context.SavePopClass(startClass);
+
+            if (shouldDereferenceElementAccess) {
+                lines.Add(")");
+            }
+
+            bool useDirectMemberAccess = shouldDereferenceElementAccess ||
+                !IsPointerBackedExpressionType(context, semantic, elementAccess.Expression) &&
+                (UsesDirectMemberAccess(semantic, elementAccess.Expression) ||
+                 TryResolveTrackedExpressionVariableType(context, elementAccess.Expression, out VariableType trackedReceiverType) &&
+                 IsDirectMemberAccessType(trackedReceiverType));
+            lines.Add(useDirectMemberAccess ? ".get_Item(" : "->get_Item(");
+            bool firstArgument = true;
+            foreach (ArgumentSyntax argument in elementAccess.ArgumentList.Arguments) {
+                if (!firstArgument) {
+                    lines.Add(", ");
+                }
+
+                if (TryAppendIndexFromEndElementAccessArgument(
+                    semantic,
+                    context,
+                    elementAccess.Expression,
+                    shouldDereferenceElementAccess,
+                    useDirectMemberAccess,
+                    argument.Expression,
+                    lines)) {
+                    firstArgument = false;
+                    continue;
+                }
+
+                startClass = context.DepthClass;
+                ProcessExpression(semantic, context, argument.Expression, lines);
+                context.PopClass(startClass);
+                firstArgument = false;
+            }
+
+            lines.Add(")");
+            context.LoadClass(saved);
+            return true;
+        }
+
+        bool TryAppendIndexFromEndElementAccessArgument(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax receiverExpression,
+            bool shouldDereferenceElementAccess,
+            bool useDirectMemberAccess,
+            ExpressionSyntax argumentExpression,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                receiverExpression == null ||
+                argumentExpression is not PrefixUnaryExpressionSyntax indexFromEndExpression ||
+                !indexFromEndExpression.IsKind(SyntaxKind.IndexExpression)) {
+                return false;
+            }
+
+            string receiverText = RenderExpressionText(semantic, context, receiverExpression);
+            if (string.IsNullOrWhiteSpace(receiverText)) {
+                return false;
+            }
+
+            string memberAccessOperator = shouldDereferenceElementAccess
+                ? "->"
+                : useDirectMemberAccess
+                    ? "."
+                    : "->";
+            lines.Add(receiverText);
+            lines.Add(memberAccessOperator);
+            lines.Add("get_Length() - ");
+
+            int startClass = context.DepthClass;
+            ProcessExpression(semantic, context, indexFromEndExpression.Operand, lines);
+            context.PopClass(startClass);
+            return true;
         }
 
         protected override void ProcessPostfixUnaryExpression(SemanticModel semantic, LayerContext context, PostfixUnaryExpressionSyntax postfixUnary, List<string> lines) {
@@ -6087,6 +9730,11 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessPrefixUnaryExpression(SemanticModel semantic, LayerContext context, PrefixUnaryExpressionSyntax prefixUnary, List<string> lines) {
+            if (prefixUnary.IsKind(SyntaxKind.AddressOfExpression) &&
+                TryProcessFunctionPointerAddressOfExpression(semantic, context, prefixUnary, lines, out ExpressionResult addressOfResult)) {
+                return addressOfResult;
+            }
+
             // Map the operator to the corresponding TypeScript operator
             string operatorSymbol = prefixUnary.OperatorToken.ToString();
             lines.Add(operatorSymbol);
@@ -6096,7 +9744,206 @@ namespace cs2.cpp {
             ExpressionResult result = ProcessExpression(semantic, context, prefixUnary.Operand, lines);
             context.PopClass(start);
 
+            if (prefixUnary.IsKind(SyntaxKind.PointerIndirectionExpression)) {
+                VariableType dereferencedType = ResolvePointerIndirectionExpressionType(semantic, prefixUnary);
+                if (dereferencedType != null) {
+                    result.Type = dereferencedType;
+                }
+            }
+
             return result;
+        }
+
+        static VariableType ResolvePointerIndirectionExpressionType(
+            SemanticModel semantic,
+            PrefixUnaryExpressionSyntax prefixUnary) {
+            if (semantic == null || prefixUnary == null) {
+                return null;
+            }
+
+            if (semantic.GetTypeInfo(prefixUnary).ConvertedType is ITypeSymbol convertedTypeSymbol &&
+                !IsWeakRecoveredTypeSymbol(convertedTypeSymbol)) {
+                return VariableUtil.GetVarType(convertedTypeSymbol);
+            }
+
+            if (semantic.GetTypeInfo(prefixUnary).Type is ITypeSymbol typeSymbol &&
+                !IsWeakRecoveredTypeSymbol(typeSymbol)) {
+                return VariableUtil.GetVarType(typeSymbol);
+            }
+
+            if (TryGetExpressionTypeSymbol(semantic, prefixUnary.Operand, out ITypeSymbol operandTypeSymbol) &&
+                operandTypeSymbol is IPointerTypeSymbol pointerTypeSymbol) {
+                return VariableUtil.GetVarType(pointerTypeSymbol.PointedAtType);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Lowers address-of method expressions used for unmanaged function pointers into one qualified C++ function address.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="prefixUnary">Address-of expression being lowered.</param>
+        /// <param name="lines">Output token buffer that receives emitted C++ tokens.</param>
+        /// <param name="result">Receives the resolved expression result when lowering succeeds.</param>
+        /// <returns><c>true</c> when the address-of expression targets a method symbol and was lowered directly; otherwise <c>false</c>.</returns>
+        bool TryProcessFunctionPointerAddressOfExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            PrefixUnaryExpressionSyntax prefixUnary,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+
+            if (semantic == null ||
+                prefixUnary == null ||
+                !ReferenceEquals(prefixUnary.SyntaxTree, semantic.SyntaxTree) ||
+                !ReferenceEquals(prefixUnary.Operand.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(prefixUnary.Operand).Symbol;
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            if (symbol is not IMethodSymbol methodSymbol) {
+                return false;
+            }
+
+            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(prefixUnary).ConvertedType ?? semantic.GetTypeInfo(prefixUnary).Type;
+            VariableType resultType = VariableUtil.GetVarType(resultTypeSymbol);
+            lines.Add(RenderQualifiedMethodPointerTarget(methodSymbol, context));
+            result = new ExpressionResult(true, VariablePath.Unknown, resultType);
+            return true;
+        }
+
+        /// <summary>
+        /// Renders one fully qualified C++ method pointer target, including emitted generic type arguments for the containing type when needed.
+        /// </summary>
+        /// <param name="methodSymbol">Method whose address is being taken.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>Qualified method pointer target text without the leading ampersand.</returns>
+        string RenderQualifiedMethodPointerTarget(IMethodSymbol methodSymbol, LayerContext context) {
+            if (methodSymbol?.ContainingType == null) {
+                return (methodSymbol?.Name ?? string.Empty) + GetMethodPointerRefModifierSuffix(methodSymbol);
+            }
+
+            string containingTypeName = RenderQualifiedContainingTypeName(methodSymbol.ContainingType, context);
+            string returnTypeName = GetCppTypeToken(VariableUtil.GetVarType(methodSymbol.ReturnType), context.Program);
+            List<string> parameterTypeNames = new List<string>();
+            foreach (IParameterSymbol parameterSymbol in methodSymbol.Parameters) {
+                string parameterTypeName = GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program);
+                if (parameterSymbol.RefKind == RefKind.Ref || parameterSymbol.RefKind == RefKind.Out) {
+                    parameterTypeName += "&";
+                }
+
+                parameterTypeNames.Add(parameterTypeName);
+            }
+
+            string emittedTargetName = $"{containingTypeName}::{methodSymbol.Name}{GetMethodPointerRefModifierSuffix(methodSymbol)}{RenderMethodPointerGenericArguments(methodSymbol, context)}";
+            string functionPointerSignature = methodSymbol.IsStatic
+                ? $"{returnTypeName} (*)({string.Join(", ", parameterTypeNames)})"
+                : $"{returnTypeName} ({containingTypeName}::*)({string.Join(", ", parameterTypeNames)})";
+            return $"static_cast<{functionPointerSignature}>(&{emittedTargetName})";
+        }
+
+        /// <summary>
+        /// Renders closed generic method arguments for one method pointer target so native overload resolution binds to the intended template instantiation.
+        /// </summary>
+        /// <param name="methodSymbol">Method whose generic arguments should be rendered.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>Closed generic argument list text, or an empty string when the method is nongeneric.</returns>
+        string RenderMethodPointerGenericArguments(IMethodSymbol methodSymbol, LayerContext context) {
+            if (methodSymbol == null) {
+                return string.Empty;
+            }
+
+            List<string> renderedTypeArguments = new List<string>();
+            if (methodSymbol.TypeArguments.Length > 0) {
+                foreach (ITypeSymbol typeArgument in methodSymbol.TypeArguments) {
+                    renderedTypeArguments.Add(RenderMethodPointerTypeArgument(typeArgument, context));
+                }
+            } else if (methodSymbol.TypeParameters.Length > 0) {
+                foreach (ITypeParameterSymbol typeParameter in methodSymbol.TypeParameters) {
+                    renderedTypeArguments.Add(typeParameter.Name);
+                }
+            }
+
+            return renderedTypeArguments.Count == 0
+                ? string.Empty
+                : $"<{string.Join(", ", renderedTypeArguments)}>";
+        }
+
+        static string GetMethodPointerRefModifierSuffix(IMethodSymbol methodSymbol) {
+            if (methodSymbol?.Parameters == null || methodSymbol.Parameters.Length == 0) {
+                return string.Empty;
+            }
+
+            List<string> suffixParts = new List<string>();
+            for (int index = 0; index < methodSymbol.Parameters.Length; ++index) {
+                IParameterSymbol parameter = methodSymbol.Parameters[index];
+                if (parameter.RefKind == RefKind.Ref) {
+                    suffixParts.Add($"ref{index}");
+                    continue;
+                }
+
+                if (parameter.RefKind == RefKind.Out) {
+                    suffixParts.Add($"out{index}");
+                }
+            }
+
+            return suffixParts.Count == 0
+                ? string.Empty
+                : "__" + string.Join("_", suffixParts);
+        }
+
+        /// <summary>
+        /// Renders the emitted containing type name for one method pointer target, preserving generic type arguments for templated containers.
+        /// </summary>
+        /// <param name="containingTypeSymbol">Containing type whose emitted name is needed.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>Containing type text suitable for a qualified method pointer target.</returns>
+        string RenderQualifiedContainingTypeName(INamedTypeSymbol containingTypeSymbol, LayerContext context) {
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(containingTypeSymbol);
+            string emittedTypeName = generatedClass?.GetEmittedTypeName() ?? containingTypeSymbol.Name;
+
+            List<string> renderedTypeArguments = new List<string>();
+            if (containingTypeSymbol.TypeArguments.Length > 0) {
+                foreach (ITypeSymbol typeArgument in containingTypeSymbol.TypeArguments) {
+                    renderedTypeArguments.Add(RenderMethodPointerTypeArgument(typeArgument, context));
+                }
+            } else if (containingTypeSymbol.TypeParameters.Length > 0) {
+                foreach (ITypeParameterSymbol typeParameter in containingTypeSymbol.TypeParameters) {
+                    renderedTypeArguments.Add(typeParameter.Name);
+                }
+            }
+
+            if (renderedTypeArguments.Count == 0) {
+                return emittedTypeName;
+            }
+
+            return $"{emittedTypeName}<{string.Join(", ", renderedTypeArguments)}>";
+        }
+
+        /// <summary>
+        /// Renders one containing-type generic argument for a qualified method pointer target using the same C++ type lowering rules as ordinary signatures.
+        /// </summary>
+        /// <param name="typeArgument">Generic argument type to render.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <returns>Rendered C++ type argument text.</returns>
+        string RenderMethodPointerTypeArgument(ITypeSymbol typeArgument, LayerContext context) {
+            VariableType sourceType = VariableUtil.GetVarType(typeArgument);
+            CPPTypeData typeData;
+            VariableType cppType = ConvertToCPPType(sourceType, out typeData);
+            string renderedType = cppType.ToCPPString(context.Program);
+
+            if (typeData.IsPointer) {
+                return $"{renderedType}*";
+            }
+
+            return renderedType;
         }
 
         protected override void ProcessMemberBindingExpression(SemanticModel semantic, LayerContext context, MemberBindingExpressionSyntax memberBinding, List<string> lines) {
@@ -6117,25 +9964,79 @@ namespace cs2.cpp {
             VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
+            string castTargetTypeName = cppType.ToCPPString(context.Program) + (typeData.IsPointer ? "*" : string.Empty);
+            ITypeSymbol sourceExpressionTypeSymbol = semantic.GetTypeInfo(castExpr.Expression).Type ?? semantic.GetTypeInfo(castExpr.Expression).ConvertedType;
+            bool sourceExpressionTypeKnown = sourceExpressionTypeSymbol != null;
+            VariableType sourceType = sourceExpressionTypeKnown
+                ? VariableUtil.GetVarType(sourceExpressionTypeSymbol)
+                : new VariableType(VariableDataType.Object, "object");
+            CPPTypeData sourceTypeData;
+            VariableType cppSourceType = ConvertToCPPType(sourceType, out sourceTypeData);
+            bool sourceIsPointerLike = sourceTypeData.IsPointer;
+            bool targetIsPointerLike = typeData.IsPointer;
+            bool sourceIsNativePointerInteger = string.Equals(cppSourceType.TypeName, "intptr_t", StringComparison.Ordinal) ||
+                string.Equals(cppSourceType.TypeName, "uintptr_t", StringComparison.Ordinal);
+            bool targetIsNativePointerInteger = string.Equals(cppType.TypeName, "intptr_t", StringComparison.Ordinal) ||
+                string.Equals(cppType.TypeName, "uintptr_t", StringComparison.Ordinal);
 
             if (!typeData.IsPointer &&
                 TryGetExpressionTypeSymbol(semantic, castExpr.Expression, out ITypeSymbol sourceTypeSymbol) &&
                 sourceTypeSymbol.SpecialType == SpecialType.System_Object) {
                 lines.Add("(*static_cast<");
-                lines.Add(cppType.ToCPPString(context.Program));
+                lines.Add(castTargetTypeName);
                 lines.Add("*>(");
                 ProcessExpression(semantic, context, castExpr.Expression, lines);
                 lines.Add("))");
                 return new ExpressionResult(true, VariablePath.Unknown, varType);
             }
 
-            lines.Add("static_cast<");
-            lines.Add(cppType.ToCPPString(context.Program));
+            if (sourceExpressionTypeKnown &&
+                sourceIsPointerLike &&
+                !targetIsPointerLike &&
+                !targetIsNativePointerInteger &&
+                IsIntegerLikeCppTypeName(cppType.TypeName)) {
+                lines.Add("static_cast<");
+                lines.Add(castTargetTypeName);
+                lines.Add(">(reinterpret_cast<");
+                lines.Add(IsUnsignedIntegerLikeCppTypeName(cppType.TypeName) ? "uintptr_t" : "intptr_t");
+                lines.Add(">(");
+                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                lines.Add("))");
+                return new ExpressionResult(true, VariablePath.Unknown, varType);
+            }
+
+            bool requiresReinterpretCast = sourceExpressionTypeKnown &&
+                ((targetIsPointerLike && (sourceIsNativePointerInteger || IsIntegerLikeCppTypeName(cppSourceType.TypeName))) ||
+                (targetIsNativePointerInteger && sourceIsPointerLike) ||
+                (targetIsPointerLike && sourceIsPointerLike));
+            lines.Add(requiresReinterpretCast ? "reinterpret_cast<" : "static_cast<");
+            lines.Add(castTargetTypeName);
             lines.Add(">(");
             ProcessExpression(semantic, context, castExpr.Expression, lines);
             lines.Add(")");
 
             return new ExpressionResult(true, VariablePath.Unknown, varType);
+        }
+
+        static bool IsIntegerLikeCppTypeName(string cppTypeName) {
+            return string.Equals(cppTypeName, "int8_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint8_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "int16_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint16_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "int32_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint32_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "int64_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint64_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "intptr_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uintptr_t", StringComparison.Ordinal);
+        }
+
+        static bool IsUnsignedIntegerLikeCppTypeName(string cppTypeName) {
+            return string.Equals(cppTypeName, "uint8_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint16_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint32_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uint64_t", StringComparison.Ordinal) ||
+                string.Equals(cppTypeName, "uintptr_t", StringComparison.Ordinal);
         }
 
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
@@ -6144,15 +10045,21 @@ namespace cs2.cpp {
             }
 
             // Process the condition (before the ?)
+            int conditionStart = context.DepthClass;
             ProcessExpression(semantic, context, conditional.Condition, lines);
+            context.PopClass(conditionStart);
             lines.Add(" ? ");
 
             // Process the true branch (after the ? and before the :)
-            ProcessExpression(semantic, context, conditional.WhenTrue, lines);
+            int whenTrueStart = context.DepthClass;
+            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenTrue), lines);
+            context.PopClass(whenTrueStart);
             lines.Add(" : ");
 
             // Process the false branch (after the :)
-            ProcessExpression(semantic, context, conditional.WhenFalse, lines);
+            int whenFalseStart = context.DepthClass;
+            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenFalse), lines);
+            context.PopClass(whenFalseStart);
         }
 
         bool TryProcessNullableConditionalExpression(
@@ -6178,7 +10085,9 @@ namespace cs2.cpp {
             VariableType convertedCppType = ConvertToCPPType(convertedSourceType, out convertedTypeData);
             string nullableTypeName = convertedCppType.ToCPPString(context.Program);
 
+            int conditionStart = context.DepthClass;
             ProcessExpression(semantic, context, conditional.Condition, lines);
+            context.PopClass(conditionStart);
             lines.Add(" ? ");
             AppendNullableConditionalBranch(semantic, context, conditional.WhenTrue, nullableTypeName, lines);
             lines.Add(" : ");
@@ -6199,8 +10108,16 @@ namespace cs2.cpp {
             }
 
             lines.Add($"{nullableTypeName}(");
-            ProcessExpression(semantic, context, branchExpression, lines);
+            int branchStart = context.DepthClass;
+            ProcessExpression(semantic, context, UnwrapRefExpression(branchExpression), lines);
+            context.PopClass(branchStart);
             lines.Add(")");
+        }
+
+        static ExpressionSyntax UnwrapRefExpression(ExpressionSyntax expression) {
+            return expression is RefExpressionSyntax refExpression
+                ? refExpression.Expression
+                : expression;
         }
 
         ITypeSymbol? ResolveNullableConditionalTargetType(
@@ -6246,25 +10163,117 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessLambdaExpression(SemanticModel semantic, LayerContext context, ParenthesizedLambdaExpressionSyntax lambda, List<string> lines) {
-            lines.Add("(");
-            for (int i = 0; i < lambda.ParameterList.Parameters.Count; i++) {
-                var parameter = lambda.ParameterList.Parameters[i];
-                lines.Add(parameter.Identifier.ToString());
+            AppendNativeLambda(
+                semantic,
+                context,
+                lambda,
+                lambda.ParameterList.Parameters,
+                lambda.Body,
+                lines);
+        }
 
-                if (i < lambda.ParameterList.Parameters.Count - 1) {
+        void AppendNativeLambda(
+            SemanticModel semantic,
+            LayerContext context,
+            LambdaExpressionSyntax lambdaExpression,
+            IReadOnlyList<ParameterSyntax> parameters,
+            CSharpSyntaxNode lambdaBody,
+            List<string> lines) {
+            lines.Add("[&](");
+            AppendLambdaParameters(semantic, context, parameters, lines);
+            lines.Add(")");
+            AppendNativeLambdaBody(semantic, context, lambdaExpression, lambdaBody, lines);
+        }
+
+        void AppendLambdaParameters(
+            SemanticModel semantic,
+            LayerContext context,
+            IReadOnlyList<ParameterSyntax> parameters,
+            List<string> lines) {
+            for (int index = 0; index < parameters.Count; index++) {
+                ParameterSyntax parameter = parameters[index];
+                if (TryGetLambdaParameterTypeName(semantic, context, parameter, out string parameterTypeName)) {
+                    lines.Add(parameterTypeName);
+                    lines.Add(" ");
+                }
+
+                lines.Add(parameter.Identifier.Text);
+                if (index < parameters.Count - 1) {
                     lines.Add(", ");
                 }
             }
-            lines.Add(") => ");
+        }
 
-            if (lambda.Body is BlockSyntax block) {
-                lines.Add("{\n");
+        bool TryGetLambdaParameterTypeName(
+            SemanticModel semantic,
+            LayerContext context,
+            ParameterSyntax parameter,
+            out string parameterTypeName) {
+            parameterTypeName = string.Empty;
+            if (parameter == null) {
+                return false;
+            }
+
+            IParameterSymbol parameterSymbol = semantic?.GetDeclaredSymbol(parameter) as IParameterSymbol;
+            ITypeSymbol parameterTypeSymbol = parameterSymbol?.Type;
+            if (parameterTypeSymbol == null && parameter.Type != null) {
+                parameterTypeSymbol = semantic?.GetTypeInfo(parameter.Type).Type ?? semantic?.GetTypeInfo(parameter.Type).ConvertedType;
+            }
+
+            if (parameterTypeSymbol == null) {
+                return false;
+            }
+
+            VariableType parameterType = VariableUtil.GetVarType(parameterTypeSymbol);
+            RegisterGeneratedTypeReferences(context, parameterType);
+            parameterTypeName = GetCppTypeToken(parameterType, context.Program);
+            if (parameterSymbol?.RefKind == RefKind.Ref || parameterSymbol?.RefKind == RefKind.Out) {
+                parameterTypeName += "&";
+            }
+
+            return true;
+        }
+
+        void AppendNativeLambdaBody(
+            SemanticModel semantic,
+            LayerContext context,
+            LambdaExpressionSyntax lambdaExpression,
+            CSharpSyntaxNode lambdaBody,
+            List<string> lines) {
+            lines.Add(" {\n");
+            if (lambdaBody is BlockSyntax block) {
                 ProcessBlock(semantic, context, block, lines);
-                lines.Add("}\n");
-            } else {
-                ProcessExpression(semantic, context, (ExpressionSyntax)lambda.Body, lines);
+                lines.Add("}");
+                return;
+            }
+
+            if (lambdaBody is ExpressionSyntax expressionSyntax) {
+                bool returnsVoid = DoesLambdaReturnVoid(semantic, lambdaExpression);
+                if (!returnsVoid) {
+                    lines.Add("return ");
+                }
+
+                int expressionStart = context.DepthClass;
+                ProcessExpression(semantic, context, expressionSyntax, lines);
+                context.PopClass(expressionStart);
                 lines.Add(";\n");
             }
+
+            lines.Add("}");
+        }
+
+        static bool DoesLambdaReturnVoid(SemanticModel semantic, LambdaExpressionSyntax lambdaExpression) {
+            if (semantic == null || lambdaExpression == null) {
+                return false;
+            }
+
+            ITypeSymbol lambdaTypeSymbol = semantic.GetTypeInfo(lambdaExpression).ConvertedType ?? semantic.GetTypeInfo(lambdaExpression).Type;
+            if (lambdaTypeSymbol is not INamedTypeSymbol delegateTypeSymbol) {
+                return false;
+            }
+
+            IMethodSymbol invokeMethod = delegateTypeSymbol.DelegateInvokeMethod;
+            return invokeMethod?.ReturnsVoid == true;
         }
 
         protected override void ProcessEmptyStatement(SemanticModel semantic, LayerContext context, EmptyStatementSyntax emptyStatement, List<string> lines) {
@@ -6447,8 +10456,17 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessWhileStatement(SemanticModel semantic, LayerContext context, WhileStatementSyntax whileStatement, List<string> lines) {
+            List<string> conditionLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult conditionResult = ProcessExpression(semantic, context, whileStatement.Condition, conditionLines);
+            context.PopClass(start);
+
+            if (conditionResult.BeforeLines != null && conditionResult.BeforeLines.Count > 0) {
+                lines.AddRange(conditionResult.BeforeLines);
+            }
+
             lines.Add("while (");
-            ProcessExpression(semantic, context, whileStatement.Condition, lines);
+            lines.AddRange(conditionLines);
             lines.Add(") {\n");
 
             // Process the body of the while loop
@@ -6464,8 +10482,12 @@ namespace cs2.cpp {
             if (forStatement.Declaration != null) {
                 ProcessDeclaration(semantic, context, forStatement.Declaration, lines);
             } else if (forStatement.Initializers.Any()) {
-                foreach (var initializer in forStatement.Initializers) {
+                for (int initializerIndex = 0; initializerIndex < forStatement.Initializers.Count; initializerIndex++) {
+                    ExpressionSyntax initializer = forStatement.Initializers[initializerIndex];
                     ProcessExpression(semantic, context, initializer, lines);
+                    if (initializerIndex < forStatement.Initializers.Count - 1) {
+                        lines.Add(", ");
+                    }
                 }
             }
             lines.Add("; ");
@@ -6480,10 +10502,14 @@ namespace cs2.cpp {
             lines.Add("; ");
 
             // Process incrementors
-            foreach (var incrementor in forStatement.Incrementors) {
+            for (int incrementorIndex = 0; incrementorIndex < forStatement.Incrementors.Count; incrementorIndex++) {
+                ExpressionSyntax incrementor = forStatement.Incrementors[incrementorIndex];
                 int startClass = context.DepthClass;
                 ProcessExpression(semantic, context, incrementor, lines);
                 context.PopClass(startClass);
+                if (incrementorIndex < forStatement.Incrementors.Count - 1) {
+                    lines.Add(", ");
+                }
             }
             lines.Add(") {\n");
 
@@ -6518,10 +10544,12 @@ namespace cs2.cpp {
 
             // Process 'else' part if exists
             if (ifStatement.Else != null) {
-                lines.Add("else ");
                 if (ifStatement.Else.Statement is IfStatementSyntax elseIfStatement) {
-                    ProcessIfStatement(semantic, context, elseIfStatement, lines); // Handle else-if cases
+                    lines.Add("else {\n");
+                    ProcessIfStatement(semantic, context, elseIfStatement, lines);
+                    lines.Add("}\n");
                 } else {
+                    lines.Add("else ");
                     lines.Add("{\n");
                     ProcessStatement(semantic, context, ifStatement.Else.Statement, lines);
                     lines.Add("}\n");
@@ -6654,7 +10682,7 @@ namespace cs2.cpp {
 
         protected override void ProcessThrowStatement(SemanticModel semantic, LayerContext context, ThrowStatementSyntax throwStatement, List<string> lines) {
             if (throwStatement.Expression == null) {
-                lines.Add("throw new Error('Throw empty. TODO: Throw exception');\n");
+                lines.Add("throw;\n");
             } else {
                 lines.Add("throw ");
                 ProcessExpression(semantic, context, throwStatement.Expression, lines);
@@ -6795,11 +10823,43 @@ namespace cs2.cpp {
                 return parsedType;
             }
 
+            if (parsedType != null && parsedType.IsPointer) {
+                VariableType pointedSourceType = new VariableType(parsedType);
+                pointedSourceType.IsPointer = false;
+
+                CPPTypeData pointedTypeData;
+                VariableType pointedCppType = ConvertToCPPType(pointedSourceType, out pointedTypeData);
+                if (pointedTypeData.IsPointer) {
+                    pointedCppType = new VariableType(
+                        VariableDataType.Unknown,
+                        $"{pointedCppType.ToCPPString(null)}*");
+                }
+
+                typeData.IsArray = false;
+                typeData.IsNativeType = pointedTypeData.IsNativeType;
+                typeData.IsPointer = true;
+                return pointedCppType;
+            }
+
             if (parsedType != null && parsedType.IsGenericParameter) {
                 typeData.IsArray = false;
                 typeData.IsNativeType = false;
                 typeData.IsPointer = false;
                 return parsedType;
+            }
+
+            if (parsedType != null &&
+                (parsedType.Type == VariableDataType.Tuple ||
+                 string.Equals(parsedType.TypeName, "ValueTuple", StringComparison.Ordinal))) {
+                codeConverter?.RegisterRuntimeRequirement("NativeTuple");
+                typeData.IsArray = false;
+                typeData.IsNativeType = false;
+                typeData.IsPointer = false;
+                return CreateConvertedGenericType(parsedType, "ValueTuple");
+            }
+
+            if (TryResolveConfiguredTypeRemap(parsedType, out VariableType remappedType)) {
+                return ConvertToCPPType(remappedType, out typeData);
             }
 
             switch (parsedType.Type) {
@@ -6875,6 +10935,12 @@ namespace cs2.cpp {
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, "char");
                 }
+                case VariableDataType.Void: {
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = true;
+                        typeData.IsPointer = false;
+                        return new VariableType(parsedType.Type, "void");
+                }
 
                 case VariableDataType.String:
 
@@ -6904,6 +10970,20 @@ namespace cs2.cpp {
                         typeData.IsPointer = true;
                         return CreateConvertedGenericType(parsedType, "Dictionary");
                 }
+                case VariableDataType.Callback: {
+                        if (string.Equals(parsedType.TypeName, "FunctionPointer", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeFunctionPointer");
+                            typeData.IsArray = false;
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return CreateConvertedGenericType(parsedType, "FunctionPointer");
+                        }
+
+                        typeData.IsArray = false;
+                        typeData.IsNativeType = false;
+                        typeData.IsPointer = true;
+                        return parsedType;
+                }
                 case VariableDataType.Object: {
                         typeData.IsArray = false;
                         typeData.IsPointer = true;
@@ -6926,6 +11006,30 @@ namespace cs2.cpp {
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
                             return new VariableType(parsedType.Type, "TimeSpan");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "SpinWait", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Threading.SpinWait", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("SpinWait");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "SpinWait");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "SpinLock", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Threading.SpinLock", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("SpinLock");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "SpinLock");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "NotImplementedException", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.NotImplementedException", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NotImplementedException");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = true;
+                            return new VariableType(parsedType.Type, "NotImplementedException");
                         }
 
                         if (string.Equals(parsedType.TypeName, "StringBuilder", StringComparison.Ordinal) ||
@@ -7011,6 +11115,14 @@ namespace cs2.cpp {
                             return new VariableType(parsedType.Type, "BinaryPrimitives");
                         }
 
+                        if (string.Equals(parsedType.TypeName, "BitOperations", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Numerics.BitOperations", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("BitOperations");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "BitOperations");
+                        }
+
                         if (string.Equals(parsedType.TypeName, "MathF", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.MathF", StringComparison.Ordinal)) {
                             codeConverter?.RegisterRuntimeRequirement("Math");
@@ -7020,23 +11132,123 @@ namespace cs2.cpp {
                         }
 
                         if (string.Equals(parsedType.TypeName, "Span", StringComparison.Ordinal) ||
-                            string.Equals(parsedType.TypeName, "System.Span", StringComparison.Ordinal) ||
-                            string.Equals(parsedType.TypeName, "ReadOnlySpan", StringComparison.Ordinal) ||
-                            string.Equals(parsedType.TypeName, "System.ReadOnlySpan", StringComparison.Ordinal)) {
+                            string.Equals(parsedType.TypeName, "System.Span", StringComparison.Ordinal)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeSpan");
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
                             return CreateConvertedGenericType(parsedType, "Span");
                         }
 
-                        if (string.Equals(parsedType.TypeName, "IntPtr", StringComparison.Ordinal) ||
+                        if (string.Equals(parsedType.TypeName, "ReadOnlySpan", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.ReadOnlySpan", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeSpan");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return CreateConvertedGenericType(parsedType, "ReadOnlySpan");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "KeyValuePair", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Collections.Generic.KeyValuePair", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeKeyValuePair");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return CreateConvertedGenericType(parsedType, "KeyValuePair");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Vector", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Numerics.Vector", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeVector");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+
+                            if (parsedType.GenericArgs.Count > 0) {
+                                return CreateConvertedGenericType(parsedType, "Vector_1");
+                            }
+
+                            return new VariableType(parsedType.Type, "Vector");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Vector128", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.Vector128", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeVector128");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+
+                            if (parsedType.GenericArgs.Count > 0) {
+                                return CreateConvertedGenericType(parsedType, "Vector128_1");
+                            }
+
+                            return new VariableType(parsedType.Type, "Vector128");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Vector256", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.Vector256", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeVector256");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+
+                            if (parsedType.GenericArgs.Count > 0) {
+                                return CreateConvertedGenericType(parsedType, "Vector256");
+                            }
+
+                            return new VariableType(parsedType.Type, "Vector256Runtime");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Vector512", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("NativeVector512");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+
+                            if (parsedType.GenericArgs.Count > 0) {
+                                return CreateConvertedGenericType(parsedType, "Vector512");
+                            }
+
+                            return new VariableType(parsedType.Type, "Vector512Runtime");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Sse", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.X86.Sse", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("Sse");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "Sse");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Avx", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.X86.Avx", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("Avx");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "Avx");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Avx2", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.X86.Avx2", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("Avx2");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "Avx2");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "Sse41", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "System.Runtime.Intrinsics.X86.Sse41", StringComparison.Ordinal)) {
+                            codeConverter?.RegisterRuntimeRequirement("Sse41");
+                            typeData.IsNativeType = false;
+                            typeData.IsPointer = false;
+                            return new VariableType(parsedType.Type, "Sse41");
+                        }
+
+                        if (string.Equals(parsedType.TypeName, "nint", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "IntPtr", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.IntPtr", StringComparison.Ordinal)) {
                             typeData.IsNativeType = true;
                             typeData.IsPointer = false;
                             return new VariableType(parsedType.Type, "intptr_t");
                         }
 
-                        if (string.Equals(parsedType.TypeName, "UIntPtr", StringComparison.Ordinal) ||
+                        if (string.Equals(parsedType.TypeName, "nuint", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "UIntPtr", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.UIntPtr", StringComparison.Ordinal)) {
                             typeData.IsNativeType = true;
                             typeData.IsPointer = false;
@@ -7096,9 +11308,143 @@ namespace cs2.cpp {
             }
         }
 
+        /// <summary>
+        /// Resolves one caller-configured source type remap before the backend applies its built-in native lowering rules.
+        /// </summary>
+        /// <param name="parsedType">Source type being lowered.</param>
+        /// <param name="remappedType">Resolved remapped target type when present.</param>
+        /// <returns><c>true</c> when a configured remap was found; otherwise <c>false</c>.</returns>
+        bool TryResolveConfiguredTypeRemap(VariableType parsedType, out VariableType remappedType) {
+            remappedType = null;
+            if (parsedType == null || codeConverter?.Program?.TypeMap == null || codeConverter.Program.TypeMap.Count == 0) {
+                return false;
+            }
+
+            string remappedTypeName = string.Empty;
+            if (!string.IsNullOrWhiteSpace(parsedType.QualifiedTypeName) &&
+                codeConverter.Program.TypeMap.TryGetValue(parsedType.QualifiedTypeName, out remappedTypeName)) {
+                if (string.Equals(remappedTypeName, parsedType.QualifiedTypeName, StringComparison.Ordinal)) {
+                    return false;
+                }
+
+                remappedType = VariableUtil.GetVarType(remappedTypeName);
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(parsedType.TypeName) &&
+                codeConverter.Program.TypeMap.TryGetValue(parsedType.TypeName, out remappedTypeName)) {
+                if (string.Equals(remappedTypeName, parsedType.TypeName, StringComparison.Ordinal)) {
+                    return false;
+                }
+
+                remappedType = VariableUtil.GetVarType(remappedTypeName);
+                return true;
+            }
+
+            return false;
+        }
+
+        bool TryResolveGeneratedFunction(IMethodSymbol methodSymbol, out ConversionFunction function) {
+            function = null;
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            methodSymbol = methodSymbol.OriginalDefinition ?? methodSymbol;
+
+            if (!TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass)) {
+                return false;
+            }
+
+            if (generatedClass?.Functions == null) {
+                return false;
+            }
+
+            function = generatedClass.Functions.FirstOrDefault(candidate => MatchesMethodSymbol(candidate, methodSymbol));
+            return function != null;
+        }
+
+        bool TryResolveGeneratedContainingClass(IMethodSymbol methodSymbol, out ConversionClass generatedClass) {
+            generatedClass = null;
+            if (methodSymbol?.ContainingType == null || codeConverter?.Program == null) {
+                return false;
+            }
+
+            generatedClass = codeConverter.Program.FindGeneratedClass(methodSymbol.ContainingType);
+            if (generatedClass != null) {
+                return true;
+            }
+
+            VariableType containingType = VariableUtil.GetVarType(methodSymbol.ContainingType);
+            generatedClass = ResolveGeneratedClass(containingType);
+            return generatedClass != null;
+        }
+
+        static bool MatchesMethodSymbol(ConversionFunction function, IMethodSymbol methodSymbol) {
+            if (function == null || methodSymbol == null) {
+                return false;
+            }
+
+            if (!string.Equals(function.Name, methodSymbol.Name, StringComparison.Ordinal)) {
+                return false;
+            }
+
+            int functionGenericParameterCount = function.GenericParameters?.Count ?? 0;
+            if (functionGenericParameterCount != methodSymbol.TypeParameters.Length) {
+                return false;
+            }
+
+            int functionParameterCount = function.InParameters?.Count ?? 0;
+            if (functionParameterCount != methodSymbol.Parameters.Length) {
+                return false;
+            }
+
+            for (int index = 0; index < functionParameterCount; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                IParameterSymbol parameterSymbol = methodSymbol.Parameters[index];
+                if (!MatchesParameterModifier(parameter, parameterSymbol)) {
+                    return false;
+                }
+
+                if (!MatchesParameterType(parameter.VarType, VariableUtil.GetVarType(parameterSymbol.Type))) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool MatchesParameterModifier(ConversionVariable parameter, IParameterSymbol parameterSymbol) {
+            bool isRef = (parameter.Modifier & ParameterModifier.Ref) != 0;
+            bool isOut = (parameter.Modifier & ParameterModifier.Out) != 0;
+            return parameterSymbol.RefKind switch {
+                RefKind.Ref => isRef && !isOut,
+                RefKind.Out => isOut,
+                _ => !isRef && !isOut
+            };
+        }
+
+        static bool MatchesParameterType(VariableType leftType, VariableType rightType) {
+            if (leftType == null || rightType == null) {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(leftType.QualifiedTypeName) &&
+                !string.IsNullOrWhiteSpace(rightType.QualifiedTypeName)) {
+                return string.Equals(leftType.QualifiedTypeName, rightType.QualifiedTypeName, StringComparison.Ordinal);
+            }
+
+            return string.Equals(leftType.ToString(), rightType.ToString(), StringComparison.Ordinal);
+        }
+
         ConversionClass ResolveGeneratedClass(VariableType parsedType) {
             if (parsedType == null || codeConverter?.Program == null || string.IsNullOrWhiteSpace(parsedType.TypeName)) {
                 return null;
+            }
+
+            ConversionClass qualifiedMatch = codeConverter.Program.FindGeneratedClass(parsedType);
+            if (qualifiedMatch != null) {
+                return qualifiedMatch;
             }
 
             string typeName = parsedType.TypeName;
@@ -7134,6 +11480,10 @@ namespace cs2.cpp {
         bool UsesDirectMemberAccess(SemanticModel semantic, ExpressionSyntax expression) {
             if (semantic == null || expression == null) {
                 return false;
+            }
+
+            if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                return UsesDirectMemberAccess(semantic, parenthesizedExpression.Expression);
             }
 
             if (!TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol typeSymbol)) {
@@ -7267,6 +11617,75 @@ namespace cs2.cpp {
                 IsDirectMemberAccessType(VariableUtil.GetVarType(symbol.ContainingType));
         }
 
+        bool IsPointerBackedExpressionType(
+            LayerContext context,
+            SemanticModel semantic,
+            ExpressionSyntax expression,
+            VariableType explicitType = null) {
+            VariableType receiverType = explicitType;
+            if (receiverType == null &&
+                context != null &&
+                TryResolveTrackedExpressionVariableType(context, expression, out VariableType trackedReceiverType)) {
+                receiverType = trackedReceiverType;
+            }
+
+            if (receiverType == null &&
+                TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol receiverTypeSymbol)) {
+                receiverType = VariableUtil.GetVarType(receiverTypeSymbol);
+            }
+
+            if (receiverType == null) {
+                return false;
+            }
+
+            ConvertToCPPType(receiverType, out CPPTypeData typeData);
+            return typeData.IsPointer;
+        }
+
+        string TryResolveUnqualifiedStaticContainingTypeAccessName(
+            LayerContext context,
+            ConversionClass currentClass,
+            ISymbol symbol,
+            ConversionVariable classVar,
+            ConversionVariable functionInVar,
+            int matchingVariableCount,
+            bool isQualifiedMemberName) {
+            if (context == null ||
+                currentClass == null ||
+                symbol == null ||
+                classVar != null ||
+                functionInVar != null ||
+                matchingVariableCount != 0 ||
+                isQualifiedMemberName) {
+                return string.Empty;
+            }
+
+            if (symbol is IAliasSymbol aliasSymbol) {
+                symbol = aliasSymbol.Target;
+            }
+
+            INamedTypeSymbol containingTypeSymbol = null;
+            bool isStaticMember = false;
+            if (symbol is IFieldSymbol fieldSymbol) {
+                containingTypeSymbol = fieldSymbol.ContainingType;
+                isStaticMember = fieldSymbol.IsStatic;
+            } else if (symbol is IPropertySymbol propertySymbol) {
+                containingTypeSymbol = propertySymbol.ContainingType;
+                isStaticMember = propertySymbol.IsStatic;
+            } else if (symbol is IMethodSymbol methodSymbol) {
+                containingTypeSymbol = methodSymbol.ContainingType;
+                isStaticMember = methodSymbol.IsStatic;
+            }
+
+            if (!isStaticMember ||
+                containingTypeSymbol == null ||
+                string.Equals(currentClass.Name, containingTypeSymbol.Name, StringComparison.Ordinal)) {
+                return string.Empty;
+            }
+
+            return GetContainingTypeAccessName(context, containingTypeSymbol);
+        }
+
         /// <summary>
         /// Determines whether a converted variable type should use direct member access because the emitted C++ type is not pointer-backed.
         /// </summary>
@@ -7338,7 +11757,12 @@ namespace cs2.cpp {
             }
 
             if (symbol is INamedTypeSymbol namedTypeSymbol &&
-                TryMapStaticRuntimeTypeName(namedTypeSymbol.Name, namedTypeSymbol.ToDisplayString(), out runtimeTypeName, out runtimeRequirementName)) {
+                namedTypeSymbol.IsGenericType) {
+                return false;
+            }
+
+            if (symbol is INamedTypeSymbol mappedTypeSymbol &&
+                TryMapStaticRuntimeTypeName(mappedTypeSymbol.Name, mappedTypeSymbol.ToDisplayString(), out runtimeTypeName, out runtimeRequirementName)) {
                 return true;
             }
 
@@ -7402,6 +11826,30 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(shortTypeName, "NativeMemory", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Runtime.InteropServices.NativeMemory", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Runtime.InteropServices.NativeMemory", StringComparison.Ordinal)) {
+                runtimeTypeName = "NativeMemory";
+                runtimeRequirementName = "NativeMemory";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "MemoryMarshal", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Runtime.InteropServices.MemoryMarshal", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Runtime.InteropServices.MemoryMarshal", StringComparison.Ordinal)) {
+                runtimeTypeName = "MemoryMarshal";
+                runtimeRequirementName = "MemoryMarshal";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "Vector512", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal)) {
+                runtimeTypeName = "Vector512Runtime";
+                runtimeRequirementName = "NativeVector512";
+                return true;
+            }
+
             if (string.Equals(shortTypeName, "Debug", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "System.Diagnostics.Debug", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "global::System.Diagnostics.Debug", StringComparison.Ordinal)) {
@@ -7451,6 +11899,29 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(shortTypeName, "Interlocked", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Threading.Interlocked", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Threading.Interlocked", StringComparison.Ordinal)) {
+                runtimeTypeName = "Interlocked";
+                runtimeRequirementName = "Interlocked";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "Volatile", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Threading.Volatile", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Threading.Volatile", StringComparison.Ordinal)) {
+                runtimeTypeName = "Volatile";
+                runtimeRequirementName = "Volatile";
+                return true;
+            }
+
+            if (string.Equals(qualifiedTypeName, "System.Buffer", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Buffer", StringComparison.Ordinal)) {
+                runtimeTypeName = "Buffer";
+                runtimeRequirementName = "Buffer";
+                return true;
+            }
+
             if (string.Equals(shortTypeName, "BitConverter", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "System.BitConverter", StringComparison.Ordinal) ||
                 string.Equals(qualifiedTypeName, "global::System.BitConverter", StringComparison.Ordinal)) {
@@ -7464,6 +11935,14 @@ namespace cs2.cpp {
                 string.Equals(qualifiedTypeName, "global::System.Buffers.Binary.BinaryPrimitives", StringComparison.Ordinal)) {
                 runtimeTypeName = "BinaryPrimitives";
                 runtimeRequirementName = "BinaryPrimitives";
+                return true;
+            }
+
+            if (string.Equals(shortTypeName, "BitOperations", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.Numerics.BitOperations", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "global::System.Numerics.BitOperations", StringComparison.Ordinal)) {
+                runtimeTypeName = "BitOperations";
+                runtimeRequirementName = "BitOperations";
                 return true;
             }
 
@@ -7569,7 +12048,22 @@ namespace cs2.cpp {
             out string delegateWrapperTypeName) {
             delegateWrapperTypeName = string.Empty;
 
-            if (typeSymbol is not INamedTypeSymbol namedTypeSymbol || !namedTypeSymbol.IsGenericType) {
+            if (typeSymbol is not INamedTypeSymbol namedTypeSymbol) {
+                return false;
+            }
+
+            if (TryGetFrameworkThreadDelegateWrapperTypeName(namedTypeSymbol, context, out delegateWrapperTypeName)) {
+                return true;
+            }
+
+            if (namedTypeSymbol.TypeKind == TypeKind.Delegate &&
+                !IsActionTypeSymbol(namedTypeSymbol) &&
+                !IsFuncTypeSymbol(namedTypeSymbol)) {
+                delegateWrapperTypeName = GetCustomDelegateWrapperTypeName(namedTypeSymbol, context);
+                return !string.IsNullOrWhiteSpace(delegateWrapperTypeName);
+            }
+
+            if (!namedTypeSymbol.IsGenericType) {
                 return false;
             }
 
@@ -7597,6 +12091,115 @@ namespace cs2.cpp {
             return true;
         }
 
+        static string GetCustomDelegateWrapperTypeName(INamedTypeSymbol delegateTypeSymbol, LayerContext context) {
+            if (delegateTypeSymbol == null || context?.Program == null) {
+                return string.Empty;
+            }
+
+            foreach (ConversionClass generatedClass in context.Program.Classes) {
+                if (generatedClass?.TypeSymbol != null &&
+                    SymbolEqualityComparer.Default.Equals(generatedClass.TypeSymbol, delegateTypeSymbol)) {
+                    return generatedClass.GetEmittedTypeName();
+                }
+            }
+
+            return delegateTypeSymbol.Name;
+        }
+
+        bool TryGetFrameworkThreadDelegateWrapperTypeName(
+            INamedTypeSymbol delegateTypeSymbol,
+            LayerContext context,
+            out string delegateWrapperTypeName) {
+            delegateWrapperTypeName = string.Empty;
+            string displayName = delegateTypeSymbol.ToDisplayString();
+            bool isThreadStart =
+                string.Equals(displayName, "System.Threading.ThreadStart", StringComparison.Ordinal) ||
+                string.Equals(displayName, "ThreadStart", StringComparison.Ordinal);
+            bool isParameterizedThreadStart =
+                string.Equals(displayName, "System.Threading.ParameterizedThreadStart", StringComparison.Ordinal) ||
+                string.Equals(displayName, "ParameterizedThreadStart", StringComparison.Ordinal);
+            if (!isThreadStart && !isParameterizedThreadStart) {
+                return false;
+            }
+
+            IMethodSymbol invokeMethod = delegateTypeSymbol.DelegateInvokeMethod;
+            if (invokeMethod == null || !invokeMethod.ReturnsVoid) {
+                return false;
+            }
+
+            if (invokeMethod.Parameters.Length == 0) {
+                delegateWrapperTypeName = "Action<>";
+                return true;
+            }
+
+            List<string> argumentTypes = new List<string>();
+            foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
+                argumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+            }
+
+            delegateWrapperTypeName = $"Action<{string.Join(", ", argumentTypes)}>";
+            return true;
+        }
+
+        bool TryAppendDelegateWrapperConstruction(
+            SemanticModel semantic,
+            LayerContext context,
+            ITypeSymbol delegateTypeSymbol,
+            IMethodSymbol methodGroupSymbol,
+            ExpressionSyntax methodGroupExpression,
+            List<string> lines) {
+            if (!TryGetDelegateWrapperTypeName(delegateTypeSymbol, methodGroupSymbol, context, out string delegateWrapperTypeName)) {
+                return false;
+            }
+
+            List<string> delegateConstructionLines = new List<string> {
+                $"new {delegateWrapperTypeName}("
+            };
+            if (methodGroupSymbol.IsStatic) {
+                delegateConstructionLines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+            } else if (TryResolveBoundDelegateReceiverText(semantic, context, methodGroupExpression, methodGroupSymbol, out string receiverText)) {
+                delegateConstructionLines.Add("std::bind_front(");
+                delegateConstructionLines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+                delegateConstructionLines.Add(", ");
+                delegateConstructionLines.Add(receiverText);
+                delegateConstructionLines.Add(")");
+            } else {
+                return false;
+            }
+
+            delegateConstructionLines.Add(")");
+            lines.AddRange(delegateConstructionLines);
+            return true;
+        }
+
+        bool TryResolveBoundDelegateReceiverText(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax methodGroupExpression,
+            IMethodSymbol methodGroupSymbol,
+            out string receiverText) {
+            receiverText = string.Empty;
+            if (semantic == null ||
+                context == null ||
+                methodGroupExpression == null ||
+                methodGroupSymbol == null ||
+                methodGroupSymbol.IsStatic) {
+                return false;
+            }
+
+            if (methodGroupExpression is IdentifierNameSyntax) {
+                receiverText = "this";
+                return true;
+            }
+
+            if (methodGroupExpression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+
+            receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            return !string.IsNullOrWhiteSpace(receiverText);
+        }
+
         /// <summary>
         /// Determines whether a type-name string refers to the managed StringBuilder runtime value.
         /// </summary>
@@ -7616,6 +12219,18 @@ namespace cs2.cpp {
         static bool IsStringRuntimeTypeReference(SemanticModel semantic, ExpressionSyntax expression) {
             if (expression == null) {
                 return false;
+            }
+
+            if (semantic == null || !ReferenceEquals(expression.SyntaxTree, semantic.SyntaxTree)) {
+                string fallbackExpressionText = expression.ToString();
+                return string.Equals(fallbackExpressionText, "string", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "char", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "String", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "Char", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "System.String", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "System.Char", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "global::System.String", StringComparison.Ordinal) ||
+                    string.Equals(fallbackExpressionText, "global::System.Char", StringComparison.Ordinal);
             }
 
             ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
@@ -7727,13 +12342,284 @@ namespace cs2.cpp {
             ExpressionSyntax expression,
             List<string> lines) {
             if (!TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol expressionTypeSymbol) ||
-                !IsByteArrayTypeSymbol(expressionTypeSymbol)) {
+                (!IsByteArrayTypeSymbol(expressionTypeSymbol) && !IsByteSpanTypeSymbol(expressionTypeSymbol))) {
                 return false;
             }
 
             string bufferText = RenderExpressionText(semantic, context, expression);
-            lines.Add($"{bufferText}->data()");
+            if (IsByteArrayTypeSymbol(expressionTypeSymbol)) {
+                lines.Add($"{bufferText}->data()");
+                return true;
+            }
+
+            lines.Add($"{bufferText}.Data");
             return true;
+        }
+
+        static bool IsByteSpanTypeSymbol(ITypeSymbol typeSymbol) {
+            if (typeSymbol is not INamedTypeSymbol namedTypeSymbol ||
+                namedTypeSymbol.TypeArguments.Length != 1) {
+                return false;
+            }
+
+            string qualifiedTypeName = namedTypeSymbol.ToDisplayString();
+            if (!string.Equals(namedTypeSymbol.Name, "Span", StringComparison.Ordinal) &&
+                !string.Equals(namedTypeSymbol.Name, "ReadOnlySpan", StringComparison.Ordinal) &&
+                !string.Equals(qualifiedTypeName, "System.Span<byte>", StringComparison.Ordinal) &&
+                !string.Equals(qualifiedTypeName, "System.ReadOnlySpan<byte>", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            return namedTypeSymbol.TypeArguments[0].SpecialType == SpecialType.System_Byte;
+        }
+
+        /// <summary>
+        /// Resolves the sole generated concrete implementation that can satisfy a generic interface or abstract-base invocation.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve receiver metadata.</param>
+        /// <param name="receiverExpression">Receiver expression being invoked.</param>
+        /// <param name="invokedMethodSymbol">Resolved source method symbol.</param>
+        /// <param name="implementationClass">Receives the unique generated implementation when found.</param>
+        /// <returns><c>true</c> when exactly one concrete generated implementation is available; otherwise <c>false</c>.</returns>
+        bool TryResolveGeneratedGenericInvocationImplementation(
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            IMethodSymbol invokedMethodSymbol,
+            out ConversionClass implementationClass) {
+            implementationClass = null;
+
+            if (!TryResolveGenericInvocationReceiverType(semantic, receiverExpression, out ITypeSymbol receiverTypeSymbol)) {
+                return false;
+            }
+
+            List<ConversionClass> matchingImplementations = ResolveGeneratedGenericInvocationDefinitions(receiverTypeSymbol, invokedMethodSymbol.OriginalDefinition);
+            if (matchingImplementations.Count != 1) {
+                return false;
+            }
+
+            implementationClass = matchingImplementations[0];
+            if (implementationClass.GenericArgs != null && implementationClass.GenericArgs.Count > 0) {
+                implementationClass = null;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves the receiver information for one generic invocation that may require runtime dispatch.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve receiver metadata.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="invokedMethodSymbol">Resolved source method symbol.</param>
+        /// <param name="receiverExpression">Receives the explicit receiver expression when one exists.</param>
+        /// <param name="receiverTypeSymbol">Receives the resolved receiver type symbol.</param>
+        /// <param name="implicitReceiverText">Receives the implicit receiver access text for unqualified instance calls.</param>
+        /// <returns><c>true</c> when a dispatch-capable receiver was resolved; otherwise <c>false</c>.</returns>
+        bool TryResolveGenericInvocationReceiver(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            out ExpressionSyntax receiverExpression,
+            out ITypeSymbol receiverTypeSymbol,
+            out string implicitReceiverText) {
+            receiverExpression = null;
+            receiverTypeSymbol = null;
+            implicitReceiverText = string.Empty;
+
+            if (invokedMethodSymbol == null || invokedMethodSymbol.IsStatic) {
+                return false;
+            }
+
+            if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess) {
+                if (memberAccess.Expression is BaseExpressionSyntax) {
+                    return false;
+                }
+
+                receiverExpression = memberAccess.Expression;
+                return TryResolveGenericInvocationReceiverType(semantic, receiverExpression, out receiverTypeSymbol);
+            }
+
+            if (invocationExpression.Expression is not IdentifierNameSyntax &&
+                invocationExpression.Expression is not GenericNameSyntax) {
+                return false;
+            }
+
+            ConversionClass currentClass = context.GetCurrentClass();
+            if (currentClass?.TypeSymbol == null || currentClass.TypeSymbol.TypeKind != TypeKind.Class || !currentClass.TypeSymbol.IsAbstract) {
+                return false;
+            }
+
+            receiverTypeSymbol = currentClass.TypeSymbol;
+            implicitReceiverText = "this";
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves the effective receiver type for one generic invocation receiver expression.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve receiver metadata.</param>
+        /// <param name="receiverExpression">Receiver expression to inspect.</param>
+        /// <param name="receiverTypeSymbol">Receives the effective receiver type symbol.</param>
+        /// <returns><c>true</c> when the receiver type is an interface or abstract class; otherwise <c>false</c>.</returns>
+        bool TryResolveGenericInvocationReceiverType(
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            out ITypeSymbol receiverTypeSymbol) {
+            receiverTypeSymbol = semantic.GetTypeInfo(receiverExpression).ConvertedType ?? semantic.GetTypeInfo(receiverExpression).Type;
+            if (IsWeakRecoveredTypeSymbol(receiverTypeSymbol) &&
+                TryGetExpressionTypeSymbol(semantic, receiverExpression, out ITypeSymbol recoveredReceiverTypeSymbol) &&
+                !IsWeakRecoveredTypeSymbol(recoveredReceiverTypeSymbol)) {
+                receiverTypeSymbol = recoveredReceiverTypeSymbol;
+            }
+
+            if (receiverTypeSymbol == null) {
+                return false;
+            }
+
+            bool isInterfaceReceiver = receiverTypeSymbol.TypeKind == TypeKind.Interface;
+            bool isAbstractClassReceiver = receiverTypeSymbol.TypeKind == TypeKind.Class &&
+                receiverTypeSymbol is INamedTypeSymbol namedReceiverTypeSymbol &&
+                namedReceiverTypeSymbol.IsAbstract;
+            return isInterfaceReceiver || isAbstractClassReceiver;
+        }
+
+        /// <summary>
+        /// Resolves the generated class definitions that satisfy one abstract or interface generic method contract.
+        /// </summary>
+        /// <param name="receiverTypeSymbol">Receiver contract to satisfy.</param>
+        /// <param name="targetMethodSymbol">Generic method contract being dispatched.</param>
+        /// <returns>Matching generated class definitions.</returns>
+        List<ConversionClass> ResolveGeneratedGenericInvocationDefinitions(
+            ITypeSymbol receiverTypeSymbol,
+            IMethodSymbol targetMethodSymbol) {
+            if (receiverTypeSymbol == null || targetMethodSymbol == null) {
+                return new List<ConversionClass>();
+            }
+
+            return codeConverter.Program.Classes
+                .Where(candidate => candidate.TypeSymbol != null &&
+                    !candidate.IsNative &&
+                    candidate.DeclarationType != MemberDeclarationType.Interface &&
+                    candidate.TypeSymbol.TypeKind == TypeKind.Class &&
+                    !candidate.TypeSymbol.IsAbstract &&
+                    ImplementsGenericInvocationTarget(candidate.TypeSymbol, receiverTypeSymbol, targetMethodSymbol))
+                .ToList();
+        }
+
+        /// <summary>
+        /// Resolves the concrete instantiated generated types that satisfy one abstract or interface generic method contract.
+        /// </summary>
+        /// <param name="compilation">Compilation whose object creation sites define the reachable concrete runtime types.</param>
+        /// <param name="receiverTypeSymbol">Receiver contract to satisfy.</param>
+        /// <param name="targetMethodSymbol">Generic method contract being dispatched.</param>
+        /// <returns>Distinct concrete implementation types that can satisfy the dispatch.</returns>
+        List<INamedTypeSymbol> ResolveGeneratedGenericInvocationConcreteImplementations(
+            Compilation compilation,
+            ITypeSymbol receiverTypeSymbol,
+            IMethodSymbol targetMethodSymbol) {
+            if (compilation == null || receiverTypeSymbol == null || targetMethodSymbol == null) {
+                return new List<INamedTypeSymbol>();
+            }
+
+            List<INamedTypeSymbol> implementations = new List<INamedTypeSymbol>();
+            HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (INamedTypeSymbol candidateTypeSymbol in codeConverter.GetInstantiatedGeneratedTypes(compilation)) {
+                if (!ImplementsGenericInvocationTarget(candidateTypeSymbol, receiverTypeSymbol, targetMethodSymbol)) {
+                    continue;
+                }
+
+                string qualifiedTypeName = candidateTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                if (!seenTypeNames.Add(qualifiedTypeName)) {
+                    continue;
+                }
+
+                implementations.Add(candidateTypeSymbol);
+            }
+
+            return implementations;
+        }
+
+        /// <summary>
+        /// Determines whether one generated concrete type provides the supplied generic method contract for a receiver interface or abstract base.
+        /// </summary>
+        /// <param name="implementationTypeSymbol">Concrete implementation candidate.</param>
+        /// <param name="receiverTypeSymbol">Receiver interface or abstract-base type.</param>
+        /// <param name="targetMethodSymbol">Generic source method contract to satisfy.</param>
+        /// <returns><c>true</c> when the implementation provides the method contract; otherwise <c>false</c>.</returns>
+        static bool ImplementsGenericInvocationTarget(
+            INamedTypeSymbol implementationTypeSymbol,
+            ITypeSymbol receiverTypeSymbol,
+            IMethodSymbol targetMethodSymbol) {
+            if (implementationTypeSymbol == null || receiverTypeSymbol == null || targetMethodSymbol == null) {
+                return false;
+            }
+
+            if (receiverTypeSymbol.TypeKind == TypeKind.Interface) {
+                if (!implementationTypeSymbol.AllInterfaces.Any(interfaceSymbol =>
+                    SymbolEqualityComparer.Default.Equals(interfaceSymbol.OriginalDefinition, receiverTypeSymbol.OriginalDefinition))) {
+                    return false;
+                }
+
+                return implementationTypeSymbol.FindImplementationForInterfaceMember(targetMethodSymbol) is IMethodSymbol;
+            }
+
+            for (INamedTypeSymbol baseTypeSymbol = implementationTypeSymbol; baseTypeSymbol != null; baseTypeSymbol = baseTypeSymbol.BaseType) {
+                if (!SymbolEqualityComparer.Default.Equals(baseTypeSymbol.OriginalDefinition, receiverTypeSymbol.OriginalDefinition)) {
+                    continue;
+                }
+
+                return ImplementsAbstractGenericInvocationTarget(implementationTypeSymbol, targetMethodSymbol);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether one concrete class satisfies an abstract generic method contract through any declaration in its inheritance chain, including intermediate generic base classes.
+        /// </summary>
+        /// <param name="implementationTypeSymbol">Concrete implementation candidate.</param>
+        /// <param name="targetMethodSymbol">Abstract generic method contract being checked.</param>
+        /// <returns><c>true</c> when the inheritance chain provides the method contract; otherwise <c>false</c>.</returns>
+        static bool ImplementsAbstractGenericInvocationTarget(
+            INamedTypeSymbol implementationTypeSymbol,
+            IMethodSymbol targetMethodSymbol) {
+            IMethodSymbol targetOriginalDefinition = targetMethodSymbol.OriginalDefinition;
+            for (INamedTypeSymbol currentTypeSymbol = implementationTypeSymbol; currentTypeSymbol != null; currentTypeSymbol = currentTypeSymbol.BaseType) {
+                foreach (IMethodSymbol candidateMethodSymbol in currentTypeSymbol.GetMembers(targetMethodSymbol.Name).OfType<IMethodSymbol>()) {
+                    if (!candidateMethodSymbol.IsGenericMethod ||
+                        candidateMethodSymbol.TypeParameters.Length != targetMethodSymbol.TypeParameters.Length ||
+                        candidateMethodSymbol.Parameters.Length != targetMethodSymbol.Parameters.Length) {
+                        continue;
+                    }
+
+                    if (SymbolEqualityComparer.Default.Equals(candidateMethodSymbol.OriginalDefinition, targetOriginalDefinition)) {
+                        return true;
+                    }
+
+                    for (IMethodSymbol overriddenMethodSymbol = candidateMethodSymbol.OverriddenMethod; overriddenMethodSymbol != null; overriddenMethodSymbol = overriddenMethodSymbol.OverriddenMethod) {
+                        if (SymbolEqualityComparer.Default.Equals(overriddenMethodSymbol.OriginalDefinition, targetOriginalDefinition)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Resolves the emitted member name token for a member-access invocation target.
+        /// </summary>
+        /// <param name="nameSyntax">Member-access name syntax to inspect.</param>
+        /// <returns>The emitted member name token.</returns>
+        static string GetInvokedMemberName(SimpleNameSyntax nameSyntax) {
+            if (nameSyntax is GenericNameSyntax genericName) {
+                return genericName.Identifier.Text;
+            }
+
+            return nameSyntax.Identifier.Text;
         }
 
         void AppendInvocationArguments(
@@ -7964,6 +12850,19 @@ namespace cs2.cpp {
         /// <param name="typeSymbol">Resolved type symbol when available.</param>
         /// <returns><c>true</c> when a concrete type symbol was recovered; otherwise <c>false</c>.</returns>
         static bool TryGetExpressionTypeSymbol(SemanticModel semantic, ExpressionSyntax expression, out ITypeSymbol typeSymbol) {
+            typeSymbol = null;
+            if (semantic == null || expression == null) {
+                return false;
+            }
+
+            if (!ReferenceEquals(expression.SyntaxTree, semantic.SyntaxTree)) {
+                if (expression is ObjectCreationExpressionSyntax objectCreationExpression) {
+                    typeSymbol = ResolveObjectCreationTypeSymbolFromText(semantic, objectCreationExpression.Type?.ToString());
+                }
+
+                return typeSymbol != null;
+            }
+
             TypeInfo typeInfo = semantic.GetTypeInfo(expression);
             typeSymbol = typeInfo.ConvertedType;
             if (IsWeakRecoveredTypeSymbol(typeSymbol) &&
@@ -8029,9 +12928,9 @@ namespace cs2.cpp {
                     invokedMethodSymbol = invocationOperation.TargetMethod;
                 } else {
                     SymbolInfo invocationSymbolInfo = semantic.GetSymbolInfo(invocationExpression);
-                    invokedMethodSymbol = ResolveMethodSymbol(invocationSymbolInfo);
-                    if (!CanMethodMatchInvocationArguments(invokedMethodSymbol, argumentCount)) {
-                        invokedMethodSymbol = ResolveBestInvocationCandidateMethodSymbol(invocationSymbolInfo, argumentCount);
+                    invokedMethodSymbol = ResolveBestInvocationCandidateMethodSymbol(semantic, invocationExpression, invocationSymbolInfo, argumentCount);
+                    if (invokedMethodSymbol == null) {
+                        invokedMethodSymbol = ResolveMethodSymbol(invocationSymbolInfo);
                     }
                 }
 
@@ -8047,7 +12946,16 @@ namespace cs2.cpp {
             }
 
             if (expression is PrefixUnaryExpressionSyntax prefixExpression &&
-                TryGetExpressionTypeSymbol(semantic, prefixExpression.Operand, out ITypeSymbol prefixOperandType) &&
+                prefixExpression.IsKind(SyntaxKind.PointerIndirectionExpression) &&
+                TryGetExpressionTypeSymbol(semantic, prefixExpression.Operand, out ITypeSymbol pointerOperandType) &&
+                pointerOperandType is IPointerTypeSymbol pointerTypeSymbol &&
+                !IsWeakRecoveredTypeSymbol(pointerTypeSymbol.PointedAtType)) {
+                typeSymbol = pointerTypeSymbol.PointedAtType;
+                return true;
+            }
+
+            if (expression is PrefixUnaryExpressionSyntax otherPrefixExpression &&
+                TryGetExpressionTypeSymbol(semantic, otherPrefixExpression.Operand, out ITypeSymbol prefixOperandType) &&
                 !IsWeakRecoveredTypeSymbol(prefixOperandType)) {
                 typeSymbol = prefixOperandType;
                 return true;
@@ -8296,6 +13204,17 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (semantic == null || typeSyntax == null) {
+                return false;
+            }
+
+            if (!ReferenceEquals(typeSyntax.SyntaxTree, semantic.SyntaxTree)) {
+                string fallbackTypeName = typeSyntax.ToString();
+                return string.Equals(fallbackTypeName, "object", StringComparison.Ordinal) ||
+                    string.Equals(fallbackTypeName, "System.Object", StringComparison.Ordinal) ||
+                    string.Equals(fallbackTypeName, "global::System.Object", StringComparison.Ordinal);
+            }
+
             TypeInfo typeInfo = semantic.GetTypeInfo(typeSyntax);
             ITypeSymbol typeSymbol = typeInfo.Type ?? typeInfo.ConvertedType;
             return typeSymbol?.SpecialType == SpecialType.System_Object;
@@ -8322,6 +13241,14 @@ namespace cs2.cpp {
             }
 
             if (TryProcessStringReaderLineDeclaration(semantic, context, declaration, varType, lines)) {
+                return;
+            }
+
+            if (TryProcessRefLocalDeclaration(semantic, context, declaration, varType, lines)) {
+                return;
+            }
+
+            if (TryProcessTupleDeconstructionDeclaration(semantic, context, declaration, lines)) {
                 return;
             }
 
@@ -8408,6 +13335,183 @@ namespace cs2.cpp {
             lines.AddRange(newLines);
         }
 
+        /// <summary>
+        /// Lowers C# ref locals to native C++ reference bindings so ref-return initializers preserve aliasing semantics without inventing placeholder object pointers.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="declaration">Declaration being evaluated.</param>
+        /// <param name="declarationType">Resolved declaration type for tracked-local metadata.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the declaration was lowered as a ref local; otherwise <c>false</c>.</returns>
+        bool TryProcessRefLocalDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            VariableType declarationType,
+            List<string> lines) {
+            if (declaration == null ||
+                declaration.Type is not RefTypeSyntax ||
+                declaration.Variables.Count != 1) {
+                return false;
+            }
+
+            VariableDeclaratorSyntax variable = declaration.Variables[0];
+            if (variable.Initializer?.Value == null) {
+                return false;
+            }
+
+            ExpressionSyntax initializerExpression = variable.Initializer.Value is RefExpressionSyntax refExpression
+                ? refExpression.Expression
+                : variable.Initializer.Value;
+            List<string> initializerLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult initializerResult = ProcessExpression(semantic, context, initializerExpression, initializerLines);
+            context.PopClass(start);
+            if (!initializerResult.Processed) {
+                return false;
+            }
+
+            if (initializerResult.BeforeLines != null && initializerResult.BeforeLines.Count > 0) {
+                lines.AddRange(initializerResult.BeforeLines);
+            }
+
+            FunctionStack? functionStack = context.GetCurrentFunction();
+            bool isRebindableReferenceLocal = IsDeclaredRefLocalReassigned(semantic, variable);
+            if (functionStack != null) {
+                functionStack.Stack.Add(new ConversionVariable {
+                    Name = variable.Identifier.ToString(),
+                    VarType = declarationType,
+                    IsRebindableReferenceLocal = isRebindableReferenceLocal
+                });
+            }
+
+            lines.Add(isRebindableReferenceLocal ? "auto* " : "auto& ");
+            lines.Add(variable.Identifier.ToString());
+            lines.Add(isRebindableReferenceLocal ? " = &" : " = ");
+            lines.AddRange(initializerLines);
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers tuple deconstruction declarations into a temporary tuple value followed by one local assignment per element.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the declaration.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="declaration">Declaration being evaluated.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <returns><c>true</c> when the declaration was lowered as a tuple deconstruction; otherwise <c>false</c>.</returns>
+        bool TryProcessTupleDeconstructionDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            List<string> lines) {
+            if (declaration == null ||
+                declaration.Variables.Count != 1) {
+                return false;
+            }
+
+            ParenthesizedVariableDesignationSyntax tupleDesignation = declaration
+                .DescendantNodes()
+                .OfType<ParenthesizedVariableDesignationSyntax>()
+                .FirstOrDefault();
+            if (tupleDesignation == null ||
+                declaration.Variables[0].Initializer?.Value == null) {
+                return false;
+            }
+
+            ExpressionSyntax initializerExpression = declaration.Variables[0].Initializer.Value;
+            List<string> initializerLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult initializerResult = ProcessExpression(semantic, context, initializerExpression, initializerLines);
+            context.PopClass(start);
+            if (!initializerResult.Processed) {
+                return false;
+            }
+
+            VariableType tupleType = ResolveTupleDeconstructionType(semantic, context, initializerExpression, initializerResult);
+            if (tupleType?.Type != VariableDataType.Tuple ||
+                tupleType.GenericArgs.Count < tupleDesignation.Variables.Count) {
+                return false;
+            }
+
+            if (initializerResult.BeforeLines != null && initializerResult.BeforeLines.Count > 0) {
+                lines.AddRange(initializerResult.BeforeLines);
+            }
+
+            string temporaryName = CreateTemporaryName("__deconstruct");
+            lines.Add($"const auto {temporaryName} = ");
+            lines.AddRange(initializerLines);
+            lines.Add(";\n");
+
+            string tupleMemberAccessOperator = ".";
+            FunctionStack functionStack = context.GetCurrentFunction();
+            for (int index = 0; index < tupleDesignation.Variables.Count; index++) {
+                if (tupleDesignation.Variables[index] is not SingleVariableDesignationSyntax singleVariableDesignation) {
+                    continue;
+                }
+
+                VariableType elementType = tupleType.GenericArgs[index];
+                CPPTypeData elementTypeData;
+                VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
+                RegisterGeneratedTypeReferences(context, elementType);
+                string pointerSuffix = elementTypeData.IsPointer ? "*" : string.Empty;
+                string declarationTypeName = QualifyRenderedCppTypeName(cppElementType.ToCPPString(context.Program), context);
+                lines.Add($"{declarationTypeName}{pointerSuffix} {singleVariableDesignation.Identifier.Text} = {temporaryName}{tupleMemberAccessOperator}Item{index + 1};\n");
+
+                if (functionStack != null) {
+                    functionStack.Stack.Add(new ConversionVariable {
+                        Name = singleVariableDesignation.Identifier.Text,
+                        VarType = elementType
+                    });
+                }
+            }
+
+            return true;
+        }
+
+        VariableType ResolveTupleDeconstructionType(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax initializerExpression,
+            ExpressionResult initializerResult) {
+            if (TryGetExpressionTypeSymbol(semantic, initializerExpression, out ITypeSymbol initializerTypeSymbol)) {
+                VariableType symbolType = VariableUtil.GetVarType(initializerTypeSymbol);
+                if (symbolType.Type == VariableDataType.Tuple) {
+                    return symbolType;
+                }
+            }
+
+            if (initializerResult.Type != null &&
+                initializerResult.Type.Type == VariableDataType.Tuple) {
+                return initializerResult.Type;
+            }
+
+            if (TryResolveInferredExpressionVariableType(context, semantic, initializerExpression, out VariableType inferredType) &&
+                inferredType.Type == VariableDataType.Tuple) {
+                return inferredType;
+            }
+
+            return null;
+        }
+
+        static bool IsDeclaredRefLocalReassigned(SemanticModel semantic, VariableDeclaratorSyntax variable) {
+            if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
+                return false;
+            }
+
+            SyntaxNode mutationScope = variable.FirstAncestorOrSelf<BlockSyntax>() ?? variable.SyntaxTree.GetRoot();
+            foreach (AssignmentExpressionSyntax assignmentExpression in mutationScope.DescendantNodes().OfType<AssignmentExpressionSyntax>()) {
+                if (assignmentExpression.Kind() == SyntaxKind.SimpleAssignmentExpression &&
+                    assignmentExpression.Right is RefExpressionSyntax &&
+                    SymbolsMatch(semantic.GetSymbolInfo(assignmentExpression.Left).Symbol, localSymbol)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         static bool IsDeclaredLocalMutated(SemanticModel semantic, VariableDeclaratorSyntax variable) {
             if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
                 return false;
@@ -8472,8 +13576,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (variable.Initializer?.Value is not ObjectCreationExpressionSyntax &&
-                variable.Initializer?.Value is not ImplicitObjectCreationExpressionSyntax) {
+            if (!IsOwnedManagedLocalInitializerExpression(semantic, variable.Initializer?.Value)) {
                 return false;
             }
 
@@ -8484,6 +13587,10 @@ namespace cs2.cpp {
 
             VariableType cppType = ConvertToCPPType(declarationType, out CPPTypeData typeData);
             if (cppType == null || !typeData.IsPointer) {
+                return false;
+            }
+
+            if (HasExplicitNativeOwnershipRelease(semantic, variable)) {
                 return false;
             }
 
@@ -8537,6 +13644,119 @@ namespace cs2.cpp {
                 expression is ArrayCreationExpressionSyntax ||
                 expression is ImplicitArrayCreationExpressionSyntax ||
                 expression is CollectionExpressionSyntax;
+        }
+
+        bool IsOwnedManagedLocalInitializerExpression(SemanticModel semantic, ExpressionSyntax expression) {
+            if (expression == null) {
+                return false;
+            }
+
+            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                expression = parenthesizedExpression.Expression;
+            }
+
+            if (expression is CastExpressionSyntax castExpression) {
+                expression = castExpression.Expression;
+            }
+
+            if (IsManagedHeapAllocationExpression(expression)) {
+                return true;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is IPropertySymbol propertySymbol) {
+                return DoesMemberReturnArrayAsOwnedNativeList(semantic, propertySymbol);
+            }
+
+            if (expression is InvocationExpressionSyntax invocationExpression) {
+                IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+                return DoesMemberReturnArrayAsOwnedNativeList(semantic, methodSymbol);
+            }
+
+            return false;
+        }
+
+        bool DoesMemberReturnArrayAsOwnedNativeList(SemanticModel semantic, ISymbol symbol) {
+            if (semantic == null || symbol == null) {
+                return false;
+            }
+
+            ITypeSymbol returnTypeSymbol = ResolveMemberReturnTypeSymbol(symbol);
+            if (!IsListFamilyTypeSymbol(returnTypeSymbol)) {
+                return false;
+            }
+
+            bool foundReturnExpression = false;
+            foreach (SyntaxReference syntaxReference in symbol.DeclaringSyntaxReferences) {
+                SyntaxNode declaration = syntaxReference.GetSyntax();
+                if (!semantic.Compilation.ContainsSyntaxTree(declaration.SyntaxTree)) {
+                    return false;
+                }
+
+                SemanticModel declarationSemantic;
+                try {
+                    declarationSemantic = semantic.Compilation.GetSemanticModel(declaration.SyntaxTree);
+                } catch (ArgumentException) {
+                    return false;
+                }
+
+                foreach (ExpressionSyntax returnExpression in EnumerateMemberReturnExpressions(declaration)) {
+                    foundReturnExpression = true;
+                    if (!TryResolveArrayElementTypeSymbol(declarationSemantic, returnExpression, out _)) {
+                        return false;
+                    }
+                }
+            }
+
+            return foundReturnExpression;
+        }
+
+        static ITypeSymbol ResolveMemberReturnTypeSymbol(ISymbol symbol) {
+            if (symbol is IPropertySymbol propertySymbol) {
+                return propertySymbol.Type;
+            }
+
+            if (symbol is IMethodSymbol methodSymbol) {
+                return methodSymbol.ReturnType;
+            }
+
+            return null;
+        }
+
+        static IEnumerable<ExpressionSyntax> EnumerateMemberReturnExpressions(SyntaxNode declaration) {
+            if (declaration is PropertyDeclarationSyntax propertyDeclaration) {
+                if (propertyDeclaration.ExpressionBody?.Expression != null) {
+                    yield return propertyDeclaration.ExpressionBody.Expression;
+                }
+
+                foreach (AccessorDeclarationSyntax accessor in propertyDeclaration.AccessorList?.Accessors ?? default) {
+                    if (!accessor.IsKind(SyntaxKind.GetAccessorDeclaration)) {
+                        continue;
+                    }
+
+                    if (accessor.ExpressionBody?.Expression != null) {
+                        yield return accessor.ExpressionBody.Expression;
+                    }
+
+                    foreach (ReturnStatementSyntax returnStatement in accessor.DescendantNodes().OfType<ReturnStatementSyntax>()) {
+                        if (returnStatement.Expression != null) {
+                            yield return returnStatement.Expression;
+                        }
+                    }
+                }
+            }
+
+            if (declaration is MethodDeclarationSyntax methodDeclaration) {
+                if (methodDeclaration.ExpressionBody?.Expression != null) {
+                    yield return methodDeclaration.ExpressionBody.Expression;
+                }
+
+                foreach (ReturnStatementSyntax returnStatement in methodDeclaration.DescendantNodes().OfType<ReturnStatementSyntax>()) {
+                    if (returnStatement.Expression != null) {
+                        yield return returnStatement.Expression;
+                    }
+                }
+            }
         }
 
         static bool DoesExpressionReferenceLocal(
@@ -8620,7 +13840,8 @@ namespace cs2.cpp {
                             continue;
                         }
 
-                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol)) {
+                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol) &&
+                            !IsNativeNoEscapeArgument(semantic, invocationExpression, argumentSyntax)) {
                             return true;
                         }
                     }
@@ -8630,6 +13851,70 @@ namespace cs2.cpp {
                             return true;
                         }
                     }
+                }
+            }
+
+            return false;
+        }
+
+        static bool HasExplicitNativeOwnershipRelease(SemanticModel semantic, VariableDeclaratorSyntax variable) {
+            if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
+                return false;
+            }
+
+            SyntaxNode scope = variable.FirstAncestorOrSelf<BlockSyntax>() ?? variable.SyntaxTree.GetRoot();
+            foreach (InvocationExpressionSyntax invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>()) {
+                if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                    continue;
+                }
+
+                string methodName = memberAccess.Name.Identifier.Text;
+                if (!string.Equals(methodName, "Delete", StringComparison.Ordinal) &&
+                    !string.Equals(methodName, "Release", StringComparison.Ordinal) &&
+                    !string.Equals(methodName, "DisposeAndDelete", StringComparison.Ordinal) &&
+                    !string.Equals(methodName, "DisposeAndRelease", StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                ISymbol invokedMethodSymbol = semantic.GetSymbolInfo(memberAccess).Symbol;
+                if (!string.Equals(invokedMethodSymbol?.ContainingType?.Name, "NativeOwnership", StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                foreach (ArgumentSyntax argument in invocation.ArgumentList.Arguments) {
+                    if (IsDirectLocalValueExpression(semantic, argument.Expression, localSymbol)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        static bool IsNativeNoEscapeArgument(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            ArgumentSyntax argumentSyntax) {
+            if (semantic == null || invocationExpression == null || argumentSyntax == null) {
+                return false;
+            }
+
+            IMethodSymbol methodSymbol = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            int argumentIndex = invocationExpression.ArgumentList.Arguments.IndexOf(argumentSyntax);
+            if (argumentIndex < 0 || argumentIndex >= methodSymbol.Parameters.Length) {
+                return false;
+            }
+
+            IParameterSymbol parameterSymbol = methodSymbol.Parameters[argumentIndex];
+            foreach (AttributeData attributeData in parameterSymbol.GetAttributes()) {
+                string attributeName = attributeData.AttributeClass?.Name;
+                if (string.Equals(attributeName, "NativeNoEscapeAttribute", StringComparison.Ordinal) ||
+                    string.Equals(attributeName, "NativeNoEscape", StringComparison.Ordinal)) {
+                    return true;
                 }
             }
 
@@ -8668,6 +13953,39 @@ namespace cs2.cpp {
         }
 
         VariableType ResolveDeclarationType(SemanticModel semantic, VariableDeclarationSyntax declaration) {
+            if (declaration.Type is RefTypeSyntax refTypeSyntax) {
+                if (refTypeSyntax.Type is IdentifierNameSyntax refIdentifierName &&
+                    string.Equals(refIdentifierName.Identifier.Text, "var", StringComparison.Ordinal) &&
+                    declaration.Variables.Count == 1) {
+                    VariableDeclaratorSyntax refVariable = declaration.Variables[0];
+                    if (semantic.GetDeclaredSymbol(refVariable) is ILocalSymbol refLocalSymbol) {
+                        VariableType localType = VariableUtil.GetVarType(refLocalSymbol.Type);
+                        if (!IsWeakObjectVariableType(localType)) {
+                            return localType;
+                        }
+                    }
+
+                    if (refVariable.Initializer?.Value is RefExpressionSyntax refExpression) {
+                        ExpressionSyntax sourceExpression = refExpression.Expression;
+                        if (sourceExpression is ElementAccessExpressionSyntax refElementAccess &&
+                            TryResolveElementAccessTypeSymbol(semantic, refElementAccess, out ITypeSymbol refElementTypeSymbol)) {
+                            return VariableUtil.GetVarType(refElementTypeSymbol);
+                        }
+
+                        if (sourceExpression is MemberAccessExpressionSyntax refMemberAccess &&
+                            TryResolveMemberAccessResultTypeSymbol(semantic, refMemberAccess, out ITypeSymbol refMemberTypeSymbol)) {
+                            return VariableUtil.GetVarType(refMemberTypeSymbol);
+                        }
+
+                        if (TryGetExpressionTypeSymbol(semantic, sourceExpression, out ITypeSymbol refSourceTypeSymbol)) {
+                            return VariableUtil.GetVarType(refSourceTypeSymbol);
+                        }
+                    }
+                }
+
+                return VariableUtil.GetVarType(refTypeSyntax.Type, semantic);
+            }
+
             if (declaration.Type is IdentifierNameSyntax identifierName &&
                 string.Equals(identifierName.Identifier.Text, "var", StringComparison.Ordinal) &&
                 declaration.Variables.Count == 1) {
@@ -8898,17 +14216,29 @@ namespace cs2.cpp {
             if (fn != null) {
                 ConversionVariable conversionVariable = new ConversionVariable();
                 conversionVariable.Name = variable.Identifier.ToString();
+                conversionVariable.Remap = CPPIdentifierSanitizer.SanitizeIdentifier(conversionVariable.Name);
+                if (string.Equals(conversionVariable.Remap, conversionVariable.Name, StringComparison.Ordinal)) {
+                    conversionVariable.Remap = null;
+                }
                 conversionVariable.VarType = sourceType;
                 fn.Stack.Add(conversionVariable);
             }
 
             string pointer = typeData.IsPointer ? " *" : " ";
             string declarationTypeName = QualifyRenderedCppTypeName(cppType.ToCPPString(context.Program), context);
-            lines.Add($"{declarationTypeName}{pointer}{variable.Identifier} = ");
+            List<string> beforeDeclarationLines = new List<string>();
+            string emittedVariableName = CPPIdentifierSanitizer.SanitizeIdentifier(variable.Identifier.ToString());
+            lines.Add($"{declarationTypeName}{pointer}{emittedVariableName} = ");
 
             int start = context.DepthClass;
-            ProcessExpression(semantic, context, variable.Initializer.Value, lines);
+            ExpressionResult initializerResult = ProcessExpression(semantic, context, variable.Initializer.Value, lines);
             context.PopClass(start);
+            if (initializerResult.BeforeLines != null && initializerResult.BeforeLines.Count > 0) {
+                beforeDeclarationLines.AddRange(initializerResult.BeforeLines);
+            }
+            if (beforeDeclarationLines.Count > 0) {
+                lines.InsertRange(0, beforeDeclarationLines);
+            }
             return true;
         }
 
@@ -9084,6 +14414,69 @@ namespace cs2.cpp {
             return false;
         }
 
+        static bool TryRewriteTargetTypedNumericLiteral(
+            ExpressionSyntax expression,
+            ITypeSymbol targetTypeSymbol,
+            out string rewrittenLiteral) {
+            rewrittenLiteral = string.Empty;
+            if (expression == null || targetTypeSymbol == null) {
+                return false;
+            }
+
+            ExpressionSyntax unwrappedExpression = expression;
+            while (unwrappedExpression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                unwrappedExpression = parenthesizedExpression.Expression;
+            }
+
+            string signPrefix = string.Empty;
+            if (unwrappedExpression is PrefixUnaryExpressionSyntax prefixUnaryExpression &&
+                (prefixUnaryExpression.IsKind(SyntaxKind.UnaryMinusExpression) ||
+                 prefixUnaryExpression.IsKind(SyntaxKind.UnaryPlusExpression))) {
+                signPrefix = prefixUnaryExpression.OperatorToken.Text;
+                unwrappedExpression = prefixUnaryExpression.Operand;
+            }
+
+            if (unwrappedExpression is not LiteralExpressionSyntax literalExpression ||
+                !literalExpression.IsKind(SyntaxKind.NumericLiteralExpression)) {
+                return false;
+            }
+
+            string normalizedLiteral = NormalizeNumericLiteral(literalExpression.Token.Text);
+            switch (targetTypeSymbol.SpecialType) {
+                case SpecialType.System_Single:
+                    rewrittenLiteral = signPrefix + NormalizeFloatingPointLiteral(normalizedLiteral, appendFloatSuffix: true);
+                    return true;
+                case SpecialType.System_Double:
+                    rewrittenLiteral = signPrefix + NormalizeFloatingPointLiteral(normalizedLiteral, appendFloatSuffix: false);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static string NormalizeFloatingPointLiteral(string normalizedLiteral, bool appendFloatSuffix) {
+            if (string.IsNullOrWhiteSpace(normalizedLiteral)) {
+                return normalizedLiteral;
+            }
+
+            string literal = normalizedLiteral;
+            if (literal.EndsWith("f", StringComparison.OrdinalIgnoreCase) ||
+                literal.EndsWith("d", StringComparison.OrdinalIgnoreCase)) {
+                literal = literal[..^1];
+            }
+
+            if (!literal.Contains('.', StringComparison.Ordinal) &&
+                !literal.Contains('e', StringComparison.OrdinalIgnoreCase)) {
+                literal += ".0";
+            }
+
+            if (appendFloatSuffix) {
+                literal += "f";
+            }
+
+            return literal;
+        }
+
         static bool IsWeakObjectVariableType(VariableType variableType) {
             return variableType != null &&
                 variableType.Type == VariableDataType.Object &&
@@ -9097,7 +14490,12 @@ namespace cs2.cpp {
                 return;
             }
 
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(variableType);
+            if (generatedClass != null) {
+                RegisterGeneratedTypeDependency(context, generatedClass.GetEmittedTypeName());
+            } else {
             RegisterGeneratedTypeReference(context, variableType.TypeName, variableType.GenericArgs.Count);
+            }
 
             if (variableType.GenericArgs == null) {
                 return;
@@ -9130,11 +14528,12 @@ namespace cs2.cpp {
             }
 
             ConversionClass currentClass = context.GetCurrentClass();
-            if (currentClass == null || currentClass.ReferencedClasses.Contains(generatedClass.Name)) {
+            string emittedTypeName = generatedClass.GetEmittedTypeName();
+            if (currentClass == null || currentClass.ReferencedClasses.Contains(emittedTypeName)) {
                 return;
             }
 
-            currentClass.ReferencedClasses.Add(generatedClass.Name);
+            currentClass.ReferencedClasses.Add(emittedTypeName);
         }
 
         string QualifyRenderedCppTypeName(string renderedTypeName, LayerContext context) {
@@ -9232,7 +14631,9 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (declarationType.TypeName != "Span" || declarationType.GenericArgs.Count != 1) {
+            bool isSpanDeclaration = declarationType.TypeName == "Span" && declarationType.GenericArgs.Count == 1;
+            bool isPointerDeclaration = declaration.Type is PointerTypeSyntax || declarationType.IsPointer;
+            if (!isSpanDeclaration && !isPointerDeclaration) {
                 return false;
             }
 
@@ -9245,34 +14646,109 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (stackAllocType.RankSpecifiers.Count != 1 || stackAllocType.RankSpecifiers[0].Sizes.Count != 1) {
+            if (stackAllocType.RankSpecifiers.Count != 1) {
                 return false;
             }
 
-            VariableType elementType = VariableUtil.GetVarType(stackAllocType.ElementType, semantic);
+            VariableType elementType = isSpanDeclaration
+                ? declarationType.GenericArgs[0]
+                : VariableUtil.GetVarType(stackAllocType.ElementType, semantic);
             CPPTypeData elementTypeData;
             VariableType cppElementType = ConvertToCPPType(elementType, out elementTypeData);
             List<string> sizeLines = new List<string>();
-            ExpressionResult sizeResult = ProcessExpression(semantic, context, stackAllocType.RankSpecifiers[0].Sizes[0], sizeLines);
-            if (!sizeResult.Processed) {
-                return false;
+            InitializerExpressionSyntax initializer = stackAllocExpression.Initializer;
+            bool hasInitializer = initializer != null && initializer.Expressions.Count > 0;
+            bool useFixedArrayBuffer = false;
+            if (hasInitializer) {
+                sizeLines.Add(initializer.Expressions.Count.ToString(CultureInfo.InvariantCulture));
+                useFixedArrayBuffer = true;
+            } else {
+                if (stackAllocType.RankSpecifiers[0].Sizes.Count != 1) {
+                    return false;
+                }
+
+                ExpressionResult sizeResult = ProcessExpression(semantic, context, stackAllocType.RankSpecifiers[0].Sizes[0], sizeLines);
+                if (!sizeResult.Processed) {
+                    return false;
+                }
+
+                useFixedArrayBuffer = semantic?.GetConstantValue(stackAllocType.RankSpecifiers[0].Sizes[0]).HasValue == true;
             }
 
             FunctionStack currentFunction = context.GetCurrentFunction();
             if (currentFunction != null) {
                 ConversionVariable stackVariable = new ConversionVariable();
                 stackVariable.Name = variable.Identifier.ToString();
+                stackVariable.Remap = CPPIdentifierSanitizer.SanitizeIdentifier(stackVariable.Name);
+                if (string.Equals(stackVariable.Remap, stackVariable.Name, StringComparison.Ordinal)) {
+                    stackVariable.Remap = null;
+                }
                 stackVariable.VarType = declarationType;
                 currentFunction.Stack.Add(stackVariable);
             }
 
-            lines.Add(cppElementType.ToCPPString(context.Program));
-            lines.Add(" ");
-            lines.Add(variable.Identifier.ToString());
-            lines.Add("[");
+            string elementTypeName = cppElementType.ToCPPString(context.Program);
+            if (isPointerDeclaration) {
+                string bufferName = $"{variable.Identifier.Text}_stackalloc";
+                if (useFixedArrayBuffer) {
+                    lines.Add($"{elementTypeName} {bufferName}[");
+                    lines.AddRange(sizeLines);
+                    lines.Add("];\n");
+                    AppendStackAllocInitializerAssignments(semantic, context, initializer, bufferName, lines);
+                    lines.Add($"{elementTypeName} *{variable.Identifier.Text} = {bufferName}");
+                    return true;
+                }
+
+                RegisterRuntimeRequirement("NativeArray");
+                lines.Add($"Array<{elementTypeName}> {bufferName}(");
+                lines.AddRange(sizeLines);
+                lines.Add(");\n");
+                lines.Add($"{elementTypeName} *{variable.Identifier.Text} = {bufferName}.Data");
+                return true;
+            }
+
+            string spanBufferName = $"{variable.Identifier.Text}_stackalloc";
+            if (useFixedArrayBuffer) {
+                lines.Add($"{elementTypeName} {spanBufferName}[");
+                lines.AddRange(sizeLines);
+                lines.Add("];\n");
+                AppendStackAllocInitializerAssignments(semantic, context, initializer, spanBufferName, lines);
+                lines.Add($"Span<{elementTypeName}> {variable.Identifier}({spanBufferName}, ");
+                lines.AddRange(sizeLines);
+                lines.Add(")");
+                return true;
+            }
+
+            RegisterRuntimeRequirement("NativeArray");
+            lines.Add($"Array<{elementTypeName}> {spanBufferName}(");
             lines.AddRange(sizeLines);
-            lines.Add("]");
+            lines.Add(");\n");
+            lines.Add($"Span<{elementTypeName}> {variable.Identifier}({spanBufferName}.Data, ");
+            lines.AddRange(sizeLines);
+            lines.Add(")");
             return true;
+        }
+
+        void AppendStackAllocInitializerAssignments(
+            SemanticModel semantic,
+            LayerContext context,
+            InitializerExpressionSyntax initializer,
+            string bufferName,
+            List<string> lines) {
+            if (initializer == null || lines == null) {
+                return;
+            }
+
+            for (int initializerIndex = 0; initializerIndex < initializer.Expressions.Count; initializerIndex++) {
+                ExpressionSyntax initializerExpression = initializer.Expressions[initializerIndex];
+                List<string> valueLines = new List<string>();
+                int valueStart = context.DepthClass;
+                ProcessExpression(semantic, context, initializerExpression, valueLines);
+                context.PopClass(valueStart);
+                lines.Add($"{bufferName}[{initializerIndex}] = ");
+                lines.AddRange(valueLines);
+                lines.Add(";\n");
+            }
         }
 
         /// <summary>
@@ -9307,6 +14783,10 @@ namespace cs2.cpp {
             if (currentFunction != null) {
                 ConversionVariable stackVariable = new ConversionVariable();
                 stackVariable.Name = variable.Identifier.ToString();
+                stackVariable.Remap = CPPIdentifierSanitizer.SanitizeIdentifier(stackVariable.Name);
+                if (string.Equals(stackVariable.Remap, stackVariable.Name, StringComparison.Ordinal)) {
+                    stackVariable.Remap = null;
+                }
                 stackVariable.VarType = declarationType;
                 currentFunction.Stack.Add(stackVariable);
             }
@@ -9317,7 +14797,8 @@ namespace cs2.cpp {
 
             string pointer = declarationTypeData.IsPointer ? " *" : " ";
             string declarationTypeName = QualifyRenderedCppTypeName(cppDeclarationType.ToCPPString(context.Program), context);
-            lines.Add($"{declarationTypeName}{pointer}{variable.Identifier.Text} = ");
+            string emittedVariableName = CPPIdentifierSanitizer.SanitizeIdentifier(variable.Identifier.Text);
+            lines.Add($"{declarationTypeName}{pointer}{emittedVariableName} = ");
             ProcessCollectionExpression(semantic, context, collectionExpression, lines);
             return true;
         }
@@ -9345,7 +14826,8 @@ namespace cs2.cpp {
             for (int index = 0; index < declaration.Variables.Count; index++) {
                 VariableDeclaratorSyntax variable = declaration.Variables[index];
                 bool isConstant = true;
-                List<string> declarationLines = [$"{declarationTypeName}{pointer}", variable.Identifier.Text];
+                string emittedVariableName = CPPIdentifierSanitizer.SanitizeIdentifier(variable.Identifier.Text);
+                List<string> declarationLines = [$"{declarationTypeName}{pointer}", emittedVariableName];
                 List<string> beforeDeclarationLines = new List<string>();
 
                 ConversionFunctionVariableUsage usage = fnStack?.Function?.BodyVariables.FirstOrDefault(candidate => candidate.Name == variable.Identifier.Text);
@@ -9363,6 +14845,10 @@ namespace cs2.cpp {
                 if (fn != null) {
                     ConversionVariable stackVariable = new ConversionVariable();
                     stackVariable.Name = variable.Identifier.Text;
+                    stackVariable.Remap = emittedVariableName;
+                    if (string.Equals(stackVariable.Remap, stackVariable.Name, StringComparison.Ordinal)) {
+                        stackVariable.Remap = null;
+                    }
                     stackVariable.VarType = varType;
                     fn.Stack.Add(stackVariable);
                 }
@@ -9527,10 +15013,24 @@ namespace cs2.cpp {
                     type = "null";
                     literalValue = "nullptr";
                     break;
-                case SyntaxKind.DefaultLiteralExpression:
-                    type = "null";
-                    literalValue = "nullptr";
-                    break;
+                case SyntaxKind.DefaultLiteralExpression: {
+                        SemanticModel semantic = context?.GetCurrentFunction()?.Function?.Semantic ?? context?.GetCurrentClass()?.Semantic;
+                        ITypeSymbol sourceTypeSymbol = semantic?.GetTypeInfo(literalExpression).Type ?? semantic?.GetTypeInfo(literalExpression).ConvertedType;
+                        if (sourceTypeSymbol != null) {
+                            VariableType sourceType = VariableUtil.GetVarType(sourceTypeSymbol);
+                            CPPTypeData defaultTypeData;
+                            VariableType cppDefaultType = ConvertToCPPType(sourceType, out defaultTypeData);
+                            type = sourceType.TypeName ?? "object";
+                            literalValue = defaultTypeData.IsPointer
+                                ? "nullptr"
+                                : $"{QualifyRenderedCppTypeName(cppDefaultType.ToCPPString(context.Program), context)}()";
+                            break;
+                        }
+
+                        type = "null";
+                        literalValue = "nullptr";
+                        break;
+                }
                 default:
                     throw new Exception("Unsupported literal type");
             }
@@ -9545,13 +15045,14 @@ namespace cs2.cpp {
                 return literalText;
             }
 
-            if (literalText.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ||
-                literalText.StartsWith("0b", StringComparison.OrdinalIgnoreCase)) {
-                return literalText;
+            string normalizedLiteral = literalText.Replace("_", string.Empty, StringComparison.Ordinal);
+            if (normalizedLiteral.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ||
+                normalizedLiteral.StartsWith("0b", StringComparison.OrdinalIgnoreCase)) {
+                return normalizedLiteral;
             }
 
-            if (literalText.EndsWith("d", StringComparison.Ordinal) || literalText.EndsWith("D", StringComparison.Ordinal)) {
-                string withoutSuffix = literalText[..^1];
+            if (normalizedLiteral.EndsWith("d", StringComparison.Ordinal) || normalizedLiteral.EndsWith("D", StringComparison.Ordinal)) {
+                string withoutSuffix = normalizedLiteral[..^1];
                 if (!withoutSuffix.Contains('.', StringComparison.Ordinal) &&
                     !withoutSuffix.Contains('e', StringComparison.OrdinalIgnoreCase)) {
                     return withoutSuffix + ".0";
@@ -9560,13 +15061,13 @@ namespace cs2.cpp {
                 return withoutSuffix;
             }
 
-            if ((literalText.EndsWith("f", StringComparison.Ordinal) || literalText.EndsWith("F", StringComparison.Ordinal)) &&
-                !literalText.Contains('.', StringComparison.Ordinal) &&
-                !literalText.Contains('e', StringComparison.OrdinalIgnoreCase)) {
-                return literalText[..^1] + ".0f";
+            if ((normalizedLiteral.EndsWith("f", StringComparison.Ordinal) || normalizedLiteral.EndsWith("F", StringComparison.Ordinal)) &&
+                !normalizedLiteral.Contains('.', StringComparison.Ordinal) &&
+                !normalizedLiteral.Contains('e', StringComparison.OrdinalIgnoreCase)) {
+                return normalizedLiteral[..^1] + ".0f";
             }
 
-            return literalText;
+            return normalizedLiteral;
         }
 
         protected override void ProcessReturnStatement(SemanticModel semantic, LayerContext context, ReturnStatementSyntax ret, List<string> lines) {
@@ -9577,10 +15078,19 @@ namespace cs2.cpp {
 
             int start = context.Class.Count;
             List<string> returnLines = new List<string>();
-            ExpressionResult result = ProcessExpression(semantic, context, ret.Expression, returnLines);
+            ExpressionSyntax returnExpression = ret.Expression is RefExpressionSyntax refExpression
+                ? refExpression.Expression
+                : ret.Expression;
+            ExpressionResult result = ProcessExpression(semantic, context, returnExpression, returnLines);
 
             if (result.BeforeLines != null) {
                 lines.AddRange(result.BeforeLines);
+            }
+
+            if (ShouldEmitEmptyStringForTargetedNullReturn(semantic, ret)) {
+                lines.Add("return String::Empty;");
+                context.PopClass(start);
+                return;
             }
 
             if (TryAppendArrayAsListReturnValue(semantic, context, ret, returnLines, lines)) {
@@ -9623,6 +15133,23 @@ namespace cs2.cpp {
             return true;
         }
 
+        /// <summary>
+        /// Returns whether one return statement should lower an explicit null literal to the managed empty-string singleton.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the active document.</param>
+        /// <param name="ret">Return statement being lowered.</param>
+        /// <returns><c>true</c> when the return target is one string and the expression is one null literal; otherwise <c>false</c>.</returns>
+        static bool ShouldEmitEmptyStringForTargetedNullReturn(SemanticModel semantic, ReturnStatementSyntax ret) {
+            if (semantic == null ||
+                ret?.Expression == null ||
+                ret.Expression.Kind() != SyntaxKind.NullLiteralExpression) {
+                return false;
+            }
+
+            ITypeSymbol returnTypeSymbol = ResolveEnclosingReturnTypeSymbol(semantic, ret);
+            return IsStringTypeSymbol(returnTypeSymbol);
+        }
+
         static ITypeSymbol ResolveEnclosingReturnTypeSymbol(SemanticModel semantic, SyntaxNode node) {
             ISymbol enclosingSymbol = semantic?.GetEnclosingSymbol(node?.SpanStart ?? 0);
             if (enclosingSymbol is IMethodSymbol methodSymbol) {
@@ -9655,7 +15182,6 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessDeclarationExpressionSyntax(SemanticModel semantic, LayerContext context, DeclarationExpressionSyntax declaration, List<string> lines) {
             if (declaration.Designation is SingleVariableDesignationSyntax single) {
                 string identifier = single.Identifier.Text;
-                lines.Add(identifier);
 
                 ITypeSymbol inferredOutTypeSymbol = TryResolveOutArgumentTypeSymbol(semantic, declaration, null);
                 VariableType variableType = inferredOutTypeSymbol != null
@@ -9664,13 +15190,20 @@ namespace cs2.cpp {
                 ConversionVariable conversionVariable = null;
                 FunctionStack fn = context.GetCurrentFunction();
                 if (fn != null) {
+                    bool hasExistingTrackedVariable = fn.Stack.Any(candidate => candidate.Name == identifier);
                     conversionVariable = new ConversionVariable {
                         Name = identifier,
                         VarType = variableType,
                         Modifier = ParameterModifier.Out
                     };
+                    if (hasExistingTrackedVariable) {
+                        conversionVariable.Remap = GetScopedDeclarationExpressionIdentifier(identifier, declaration);
+                    }
+
                     fn.Stack.Add(conversionVariable);
                 }
+
+                lines.Add(conversionVariable?.Remap ?? identifier);
 
                 ExpressionResult result = new ExpressionResult(true, conversionVariable != null ? VariablePath.FunctionStack : VariablePath.Unknown, variableType);
                 if (conversionVariable != null) {
@@ -9681,7 +15214,7 @@ namespace cs2.cpp {
             }
 
             if (declaration.Designation is DiscardDesignationSyntax) {
-                lines.Add("_");
+                lines.Add(GetDiscardTemporaryName(declaration));
                 return new ExpressionResult(true);
             }
 
@@ -9704,6 +15237,20 @@ namespace cs2.cpp {
             }
 
             return VariableUtil.GetVarType(declarationExpression.Type, semantic);
+        }
+
+        static string GetDiscardTemporaryName(SyntaxNode discardSyntax) {
+            return $"__discard_{discardSyntax.SpanStart:X8}";
+        }
+
+        static string GetScopedDeclarationExpressionIdentifier(string identifier, SyntaxNode declarationSyntax) {
+            return $"{identifier}_{declarationSyntax.SpanStart:X8}";
+        }
+
+        static string ResolveTrackedIdentifierEmissionName(LayerContext context, string identifier) {
+            FunctionStack currentFunction = context?.GetCurrentFunction();
+            ConversionVariable trackedVariable = currentFunction?.Stack.LastOrDefault(candidate => candidate.Name == identifier);
+            return trackedVariable?.Remap ?? identifier;
         }
 
         ITypeSymbol TryResolveOutArgumentTypeSymbol(
@@ -9918,6 +15465,16 @@ namespace cs2.cpp {
             out string propertyName) {
             propertyName = string.Empty;
 
+            if (assignmentLeft is IdentifierNameSyntax assignmentIdentifier &&
+                TryResolveDirectFieldSymbol(semantic, assignmentIdentifier)) {
+                return false;
+            }
+
+            if (assignmentLeft is MemberAccessExpressionSyntax assignmentMemberAccess &&
+                TryResolveDirectFieldSymbol(semantic, assignmentMemberAccess)) {
+                return false;
+            }
+
             if (assignmentLeft is IdentifierNameSyntax identifierName &&
                 TryResolveGeneratedPropertySetter(context, semantic, assignmentLeft, identifierName.Identifier.Text)) {
                 propertyName = identifierName.Identifier.Text;
@@ -9934,10 +15491,38 @@ namespace cs2.cpp {
             return false;
         }
 
+        static bool TryResolveDirectFieldSymbol(SemanticModel semantic, IdentifierNameSyntax identifierName) {
+            if (semantic == null ||
+                identifierName == null ||
+                !ReferenceEquals(identifierName.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            try {
+                return semantic.GetSymbolInfo(identifierName).Symbol is IFieldSymbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+        }
+
+        static bool TryResolveDirectFieldSymbol(SemanticModel semantic, MemberAccessExpressionSyntax memberAccess) {
+            if (semantic == null ||
+                memberAccess == null ||
+                !ReferenceEquals(memberAccess.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            try {
+                return ResolveMemberAccessSymbol(semantic, memberAccess) is IFieldSymbol;
+            } catch (ArgumentException) {
+                return false;
+            }
+        }
+
         bool TryAppendObjectInitializerSetterAssignment(
             SemanticModel semantic,
             LayerContext context,
-            ObjectCreationExpressionSyntax objectCreation,
+            TypeSyntax objectCreationTypeSyntax,
             string objectName,
             string memberAccessOperator,
             AssignmentExpressionSyntax assignment,
@@ -9948,7 +15533,7 @@ namespace cs2.cpp {
                 propertySymbol.SetMethod != null) {
                 propertyName = propertySymbol.Name;
             } else if (assignment.Left is IdentifierNameSyntax identifierName &&
-                TryResolveGeneratedPropertySetter(semantic, objectCreation.Type, identifierName.Identifier.Text)) {
+                TryResolveGeneratedPropertySetter(semantic, objectCreationTypeSyntax, identifierName.Identifier.Text)) {
                 propertyName = identifierName.Identifier.Text;
             }
 
@@ -10039,7 +15624,17 @@ namespace cs2.cpp {
             SemanticModel semantic,
             TypeSyntax receiverTypeSyntax,
             string propertyName) {
-            ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverTypeSyntax).Type ?? semantic.GetTypeInfo(receiverTypeSyntax).ConvertedType;
+            if (semantic == null || receiverTypeSyntax == null) {
+                return false;
+            }
+
+            ITypeSymbol receiverTypeSymbol;
+            if (!ReferenceEquals(receiverTypeSyntax.SyntaxTree, semantic.SyntaxTree)) {
+                receiverTypeSymbol = ResolveObjectCreationTypeSymbolFromText(semantic, receiverTypeSyntax.ToString());
+            } else {
+                receiverTypeSymbol = semantic.GetTypeInfo(receiverTypeSyntax).Type ?? semantic.GetTypeInfo(receiverTypeSyntax).ConvertedType;
+            }
+
             if (receiverTypeSymbol == null) {
                 return false;
             }

@@ -3,10 +3,25 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "array.hpp"
 #include "native_string.hpp"
+
+template<typename T>
+class NativeListEqual {
+public:
+    bool operator()(const T& left, const T& right) const {
+        if constexpr (std::is_pointer_v<T>) {
+            return left == right;
+        } else if constexpr (requires(T value) { value.Equals(right); }) {
+            return const_cast<T&>(left).Equals(right);
+        } else {
+            return left == right;
+        }
+    }
+};
 
 template<typename T>
 class List : public std::vector<T> {
@@ -50,11 +65,13 @@ public:
     }
 
     bool Contains(const T& value) const {
-        return std::find(this->begin(), this->end(), value) != this->end();
+        NativeListEqual<T> equal;
+        return std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); }) != this->end();
     }
 
     bool Remove(const T& value) {
-        typename std::vector<T>::iterator iterator = std::find(this->begin(), this->end(), value);
+        NativeListEqual<T> equal;
+        typename std::vector<T>::iterator iterator = std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); });
         if (iterator == this->end()) {
             return false;
         }
@@ -65,6 +82,18 @@ public:
 
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
+    }
+
+    T& get_Item(int32_t index) {
+        return (*this)[static_cast<size_t>(index)];
+    }
+
+    const T& get_Item(int32_t index) const {
+        return (*this)[static_cast<size_t>(index)];
+    }
+
+    void set_Item(int32_t index, const T& value) {
+        (*this)[static_cast<size_t>(index)] = value;
     }
 
     int32_t get_Count() const {

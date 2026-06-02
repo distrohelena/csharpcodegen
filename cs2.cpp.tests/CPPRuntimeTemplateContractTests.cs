@@ -23,6 +23,65 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the native dictionary runtime can use generated value-type equality and hash members for struct keys.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_dictionary_hashes_generated_value_type_keys() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_dictionary.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("class NativeDictionaryHash", source, StringComparison.Ordinal);
+        Assert.Contains("class NativeDictionaryEqual", source, StringComparison.Ordinal);
+        Assert.Contains("value.GetHashCode()", source, StringComparison.Ordinal);
+        Assert.Contains("value.Equals(right)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the native list runtime can use generated value-type equality members for Contains and Remove.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_list_compares_generated_value_type_items() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_list.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("class NativeListEqual", source, StringComparison.Ordinal);
+        Assert.Contains("value.Equals(right)", source, StringComparison.Ordinal);
+        Assert.Contains("std::find_if", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the native event runtime stores and invokes free or static subscribers instead of discarding all event traffic.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_event_invokes_static_subscribers() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_event.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("std::vector<Subscriber> Subscribers", source, StringComparison.Ordinal);
+        Assert.Contains("Event& operator+=(void (*handler)(TArgs...))", source, StringComparison.Ordinal);
+        Assert.Contains("std::array<void*, sizeof...(TArgs)> argumentPointers", source, StringComparison.Ordinal);
+        Assert.Contains("subscriber.Invoke(argumentPointers.data());", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the number runtime template declares the finite-check helper surface directly.
     /// </summary>
     [Fact]

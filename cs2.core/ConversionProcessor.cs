@@ -80,6 +80,8 @@ namespace cs2.core {
                 return ProcessIdentifierNameSyntax(semantic, context, identifier, lines, refTypes);
             } else if (expression is ObjectCreationExpressionSyntax objectCreation) {
                 return ProcessObjectCreationExpressionSyntax(semantic, context, objectCreation, lines);
+            } else if (expression is ImplicitObjectCreationExpressionSyntax implicitObjectCreation) {
+                return ProcessImplicitObjectCreationExpressionSyntax(semantic, context, implicitObjectCreation, lines);
             } else if (expression is MemberAccessExpressionSyntax memberAccess) {
                 return ProcessMemberAccessExpressionSyntax(semantic, context, memberAccess, lines, refTypes);
             } else if (expression is InvocationExpressionSyntax invocationExpression) {
@@ -122,6 +124,8 @@ namespace cs2.core {
                 ProcessTupleExpression(semantic, context, tupleExpression, lines);
             } else if (expression is InitializerExpressionSyntax initializerExpression) {
                 ProcessInitializerExpression(semantic, context, initializerExpression, lines);
+            } else if (expression is SwitchExpressionSyntax switchExpression) {
+                return ProcessSwitchExpressionSyntax(semantic, context, switchExpression, lines);
             } else if (expression is BaseExpressionSyntax baseExpression) {
                 ProcessBaseExpression(semantic, context, baseExpression, lines);
             } else if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
@@ -148,6 +152,36 @@ namespace cs2.core {
             }
 
             return new ExpressionResult(true);
+        }
+
+        protected virtual ExpressionResult ProcessImplicitObjectCreationExpressionSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            ImplicitObjectCreationExpressionSyntax implicitObjectCreation,
+            List<string> lines) {
+            ObjectCreationExpressionSyntax explicitObjectCreation = CreateExplicitObjectCreationExpression(semantic, implicitObjectCreation);
+            if (explicitObjectCreation == null) {
+                return new ExpressionResult(false);
+            }
+
+            return ProcessObjectCreationExpressionSyntax(semantic, context, explicitObjectCreation, lines);
+        }
+
+        protected static ObjectCreationExpressionSyntax CreateExplicitObjectCreationExpression(
+            SemanticModel semantic,
+            ImplicitObjectCreationExpressionSyntax implicitObjectCreation) {
+            if (semantic == null || implicitObjectCreation == null) {
+                return null;
+            }
+
+            ITypeSymbol createdTypeSymbol = semantic.GetTypeInfo(implicitObjectCreation).Type ?? semantic.GetTypeInfo(implicitObjectCreation).ConvertedType;
+            if (createdTypeSymbol == null) {
+                return null;
+            }
+
+            string createdTypeName = createdTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            TypeSyntax explicitTypeSyntax = SyntaxFactory.ParseTypeName(createdTypeName);
+            return SyntaxFactory.ObjectCreationExpression(explicitTypeSyntax, implicitObjectCreation.ArgumentList, implicitObjectCreation.Initializer);
         }
 
         protected abstract void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax generic, List<string> lines);
@@ -185,6 +219,14 @@ namespace cs2.core {
         protected abstract void ProcessBaseExpression(SemanticModel semantic, LayerContext context, BaseExpressionSyntax baseExpression, List<string> lines);
 
         protected abstract void ProcessInitializerExpression(SemanticModel semantic, LayerContext context, InitializerExpressionSyntax initializerExpression, List<string> lines);
+
+        protected virtual ExpressionResult ProcessSwitchExpressionSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            SwitchExpressionSyntax switchExpression,
+            List<string> lines) {
+            return new ExpressionResult(false);
+        }
 
         protected abstract void ProcessTupleExpression(SemanticModel semantic, LayerContext context, TupleExpressionSyntax tupleExpression, List<string> lines);
 

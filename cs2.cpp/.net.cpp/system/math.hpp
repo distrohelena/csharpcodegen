@@ -29,6 +29,11 @@ public:
     }
 
     template <typename TValue>
+    static double Floor(TValue value) {
+        return std::floor(static_cast<double>(value));
+    }
+
+    template <typename TValue>
     static TValue Max(TValue left, TValue right) {
         return std::max(left, right);
     }
@@ -51,8 +56,28 @@ public:
     }
 
     template <typename TValue>
+    static TValue MinMagnitude(TValue left, TValue right) {
+        TValue leftMagnitude = static_cast<TValue>(Abs(left));
+        TValue rightMagnitude = static_cast<TValue>(Abs(right));
+        if (leftMagnitude < rightMagnitude) {
+            return left;
+        }
+
+        if (rightMagnitude < leftMagnitude) {
+            return right;
+        }
+
+        return Min(left, right);
+    }
+
+    template <typename TValue>
     static double Abs(TValue value) {
         return std::fabs(static_cast<double>(value));
+    }
+
+    template <typename TValue>
+    static double Acos(TValue value) {
+        return std::acos(static_cast<double>(value));
     }
 
     template <typename TValue>
@@ -90,6 +115,16 @@ public:
     }
 
     template <typename TValue>
+    static double Log2(TValue value) {
+        return std::log2(static_cast<double>(value));
+    }
+
+    template <typename TValue>
+    static bool IsFinite(TValue value) {
+        return std::isfinite(static_cast<double>(value));
+    }
+
+    template <typename TValue>
     static double Tan(TValue value) {
         return std::tan(static_cast<double>(value));
     }
@@ -113,6 +148,11 @@ public:
     }
 
     template <typename TValue>
+    static float Floor(TValue value) {
+        return static_cast<float>(Math::Floor(value));
+    }
+
+    template <typename TValue>
     static float Max(TValue left, TValue right) {
         return static_cast<float>(Math::Max(left, right));
     }
@@ -133,8 +173,18 @@ public:
     }
 
     template <typename TValue>
+    static float MinMagnitude(TValue left, TValue right) {
+        return static_cast<float>(Math::MinMagnitude(left, right));
+    }
+
+    template <typename TValue>
     static float Abs(TValue value) {
         return static_cast<float>(Math::Abs(value));
+    }
+
+    template <typename TValue>
+    static float Acos(TValue value) {
+        return static_cast<float>(Math::Acos(value));
     }
 
     template <typename TValue>
@@ -160,6 +210,16 @@ public:
     template <typename TValue>
     static float Sqrt(TValue value) {
         return static_cast<float>(Math::Sqrt(value));
+    }
+
+    template <typename TValue>
+    static float Log2(TValue value) {
+        return static_cast<float>(Math::Log2(value));
+    }
+
+    template <typename TValue>
+    static bool IsFinite(TValue value) {
+        return Math::IsFinite(value);
     }
 
     template <typename TValue>

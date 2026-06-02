@@ -124,7 +124,7 @@ namespace cs2.core {
                     return accessComparison;
                 }
 
-                return string.Compare(a.Name, b.Name, StringComparison.Ordinal);
+                return a.SourceOrder.CompareTo(b.SourceOrder);
             });
         }
 
@@ -161,5 +161,4 @@ namespace cs2.core {
         }
     }
 }
-
 

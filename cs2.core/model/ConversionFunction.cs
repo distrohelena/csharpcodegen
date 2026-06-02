@@ -1,3 +1,4 @@
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace cs2.core {
@@ -21,8 +22,13 @@ namespace cs2.core {
         /// Gets or sets a value indicating whether the generated native signature should return a constant reference instead of a value copy.
         /// </summary>
         public bool ReturnsConstReference { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the generated native signature should return a mutable reference instead of a value copy.
+        /// </summary>
+        public bool ReturnsReference { get; set; }
         public string NativeFreeFunctionName { get; set; }
         public string NativeFreeFunctionIncludePath { get; set; }
+        public SemanticModel Semantic { get; set; }
 
         public List<ConversionVariable> InParameters { get; set; }
 
