@@ -673,6 +673,7 @@ namespace cs2.core {
                 ? VariableUtil.GetVarType(propertySymbol.Type)
                 : VariableUtil.GetVarType(pMember.Type, semantic);
             variable.IsOverride = isOverride;
+            variable.IsAbstract = type == MemberDeclarationType.Abstract;
             variable.DeclarationType = type;
             if (propertySymbol != null) {
                 if (propertySymbol.RefKind == RefKind.Ref) {

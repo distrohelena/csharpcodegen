@@ -2001,6 +2001,10 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives declarations.</param>
         /// <param name="sourceWriter">Writer that receives definitions.</param>
         void AddBasePropertyBridgeWriters(ConversionClass conversionClass, HashSet<string> plannedAccessorNames, List<Action> writers, TextWriter headerWriter, TextWriter sourceWriter) {
+            if (conversionClass.TypeSymbol?.IsAbstract == true) {
+                return;
+            }
+
             for (INamedTypeSymbol baseTypeSymbol = conversionClass.TypeSymbol?.BaseType; baseTypeSymbol != null; baseTypeSymbol = baseTypeSymbol.BaseType) {
                 ConversionClass baseConversionClass = program.FindGeneratedClass(baseTypeSymbol);
                 if (baseConversionClass == null) {
@@ -2289,7 +2293,8 @@ namespace cs2.cpp {
                 return false;
             }
 
-            return variable.GetBlock != null ||
+            return variable.DeclarationType == MemberDeclarationType.Abstract ||
+                   variable.GetBlock != null ||
                    variable.SetBlock != null ||
                    variable.ArrowExpression != null;
         }

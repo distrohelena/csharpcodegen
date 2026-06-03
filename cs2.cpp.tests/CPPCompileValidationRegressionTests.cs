@@ -1912,6 +1912,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures abstract class properties stay virtual accessors so base-class methods dispatch to derived overrides instead of reading synthetic storage.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAbstractPropertyReadFromBaseMethod_EmitsPureVirtualGetterWithoutBackingField() {
+            string source = """
+                public abstract class TypeProcessor {
+                    protected abstract int InternalBodiesPerConstraint { get; }
+
+                    protected int bodiesPerConstraint;
+
+                    public void Initialize() {
+                        bodiesPerConstraint = InternalBodiesPerConstraint;
+                    }
+                }
+
+                public class TwoBodyTypeProcessor : TypeProcessor {
+                    protected override int InternalBodiesPerConstraint => 2;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string baseHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TypeProcessor.hpp"));
+            string baseSource = File.ReadAllText(Path.Combine(output.OutputPath, "TypeProcessor.cpp"));
+            string derivedSource = File.ReadAllText(Path.Combine(output.OutputPath, "TwoBodyTypeProcessor.cpp"));
+
+            Assert.Contains("virtual int32_t get_InternalBodiesPerConstraint() = 0;", baseHeader);
+            Assert.DoesNotContain("int32_t InternalBodiesPerConstraint;", baseHeader, StringComparison.Ordinal);
+            Assert.Contains("this->bodiesPerConstraint = this->get_InternalBodiesPerConstraint();", baseSource);
+            Assert.Contains("return 2;", derivedSource);
+            Assert.DoesNotContain("TypeProcessor::get_InternalBodiesPerConstraint()", baseSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures concrete classes emit interface-property bridges when the implementation lives on another base class.
         /// </summary>
         [Fact]
@@ -1939,6 +1972,29 @@ namespace cs2.cpp.tests {
             Assert.Contains("::Entity* get_Parent();", header);
             Assert.Contains("::Entity* Sprite::get_Parent()", sourceOutput);
             Assert.Contains("return this->Component::get_Parent();", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures abstract intermediate classes do not emit inherited base-property bridge accessors that forward back into unresolved abstract base getters.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithAbstractIntermediateClass_DoesNotEmitInheritedAbstractPropertyBridge() {
+            string source = """
+                public abstract class BaseGate {
+                    public abstract int Value { get; }
+                }
+
+                public abstract class IntermediateGate : BaseGate {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "IntermediateGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "IntermediateGate.cpp"));
+
+            Assert.DoesNotContain("get_Value()", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("get_Value()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("BaseGate::get_Value()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
