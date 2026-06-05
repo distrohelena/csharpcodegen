@@ -71,6 +71,22 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Creates the default Nintendo Wii headless development profile.
+        /// </summary>
+        /// <returns>The default Nintendo Wii platform profile.</returns>
+        public static CPPPlatformProfile CreateWiiHeadless() {
+            return new CPPPlatformProfile {
+                Kind = CPPPlatformKind.WiiHeadless,
+                Name = "wii-headless",
+                DefineName = "HE_CPP_PLATFORM_WII",
+                IsLittleEndian = false,
+                IsWindowsHost = false,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector,
+                PointerSizeInBytes = 4
+            };
+        }
+
+        /// <summary>
         /// Creates the default Nintendo DS headless profile.
         /// </summary>
         /// <returns>The default Nintendo DS platform profile.</returns>

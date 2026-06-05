@@ -102,5 +102,20 @@ namespace cs2.cpp {
                 LoadNativeRuntimeMetadata = true
             };
         }
+
+        /// <summary>
+        /// Creates the default option set for the first Wii headless milestone.
+        /// </summary>
+        /// <returns>The default Wii conversion options.</returns>
+        public static CPPConversionOptions CreateWiiDefault() {
+            return new CPPConversionOptions {
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateWiiHeadless(),
+                RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+                CollectDiagnostics = true,
+                BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
+                LoadNativeRuntimeMetadata = true
+            };
+        }
     }
 }

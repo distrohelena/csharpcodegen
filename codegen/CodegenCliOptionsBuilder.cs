@@ -126,6 +126,8 @@ public static class CodegenCliOptionsBuilder {
         CPPPlatformProfile platformProfile;
         if (string.Equals(platformId, "gamecube", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreateGameCubeHeadless();
+        } else if (string.Equals(platformId, "wii", StringComparison.OrdinalIgnoreCase)) {
+            platformProfile = CPPPlatformProfile.CreateWiiHeadless();
         } else if (string.Equals(platformId, "ds", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreateNintendoDsHeadless();
         } else if (string.Equals(platformId, "ps2", StringComparison.OrdinalIgnoreCase)) {

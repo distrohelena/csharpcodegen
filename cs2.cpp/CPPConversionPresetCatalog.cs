@@ -55,6 +55,10 @@ namespace cs2.cpp {
                 return CreateGameCubeCoreBootPreset();
             }
 
+            if (string.Equals(presetId, "wii-core-boot", StringComparison.OrdinalIgnoreCase)) {
+                return CreateWiiCoreBootPreset();
+            }
+
             if (string.Equals(presetId, "n64-minimal", StringComparison.OrdinalIgnoreCase)) {
                 return CreateNintendo64MinimalPreset();
             }
@@ -151,6 +155,36 @@ namespace cs2.cpp {
                 BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "gamecube-core-boot",
+                    ForbidShaders = true,
+                    ForbidRuntimeJson = true,
+                    ForbidReflectionLikeRuntime = true,
+                    ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = new[] {
+                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                    "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates the first Wii preset used for generated-core boot validation.
+        /// </summary>
+        /// <returns>The resolved Wii core-boot preset.</returns>
+        static CPPConversionPreset CreateWiiCoreBootPreset() {
+            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
+                .WithMode("shaders", CPPFeatureMode.Disabled)
+                .WithMode("debug_overlay", CPPFeatureMode.Disabled);
+
+            return new CPPConversionPreset {
+                Id = "wii-core-boot",
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateWiiHeadless(),
+                RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+                BuildFeatureProfile = featureProfile,
+                RestrictionProfile = new CPPRestrictionProfile {
+                    Name = "wii-core-boot",
                     ForbidShaders = true,
                     ForbidRuntimeJson = true,
                     ForbidReflectionLikeRuntime = true,
