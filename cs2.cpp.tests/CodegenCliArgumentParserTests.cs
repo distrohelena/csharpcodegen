@@ -66,4 +66,24 @@ public sealed class CodegenCliArgumentParserTests {
         Assert.Equal("helengine.float3", options.TypeRemaps["System.Numerics.Vector3"]);
         Assert.Equal("helengine.float4", options.TypeRemaps["System.Numerics.Quaternion"]);
     }
+
+    /// <summary>
+    /// Ensures the DS platform id resolves to a dedicated 32-bit platform profile instead of silently inheriting the Windows layout profile.
+    /// </summary>
+    [Fact]
+    public void Create_conversion_options_for_ds_uses_nintendo_ds_platform_profile() {
+        CodegenCliParsedArguments parsedArguments = new CodegenCliParsedArguments {
+            ProjectPath = @"C:\tmp\fixture.csproj",
+            OutputFolder = @"C:\tmp\generated",
+            PlatformId = "ds",
+            Language = "cpp",
+            Endianness = "little"
+        };
+
+        CPPConversionOptions options = CodegenCliOptionsBuilder.CreateConversionOptions(parsedArguments);
+
+        Assert.Equal(CPPPlatformKind.NintendoDsHeadless, options.PlatformProfile.Kind);
+        Assert.Equal(4, options.PlatformProfile.PointerSizeInBytes);
+        Assert.False(options.PlatformProfile.IsWindowsHost);
+    }
 }

@@ -579,6 +579,14 @@ namespace cs2.core {
                 return true;
             }
 
+            if (method?.ExplicitInterfaceSpecifier != null &&
+                methodSymbol != null &&
+                methodSymbol.ExplicitInterfaceImplementations.Any(interfaceMethod =>
+                    string.Equals(interfaceMethod.ContainingType?.OriginalDefinition?.ToDisplayString(), "System.Collections.Generic.IEnumerable<T>", StringComparison.Ordinal) &&
+                    string.Equals(interfaceMethod.Name, "GetEnumerator", StringComparison.Ordinal))) {
+                return true;
+            }
+
             return method?.ExplicitInterfaceSpecifier != null &&
                 methodSymbol != null &&
                 methodSymbol.ExplicitInterfaceImplementations.Length > 0 &&
@@ -659,13 +667,17 @@ namespace cs2.core {
             MemberDeclarationType type;
             MemberUtil.GetModifiers(pMember.Modifiers, out isStatic, out isOverride, out accessType, out type);
 
+            IPropertySymbol propertySymbol = semantic.GetDeclaredSymbol(pMember) as IPropertySymbol;
+            if (ShouldSkipExplicitInterfaceProperty(pMember, propertySymbol)) {
+                return;
+            }
+
             ConversionVariable variable = context.StartVar();
             variable.Semantic = semantic;
             variable.Name = pMember.Identifier.ToString();
             variable.IsStatic = isStatic;
 
             variable.AccessType = accessType;
-            IPropertySymbol propertySymbol = semantic.GetDeclaredSymbol(pMember) as IPropertySymbol;
             if (propertySymbol?.ExplicitInterfaceImplementations.Length > 0) {
                 variable.AccessType = MemberAccessType.Public;
             }
@@ -717,6 +729,22 @@ namespace cs2.core {
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Determines whether one explicit interface property should be omitted because the current native interface surface cannot represent it without a signature collision.
+        /// </summary>
+        /// <param name="property">Property declaration syntax under consideration.</param>
+        /// <param name="propertySymbol">Resolved Roslyn property symbol.</param>
+        /// <returns><c>true</c> when the property should not be emitted; otherwise <c>false</c>.</returns>
+        static bool ShouldSkipExplicitInterfaceProperty(PropertyDeclarationSyntax property, IPropertySymbol propertySymbol) {
+            if (property?.ExplicitInterfaceSpecifier == null || propertySymbol == null) {
+                return false;
+            }
+
+            return propertySymbol.ExplicitInterfaceImplementations.Any(interfaceProperty =>
+                string.Equals(interfaceProperty.ContainingType?.ToDisplayString(), "System.Collections.IEnumerator", StringComparison.Ordinal) &&
+                string.Equals(interfaceProperty.Name, "Current", StringComparison.Ordinal));
         }
 
         private static void ProcessEvent(SemanticModel semantic, EventFieldDeclarationSyntax eventDecl, ConversionContext context) {

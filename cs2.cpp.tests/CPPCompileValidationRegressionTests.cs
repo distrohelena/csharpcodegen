@@ -195,24 +195,29 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures explicit-layout value types emit packed field overlays that preserve declared field offsets.
+        /// Ensures explicit-layout value types without overlapping offsets emit packed direct fields plus inserted padding that preserve declared field offsets.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithExplicitLayoutStruct_EmitsPackedOffsetOverlayFields() {
+        public void WriteOutput_WithExplicitLayoutStruct_EmitsPackedOffsetFields() {
             string source = """
-                using System.Numerics;
                 using System.Runtime.InteropServices;
+
+                public struct Float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                }
 
                 [StructLayout(LayoutKind.Explicit)]
                 public struct NodeChild {
                     [FieldOffset(0)]
-                    public Vector3 Min;
+                    public Float3 Min;
 
                     [FieldOffset(12)]
                     public int Index;
 
                     [FieldOffset(16)]
-                    public Vector3 Max;
+                    public Float3 Max;
 
                     [FieldOffset(28)]
                     public int LeafCount;
@@ -224,13 +229,10 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "NodeChild.cpp"));
 
             Assert.Contains("#pragma pack(push, 1)", headerOutput);
-            Assert.Contains("union {", headerOutput);
+            Assert.DoesNotContain("union {", headerOutput, StringComparison.Ordinal);
             Assert.Contains(" Min;", headerOutput);
-            Assert.Contains("uint8_t __pad_0[12];", headerOutput);
             Assert.Contains("int32_t Index;", headerOutput);
-            Assert.Contains("uint8_t __pad_1[16];", headerOutput);
             Assert.Contains(" Max;", headerOutput);
-            Assert.Contains("uint8_t __pad_2[28];", headerOutput);
             Assert.Contains("int32_t LeafCount;", headerOutput);
             Assert.Contains("#pragma pack(pop)", headerOutput);
             Assert.DoesNotContain("NodeChild::NodeChild() :", sourceOutput, StringComparison.Ordinal);
@@ -268,6 +270,187 @@ namespace cs2.cpp.tests {
             Assert.Equal(2, Regex.Matches(headerOutput, "uint8_t __pad_[0-9]+\\[8\\];").Count);
             Assert.Contains("int32_t RefineFlag;", headerOutput);
             Assert.Contains("float LocalCostChange;", headerOutput);
+        }
+
+        /// <summary>
+        /// Ensures explicit-layout structs without overlapping offsets emit padded direct fields instead of anonymous union overlays so stricter C++ compilers can accept non-trivial members.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitLayoutStructWithoutOverlap_EmitsPaddedDirectFields() {
+            string source = """
+                using System.Runtime.InteropServices;
+
+                public struct Float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                }
+
+                [StructLayout(LayoutKind.Explicit, Size = 32)]
+                public struct BodyVelocity {
+                    [FieldOffset(0)]
+                    public Float3 Linear;
+
+                    [FieldOffset(16)]
+                    public Float3 Angular;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BodyVelocity.hpp"));
+
+            Assert.Contains("#pragma pack(push, 1)", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("union {", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Float3 Linear;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("uint8_t __pad_0[4];", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Float3 Angular;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("uint8_t __tail_padding[4];", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("#pragma pack(pop)", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit-layout structs with monotonic generated generic value-type fields emit padded direct fields instead of invalid overlay unions.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitLayoutGeneratedGenericValueTypeFields_EmitsPaddedDirectFields() {
+            string source = """
+                using System.Runtime.InteropServices;
+
+                public unsafe struct Buffer<T> where T : unmanaged {
+                    public T* Memory;
+                    public int Length;
+                    public int Id;
+                }
+
+                [StructLayout(LayoutKind.Explicit)]
+                public unsafe struct PackedContext {
+                    [FieldOffset(0)]
+                    public Buffer<int> A;
+
+                    [FieldOffset(16)]
+                    public Buffer<int> B;
+
+                    [FieldOffset(32)]
+                    public float Dt;
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PackedContext.hpp"));
+
+            Assert.DoesNotContain("union {", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Buffer_1<int32_t> A;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Buffer_1<int32_t> B;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("float Dt;", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures explicit generic IEnumerable.GetEnumerator implementations do not emit a second native overload that differs only by return type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithExplicitGenericGetEnumeratorImplementation_SkipsDuplicateNativeOverload() {
+            string source = """
+                using System.Collections;
+                using System.Collections.Generic;
+
+                public struct ItemEnumerator : IEnumerator<int> {
+                    public int Current => 0;
+
+                    object IEnumerator.Current => Current;
+
+                    public bool MoveNext() {
+                        return false;
+                    }
+
+                    public void Reset() {
+                    }
+
+                    public void Dispose() {
+                    }
+                }
+
+                public struct ItemEnumerable : IEnumerable<int> {
+                    public ItemEnumerator GetEnumerator() {
+                        return new ItemEnumerator();
+                    }
+
+                    IEnumerator IEnumerable.GetEnumerator() {
+                        return GetEnumerator();
+                    }
+
+                    IEnumerator<int> IEnumerable<int>.GetEnumerator() {
+                        return GetEnumerator();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ItemEnumerable.hpp"));
+
+            Assert.Contains("::ItemEnumerator GetEnumerator();", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("IEnumerator<int32_t>* GetEnumerator();", headerOutput, StringComparison.Ordinal);
+            Assert.Single(Regex.Matches(headerOutput, "GetEnumerator\\(").Cast<Match>());
+        }
+
+        /// <summary>
+        /// Ensures indexer calls cast numeric arguments to the resolved native parameter type so signed and unsigned overloads stay unambiguous on stricter C++ toolchains.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSignedAndUnsignedIndexerOverloads_CastsElementAccessArgumentsToResolvedParameterTypes() {
+            string source = """
+                public class DualIndex {
+                    public int this[int index] {
+                        get {
+                            return index;
+                        }
+                    }
+
+                    public int this[uint index] {
+                        get {
+                            return (int)index;
+                        }
+                    }
+
+                    public int ReadConstant() {
+                        return this[0];
+                    }
+
+                    public int ReadUnsigned(uint index) {
+                        return this[index];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DualIndex.cpp"));
+
+            Assert.Contains("this->get_Item(static_cast<int32_t>(0))", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->get_Item(static_cast<uint32_t>(index))", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures integral overload disambiguation does not cast ref or out arguments into rvalues.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithIntegralOutArgument_DoesNotCastRefOrOutTargets() {
+            string source = """
+                public class OutHelper {
+                    public static void ReadValue(int source, out int value) {
+                        value = source;
+                    }
+
+                    public int Read() {
+                        int result;
+                        ReadValue(1, out result);
+                        return result;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "OutHelper.cpp"));
+
+            Assert.DoesNotContain("static_cast<int32_t>(result)", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -8162,6 +8345,84 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
 
             Assert.Contains("extractor.template Capture__ref0<int32_t>(value);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures generic member invocations on chained receivers still emit the required <c>template</c> disambiguator when an earlier member in the chain depends on template parameters.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithChainedDependentReceiverGenericInvocation_EmitsTemplateDisambiguator() {
+            string source = """
+                public unsafe struct Buffer<T> where T : unmanaged {
+                    public T* Memory;
+                    public int Length;
+
+                    public Buffer<TTo> As<TTo>() where TTo : unmanaged {
+                        return default;
+                    }
+                }
+
+                public struct TypeBatch<TMarker> where TMarker : unmanaged {
+                    public Buffer<byte> BodyReferences;
+                }
+
+                public class Fixture<TMarker> where TMarker : unmanaged {
+                    TypeBatch<TMarker> GetBatch() {
+                        return default;
+                    }
+
+                    public void Run() {
+                        var batch = GetBatch();
+                        var ints = batch.BodyReferences.As<int>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("batch.BodyReferences.template As<int32_t>()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures <c>ref var</c> locals use their resolved native type instead of <c>auto&amp;</c> so subsequent generic member calls on concrete value-type members stay non-dependent in C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefVarLocalOnConcreteType_EmitsTypedReferenceLocal() {
+            string source = """
+                public unsafe struct Buffer<T> where T : unmanaged {
+                    public T* Memory;
+                    public int Length;
+
+                    public Buffer<TTo> As<TTo>() where TTo : unmanaged {
+                        return default;
+                    }
+                }
+
+                public struct TypeBatch {
+                    public Buffer<byte> BodyReferences;
+                }
+
+                public class Fixture<TMarker> where TMarker : unmanaged {
+                    TypeBatch batch;
+
+                    ref TypeBatch GetBatch() {
+                        return ref batch;
+                    }
+
+                    public void Run() {
+                        ref var localBatch = ref GetBatch();
+                        var ints = localBatch.BodyReferences.As<int>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
+
+            Assert.Contains("::TypeBatch& localBatch = this->GetBatch();", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("localBatch.BodyReferences.As<int32_t>()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("auto& localBatch =", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

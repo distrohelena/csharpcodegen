@@ -152,7 +152,7 @@ namespace cs2.cpp {
                     referencedTypes,
                     includeRequiredTypes,
                     excludedTypeNames,
-                    allowReferenceForwardDeclaration: function.ReturnsReference || function.ReturnsConstReference);
+                    allowReferenceForwardDeclaration: function.ReturnsReference || function.ReturnsConstReference || CanUseGeneratedEnumeratorForwardDeclaration(function.ReturnType));
 
                 foreach (ConversionVariable parameter in function.InParameters) {
                     AddTypeReference(
@@ -160,9 +160,27 @@ namespace cs2.cpp {
                         referencedTypes,
                         includeRequiredTypes,
                         excludedTypeNames,
-                        allowReferenceForwardDeclaration: UsesReferenceSignature(parameter));
+                        allowReferenceForwardDeclaration: UsesReferenceSignature(parameter) || CanUseGeneratedEnumeratorForwardDeclaration(parameter.VarType));
                 }
             }
+        }
+
+        /// <summary>
+        /// Resolves whether one generated enumerator type can stay forward-declared in headers because it only appears in a function signature.
+        /// </summary>
+        /// <param name="variableType">Signature type being inspected.</param>
+        /// <returns><c>true</c> when a generated enumerator forward declaration is sufficient; otherwise <c>false</c>.</returns>
+        static bool CanUseGeneratedEnumeratorForwardDeclaration(VariableType variableType) {
+            if (variableType == null) {
+                return false;
+            }
+
+            string qualifiedTypeName = GetReferencedTypeName(variableType);
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return false;
+            }
+
+            return qualifiedTypeName.Contains("Enumerator", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1574,14 +1592,14 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the header declaration.</param>
         /// <param name="sourceWriter">Writer that receives the source definitions.</param>
         void WriteClass(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
-            WriteTemplateDeclaration(conversionClass, headerWriter);
-
             string emittedTypeName = conversionClass.GetEmittedTypeName();
             string inheritance = GetInheritanceClause(conversionClass);
             int layoutPack = GetPackedStructLayoutPack(conversionClass);
             if (layoutPack > 0) {
                 headerWriter.WriteLine($"#pragma pack(push, {layoutPack})");
             }
+
+            WriteTemplateDeclaration(conversionClass, headerWriter);
 
             if (string.IsNullOrWhiteSpace(inheritance)) {
                 headerWriter.WriteLine($"class {emittedTypeName}");
@@ -1669,7 +1687,7 @@ namespace cs2.cpp {
                            SymbolEqualityComparer.Default.Equals(candidate.TypeSymbol.ContainingType, conversionClass.TypeSymbol)) ||
                           candidate.GetEmittedTypeName().StartsWith(emittedTypePrefix, StringComparison.Ordinal)))) {
                 if (nestedType.GenericArgs != null && nestedType.GenericArgs.Count > 0) {
-                    string templateArguments = string.Join(", ", nestedType.GenericArgs.Select(argument => $"typename {argument}"));
+                    string templateArguments = string.Join(", ", nestedType.GenericArgs.Select((argument, index) => $"typename TFriendArg{index}"));
                     headerWriter.WriteLine($"template <{templateArguments}>");
                 }
 
@@ -2427,6 +2445,10 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryWriteNonOverlappingExplicitLayoutFields(conversionClass, fields, headerWriter)) {
+                return;
+            }
+
             headerWriter.WriteLine("    union {");
             int paddingIndex = 0;
             foreach (ConversionVariable field in fields) {
@@ -2441,6 +2463,70 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("    };");
+        }
+
+        bool TryWriteNonOverlappingExplicitLayoutFields(ConversionClass conversionClass, List<ConversionVariable> fields, TextWriter headerWriter) {
+            if (!TryGetExplicitLayoutFieldSpans(fields, out List<ExplicitLayoutFieldSpan> spans)) {
+                return false;
+            }
+
+            int paddingIndex = 0;
+            int currentOffset = 0;
+            foreach (ExplicitLayoutFieldSpan span in spans) {
+                if (span.Offset > currentOffset) {
+                    headerWriter.WriteLine($"    uint8_t __pad_{paddingIndex}[{span.Offset - currentOffset}];");
+                    paddingIndex++;
+                }
+
+                headerWriter.WriteLine(GetFieldDeclaration(conversionClass, span.Field, "    "));
+                currentOffset = span.Offset + span.Size;
+            }
+
+            if (TryGetExplicitLayoutSize(conversionClass, out int explicitLayoutSize) && explicitLayoutSize > currentOffset) {
+                headerWriter.WriteLine($"    uint8_t __tail_padding[{explicitLayoutSize - currentOffset}];");
+            }
+
+            return true;
+        }
+
+        bool TryGetExplicitLayoutFieldSpans(List<ConversionVariable> fields, out List<ExplicitLayoutFieldSpan> spans) {
+            spans = new List<ExplicitLayoutFieldSpan>(fields.Count);
+            foreach (ConversionVariable field in fields) {
+                int offset = field.HasExplicitLayoutOffset ? field.ExplicitLayoutOffset : 0;
+                if (!TryGetNativeValueSize(field.VarType, out int size)) {
+                    spans.Clear();
+                    return false;
+                }
+
+                spans.Add(new ExplicitLayoutFieldSpan(field, offset, size));
+            }
+
+            ExplicitLayoutFieldSpan previousSpan = null;
+            foreach (ExplicitLayoutFieldSpan span in spans) {
+                if (previousSpan != null && span.Offset < previousSpan.Offset + previousSpan.Size) {
+                    spans.Clear();
+                    return false;
+                }
+
+                previousSpan = span;
+            }
+
+            return true;
+        }
+
+        sealed class ExplicitLayoutFieldSpan
+        {
+            public ExplicitLayoutFieldSpan(ConversionVariable field, int offset, int size) {
+                Field = field;
+                Offset = offset;
+                Size = size;
+            }
+
+            public ConversionVariable Field { get; }
+
+            public int Offset { get; }
+
+            public int Size { get; }
         }
 
         int GetPackedStructLayoutPack(ConversionClass conversionClass) {
@@ -2511,8 +2597,13 @@ namespace cs2.cpp {
 
         bool TryGetNativeValueSize(VariableType variableType, out int size) {
             size = 0;
-            if (variableType == null || variableType.IsPointer || variableType.IsReference || variableType.IsConstReference) {
+            if (variableType == null || variableType.IsReference || variableType.IsConstReference) {
                 return false;
+            }
+
+            if (variableType.IsPointer || IsNativePointerSizedValueType(variableType)) {
+                size = GetPlatformPointerSizeInBytes();
+                return size > 0;
             }
 
             string qualifiedTypeName = variableType.QualifiedTypeName ?? string.Empty;
@@ -2535,6 +2626,29 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        bool IsNativePointerSizedValueType(VariableType variableType) {
+            if (variableType == null) {
+                return false;
+            }
+
+            string qualifiedTypeName = variableType.QualifiedTypeName ?? string.Empty;
+            string typeName = variableType.TypeName ?? string.Empty;
+            return string.Equals(qualifiedTypeName, "System.IntPtr", StringComparison.Ordinal) ||
+                string.Equals(qualifiedTypeName, "System.UIntPtr", StringComparison.Ordinal) ||
+                string.Equals(typeName, "IntPtr", StringComparison.Ordinal) ||
+                string.Equals(typeName, "UIntPtr", StringComparison.Ordinal) ||
+                string.Equals(typeName, "nint", StringComparison.Ordinal) ||
+                string.Equals(typeName, "nuint", StringComparison.Ordinal);
+        }
+
+        int GetPlatformPointerSizeInBytes() {
+            if (program?.Options?.PlatformProfile?.PointerSizeInBytes > 0) {
+                return program.Options.PlatformProfile.PointerSizeInBytes;
+            }
+
+            return IntPtr.Size;
         }
 
         bool TryResolveConfiguredLayoutTypeRemap(VariableType variableType, out VariableType remappedVariableType) {
@@ -2587,6 +2701,11 @@ namespace cs2.cpp {
             size = 0;
             if (conversionClass == null) {
                 return false;
+            }
+
+            if (conversionClass.SequentialStructLayoutSize > 0) {
+                size = conversionClass.SequentialStructLayoutSize;
+                return true;
             }
 
             foreach (ConversionVariable variable in conversionClass.Variables.Where(IsExplicitLayoutInstanceField)) {

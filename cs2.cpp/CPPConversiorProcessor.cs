@@ -5130,6 +5130,7 @@ namespace cs2.cpp {
                 }
 
                 RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(implementationTypeSymbol));
+                RegisterGeneratedDispatchTypeArgumentDependencies(context, currentClass, implementationTypeSymbol);
             }
 
             if (currentClass != null &&
@@ -5179,6 +5180,36 @@ namespace cs2.cpp {
             lines.Add("throw new NotSupportedException(\"No generated implementation matched generic dispatch receiver.\");\n");
             lines.Add("})()");
             return true;
+        }
+
+        void RegisterGeneratedDispatchTypeArgumentDependencies(
+            LayerContext context,
+            ConversionClass currentClass,
+            INamedTypeSymbol implementationTypeSymbol) {
+            if (context?.Program == null || currentClass == null || implementationTypeSymbol == null) {
+                return;
+            }
+
+            foreach (ITypeSymbol typeArgumentSymbol in implementationTypeSymbol.TypeArguments) {
+                if (typeArgumentSymbol is not INamedTypeSymbol namedTypeArgumentSymbol) {
+                    continue;
+                }
+
+                ConversionClass generatedTypeArgumentClass = context.Program.FindGeneratedClass(namedTypeArgumentSymbol);
+                if (generatedTypeArgumentClass != null) {
+                    string emittedTypeName = generatedTypeArgumentClass.GetEmittedTypeName();
+                    if (!currentClass.ReferencedClasses.Contains(emittedTypeName, StringComparer.Ordinal)) {
+                        currentClass.ReferencedClasses.Add(emittedTypeName);
+                    }
+
+                    string includePath = generatedTypeArgumentClass.GetEmittedFileStem(context.Program) + ".hpp";
+                    if (!currentClass.SourceIncludes.Contains(includePath, StringComparer.Ordinal)) {
+                        currentClass.SourceIncludes.Add(includePath);
+                    }
+                }
+
+                RegisterGeneratedDispatchTypeArgumentDependencies(context, currentClass, namedTypeArgumentSymbol);
+            }
         }
 
         /// <summary>
@@ -5659,6 +5690,16 @@ namespace cs2.cpp {
                 return;
             }
 
+            if (TryAppendTargetTypedIntegralArgumentCast(
+                semantic,
+                context,
+                argumentExpression,
+                argumentExpressionLines,
+                parameterSymbol?.RefKind == RefKind.None ? parameterSymbol?.Type : null,
+                argumentLines)) {
+                return;
+            }
+
             if (TryAppendScopedTemporaryInvocationArgument(
                 semantic,
                 context,
@@ -5754,12 +5795,76 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (IsIntegralLikeTypeSymbol(parameterSymbol.Type)) {
+                return false;
+            }
+
             if (!TryRewriteTargetTypedNumericLiteral(argumentExpression, parameterSymbol.Type, out string rewrittenLiteral)) {
                 return false;
             }
 
             argumentLines.Add(rewrittenLiteral);
             return true;
+        }
+
+        bool TryAppendTargetTypedIntegralArgumentCast(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax argumentExpression,
+            List<string> argumentExpressionLines,
+            ITypeSymbol targetTypeSymbol,
+            List<string> argumentLines) {
+            if (semantic == null ||
+                context == null ||
+                argumentExpression == null ||
+                argumentExpressionLines == null ||
+                targetTypeSymbol == null ||
+                argumentLines == null ||
+                !IsIntegralLikeTypeSymbol(targetTypeSymbol)) {
+                return false;
+            }
+
+            if (!argumentExpression.IsKind(SyntaxKind.NumericLiteralExpression)) {
+                if (!TryGetExpressionTypeSymbol(semantic, argumentExpression, out ITypeSymbol sourceTypeSymbol) ||
+                    !IsIntegralLikeTypeSymbol(sourceTypeSymbol)) {
+                    return false;
+                }
+
+                Conversion conversion = semantic.ClassifyConversion(argumentExpression, targetTypeSymbol);
+                if (!conversion.Exists || !conversion.IsImplicit) {
+                    return false;
+                }
+            }
+
+            argumentLines.Add("static_cast<");
+            argumentLines.Add(GetCppTypeToken(VariableUtil.GetVarType(targetTypeSymbol), context.Program));
+            argumentLines.Add(">(");
+            argumentLines.AddRange(argumentExpressionLines);
+            argumentLines.Add(")");
+            return true;
+        }
+
+        static bool IsIntegralLikeTypeSymbol(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            if (typeSymbol.TypeKind == TypeKind.Enum) {
+                return true;
+            }
+
+            return typeSymbol.SpecialType switch {
+                SpecialType.System_Byte => true,
+                SpecialType.System_SByte => true,
+                SpecialType.System_Int16 => true,
+                SpecialType.System_UInt16 => true,
+                SpecialType.System_Int32 => true,
+                SpecialType.System_UInt32 => true,
+                SpecialType.System_Int64 => true,
+                SpecialType.System_UInt64 => true,
+                SpecialType.System_Char => true,
+                _ => false
+            };
         }
 
         bool TryAppendUserDefinedConversionInvocationArgument(
@@ -6999,8 +7104,55 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (ExpressionContainsDependentTemplateReceiver(semantic, receiverExpression)) {
+                return true;
+            }
+
             ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(receiverExpression).ConvertedType ?? semantic.GetTypeInfo(receiverExpression).Type;
             return ContainsTypeParameter(receiverTypeSymbol);
+        }
+
+        static bool ExpressionContainsDependentTemplateReceiver(SemanticModel semantic, ExpressionSyntax expression) {
+            if (semantic == null ||
+                expression == null ||
+                !ReferenceEquals(expression.SyntaxTree, semantic.SyntaxTree)) {
+                return false;
+            }
+
+            ITypeSymbol expressionTypeSymbol = semantic.GetTypeInfo(expression).ConvertedType ?? semantic.GetTypeInfo(expression).Type;
+            if (ContainsTypeParameter(expressionTypeSymbol)) {
+                return true;
+            }
+
+            if (expression is MemberAccessExpressionSyntax memberAccessExpression) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, memberAccessExpression.Expression);
+            }
+
+            if (expression is ElementAccessExpressionSyntax elementAccessExpression) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, elementAccessExpression.Expression);
+            }
+
+            if (expression is ConditionalAccessExpressionSyntax conditionalAccessExpression) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, conditionalAccessExpression.Expression);
+            }
+
+            if (expression is ParenthesizedExpressionSyntax parenthesizedExpressionSyntax) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, parenthesizedExpressionSyntax.Expression);
+            }
+
+            if (expression is CastExpressionSyntax castExpressionSyntax) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, castExpressionSyntax.Expression);
+            }
+
+            if (expression is PrefixUnaryExpressionSyntax prefixUnaryExpressionSyntax) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, prefixUnaryExpressionSyntax.Operand);
+            }
+
+            if (expression is PostfixUnaryExpressionSyntax postfixUnaryExpressionSyntax) {
+                return ExpressionContainsDependentTemplateReceiver(semantic, postfixUnaryExpressionSyntax.Operand);
+            }
+
+            return false;
         }
 
         static bool ContainsTypeParameter(ITypeSymbol typeSymbol) {
@@ -9655,7 +9807,8 @@ namespace cs2.cpp {
                  IsDirectMemberAccessType(trackedReceiverType));
             lines.Add(useDirectMemberAccess ? ".get_Item(" : "->get_Item(");
             bool firstArgument = true;
-            foreach (ArgumentSyntax argument in elementAccess.ArgumentList.Arguments) {
+            for (int argumentIndex = 0; argumentIndex < elementAccess.ArgumentList.Arguments.Count; argumentIndex++) {
+                ArgumentSyntax argument = elementAccess.ArgumentList.Arguments[argumentIndex];
                 if (!firstArgument) {
                     lines.Add(", ");
                 }
@@ -9672,9 +9825,26 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                List<string> argumentExpressionLines = new List<string>();
                 startClass = context.DepthClass;
-                ProcessExpression(semantic, context, argument.Expression, lines);
+                ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(startClass);
+
+                IParameterSymbol parameterSymbol = argumentIndex < propertySymbol.Parameters.Length
+                    ? propertySymbol.Parameters[argumentIndex]
+                    : null;
+                if (TryAppendTargetTypedIntegralArgumentCast(
+                    semantic,
+                    context,
+                    argument.Expression,
+                    argumentExpressionLines,
+                    parameterSymbol?.Type,
+                    lines)) {
+                    firstArgument = false;
+                    continue;
+                }
+
+                lines.AddRange(argumentExpressionLines);
                 firstArgument = false;
             }
 
@@ -13386,7 +13556,17 @@ namespace cs2.cpp {
                 });
             }
 
-            lines.Add(isRebindableReferenceLocal ? "auto* " : "auto& ");
+            if (isRebindableReferenceLocal) {
+                lines.Add("auto* ");
+            } else {
+                CPPTypeData declarationTypeData;
+                VariableType cppDeclarationType = ConvertToCPPType(declarationType, out declarationTypeData);
+                RegisterGeneratedTypeReferences(context, declarationType);
+                string declarationTypeName = QualifyRenderedCppTypeName(cppDeclarationType.ToCPPString(context.Program), context);
+                string pointerSuffix = declarationTypeData.IsPointer ? "*" : string.Empty;
+                lines.Add($"{declarationTypeName}{pointerSuffix}& ");
+            }
+
             lines.Add(variable.Identifier.ToString());
             lines.Add(isRebindableReferenceLocal ? " = &" : " = ");
             lines.AddRange(initializerLines);

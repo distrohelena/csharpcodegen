@@ -308,9 +308,9 @@ public:
         Vector256<T> result;
         for (int32_t laneIndex = 0; laneIndex < Vector256<T>::LaneCount; ++laneIndex) {
             if constexpr (std::is_same_v<T, float>) {
-                result.Values[laneIndex] = BitCastBack<float>((~BitCast<uint32_t>(left.Values[laneIndex])) & BitCast<uint32_t>(right.Values[laneIndex]));
+                result.Values[laneIndex] = BitCastBack<float>(BitCast<uint32_t>(left.Values[laneIndex]) & (~BitCast<uint32_t>(right.Values[laneIndex])));
             } else {
-                result.Values[laneIndex] = static_cast<T>((~left.Values[laneIndex]) & right.Values[laneIndex]);
+                result.Values[laneIndex] = static_cast<T>(left.Values[laneIndex] & (~right.Values[laneIndex]));
             }
         }
         return result;

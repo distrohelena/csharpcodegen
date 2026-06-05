@@ -34,6 +34,11 @@ namespace cs2.cpp {
         public CPPGeneratedMathConventionKind GeneratedMathConvention { get; set; }
 
         /// <summary>
+        /// Gets or sets the native pointer size, in bytes, used when computing unmanaged value-type layout.
+        /// </summary>
+        public int PointerSizeInBytes { get; set; }
+
+        /// <summary>
         /// Creates the default Windows headless development profile.
         /// </summary>
         /// <returns>The default Windows platform profile.</returns>
@@ -44,7 +49,8 @@ namespace cs2.cpp {
                 DefineName = "HE_CPP_PLATFORM_WINDOWS",
                 IsLittleEndian = true,
                 IsWindowsHost = true,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector,
+                PointerSizeInBytes = 8
             };
         }
 
@@ -59,7 +65,24 @@ namespace cs2.cpp {
                 DefineName = "HE_CPP_PLATFORM_GAMECUBE",
                 IsLittleEndian = false,
                 IsWindowsHost = false,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector,
+                PointerSizeInBytes = 4
+            };
+        }
+
+        /// <summary>
+        /// Creates the default Nintendo DS headless profile.
+        /// </summary>
+        /// <returns>The default Nintendo DS platform profile.</returns>
+        public static CPPPlatformProfile CreateNintendoDsHeadless() {
+            return new CPPPlatformProfile {
+                Kind = CPPPlatformKind.NintendoDsHeadless,
+                Name = "ds-headless",
+                DefineName = "HE_CPP_PLATFORM_DS",
+                IsLittleEndian = true,
+                IsWindowsHost = false,
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector,
+                PointerSizeInBytes = 4
             };
         }
 
@@ -74,7 +97,8 @@ namespace cs2.cpp {
                 DefineName = "HE_CPP_PLATFORM_PS2",
                 IsLittleEndian = true,
                 IsWindowsHost = false,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector,
+                PointerSizeInBytes = 4
             };
         }
 
@@ -89,7 +113,8 @@ namespace cs2.cpp {
                 DefineName = "HE_CPP_PLATFORM_N64",
                 IsLittleEndian = false,
                 IsWindowsHost = false,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector
+                GeneratedMathConvention = CPPGeneratedMathConventionKind.EngineRowVector,
+                PointerSizeInBytes = 4
             };
         }
     }

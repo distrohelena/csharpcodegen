@@ -416,6 +416,28 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures the portable Vector256 runtime preserves .NET AndNot operand order used by BEPU integration scheduling.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithVector256AndNotUsage_PreservesManagedOperandOrder() {
+            string source = """
+                using System.Runtime.Intrinsics;
+
+                public static class WideIntrinsics {
+                    public static Vector256<uint> Mask(Vector256<uint> left, Vector256<uint> right) {
+                        return Vector256.AndNot(left, right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string vector256Header = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector256.hpp"));
+
+            Assert.Contains("leftBits & (~rightBits)", vector256Header, StringComparison.Ordinal);
+            Assert.DoesNotContain("(~leftBits) & rightBits", vector256Header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures Vector128 exposes a portable raw-value bridge for remapped engine value types such as float3.
         /// </summary>
         [Fact]

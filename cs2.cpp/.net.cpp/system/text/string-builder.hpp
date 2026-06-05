@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include <cstddef>
+#include <cstdint>
 
 /// <summary>
 /// Provides a lightweight append-oriented string builder for transpiled managed code.
@@ -11,7 +12,7 @@ class StringBuilder {
     std::string buffer;
 
 public:
-    int Length;
+    int32_t Length;
 
     /// <summary>
     /// Initializes an empty builder.
@@ -22,7 +23,7 @@ public:
     /// Initializes a builder with a reserved capacity hint.
     /// </summary>
     /// <param name="capacity">Expected character capacity for the composed string.</param>
-    explicit StringBuilder(int capacity) {
+    explicit StringBuilder(int32_t capacity) {
         if (capacity > 0) {
             buffer.reserve(static_cast<std::size_t>(capacity));
         }
@@ -35,7 +36,7 @@ public:
     /// <param name="value">Initial text content for the builder.</param>
     explicit StringBuilder(std::string_view value) {
         buffer.append(value);
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
     }
 
     /// <summary>
@@ -45,7 +46,7 @@ public:
     /// <returns>The current builder instance.</returns>
     StringBuilder& Append(char value) {
         buffer.push_back(value);
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
 
@@ -65,9 +66,20 @@ public:
     /// </summary>
     /// <param name="value">Integer value to append.</param>
     /// <returns>The current builder instance.</returns>
-    StringBuilder& Append(int value) {
+    StringBuilder& Append(int32_t value) {
         buffer.append(std::to_string(value));
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
+        return *this;
+    }
+
+    /// <summary>
+    /// Appends an unsigned integer value and returns the builder for chaining.
+    /// </summary>
+    /// <param name="value">Unsigned integer value to append.</param>
+    /// <returns>The current builder instance.</returns>
+    StringBuilder& Append(uint32_t value) {
+        buffer.append(std::to_string(value));
+        Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
 
@@ -77,7 +89,7 @@ public:
     /// <returns>The current builder instance.</returns>
     StringBuilder& AppendLine() {
         buffer.push_back('\n');
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
 
@@ -89,14 +101,14 @@ public:
     StringBuilder& AppendLine(std::string_view value) {
         buffer.append(value);
         buffer.push_back('\n');
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
 
     /// <summary>
     /// Truncates the builder to the specified length.
     /// </summary>
-    void set_Length(int value) {
+    void set_Length(int32_t value) {
         if (value < 0) {
             value = 0;
         }
@@ -105,7 +117,7 @@ public:
         if (size < buffer.size()) {
             buffer.resize(size);
         }
-        Length = static_cast<int>(buffer.size());
+        Length = static_cast<int32_t>(buffer.size());
     }
 
     /// <summary>
@@ -114,7 +126,7 @@ public:
     /// <param name="startIndex">Start index of the substring.</param>
     /// <param name="length">Length of the substring.</param>
     /// <returns>A substring of the accumulated string content.</returns>
-    std::string ToString(int startIndex, int length) const {
+    std::string ToString(int32_t startIndex, int32_t length) const {
         if (startIndex < 0) {
             startIndex = 0;
         }

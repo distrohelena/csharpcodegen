@@ -24,6 +24,11 @@ namespace cs2.cpp {
         GameCubeHeadless,
 
         /// <summary>
+        /// Headless Nintendo DS target.
+        /// </summary>
+        NintendoDsHeadless,
+
+        /// <summary>
         /// Headless Nintendo Wii target.
         /// </summary>
         WiiHeadless,

@@ -113,6 +113,10 @@ namespace cs2.core {
         }
 
         protected virtual void SortVariables(ConversionClass cl) {
+            if (cl.IsValueType) {
+                return;
+            }
+
             cl.Variables.Sort((a, b) => {
                 int staticComparison = b.IsStatic.CompareTo(a.IsStatic);
                 if (staticComparison != 0) {
@@ -161,4 +165,3 @@ namespace cs2.core {
         }
     }
 }
-
