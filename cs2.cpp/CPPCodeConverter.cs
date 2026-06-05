@@ -206,6 +206,9 @@ namespace cs2.cpp {
             writeClasses(outputFolder, BuildUsageReport);
             new CPPGeneratedOutputAdapter().Apply(outputFolder, Options);
             PruneDisabledFeatureRuntimeFiles(outputFolder);
+            foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(outputFolder)) {
+                TrackEmittedFile(supportFile);
+            }
 
             string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);

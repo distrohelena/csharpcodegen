@@ -6096,6 +6096,43 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures native free-function registration hooks emit the companion generated registration support files expected by the generated runtime component registry.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeFreeFunctionPartialMethod_EmitsGeneratedRegistrationSupportFiles() {
+            string source = """
+                using System;
+
+                [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
+                internal sealed class NativeFreeFunctionAttribute : Attribute {
+                    public NativeFreeFunctionAttribute(string functionName, string includePath) {
+                    }
+                }
+
+                public sealed class RuntimeComponentRegistry {
+                    public static RuntimeComponentRegistry CreateDefault() {
+                        RuntimeComponentRegistry registry = new RuntimeComponentRegistry();
+                        RegisterGeneratedRuntimeComponentDeserializers(registry);
+                        return registry;
+                    }
+
+                    [NativeFreeFunction("RegisterGeneratedRuntimeComponentDeserializers", "GeneratedRuntimeComponentDeserializerRegistration.hpp")]
+                    static void RegisterGeneratedRuntimeComponentDeserializers(RuntimeComponentRegistry registry) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerPath = Path.Combine(output.OutputPath, "GeneratedRuntimeComponentDeserializerRegistration.hpp");
+            string sourcePath = Path.Combine(output.OutputPath, "GeneratedRuntimeComponentDeserializerRegistration.cpp");
+
+            Assert.True(File.Exists(headerPath));
+            Assert.True(File.Exists(sourcePath));
+            Assert.Contains("void RegisterGeneratedRuntimeComponentDeserializers(::RuntimeComponentRegistry* registry);", File.ReadAllText(headerPath));
+            Assert.Contains("void RegisterGeneratedRuntimeComponentDeserializers(::RuntimeComponentRegistry* registry)", File.ReadAllText(sourcePath));
+        }
+
+        /// <summary>
         /// Ensures managed array helper and allocation patterns lower through the native Array runtime surface.
         /// </summary>
         [Fact]
