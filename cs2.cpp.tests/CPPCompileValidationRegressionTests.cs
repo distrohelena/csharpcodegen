@@ -545,6 +545,69 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures configured type remaps rewrite emitted C++ across fields, method signatures, local declarations, and nested generic arguments.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConfiguredTypeRemaps_RewritesAllEmittedTypeReferences() {
+            string source = """
+                using System.Collections.Generic;
+                using System.Numerics;
+
+                namespace Example {
+                    public struct Float2 {
+                        public float X;
+                        public float Y;
+                    }
+
+                    public struct Float3 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                    }
+
+                    public struct Float4 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                        public float W;
+                    }
+
+                    public sealed class RemapFixture {
+                        public Vector4 Orientation;
+                        public List<Vector2> History;
+
+                        public Vector3 Project(Vector4 input) {
+                            Vector3 local = default;
+                            List<Vector2> scratch = new List<Vector2>();
+                            scratch.Add(default);
+                            return local;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversionWithTypeRemaps(
+                source,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["System.Numerics.Vector2"] = "Example.Float2",
+                    ["System.Numerics.Vector3"] = "Example.Float3",
+                    ["System.Numerics.Vector4"] = "Example.Float4"
+                });
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RemapFixture.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RemapFixture.cpp"));
+            string combinedOutput = headerOutput + sourceOutput;
+
+            Assert.Contains("::Float4 Orientation;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("List<::Float2>* History;", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Float3 Project(::Float4 input);", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("::Float3 local", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("new List<::Float2>()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Vector2", combinedOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Vector3", combinedOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Vector4", combinedOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures value-type instance fields preserve declaration order instead of being alphabetized during native emission.
         /// </summary>
         [Fact]
