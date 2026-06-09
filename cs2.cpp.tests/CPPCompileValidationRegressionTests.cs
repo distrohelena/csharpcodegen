@@ -6854,6 +6854,36 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures dictionary value iteration lowers to the native dictionary Values() helper instead of a missing property-style getter surface.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDictionaryValuesForeach_UsesNativeDictionaryValuesShape() {
+            string source = """
+                using System.Collections.Generic;
+
+                public interface IShaderBackend {
+                    string Name { get; }
+                }
+
+                public class Widget {
+                    void RegisterAll(IReadOnlyDictionary<int, IShaderBackend> backends) {
+                        foreach (IShaderBackend backend in backends.Values) {
+                            if (backend != null) {
+                                string name = backend.Name;
+                            }
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("for (const auto& backend : backends->Values())", sourceOutput);
+            Assert.DoesNotContain("backends->get_Values()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures locals later supplied to out parameters stay mutable so native declarations do not gain invalid const qualifiers.
         /// </summary>
         [Fact]

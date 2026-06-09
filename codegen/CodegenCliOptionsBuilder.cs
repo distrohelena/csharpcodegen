@@ -36,6 +36,9 @@ public static class CodegenCliOptionsBuilder {
         ApplyBooleanOption(parsedArguments.SelectedOptions, "fail-on-error", value => options.FailOnError = value);
         ApplyBooleanOption(parsedArguments.SelectedOptions, "collect-diagnostics", value => options.CollectDiagnostics = value);
 
+        if (TryGetStringOption(parsedArguments.SelectedOptions, "app-context-base-directory-mode", out string appContextBaseDirectoryMode)) {
+            options.AppContextBaseDirectoryMode = ParseAppContextBaseDirectoryMode(appContextBaseDirectoryMode);
+        }
         if (TryGetStringOption(parsedArguments.SelectedOptions, "windows-handoff-output-folder", out string handoffOutputFolder)) {
             options.WindowsHandoffOutputFolder = handoffOutputFolder;
         }
@@ -79,6 +82,22 @@ public static class CodegenCliOptionsBuilder {
         }
 
         return typeRemaps;
+    }
+
+    /// <summary>
+    /// Parses one caller-provided AppContext base-directory emission mode token.
+    /// </summary>
+    /// <param name="serializedMode">Serialized mode token supplied by the caller.</param>
+    /// <returns>The parsed AppContext base-directory mode.</returns>
+    static CPPAppContextBaseDirectoryMode ParseAppContextBaseDirectoryMode(string serializedMode) {
+        if (string.IsNullOrWhiteSpace(serializedMode)
+            || string.Equals(serializedMode, "dynamic-runtime", StringComparison.OrdinalIgnoreCase)) {
+            return CPPAppContextBaseDirectoryMode.DynamicRuntime;
+        } else if (string.Equals(serializedMode, "static-dot", StringComparison.OrdinalIgnoreCase)) {
+            return CPPAppContextBaseDirectoryMode.StaticDot;
+        }
+
+        throw new ArgumentException($"Unsupported AppContext base-directory mode '{serializedMode}'.");
     }
 
     /// <summary>

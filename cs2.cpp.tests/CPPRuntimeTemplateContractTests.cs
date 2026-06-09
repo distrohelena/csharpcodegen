@@ -102,6 +102,24 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the AppContext runtime template owns the static-dot fallback branch directly so non-host targets can disable dynamic string initialization through generated config.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_app_context_declares_static_dot_fallback_branch() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "app_context.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#if HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT", source, StringComparison.Ordinal);
+        Assert.Contains("inline static constexpr const char* BaseDirectory = \".\";", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Resolves the csharpcodegen repository root from the current test assembly location.
     /// </summary>
     /// <returns>Absolute repository root path.</returns>

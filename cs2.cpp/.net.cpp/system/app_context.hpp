@@ -15,6 +15,9 @@
 /// Resolves executable-relative application context values used by generated runtime initialization.
 class AppContext {
 public:
+#if HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT
+    inline static constexpr const char* BaseDirectory = ".";
+#else
     inline static std::string BaseDirectory = []() {
 #if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
         return std::string(".");
@@ -36,6 +39,7 @@ public:
         return executablePath.parent_path().string();
 #endif
     }();
+#endif
 };
 
 #endif // APP_CONTEXT_HPP

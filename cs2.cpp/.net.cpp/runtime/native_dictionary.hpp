@@ -99,6 +99,16 @@ public:
         return keys;
     }
 
+    std::vector<TValue> Values() const {
+        std::vector<TValue> values;
+        values.reserve(this->size());
+        for (const auto& pair : *this) {
+            values.push_back(pair.second);
+        }
+
+        return values;
+    }
+
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
     }

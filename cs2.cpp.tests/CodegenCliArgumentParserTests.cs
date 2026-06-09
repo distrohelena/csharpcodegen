@@ -68,6 +68,25 @@ public sealed class CodegenCliArgumentParserTests {
     }
 
     /// <summary>
+    /// Ensures caller-provided AppContext base-directory emission mode flows from generic <c>--set</c> arguments into the conversion options surface.
+    /// </summary>
+    [Fact]
+    public void Create_conversion_options_reads_app_context_base_directory_mode_from_selected_options() {
+        CodegenCliParsedArguments parsedArguments = new CodegenCliParsedArguments {
+            ProjectPath = @"C:\tmp\fixture.csproj",
+            OutputFolder = @"C:\tmp\generated",
+            PlatformId = "psvita",
+            Language = "cpp",
+            Endianness = "little"
+        };
+        parsedArguments.SelectedOptions["app-context-base-directory-mode"] = "static-dot";
+
+        CPPConversionOptions options = CodegenCliOptionsBuilder.CreateConversionOptions(parsedArguments);
+
+        Assert.Equal(CPPAppContextBaseDirectoryMode.StaticDot, options.AppContextBaseDirectoryMode);
+    }
+
+    /// <summary>
     /// Ensures the DS platform id resolves to a dedicated 32-bit platform profile instead of silently inheriting the Windows layout profile.
     /// </summary>
     [Fact]

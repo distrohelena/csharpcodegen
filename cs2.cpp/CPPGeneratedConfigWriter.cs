@@ -45,7 +45,8 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_EXCEPTIONS {ToDefineValue(options.RuntimeProfile.UseExceptions)}",
                 $"#define HE_CPP_USE_RTTI {ToDefineValue(options.RuntimeProfile.UseRtti)}",
                 $"#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN {ToDefineValue(options.PlatformProfile.IsLittleEndian)}",
-                $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}"
+                $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}",
+                $"#define HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT {ToDefineValue(options.AppContextBaseDirectoryMode == CPPAppContextBaseDirectoryMode.StaticDot)}"
             };
 
             AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());
