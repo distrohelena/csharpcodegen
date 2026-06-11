@@ -86,4 +86,30 @@ public sealed class CodegenCliArgumentParserTests {
         Assert.Equal(4, options.PlatformProfile.PointerSizeInBytes);
         Assert.False(options.PlatformProfile.IsWindowsHost);
     }
+
+    /// <summary>
+    /// Ensures caller-owned non-built-in platforms are shaped through generic CLI settings instead of hardcoded platform branches.
+    /// </summary>
+    [Fact]
+    public void Create_conversion_options_for_custom_platform_uses_generic_platform_shape_settings() {
+        CodegenCliParsedArguments parsedArguments = new CodegenCliParsedArguments {
+            ProjectPath = @"C:\tmp\fixture.csproj",
+            OutputFolder = @"C:\tmp\generated",
+            PlatformId = "retroppc",
+            Language = "cpp",
+            Endianness = "big"
+        };
+        parsedArguments.SelectedOptions["generated-math-convention"] = "native-column-vector";
+        parsedArguments.SelectedOptions["pointer-size-bytes"] = "4";
+
+        CPPConversionOptions options = CodegenCliOptionsBuilder.CreateConversionOptions(parsedArguments);
+
+        Assert.Equal(CPPPlatformKind.CustomHeadless, options.PlatformProfile.Kind);
+        Assert.Equal("retroppc-headless", options.PlatformProfile.Name);
+        Assert.Equal("HE_CPP_PLATFORM_RETROPPC", options.PlatformProfile.DefineName);
+        Assert.Equal(CPPGeneratedMathConventionKind.NativeColumnVector, options.PlatformProfile.GeneratedMathConvention);
+        Assert.Equal(4, options.PlatformProfile.PointerSizeInBytes);
+        Assert.False(options.PlatformProfile.IsLittleEndian);
+        Assert.False(options.PlatformProfile.IsWindowsHost);
+    }
 }

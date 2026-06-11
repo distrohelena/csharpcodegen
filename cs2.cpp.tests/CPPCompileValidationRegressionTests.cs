@@ -9434,6 +9434,26 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures the shared NativeMemory runtime asset does not require std::aligned_alloc on non-MSVC toolchains.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeMemoryStaticCall_EmitsPortableAlignedAllocationRuntime() {
+            string source = """
+                public unsafe class Fixture {
+                    public void* Run() {
+                        return System.Runtime.InteropServices.NativeMemory.AlignedAlloc((nuint)16, (nuint)8);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, allowUnsafe: true);
+            string runtimeHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "interopservices", "native_memory.hpp"));
+
+            Assert.DoesNotContain("std::aligned_alloc", runtimeHeaderOutput, StringComparison.Ordinal);
+            Assert.Contains("std::malloc", runtimeHeaderOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures parenthesized lambda expressions lower to native lambdas instead of preserving raw C# arrow syntax.
         /// </summary>
         [Fact]

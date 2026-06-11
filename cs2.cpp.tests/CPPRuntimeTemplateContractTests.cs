@@ -102,6 +102,30 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the file-stream runtime template owns the PS2 `cdrom0:` direct-read path instead of requiring downstream generated-code rewrites.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_file_stream_owns_ps2_cdrom_direct_read_support() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "file-stream.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#if HE_CPP_PLATFORM_PS2", source, StringComparison.Ordinal);
+        Assert.Contains("FileStreamSupportStartsWithPs2CdromPrefix", source, StringComparison.Ordinal);
+        Assert.Contains("ReadPs2DiscFile", source, StringComparison.Ordinal);
+        Assert.Contains("mode == FileMode::Open && FileStreamSupportStartsWithPs2CdromPrefix", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer = ReadPs2DiscFile", source, StringComparison.Ordinal);
+        Assert.Contains("ownsMemoryBuffer = true;", source, StringComparison.Ordinal);
+        Assert.Contains("writable = false;", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Resolves the csharpcodegen repository root from the current test assembly location.
     /// </summary>
     /// <returns>Absolute repository root path.</returns>

@@ -2,10 +2,86 @@
 #include <stdexcept>  // For exceptions
 #include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
+#include <algorithm>
+#include <cerrno>
+#include <fcntl.h>
 #if defined(_WIN32)
 #include <io.h>
 #else
 #include <unistd.h>
+#endif
+
+#if HE_CPP_PLATFORM_PS2
+namespace {
+    bool FileStreamSupportStartsWithPs2CdromPrefix(const std::string& path) {
+        return path.rfind("cdrom0:", 0) == 0;
+    }
+
+    std::string FileStreamSupportResolvePs2DiscReadPath(const std::string& path) {
+        if (!FileStreamSupportStartsWithPs2CdromPrefix(path)) {
+            return path;
+        }
+
+        std::string normalizedPath = path;
+        std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+        return normalizedPath;
+    }
+
+    std::vector<std::string> BuildPs2DiscReadCandidates(const std::string& resolvedPath) {
+        std::vector<std::string> candidates;
+        candidates.push_back(resolvedPath);
+        if (resolvedPath.rfind("cdrom0:/", 0) == 0) {
+            candidates.push_back("cdrom0:" + resolvedPath.substr(8));
+        }
+
+        return candidates;
+    }
+
+    std::vector<uint8_t> ReadPs2DiscFile(const std::string& path) {
+        const std::vector<std::string> candidates = BuildPs2DiscReadCandidates(path);
+        for (size_t candidateIndex = 0; candidateIndex < candidates.size(); candidateIndex++) {
+            const std::string& candidatePath = candidates[candidateIndex];
+            int fileDescriptor = open(candidatePath.c_str(), O_RDONLY);
+            if (fileDescriptor < 0) {
+                continue;
+            }
+
+            const off_t fileLength = lseek(fileDescriptor, 0, SEEK_END);
+            if (fileLength < 0) {
+                close(fileDescriptor);
+                throw std::runtime_error(std::string("Failed to determine file length: ") + candidatePath);
+            }
+            if (lseek(fileDescriptor, 0, SEEK_SET) < 0) {
+                close(fileDescriptor);
+                throw std::runtime_error(std::string("Failed to seek file: ") + candidatePath);
+            }
+
+            std::vector<uint8_t> bytes(static_cast<size_t>(fileLength));
+            size_t totalBytesRead = 0;
+            while (totalBytesRead < bytes.size()) {
+                const ssize_t bytesRead = read(
+                    fileDescriptor,
+                    bytes.data() + totalBytesRead,
+                    bytes.size() - totalBytesRead);
+                if (bytesRead <= 0) {
+                    close(fileDescriptor);
+                    throw std::runtime_error(std::string("Failed to read file: ") + candidatePath);
+                }
+
+                totalBytesRead += static_cast<size_t>(bytesRead);
+            }
+
+            close(fileDescriptor);
+            if (totalBytesRead != bytes.size()) {
+                throw std::runtime_error(std::string("Failed to read file: ") + candidatePath);
+            }
+
+            return bytes;
+        }
+
+        throw std::runtime_error(std::string("Failed to open file: ") + path);
+    }
+}
 #endif
 
 // Helper function to get file mode as C-style string
@@ -34,6 +110,17 @@ FileStream::FileStream(const uint8_t* data, size_t dataLength)
 
 FileStream::FileStream(const char* path, FileMode mode)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), writable(true) {
+#if HE_CPP_PLATFORM_PS2
+    std::string resolvedPs2ReadPath = FileStreamSupportResolvePs2DiscReadPath(path != nullptr ? path : "");
+    bool usesPs2DirectRead = mode == FileMode::Open && FileStreamSupportStartsWithPs2CdromPrefix(resolvedPs2ReadPath);
+    if (usesPs2DirectRead) {
+        memoryBuffer = ReadPs2DiscFile(resolvedPs2ReadPath);
+        ownsMemoryBuffer = true;
+        writable = false;
+        length = memoryBuffer.size();
+        return;
+    }
+#endif
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
         throw std::runtime_error(std::string("Failed to open file: ") + path);

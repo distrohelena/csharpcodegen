@@ -31,7 +31,22 @@ public:
 #if defined(_MSC_VER)
         return _aligned_malloc(alignedByteCount, normalizedAlignment);
 #else
-        return std::aligned_alloc(normalizedAlignment, alignedByteCount);
+        size_t metadataSize = sizeof(void*);
+        size_t totalByteCount = alignedByteCount + normalizedAlignment + metadataSize;
+        void* baseAllocation = std::malloc(totalByteCount);
+        if (baseAllocation == nullptr) {
+            return nullptr;
+        }
+
+        uintptr_t baseAddress = reinterpret_cast<uintptr_t>(baseAllocation);
+        uintptr_t minimumAlignedAddress = baseAddress + metadataSize;
+        uintptr_t remainder = minimumAlignedAddress % normalizedAlignment;
+        uintptr_t alignedAddress = remainder == 0
+            ? minimumAlignedAddress
+            : minimumAlignedAddress + (normalizedAlignment - remainder);
+        void** metadataSlot = reinterpret_cast<void**>(alignedAddress - metadataSize);
+        *metadataSlot = baseAllocation;
+        return reinterpret_cast<void*>(alignedAddress);
 #endif
     }
 
@@ -47,7 +62,8 @@ public:
 #if defined(_MSC_VER)
         _aligned_free(value);
 #else
-        std::free(value);
+        void* baseAllocation = *(reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(value) - sizeof(void*)));
+        std::free(baseAllocation);
 #endif
     }
 };
