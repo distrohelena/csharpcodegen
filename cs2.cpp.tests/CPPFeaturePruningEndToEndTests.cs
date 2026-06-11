@@ -93,10 +93,10 @@ namespace helengine.core.runtime {
     }
 
     /// <summary>
-    /// Verifies that the GameCube core-boot preset writes GameCube config metadata and disables shader-only output.
+    /// Verifies that the stripped native core-boot preset writes generic custom-platform config metadata and disables shader-only output.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_WritesGameCubeConfigAndDisablesShaders() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_WritesGenericConfigAndDisablesShaders() {
         string source = """
 namespace helengine {
     public class ShaderAsset {
@@ -109,12 +109,12 @@ namespace helengine.core.scene {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
         string configPath = Path.Combine(outputPath, "helcpp_config.hpp");
         string config = File.ReadAllText(configPath);
 
         Assert.Contains("#define HE_CPP_COMPILER_GCC 1", config);
-        Assert.Contains("#define HE_CPP_PLATFORM_GAMECUBE 1", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_RETROPPC 1", config);
         Assert.Contains("#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0", config);
         Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", config);
         Assert.Contains("#define HE_CPP_FEATURE_SHADERS 0", config);
@@ -122,44 +122,10 @@ namespace helengine.core.scene {
     }
 
     /// <summary>
-    /// Verifies that the GameCube core-boot preset rewrites generated float4x4 output for native column-vector consumption.
+    /// Verifies that the stripped native core-boot preset keeps the raw shader asset data contract needed by runtime helpers even while the shader feature is disabled.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_RewritesFloat4x4ForNativeColumnVectorMath() {
-        string source = """
-namespace helengine.core.scene {
-    public class SceneNode {
-    }
-}
-""";
-
-        string runtimeRoot = Path.Combine(Path.GetTempPath(), "cs2cpp-gamecube-runtime-root", Guid.NewGuid().ToString("N"));
-        string runtimeTemplateRoot = Path.Combine(runtimeRoot, ".net.cpp");
-        string currentRuntimeRoot = Environment.GetEnvironmentVariable("CS2_RUNTIME_ROOT");
-        try {
-            CopyDirectoryRecursively(ResolveRuntimeTemplateRoot(), runtimeTemplateRoot);
-            File.WriteAllText(Path.Combine(runtimeTemplateRoot, "float4x4.cpp"), GameCubeFloat4x4RuntimeSeed);
-            Environment.SetEnvironmentVariable("CS2_RUNTIME_ROOT", runtimeRoot);
-
-            string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
-            string float4x4Path = Path.Combine(outputPath, "float4x4.cpp");
-            string float4x4Source = File.ReadAllText(float4x4Path);
-
-            Assert.Contains("result.M14 = x;", float4x4Source);
-            Assert.Contains("result.M24 = y;", float4x4Source);
-            Assert.Contains("result.M34 = z;", float4x4Source);
-            Assert.Contains("result.M33 = Number::IsPositiveInfinity(farPlaneDistance) ? 0.0f : nearPlaneDistance / (nearPlaneDistance - farPlaneDistance);", float4x4Source);
-            Assert.DoesNotContain("result.M41 = x;", float4x4Source);
-        } finally {
-            Environment.SetEnvironmentVariable("CS2_RUNTIME_ROOT", currentRuntimeRoot);
-        }
-    }
-
-    /// <summary>
-    /// Verifies that the GameCube core-boot preset keeps the raw shader asset data contract needed by runtime helpers even while the shader feature is disabled.
-    /// </summary>
-    [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_KeepsShaderAssetDataContract() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_KeepsShaderAssetDataContract() {
         string source = """
 namespace helengine {
     public class ShaderAsset {
@@ -172,7 +138,7 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         Assert.True(File.Exists(Path.Combine(outputPath, "ShaderAsset.hpp")));
         Assert.True(File.Exists(Path.Combine(outputPath, "ShaderAsset.cpp")));
@@ -180,10 +146,10 @@ namespace helengine {
     }
 
     /// <summary>
-    /// Verifies that the GameCube core-boot preset applies the reflection-disabling preprocessor symbols before type emission.
+    /// Verifies that the stripped native core-boot preset applies the reflection-disabling preprocessor symbols before type emission.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_DoesNotEmitRuntimeScriptReflectionTypes() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_DoesNotEmitRuntimeScriptReflectionTypes() {
         string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-gamecube-reflection-pruning-tests", Guid.NewGuid().ToString("N"));
         string referencedProjectPath = Path.Combine(rootPath, "Referenced", "Referenced.csproj");
         string rootProjectPath = Path.Combine(rootPath, "Root", "Root.csproj");
@@ -288,7 +254,7 @@ namespace helengine {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
-        options.PresetId = "gamecube-core-boot";
+        options.PresetId = "native-core-boot";
         options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
@@ -306,10 +272,10 @@ namespace helengine {
     }
 
     /// <summary>
-    /// Verifies that the GameCube core-boot preset keeps the stream-reader runtime helper when emitted content processors still depend on direct UTF-8 text reads.
+    /// Verifies that the stripped native core-boot preset keeps the stream-reader runtime helper when emitted content processors still depend on direct UTF-8 text reads.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_KeepsStreamReaderForTextContentProcessor() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_KeepsStreamReaderForTextContentProcessor() {
         string source = """
 using System;
 using System.IO;
@@ -348,17 +314,17 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         Assert.True(File.Exists(Path.Combine(outputPath, "TextContentProcessor.hpp")));
         Assert.True(File.Exists(Path.Combine(outputPath, "system", "io", "stream-reader.hpp")));
     }
 
     /// <summary>
-    /// Verifies that editor-only inspector attribute sources are removed from generated runtime-native output before the unity translation unit is authored.
+    /// Verifies that editor-only inspector attribute sources are removed from generated stripped-native output before the unity translation unit is authored.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_RemovesEditorOnlyAttributeSources() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_RemovesEditorOnlyAttributeSources() {
         string source = """
 using System;
 
@@ -379,7 +345,7 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         Assert.True(File.Exists(Path.Combine(outputPath, "CameraSettings.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "EditorPropertyDisplayNameAttribute.hpp")));
@@ -407,7 +373,7 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         string parentSource = File.ReadAllText(Path.Combine(outputPath, "Parent.cpp"));
         Assert.Contains("#include \"Child.hpp\"", parentSource);
@@ -437,7 +403,7 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         string ambientSource = File.ReadAllText(Path.Combine(outputPath, "AmbientLightComponent.cpp"));
         Assert.Contains("LightType::Ambient", ambientSource);
@@ -458,7 +424,7 @@ namespace helengine {
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
 
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "StepValidator.cpp"));
         string numberHeader = File.ReadAllText(Path.Combine(outputPath, "system", "number.hpp"));
@@ -468,27 +434,6 @@ namespace helengine {
         Assert.DoesNotContain("Double::IsInfinity", sourceOutput, StringComparison.Ordinal);
         Assert.Contains("static bool IsNaN(double value)", numberHeader);
         Assert.Contains("static bool IsInfinity(double value)", numberHeader);
-    }
-
-    /// <summary>
-    /// Verifies the GameCube core-boot preset keeps generated native file support routed through the packaged-disc file system for rooted <c>dvd:/</c> paths.
-    /// </summary>
-    [Fact]
-    public void WriteOutput_WhenPresetIsGameCubeCoreBoot_AdaptsNativeFileIoForPackagedDiscPaths() {
-        string source = """
-namespace helengine {
-    public sealed class SceneNode {
-    }
-}
-""";
-
-        string outputPath = RunConversionWithPreset(source, "gamecube-core-boot");
-
-        string fileSource = File.ReadAllText(Path.Combine(outputPath, "system", "io", "file.cpp"));
-        Assert.Contains("#include \"platform/gamecube/GameCubeDiscFileSystem.hpp\"", fileSource);
-        Assert.Contains("GameCubeDiscFileSystem::CanHandlePath(fileName)", fileSource);
-        Assert.Contains("GameCubeDiscFileSystem::Exists(fileName)", fileSource);
-        Assert.Contains("GameCubeDiscFileSystem::OpenRead(filePath)", fileSource);
     }
 
     /// <summary>

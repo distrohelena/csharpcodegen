@@ -23,52 +23,52 @@ public class CPPConversionPresetCatalogTests {
     }
 
     /// <summary>
-    /// Ensures the GameCube core-boot preset resolves to the expected compiler, platform, feature, and restriction settings.
+    /// Ensures the stripped native core-boot preset resolves to the expected compiler, platform, feature, and restriction settings.
     /// </summary>
     [Fact]
-    public void Resolve_GameCubeCoreBoot_UsesNamedPresetProfiles() {
-        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+    public void Resolve_NativeCoreBoot_UsesNamedPresetProfiles() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("native-core-boot");
 
-        Assert.Equal("gamecube-core-boot", preset.Id);
+        Assert.Equal("native-core-boot", preset.Id);
         Assert.Equal("gcc", preset.CompilerProfile.Name);
-        Assert.Equal("gamecube-headless", preset.PlatformProfile.Name);
+        Assert.Equal("retroppc-headless", preset.PlatformProfile.Name);
         Assert.Equal("stl-lite", preset.RuntimeProfile.Name);
         Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("shaders", CPPFeatureMode.Auto));
         Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("debug_overlay", CPPFeatureMode.Auto));
-        Assert.Equal("gamecube-core-boot", preset.RestrictionProfile.Name);
+        Assert.Equal("native-core-boot", preset.RestrictionProfile.Name);
         Assert.True(preset.RestrictionProfile.ForbidShaders);
         Assert.True(preset.RestrictionProfile.ForbidDebugOnlySystems);
     }
 
     /// <summary>
-    /// Ensures the GameCube preset resolves the native column-vector generated math convention.
+    /// Ensures the stripped native preset resolves the native column-vector generated math convention.
     /// </summary>
     [Fact]
-    public void Resolve_GameCubeCoreBoot_UsesNativeColumnVectorMathConvention() {
-        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+    public void Resolve_NativeCoreBoot_UsesNativeColumnVectorMathConvention() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("native-core-boot");
 
         object convention = typeof(CPPPlatformProfile).GetProperty("GeneratedMathConvention")?.GetValue(preset.PlatformProfile);
         Assert.Equal("NativeColumnVector", convention?.ToString());
     }
 
     /// <summary>
-    /// Ensures the GameCube core-boot preset forbids reflection-like runtime systems.
+    /// Ensures the stripped native core-boot preset forbids reflection-like runtime systems.
     /// </summary>
     [Fact]
-    public void Resolve_GameCubeCoreBoot_ForbidsReflectionLikeRuntime() {
-        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("gamecube-core-boot");
+    public void Resolve_NativeCoreBoot_ForbidsReflectionLikeRuntime() {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("native-core-boot");
 
         Assert.True(preset.RestrictionProfile.ForbidReflectionLikeRuntime);
         Assert.True(preset.RestrictionProfile.ForbidRuntimeJson);
     }
 
     /// <summary>
-    /// Ensures the GameCube core-boot preset carries only the reflection-disable preprocessor symbols required by the stripped runtime.
+    /// Ensures the stripped native core-boot preset carries only the reflection-disable preprocessor symbols required by the stripped runtime.
     /// </summary>
     [Fact]
-    public void ApplyTo_GameCubeCoreBoot_AddsReflectionDisableSymbols() {
+    public void ApplyTo_NativeCoreBoot_AddsReflectionDisableSymbols() {
         CPPConversionOptions options = new CPPConversionOptions {
-            PresetId = "gamecube-core-boot"
+            PresetId = "native-core-boot"
         };
 
         new CPPConversionPresetCatalog().ApplyTo(options);
@@ -79,51 +79,4 @@ public class CPPConversionPresetCatalogTests {
         Assert.Contains("HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION", options.AdditionalPreprocessorSymbols);
     }
 
-    /// <summary>
-    /// Ensures the Wii core-boot preset resolves to the expected compiler, platform, feature, and restriction settings.
-    /// </summary>
-    [Fact]
-    public void Resolve_WiiCoreBoot_UsesNamedPresetProfiles() {
-        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("wii-core-boot");
-
-        Assert.Equal("wii-core-boot", preset.Id);
-        Assert.Equal("gcc", preset.CompilerProfile.Name);
-        Assert.Equal("wii-headless", preset.PlatformProfile.Name);
-        Assert.Equal(CPPPlatformKind.WiiHeadless, preset.PlatformProfile.Kind);
-        Assert.Equal("stl-lite", preset.RuntimeProfile.Name);
-        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("shaders", CPPFeatureMode.Auto));
-        Assert.Equal(CPPFeatureMode.Disabled, preset.BuildFeatureProfile.GetMode("debug_overlay", CPPFeatureMode.Auto));
-        Assert.Equal("wii-core-boot", preset.RestrictionProfile.Name);
-        Assert.True(preset.RestrictionProfile.ForbidShaders);
-        Assert.True(preset.RestrictionProfile.ForbidRuntimeJson);
-        Assert.True(preset.RestrictionProfile.ForbidReflectionLikeRuntime);
-        Assert.True(preset.RestrictionProfile.ForbidDebugOnlySystems);
-    }
-
-    /// <summary>
-    /// Ensures the Wii preset uses the same native column-vector generated math convention as the GX GameCube target.
-    /// </summary>
-    [Fact]
-    public void Resolve_WiiCoreBoot_UsesNativeColumnVectorMathConvention() {
-        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve("wii-core-boot");
-
-        Assert.Equal(CPPGeneratedMathConventionKind.NativeColumnVector, preset.PlatformProfile.GeneratedMathConvention);
-    }
-
-    /// <summary>
-    /// Ensures the Wii core-boot preset carries only the reflection-disable preprocessor symbols required by the stripped runtime.
-    /// </summary>
-    [Fact]
-    public void ApplyTo_WiiCoreBoot_AddsReflectionDisableSymbols() {
-        CPPConversionOptions options = new CPPConversionOptions {
-            PresetId = "wii-core-boot"
-        };
-
-        new CPPConversionPresetCatalog().ApplyTo(options);
-
-        Assert.False(options.IncludeProjectDefinedPreprocessorSymbols);
-        Assert.DoesNotContain("HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED", options.AdditionalPreprocessorSymbols);
-        Assert.Contains("HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION", options.AdditionalPreprocessorSymbols);
-        Assert.Contains("HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION", options.AdditionalPreprocessorSymbols);
-    }
 }

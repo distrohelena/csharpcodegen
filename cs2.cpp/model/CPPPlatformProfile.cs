@@ -55,34 +55,32 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Creates the default GameCube headless development profile.
+        /// Creates one caller-defined custom native profile from generic platform-shape metadata.
         /// </summary>
-        /// <returns>The default GameCube platform profile.</returns>
-        public static CPPPlatformProfile CreateGameCubeHeadless() {
-            return new CPPPlatformProfile {
-                Kind = CPPPlatformKind.GameCubeHeadless,
-                Name = "gamecube-headless",
-                DefineName = "HE_CPP_PLATFORM_GAMECUBE",
-                IsLittleEndian = false,
-                IsWindowsHost = false,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector,
-                PointerSizeInBytes = 4
-            };
-        }
+        /// <param name="platformId">Caller-owned platform identifier used for generated config naming.</param>
+        /// <param name="isLittleEndian">Whether the target uses little-endian memory layout.</param>
+        /// <param name="generatedMathConvention">Generated runtime math convention required by the target.</param>
+        /// <param name="pointerSizeInBytes">Native pointer size used by the target runtime.</param>
+        /// <returns>The resolved custom platform profile.</returns>
+        public static CPPPlatformProfile CreateCustomHeadless(
+            string platformId,
+            bool isLittleEndian,
+            CPPGeneratedMathConventionKind generatedMathConvention,
+            int pointerSizeInBytes) {
+            if (string.IsNullOrWhiteSpace(platformId)) {
+                throw new ArgumentException("Platform id must not be empty.", nameof(platformId));
+            } else if (pointerSizeInBytes <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(pointerSizeInBytes), "Pointer size must be positive.");
+            }
 
-        /// <summary>
-        /// Creates the default Nintendo Wii headless development profile.
-        /// </summary>
-        /// <returns>The default Nintendo Wii platform profile.</returns>
-        public static CPPPlatformProfile CreateWiiHeadless() {
             return new CPPPlatformProfile {
-                Kind = CPPPlatformKind.WiiHeadless,
-                Name = "wii-headless",
-                DefineName = "HE_CPP_PLATFORM_WII",
-                IsLittleEndian = false,
+                Kind = CPPPlatformKind.CustomHeadless,
+                Name = $"{platformId}-headless",
+                DefineName = $"HE_CPP_PLATFORM_{platformId.ToUpperInvariant()}",
+                IsLittleEndian = isLittleEndian,
                 IsWindowsHost = false,
-                GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector,
-                PointerSizeInBytes = 4
+                GeneratedMathConvention = generatedMathConvention,
+                PointerSizeInBytes = pointerSizeInBytes
             };
         }
 

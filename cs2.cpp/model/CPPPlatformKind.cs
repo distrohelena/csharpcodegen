@@ -19,19 +19,14 @@ namespace cs2.cpp {
         PlayStation2Headless,
 
         /// <summary>
-        /// Headless Nintendo GameCube target.
-        /// </summary>
-        GameCubeHeadless,
-
-        /// <summary>
         /// Headless Nintendo DS target.
         /// </summary>
         NintendoDsHeadless,
 
         /// <summary>
-        /// Headless Nintendo Wii target.
+        /// Headless caller-defined custom native target.
         /// </summary>
-        WiiHeadless,
+        CustomHeadless,
 
         /// <summary>
         /// Headless PlayStation Portable target.

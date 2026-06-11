@@ -76,11 +76,18 @@ public class CPPGeneratedConfigWriterTests {
     }
 
     /// <summary>
-    /// Ensures the generated config writer emits GCC and GameCube metadata for GameCube-targeted conversions.
+    /// Ensures the generated config writer emits caller-owned custom platform metadata from a generic custom profile.
     /// </summary>
     [Fact]
-    public void Write_WithGameCubeProfile_WritesGameCubeDefines() {
-        CPPConversionOptions options = CPPConversionOptions.CreateGameCubeDefault();
+    public void Write_WithCustomPlatformProfile_WritesCustomPlatformDefines() {
+        CPPConversionOptions options = new CPPConversionOptions {
+            CompilerProfile = CPPCompilerProfile.CreateGcc(),
+            PlatformProfile = CPPPlatformProfile.CreateCustomHeadless("retroppc", false, CPPGeneratedMathConventionKind.NativeColumnVector, 4),
+            RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+            CollectDiagnostics = true,
+            BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
+            LoadNativeRuntimeMetadata = true
+        };
         CPPConversionReport report = new CPPConversionReport();
         CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
         registrar.RegisterDefaults(options);
@@ -90,28 +97,7 @@ public class CPPGeneratedConfigWriterTests {
         string output = File.ReadAllText(filePath);
 
         Assert.Contains("#define HE_CPP_COMPILER_GCC 1", output);
-        Assert.Contains("#define HE_CPP_PLATFORM_GAMECUBE 1", output);
-        Assert.Contains("#define HE_CPP_RUNTIME_STL_LITE 1", output);
-        Assert.Contains("#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0", output);
-        Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", output);
-    }
-
-    /// <summary>
-    /// Ensures the generated config writer emits GCC and Wii metadata for Wii-targeted conversions.
-    /// </summary>
-    [Fact]
-    public void Write_WithWiiProfile_WritesWiiDefines() {
-        CPPConversionOptions options = CPPConversionOptions.CreateWiiDefault();
-        CPPConversionReport report = new CPPConversionReport();
-        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
-        registrar.RegisterDefaults(options);
-
-        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
-        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar);
-        string output = File.ReadAllText(filePath);
-
-        Assert.Contains("#define HE_CPP_COMPILER_GCC 1", output);
-        Assert.Contains("#define HE_CPP_PLATFORM_WII 1", output);
+        Assert.Contains("#define HE_CPP_PLATFORM_RETROPPC 1", output);
         Assert.Contains("#define HE_CPP_RUNTIME_STL_LITE 1", output);
         Assert.Contains("#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0", output);
         Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", output);

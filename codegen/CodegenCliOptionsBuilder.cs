@@ -19,7 +19,7 @@ public static class CodegenCliOptionsBuilder {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.PresetId = parsedArguments.PresetId ?? string.Empty;
         options.CompilerProfile = CreateCompilerProfile(parsedArguments.PlatformId, parsedArguments.CompilerProfileName);
-        options.PlatformProfile = CreatePlatformProfile(parsedArguments.PlatformId, parsedArguments.Endianness);
+        options.PlatformProfile = CreatePlatformProfile(parsedArguments.PlatformId, parsedArguments.Endianness, parsedArguments.SelectedOptions);
         options.RuntimeProfile = CreateRuntimeProfile(parsedArguments.RuntimeProfileName);
         options.BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault();
         options.FeatureCatalog = LoadFeatureCatalog(parsedArguments.FeatureCatalogPath);
@@ -121,21 +121,20 @@ public static class CodegenCliOptionsBuilder {
     /// </summary>
     /// <param name="platformId">Target platform identifier.</param>
     /// <param name="endianness">Optional endianness override token.</param>
+    /// <param name="selectedOptions">Caller-selected generic platform-shape options.</param>
     /// <returns>The resolved platform profile.</returns>
-    static CPPPlatformProfile CreatePlatformProfile(string platformId, string endianness) {
+    static CPPPlatformProfile CreatePlatformProfile(string platformId, string endianness, IReadOnlyDictionary<string, string> selectedOptions) {
         CPPPlatformProfile platformProfile;
-        if (string.Equals(platformId, "gamecube", StringComparison.OrdinalIgnoreCase)) {
-            platformProfile = CPPPlatformProfile.CreateGameCubeHeadless();
-        } else if (string.Equals(platformId, "wii", StringComparison.OrdinalIgnoreCase)) {
-            platformProfile = CPPPlatformProfile.CreateWiiHeadless();
-        } else if (string.Equals(platformId, "ds", StringComparison.OrdinalIgnoreCase)) {
+        if (string.Equals(platformId, "ds", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreateNintendoDsHeadless();
         } else if (string.Equals(platformId, "ps2", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreatePlayStation2Headless();
         } else if (string.Equals(platformId, "n64", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreateNintendo64Headless();
-        } else {
+        } else if (string.Equals(platformId, "windows", StringComparison.OrdinalIgnoreCase)) {
             platformProfile = CPPPlatformProfile.CreateWindowsHeadless();
+        } else {
+            platformProfile = CreateCustomPlatformProfile(platformId, endianness, selectedOptions);
         }
 
         bool isLittleEndian = !string.Equals(endianness, "big", StringComparison.OrdinalIgnoreCase);
@@ -144,6 +143,35 @@ public static class CodegenCliOptionsBuilder {
         platformProfile.Name = $"{platformId}-headless";
         platformProfile.DefineName = $"HE_CPP_PLATFORM_{platformId.ToUpperInvariant()}";
         return platformProfile;
+    }
+
+    /// <summary>
+    /// Builds one caller-owned custom platform profile from generic shape settings instead of a hardcoded platform branch.
+    /// </summary>
+    /// <param name="platformId">Target platform identifier.</param>
+    /// <param name="endianness">Optional endianness override token.</param>
+    /// <param name="selectedOptions">Caller-selected generic platform-shape options.</param>
+    /// <returns>The resolved caller-owned custom platform profile.</returns>
+    static CPPPlatformProfile CreateCustomPlatformProfile(
+        string platformId,
+        string endianness,
+        IReadOnlyDictionary<string, string> selectedOptions) {
+        if (string.IsNullOrWhiteSpace(platformId)) {
+            throw new ArgumentException("Platform id must be provided for custom platform profiles.", nameof(platformId));
+        } else if (selectedOptions == null) {
+            throw new ArgumentNullException(nameof(selectedOptions));
+        }
+
+        if (!TryGetStringOption(selectedOptions, "generated-math-convention", out string generatedMathConventionToken)) {
+            throw new ArgumentException($"Custom platform '{platformId}' must provide a generated-math-convention option.");
+        }
+        if (!TryGetIntOption(selectedOptions, "pointer-size-bytes", out int pointerSizeInBytes) || pointerSizeInBytes <= 0) {
+            throw new ArgumentException($"Custom platform '{platformId}' must provide a positive pointer-size-bytes option.");
+        }
+
+        bool isLittleEndian = !string.Equals(endianness, "big", StringComparison.OrdinalIgnoreCase);
+        CPPGeneratedMathConventionKind generatedMathConvention = ParseGeneratedMathConvention(generatedMathConventionToken);
+        return CPPPlatformProfile.CreateCustomHeadless(platformId, isLittleEndian, generatedMathConvention, pointerSizeInBytes);
     }
 
     /// <summary>
@@ -179,6 +207,25 @@ public static class CodegenCliOptionsBuilder {
     }
 
     /// <summary>
+    /// Reads one optional integer assignment from the selected-options map.
+    /// </summary>
+    /// <param name="values">Selected-option assignments keyed by setting id.</param>
+    /// <param name="key">Option key to read.</param>
+    /// <param name="value">Resolved integer value when present.</param>
+    /// <returns>True when a valid integer value was found; otherwise false.</returns>
+    static bool TryGetIntOption(IReadOnlyDictionary<string, string> values, string key, out int value) {
+        value = 0;
+        if (!TryGetStringOption(values, key, out string rawValue)) {
+            return false;
+        }
+        if (!int.TryParse(rawValue, out value)) {
+            throw new ArgumentException($"The '{key}' option expects an integer value.");
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Reads one optional string assignment from the selected-options map.
     /// </summary>
     /// <param name="values">Selected-option assignments keyed by setting id.</param>
@@ -198,5 +245,21 @@ public static class CodegenCliOptionsBuilder {
 
         value = rawValue;
         return true;
+    }
+
+    /// <summary>
+    /// Parses one caller-selected generated math convention token into the shared runtime enum surface.
+    /// </summary>
+    /// <param name="value">Serialized generated math convention token.</param>
+    /// <returns>The resolved generated math convention kind.</returns>
+    static CPPGeneratedMathConventionKind ParseGeneratedMathConvention(string value) {
+        if (string.Equals(value, "engine-row-vector", StringComparison.OrdinalIgnoreCase)) {
+            return CPPGeneratedMathConventionKind.EngineRowVector;
+        }
+        if (string.Equals(value, "native-column-vector", StringComparison.OrdinalIgnoreCase)) {
+            return CPPGeneratedMathConventionKind.NativeColumnVector;
+        }
+
+        throw new ArgumentException($"Unsupported generated-math-convention value '{value}'.");
     }
 }
