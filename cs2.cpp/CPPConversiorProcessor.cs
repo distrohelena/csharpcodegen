@@ -21,6 +21,11 @@ namespace cs2.cpp {
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar => codeConverter?.RuntimeRequirementRegistrar;
 
         /// <summary>
+        /// Gets the active conversion options for the current backend run.
+        /// </summary>
+        public CPPConversionOptions Options => codeConverter?.Options;
+
+        /// <summary>
         /// Begins runtime-helper tracking for the currently emitted type when a converter-backed registrar is available.
         /// </summary>
         /// <returns>The active type scope, or an empty scope when no converter-backed registrar is available.</returns>

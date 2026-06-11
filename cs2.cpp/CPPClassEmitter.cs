@@ -11,6 +11,7 @@ namespace cs2.cpp {
     public class CPPClassEmitter {
         readonly CPPConversiorProcessor processor;
         readonly CPPProgram program;
+        readonly CPPGeneratedFunctionBodyOverrideCatalog functionBodyOverrideCatalog;
 
         /// <summary>
         /// Initializes a class emitter bound to the current processor and program state.
@@ -20,6 +21,7 @@ namespace cs2.cpp {
         public CPPClassEmitter(CPPConversiorProcessor processor, CPPProgram program) {
             this.processor = processor;
             this.program = program;
+            functionBodyOverrideCatalog = new CPPGeneratedFunctionBodyOverrideCatalog();
         }
 
         /// <summary>
@@ -3203,7 +3205,8 @@ namespace cs2.cpp {
                 WriteExplicitLayoutFieldAssignments(conversionClass, sourceWriter);
             }
 
-            if (function.HasBody) {
+            if (functionBodyOverrideCatalog.TryWriteOverride(processor?.Options, function, sourceWriter)) {
+            } else if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
             } else {
                 sourceWriter.WriteLine("throw new NotSupportedException(\"Method has no generated body.\");");

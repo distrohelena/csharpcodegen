@@ -6,6 +6,10 @@ namespace cs2.core {
         public string Name { get; set; }
         public string Remap { get; set; }
         public string RemapClass { get; set; }
+        /// <summary>
+        /// Gets or sets one stable Roslyn-derived source-method identity used by backend emitters that need to specialize specific generated functions.
+        /// </summary>
+        public string SourceMethodKey { get; set; }
 
         public List<string>? GenericParameters { get; set; }
 
@@ -56,6 +60,7 @@ namespace cs2.core {
 
         public ConversionFunction() {
             Name = "";
+            SourceMethodKey = string.Empty;
             InParameters = new List<ConversionVariable>();
             BodyVariables = new List<ConversionFunctionVariableUsage>();
             NativeFreeFunctionName = string.Empty;

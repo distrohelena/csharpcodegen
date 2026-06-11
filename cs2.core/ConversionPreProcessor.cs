@@ -349,6 +349,7 @@ namespace cs2.core {
             func.IsOverride = isOverride;
             func.AccessType = access;
             func.Name = name;
+            func.SourceMethodKey = BuildSourceMethodKey(methodSymbol);
             func.Remap = mappedName;
             func.DeclarationType = type;
             func.IsAsync = MemberUtil.IsAsync(method.Modifiers);
@@ -436,6 +437,7 @@ namespace cs2.core {
             func.IsStatic = true;
             func.AccessType = access;
             func.Name = $"operator{operatorDeclaration.OperatorToken.Text}";
+            func.SourceMethodKey = BuildSourceMethodKey(semantic.GetDeclaredSymbol(operatorDeclaration) as IMethodSymbol);
             func.DeclarationType = type;
             ApplyFunctionReturnType(operatorDeclaration.ReturnType, semantic, func);
 
@@ -472,6 +474,7 @@ namespace cs2.core {
             func.Name = GetConversionOperatorFunctionName(
                 conversionOperatorDeclaration.ImplicitOrExplicitKeyword.Kind(),
                 methodSymbol?.ReturnType ?? semantic.GetTypeInfo(conversionOperatorDeclaration.Type).Type);
+            func.SourceMethodKey = BuildSourceMethodKey(methodSymbol);
             func.DeclarationType = type;
             ApplyFunctionReturnType(conversionOperatorDeclaration.Type, semantic, func);
 
@@ -496,6 +499,26 @@ namespace cs2.core {
             string operatorPrefix = operatorKind == SyntaxKind.ImplicitKeyword ? "op_Implicit_to_" : "op_Explicit_to_";
             string targetName = returnTypeSymbol?.OriginalDefinition?.MetadataName ?? returnTypeSymbol?.MetadataName ?? returnTypeSymbol?.Name ?? "Unknown";
             return operatorPrefix + targetName.Replace('`', '_');
+        }
+
+        /// <summary>
+        /// Builds one stable source-method identity string from a Roslyn method symbol so backend emitters can specialize known generated functions without rewriting emitted files later.
+        /// </summary>
+        /// <param name="methodSymbol">Resolved source method symbol.</param>
+        /// <returns>Stable source-method identity string, or an empty string when no symbol is available.</returns>
+        private static string BuildSourceMethodKey(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return string.Empty;
+            }
+
+            SymbolDisplayFormat displayFormat = new SymbolDisplayFormat(
+                globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
+                typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+                genericsOptions: SymbolDisplayGenericsOptions.None,
+                memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
+                parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeRef,
+                miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
+            return methodSymbol.OriginalDefinition.ToDisplayString(displayFormat);
         }
 
         private static void ProcessDelegateDeclaration(SemanticModel semantic, DelegateDeclarationSyntax delegateDecl, ConversionContext context) {

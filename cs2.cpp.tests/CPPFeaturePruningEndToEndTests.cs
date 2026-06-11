@@ -122,6 +122,104 @@ namespace helengine.core.scene {
     }
 
     /// <summary>
+    /// Verifies that native-column-vector conversions specialize the generated <c>helengine.float4x4</c> method bodies during emission instead of rewriting emitted files afterward.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_SpecializesFloat4x4BodiesDuringEmission() {
+        string source = """
+namespace helengine {
+    public struct float3 {
+        public float X;
+        public float Y;
+        public float Z;
+
+        public static float3 Normalize(float3 value) {
+            return value;
+        }
+
+        public static float3 Cross(float3 left, float3 right) {
+            return left;
+        }
+
+        public static float Dot(float3 left, float3 right) {
+            return 0f;
+        }
+
+        public static float3 operator -(float3 left, float3 right) {
+            return left;
+        }
+    }
+
+    public struct float4 {
+        public float X;
+        public float Y;
+        public float Z;
+        public float W;
+    }
+
+    public struct float4x4 {
+        public float M11;
+        public float M12;
+        public float M13;
+        public float M14;
+        public float M21;
+        public float M22;
+        public float M23;
+        public float M24;
+        public float M31;
+        public float M32;
+        public float M33;
+        public float M34;
+        public float M41;
+        public float M42;
+        public float M43;
+        public float M44;
+
+        public static void CreateLookAt(ref float3 cameraPosition, ref float3 cameraTarget, ref float3 cameraUpVector, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void CreateOrthographicOffCenter(float left, float right, float bottom, float top, float zNearPlane, float zFarPlane, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void CreatePerspectiveFieldOfView(float fieldOfView, float aspectRatio, float nearPlaneDistance, float farPlaneDistance, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void CreateTranslation(float x, float y, float z, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void CreateTranslation(ref float3 position, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void Multiply(ref float4x4 matrix1, ref float4x4 matrix2, out float4x4 result) {
+            result = new float4x4();
+        }
+
+        public static void CreateFromQuaternion(ref float4 quaternion, out float4x4 result) {
+            result = new float4x4();
+        }
+    }
+}
+""";
+
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
+        string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "float4x4.cpp"));
+
+        Assert.Contains("result.M14 = -float3::Dot(vector2, cameraPosition);", float4x4Source);
+        Assert.Contains("result.M34 = static_cast<float>((static_cast<double>(zNearPlane) / (static_cast<double>(zNearPlane) - static_cast<double>(zFarPlane))));", float4x4Source);
+        Assert.Contains("result.M43 = -1.0f;", float4x4Source);
+        Assert.Contains("result.M14 = x;", float4x4Source);
+        Assert.Contains("result.M24 = position.Y;", float4x4Source);
+        Assert.Contains("float m11 = (((matrix2.M11 * matrix1.M11) + (matrix2.M12 * matrix1.M21)) + (matrix2.M13 * matrix1.M31)) + (matrix2.M14 * matrix1.M41);", float4x4Source);
+        Assert.Contains("result.M12 = 2f * (num6 - num5);", float4x4Source);
+        Assert.DoesNotContain("result.M41 = x;", float4x4Source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies that the stripped native core-boot preset keeps the raw shader asset data contract needed by runtime helpers even while the shader feature is disabled.
     /// </summary>
     [Fact]
