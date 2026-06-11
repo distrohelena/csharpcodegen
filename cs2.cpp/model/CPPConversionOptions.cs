@@ -51,6 +51,11 @@ namespace cs2.cpp {
         public IReadOnlyDictionary<string, string> TypeRemaps { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <summary>
+        /// Gets or sets caller-provided generic platform settings that must flow through to generated runtime configuration without hardcoded platform branches.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> PlatformOptionValues { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets or sets whether the converter should write a serialized conversion report alongside generated output.
         /// </summary>
         public bool WriteConversionReport { get; set; }

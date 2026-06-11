@@ -220,6 +220,70 @@ namespace helengine {
     }
 
     /// <summary>
+    /// Verifies that generic custom platform file-system hooks are emitted through generated config and the shared file runtime template instead of platform-owned rewrite passes.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenCustomPlatformDeclaresNativeFileSystem_HooksSharedFileRuntimeTemplate() {
+        string source = """
+namespace helengine {
+    public sealed class SceneNode {
+    }
+}
+""";
+
+        string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-custom-platform-file-hook-tests", Guid.NewGuid().ToString("N"));
+        string projectPath = Path.Combine(rootPath, "Fixture.csproj");
+        string sourcePath = Path.Combine(rootPath, "Fixture.cs");
+        string outputPath = Path.Combine(rootPath, "out");
+
+        Directory.CreateDirectory(rootPath);
+        File.WriteAllText(projectPath, CreateProjectFile());
+        File.WriteAllText(sourcePath, source);
+
+        CPPConversionOptions options = new CPPConversionOptions {
+            CompilerProfile = CPPCompilerProfile.CreateGcc(),
+            PlatformProfile = CPPPlatformProfile.CreateCustomHeadless("retroppc", false, CPPGeneratedMathConventionKind.NativeColumnVector, 4),
+            RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+            CollectDiagnostics = true,
+            BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault().WithMode("shaders", CPPFeatureMode.Disabled).WithMode("debug_overlay", CPPFeatureMode.Disabled),
+            RestrictionProfile = new CPPRestrictionProfile {
+                Name = "native-core-boot",
+                ForbidShaders = true,
+                ForbidRuntimeJson = true,
+                ForbidReflectionLikeRuntime = true,
+                ForbidDebugOnlySystems = true
+            },
+            IncludeProjectDefinedPreprocessorSymbols = false,
+            AdditionalPreprocessorSymbols = [
+                "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+            ],
+            LoadNativeRuntimeMetadata = false,
+            WriteConversionReport = true,
+            FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog(),
+            PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                ["native-file-system-header"] = "\"platform/gamecube/GameCubeDiscFileSystem.hpp\"",
+                ["native-file-system-type"] = "helengine::gamecube::GameCubeDiscFileSystem"
+            }
+        };
+
+        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
+        converter.AddCsproj(projectPath);
+        converter.WriteOutput(outputPath);
+
+        string configOutput = File.ReadAllText(Path.Combine(outputPath, "helcpp_config.hpp"));
+        string fileSource = File.ReadAllText(Path.Combine(outputPath, "system", "io", "file.cpp"));
+        Assert.Contains("#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM 1", configOutput);
+        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER \"platform/gamecube/GameCubeDiscFileSystem.hpp\"", configOutput);
+        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE helengine::gamecube::GameCubeDiscFileSystem", configOutput);
+        Assert.Contains("#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER", fileSource);
+        Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(fileName)", fileSource);
+        Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::Exists(fileName)", fileSource);
+        Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(filePath)", fileSource);
+        Assert.DoesNotContain("HE_CPP_PLATFORM_GAMECUBE", fileSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies that the stripped native core-boot preset keeps the raw shader asset data contract needed by runtime helpers even while the shader feature is disabled.
     /// </summary>
     [Fact]

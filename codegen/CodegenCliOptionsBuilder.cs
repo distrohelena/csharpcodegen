@@ -46,6 +46,7 @@ public static class CodegenCliOptionsBuilder {
         if (TryGetStringOption(parsedArguments.SelectedOptions, "type-remaps", out string typeRemaps)) {
             options.TypeRemaps = ParseTypeRemaps(typeRemaps);
         }
+        options.PlatformOptionValues = new Dictionary<string, string>(parsedArguments.SelectedOptions, StringComparer.OrdinalIgnoreCase);
 
         return options;
     }

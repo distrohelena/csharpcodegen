@@ -2,8 +2,8 @@
 
 #include "helcpp_config.hpp"
 
-#if HE_CPP_PLATFORM_GAMECUBE
-#include "platform/gamecube/GameCubeDiscFileSystem.hpp"
+#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
+#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
 #endif
 
 #include <fstream>
@@ -14,9 +14,9 @@ bool File::Exists(const char* fileName) {
 		return false;
 	}
 
-#if HE_CPP_PLATFORM_GAMECUBE
-	if (helengine::gamecube::GameCubeDiscFileSystem::CanHandlePath(fileName)) {
-		return helengine::gamecube::GameCubeDiscFileSystem::Exists(fileName);
+#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
+	if (HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(fileName)) {
+		return HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::Exists(fileName);
 	}
 #endif
 
@@ -53,9 +53,9 @@ FileStream File::Open(const std::string& filePath, FileMode fileMode)
 
 FileStream* File::OpenRead(const char* filePath)
 {
-#if HE_CPP_PLATFORM_GAMECUBE
-	if (helengine::gamecube::GameCubeDiscFileSystem::CanHandlePath(filePath)) {
-		return helengine::gamecube::GameCubeDiscFileSystem::OpenRead(filePath);
+#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
+	if (HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(filePath)) {
+		return HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(filePath);
 	}
 #endif
 

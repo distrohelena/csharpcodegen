@@ -45,8 +45,14 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_EXCEPTIONS {ToDefineValue(options.RuntimeProfile.UseExceptions)}",
                 $"#define HE_CPP_USE_RTTI {ToDefineValue(options.RuntimeProfile.UseRtti)}",
                 $"#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN {ToDefineValue(options.PlatformProfile.IsLittleEndian)}",
-                $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}"
+                $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}",
+                $"#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM {ToDefineValue(HasCustomFileSystem(options))}"
             };
+
+            if (HasCustomFileSystem(options)) {
+                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER {GetRequiredPlatformOption(options, \"native-file-system-header\")}");
+                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE {GetRequiredPlatformOption(options, \"native-file-system-type\")}");
+            }
 
             AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());
 
@@ -60,6 +66,33 @@ namespace cs2.cpp {
 
         static int ToDefineValue(bool value) {
             return value ? 1 : 0;
+        }
+
+        static bool HasCustomFileSystem(CPPConversionOptions options) {
+            return TryGetPlatformOption(options, "native-file-system-header", out _) &&
+                TryGetPlatformOption(options, "native-file-system-type", out _);
+        }
+
+        static bool TryGetPlatformOption(CPPConversionOptions options, string optionName, out string value) {
+            value = string.Empty;
+            if (options?.PlatformOptionValues == null || string.IsNullOrWhiteSpace(optionName)) {
+                return false;
+            }
+
+            if (!options.PlatformOptionValues.TryGetValue(optionName, out string rawValue) || string.IsNullOrWhiteSpace(rawValue)) {
+                return false;
+            }
+
+            value = rawValue;
+            return true;
+        }
+
+        static string GetRequiredPlatformOption(CPPConversionOptions options, string optionName) {
+            if (!TryGetPlatformOption(options, optionName, out string value)) {
+                throw new InvalidOperationException($"Missing required platform option '{optionName}' for generated config emission.");
+            }
+
+            return value;
         }
 
         static void AppendFeatureDefines(List<string> lines, CPPBuildUsageReport buildUsageReport) {
