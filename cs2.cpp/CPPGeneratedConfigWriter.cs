@@ -50,8 +50,8 @@ namespace cs2.cpp {
             };
 
             if (HasCustomFileSystem(options)) {
-                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER {GetRequiredPlatformOption(options, \"native-file-system-header\")}");
-                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE {GetRequiredPlatformOption(options, \"native-file-system-type\")}");
+                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER {GetRequiredPlatformOption(options, "native-file-system-header")}");
+                lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE {GetRequiredPlatformOption(options, "native-file-system-type")}");
             }
 
             AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());

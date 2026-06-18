@@ -1985,6 +1985,18 @@ namespace cs2.cpp {
             return methodSymbol.Name + GetRefModifierSuffix(methodSymbol);
         }
 
+        string ResolveConvertedFunctionName(IMethodSymbol methodSymbol, ConversionFunction generatedFunction = null) {
+            if (generatedFunction != null) {
+                return GetEmittedFunctionName(generatedFunction);
+            }
+
+            if (TryResolveGeneratedFunction(methodSymbol, out ConversionFunction resolvedGeneratedFunction)) {
+                return GetEmittedFunctionName(resolvedGeneratedFunction);
+            }
+
+            return GetEmittedFunctionName(methodSymbol);
+        }
+
         static string GetConversionOperatorFunctionName(IMethodSymbol methodSymbol) {
             if (methodSymbol == null) {
                 return string.Empty;
@@ -2001,6 +2013,21 @@ namespace cs2.cpp {
                 ?? methodSymbol.ReturnType?.Name
                 ?? "Unknown";
             return operatorPrefix + targetName.Replace('`', '_');
+        }
+
+        static string BuildSourceMethodKey(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return string.Empty;
+            }
+
+            SymbolDisplayFormat displayFormat = new SymbolDisplayFormat(
+                globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
+                typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+                genericsOptions: SymbolDisplayGenericsOptions.None,
+                memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
+                parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeParamsRefOut,
+                miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
+            return methodSymbol.OriginalDefinition.ToDisplayString(displayFormat);
         }
 
         static string GetRefModifierSuffix(ConversionFunction function) {
@@ -3314,7 +3341,7 @@ namespace cs2.cpp {
                             lines.Add("template ");
                         }
 
-                        lines.Add(GetEmittedFunctionName(invokedMemberMethodSymbol));
+                        lines.Add(ResolveConvertedFunctionName(invokedMemberMethodSymbol));
                         AppendInvocationGenericArgumentsFromSyntax(semantic, context, containingInvocation.Expression, lines);
                         VariableType resolvedInvocationType = ResolveMemberAccessResultType(invokedMemberMethodSymbol) ?? VariableUtil.GetVarType(invokedMemberMethodSymbol.ReturnType);
                         VariablePath resolvedInvocationPath = ResolveMemberAccessResultPath(useStaticAccess, result.VarPath, invokedMemberMethodSymbol);
@@ -4761,7 +4788,7 @@ namespace cs2.cpp {
 
             invocationLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
             invocationLines.Add("::");
-            invocationLines.Add(GetEmittedFunctionName(extensionMethodSymbol));
+            invocationLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
             AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationLines);
             invocationLines.Add("(");
 
@@ -4849,7 +4876,7 @@ namespace cs2.cpp {
                 lines.Add("template ");
             }
 
-            lines.Add(GetEmittedFunctionName(invokedMethodSymbol));
+            lines.Add(ResolveConvertedFunctionName(invokedMethodSymbol));
             AppendInvocationGenericArgumentsFromSyntax(semantic, context, invocationExpression.Expression, lines);
 
             VariableType invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
@@ -5143,7 +5170,7 @@ namespace cs2.cpp {
                 currentClass.SourceIncludes.Add("runtime/native_exceptions.hpp");
             }
 
-            string emittedFunctionName = GetEmittedFunctionName(invokedMethodSymbol);
+            string emittedFunctionName = ResolveConvertedFunctionName(invokedMethodSymbol);
             if (invokedMethodSymbol.ReturnType != null && invokedMethodSymbol.ReturnType.SpecialType != SpecialType.System_Void) {
                 invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
                 VariableType convertedInvocationType = ConvertToCPPType(invocationType, out CPPTypeData invocationTypeData);
@@ -8551,7 +8578,7 @@ namespace cs2.cpp {
             if (TryResolveGenericInvocationFunctionByArguments(semantic, context, generic, out ConversionFunction resolvedGeneratedFunction)) {
                 lines.Add(GetEmittedFunctionName(resolvedGeneratedFunction));
             } else if (methodSymbol != null) {
-                lines.Add(GetEmittedFunctionName(methodSymbol));
+                lines.Add(ResolveConvertedFunctionName(methodSymbol));
             } else {
                 lines.Add(generic.Identifier.ToString());
             }
@@ -10017,7 +10044,7 @@ namespace cs2.cpp {
                 parameterTypeNames.Add(parameterTypeName);
             }
 
-            string emittedTargetName = $"{containingTypeName}::{methodSymbol.Name}{GetMethodPointerRefModifierSuffix(methodSymbol)}{RenderMethodPointerGenericArguments(methodSymbol, context)}";
+            string emittedTargetName = $"{containingTypeName}::{ResolveConvertedFunctionName(methodSymbol)}{RenderMethodPointerGenericArguments(methodSymbol, context)}";
             string functionPointerSignature = methodSymbol.IsStatic
                 ? $"{returnTypeName} (*)({string.Join(", ", parameterTypeNames)})"
                 : $"{returnTypeName} ({containingTypeName}::*)({string.Join(", ", parameterTypeNames)})";
@@ -11533,6 +11560,15 @@ namespace cs2.cpp {
 
             if (generatedClass?.Functions == null) {
                 return false;
+            }
+
+            string sourceMethodKey = BuildSourceMethodKey(methodSymbol);
+            if (!string.IsNullOrWhiteSpace(sourceMethodKey)) {
+                function = generatedClass.Functions.FirstOrDefault(candidate =>
+                    string.Equals(candidate.SourceMethodKey, sourceMethodKey, StringComparison.Ordinal));
+                if (function != null) {
+                    return true;
+                }
             }
 
             function = generatedClass.Functions.FirstOrDefault(candidate => MatchesMethodSymbol(candidate, methodSymbol));
