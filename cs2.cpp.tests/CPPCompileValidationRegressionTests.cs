@@ -7094,6 +7094,47 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures value-type operator overloads keep canonical C++ operator names even when the parameter-lowering path would otherwise add ref/out suffixes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLargeValueTypeOperators_DoesNotMangleOperatorNames() {
+            string source = """
+                public enum ButtonState {
+                    Released,
+                    Pressed
+                }
+
+                public struct MouseState {
+                    int _x;
+                    int _y;
+                    int _scrollWheelValue;
+                    int _horizontalScrollWheelValue;
+                    byte _buttons;
+
+                    public static bool operator ==(MouseState left, MouseState right) {
+                        return left._x == right._x &&
+                               left._y == right._y &&
+                               left._buttons == right._buttons &&
+                               left._scrollWheelValue == right._scrollWheelValue &&
+                               left._horizontalScrollWheelValue == right._horizontalScrollWheelValue;
+                    }
+
+                    public static bool operator !=(MouseState left, MouseState right) {
+                        return !(left == right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MouseState.hpp"));
+
+            Assert.Contains("friend bool operator==(", headerOutput);
+            Assert.Contains("friend bool operator!=(", headerOutput);
+            Assert.DoesNotContain("operator==__", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("operator!=__", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generic object creation keeps the concrete generated type instead of collapsing to the interface target type.
         /// </summary>
         [Fact]

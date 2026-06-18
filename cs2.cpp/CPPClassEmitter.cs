@@ -3347,6 +3347,10 @@ namespace cs2.cpp {
                 return conversionClass.GetEmittedTypeName();
             }
 
+            if (IsFreeOperatorFunction(function)) {
+                return function.Name;
+            }
+
             return function.Name + GetRefModifierSuffix(function);
         }
 

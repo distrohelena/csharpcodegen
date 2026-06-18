@@ -1164,8 +1164,8 @@ namespace cs2.cpp.tests {
         /// Ensures C# event declarations resolve to the lightweight runtime event contract instead of a missing generated header.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithActionEvent_UsesRuntimeEventHeader() {
-            string source = """
+    public void WriteOutput_WithActionEvent_UsesRuntimeEventHeader() {
+        string source = """
                 using System;
 
                 public interface IInteractable2D {
@@ -1179,14 +1179,49 @@ namespace cs2.cpp.tests {
             Assert.Contains("#include \"runtime/native_event.hpp\"", header);
             Assert.DoesNotContain("#include \"Event.hpp\"", header, StringComparison.Ordinal);
             Assert.Contains("::Event CursorEvent", output.GeneratedText);
-            AssertRuntimeRequirement(output.Report, "NativeEvent");
-            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_event.hpp")));
-        }
+        AssertRuntimeRequirement(output.Report, "NativeEvent");
+        Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_event.hpp")));
+    }
 
-        /// <summary>
-        /// Ensures custom delegate declarations lower to callable runtime aliases instead of empty synthetic delegate classes.
-        /// </summary>
-        [Fact]
+    /// <summary>
+    /// Ensures instance-method event subscriptions lower through an explicit bound runtime helper instead of emitting unusable unbound member pointers.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithInstanceEventSubscription_UsesBoundRuntimeEventHelper() {
+        string source = """
+                using System;
+
+                public class InteractableComponent {
+                    public event Action<int, int, int> CursorEvent;
+                }
+
+                public class NintendoDsReturnOverlayComponent {
+                    InteractableComponent BoundInteractable;
+
+                    public void Bind() {
+                        BoundInteractable.CursorEvent += HandleCursorEvent;
+                    }
+
+                    public void Unbind() {
+                        BoundInteractable.CursorEvent -= HandleCursorEvent;
+                    }
+
+                    void HandleCursorEvent(int relativePosition, int delta, int interaction) {
+                    }
+                }
+                """;
+
+        ConversionOutput output = RunConversion(source);
+        string sourceText = File.ReadAllText(Path.Combine(output.OutputPath, "NintendoDsReturnOverlayComponent.cpp"));
+
+        Assert.Contains("CursorEvent += Event::Bind(this, static_cast<void (NintendoDsReturnOverlayComponent::*)(int32_t, int32_t, int32_t)>(&NintendoDsReturnOverlayComponent::HandleCursorEvent))", sourceText, StringComparison.Ordinal);
+        Assert.Contains("CursorEvent -= Event::Bind(this, static_cast<void (NintendoDsReturnOverlayComponent::*)(int32_t, int32_t, int32_t)>(&NintendoDsReturnOverlayComponent::HandleCursorEvent))", sourceText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures custom delegate declarations lower to callable runtime aliases instead of empty synthetic delegate classes.
+    /// </summary>
+    [Fact]
         public void WriteOutput_WithCustomDelegateDeclaration_UsesRuntimeDelegateAlias() {
             string source = """
                 public delegate void RefinementScheduler(int frameIndex, out int rootRefinementSize, out bool usePriorityQueue);

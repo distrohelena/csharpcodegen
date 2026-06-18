@@ -1103,6 +1103,7 @@ namespace cs2.cpp {
             }
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
                 lines.Add("std::string()");
+            } else if (TryAppendEventMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else if (TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
             } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else if (TryAppendArrayAsListAssignmentValue(semantic, context, assignment, rightLines, lines)) {
@@ -1379,6 +1380,44 @@ namespace cs2.cpp {
                 methodGroupSymbol,
                 assignment.Right,
                 lines);
+        }
+
+        bool TryAppendEventMethodGroupAssignmentValue(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                assignment == null ||
+                lines == null ||
+                !assignment.IsKind(SyntaxKind.AddAssignmentExpression) &&
+                !assignment.IsKind(SyntaxKind.SubtractAssignmentExpression) ||
+                !IsEventExpression(semantic, assignment.Left)) {
+                return false;
+            }
+
+            IMethodSymbol methodGroupSymbol = ResolveMethodSymbol(semantic.GetSymbolInfo(assignment.Right));
+            if (methodGroupSymbol == null) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeEvent");
+            if (methodGroupSymbol.IsStatic) {
+                lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+                return true;
+            }
+
+            if (!TryResolveBoundDelegateReceiverText(semantic, context, assignment.Right, methodGroupSymbol, out string receiverText)) {
+                return false;
+            }
+
+            lines.Add("Event::Bind(");
+            lines.Add(receiverText);
+            lines.Add(", ");
+            lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+            lines.Add(")");
+            return true;
         }
 
         bool TryGetDelegateLambdaWrapperTypeName(

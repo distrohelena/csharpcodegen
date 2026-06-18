@@ -207,15 +207,15 @@ namespace helengine {
 """;
 
         string outputPath = RunConversionWithPreset(source, "native-core-boot");
-        string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "float4x4.cpp"));
+        string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "helengine_float4x4.cpp"));
 
-        Assert.Contains("result.M14 = -float3::Dot(vector2, cameraPosition);", float4x4Source);
-        Assert.Contains("result.M34 = static_cast<float>((static_cast<double>(zNearPlane) / (static_cast<double>(zNearPlane) - static_cast<double>(zFarPlane))));", float4x4Source);
+        Assert.Contains("result.M41 = -float3::Dot(vector2, cameraPosition);", float4x4Source);
+        Assert.Contains("result.M43 = static_cast<float>((static_cast<double>(zNearPlane) / (static_cast<double>(zNearPlane) - static_cast<double>(zFarPlane))));", float4x4Source);
         Assert.Contains("result.M43 = -1.0f;", float4x4Source);
         Assert.Contains("result.M14 = x;", float4x4Source);
         Assert.Contains("result.M24 = position.Y;", float4x4Source);
         Assert.Contains("float m11 = (((matrix2.M11 * matrix1.M11) + (matrix2.M12 * matrix1.M21)) + (matrix2.M13 * matrix1.M31)) + (matrix2.M14 * matrix1.M41);", float4x4Source);
-        Assert.Contains("result.M12 = 2f * (num6 - num5);", float4x4Source);
+        Assert.Contains("result.M12 = 2.0f * (num6 + num5);", float4x4Source);
         Assert.DoesNotContain("result.M41 = x;", float4x4Source, StringComparison.Ordinal);
     }
 
@@ -273,6 +273,7 @@ namespace helengine {
 
         string configOutput = File.ReadAllText(Path.Combine(outputPath, "helcpp_config.hpp"));
         string fileSource = File.ReadAllText(Path.Combine(outputPath, "system", "io", "file.cpp"));
+        string fileStreamSource = File.ReadAllText(Path.Combine(outputPath, "system", "io", "file-stream.cpp"));
         Assert.Contains("#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM 1", configOutput);
         Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER \"platform/gamecube/GameCubeDiscFileSystem.hpp\"", configOutput);
         Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE helengine::gamecube::GameCubeDiscFileSystem", configOutput);
@@ -281,6 +282,10 @@ namespace helengine {
         Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::Exists(fileName)", fileSource);
         Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(filePath)", fileSource);
         Assert.DoesNotContain("HE_CPP_PLATFORM_GAMECUBE", fileSource, StringComparison.Ordinal);
+        Assert.Contains("#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER", fileStreamSource);
+        Assert.Contains("mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)", fileStreamSource);
+        Assert.Contains("std::unique_ptr<FileStream> customStream(HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(path));", fileStreamSource);
+        Assert.DoesNotContain("HE_CPP_PLATFORM_GAMECUBE", fileStreamSource, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -82,6 +82,25 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the native event runtime declares an explicit bound-instance helper instead of silently discarding member-method subscriptions.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_event_declares_bound_instance_subscription_support() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_event.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("static auto Bind(TInstance* instance, void (TInstance::*method)(TArgs...))", source, StringComparison.Ordinal);
+        Assert.Contains("Event& operator+=(BoundHandler<TInstance, TArgs...> handler)", source, StringComparison.Ordinal);
+        Assert.Contains("Event& operator-=(BoundHandler<TInstance, TArgs...> handler)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the number runtime template declares the finite-check helper surface directly.
     /// </summary>
     [Fact]
@@ -123,6 +142,30 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("memoryBuffer = ReadPs2DiscFile", source, StringComparison.Ordinal);
         Assert.Contains("ownsMemoryBuffer = true;", source, StringComparison.Ordinal);
         Assert.Contains("writable = false;", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the file-stream runtime template owns the generic custom native file-system handoff instead of requiring downstream generated-code rewrites.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_file_stream_owns_generic_custom_file_system_handoff() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "file-stream.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM", source, StringComparison.Ordinal);
+        Assert.Contains("#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER", source, StringComparison.Ordinal);
+        Assert.Contains("mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)", source, StringComparison.Ordinal);
+        Assert.Contains("std::unique_ptr<FileStream> customStream(HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(path));", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer.swap(customStream->memoryBuffer);", source, StringComparison.Ordinal);
+        Assert.Contains("customStream->file = nullptr;", source, StringComparison.Ordinal);
+        Assert.Contains("customStream->ownsMemoryBuffer = false;", source, StringComparison.Ordinal);
     }
 
     /// <summary>

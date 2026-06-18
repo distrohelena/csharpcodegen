@@ -1,7 +1,12 @@
 #include "file-stream.hpp"
+#include "helcpp_config.hpp"
+#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
+#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
+#endif
 #include <stdexcept>  // For exceptions
 #include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
+#include <memory>
 #include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
@@ -110,6 +115,20 @@ FileStream::FileStream(const uint8_t* data, size_t dataLength)
 
 FileStream::FileStream(const char* path, FileMode mode)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), writable(true) {
+#if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
+    if (path != nullptr && mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)) {
+        std::unique_ptr<FileStream> customStream(HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(path));
+        file = customStream->file;
+        memoryBuffer.swap(customStream->memoryBuffer);
+        position = customStream->position;
+        length = customStream->length;
+        ownsMemoryBuffer = customStream->ownsMemoryBuffer;
+        writable = customStream->writable;
+        customStream->file = nullptr;
+        customStream->ownsMemoryBuffer = false;
+        return;
+    }
+#endif
 #if HE_CPP_PLATFORM_PS2
     std::string resolvedPs2ReadPath = FileStreamSupportResolvePs2DiscReadPath(path != nullptr ? path : "");
     bool usesPs2DirectRead = mode == FileMode::Open && FileStreamSupportStartsWithPs2CdromPrefix(resolvedPs2ReadPath);
