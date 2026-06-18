@@ -15,7 +15,7 @@ public class CPPFeatureOwnedRuntimeRequirementTests {
         string source = """
 using System.IO;
 
-namespace helengine.core.shaders.compilation {
+namespace ExampleEngine.Core.Shaders.Compilation {
     public class ShaderConditionalPreprocessor {
         public string Filter(string source) {
             using StringReader reader = new StringReader(source);
@@ -44,7 +44,7 @@ namespace helengine.core.shaders.compilation {
     /// </summary>
     [Fact]
     public void Catalog_MapsRestrictedHelpersToExpandedFeatureBuckets() {
-        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog(CPPTestFeatureCatalogFactory.CreateHelengineCatalog());
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog(CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog());
 
         Assert.True(catalog.TryGet("NativeType", out CPPRuntimeRequirementDefinition nativeType));
         Assert.Empty(nativeType.OwningFeatureIds);
@@ -77,7 +77,7 @@ namespace helengine.core.shaders.compilation {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.BuildFeatureProfile = featureProfile;
-        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);

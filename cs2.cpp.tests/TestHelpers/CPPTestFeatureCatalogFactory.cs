@@ -5,10 +5,10 @@ namespace cs2.cpp.tests.TestHelpers;
 /// </summary>
 public static class CPPTestFeatureCatalogFactory {
     /// <summary>
-    /// Creates one helengine-shaped feature catalog used by migration coverage while the generic metadata path replaces the old built-in roots.
+    /// Creates one sample feature catalog used by generic feature-scanning and pruning tests.
     /// </summary>
-    /// <returns>External feature catalog that matches the current helengine metadata shape.</returns>
-    public static CPPExternalFeatureCatalog CreateHelengineCatalog() {
+    /// <returns>External feature catalog populated with caller-owned sample type roots.</returns>
+    public static CPPExternalFeatureCatalog CreateSampleFeatureCatalog() {
         return CPPExternalFeatureCatalogLoader.LoadFromJson("""
 {
   "features": [
@@ -23,23 +23,23 @@ public static class CPPTestFeatureCatalogFactory {
     { "id": "text_processing", "defaultMode": "auto", "conflictPolicy": "error" }
   ],
   "rootRules": [
-    { "typeName": "helengine.RenderManager2D", "featureIds": [ "render2d" ] },
-    { "typeName": "helengine.IDrawable2D", "featureIds": [ "render2d" ] },
-    { "typeName": "helengine.ISpriteDrawable2D", "featureIds": [ "sprites", "render2d" ] },
-    { "typeName": "helengine.core.graphics.ISpriteRenderable", "featureIds": [ "sprites", "render2d" ] },
-    { "typeName": "helengine.SpriteComponent", "featureIds": [ "sprites", "render2d" ] },
-    { "typeName": "helengine.ITextDrawable2D", "featureIds": [ "text2d", "render2d" ] },
-    { "typeName": "helengine.TextComponent", "featureIds": [ "text2d", "render2d" ] },
-    { "typeName": "helengine.DebugComponent", "featureIds": [ "debug_overlay" ] },
-    { "typeName": "helengine.DebugOverlayComponent", "featureIds": [ "debug_overlay" ] },
-    { "typeName": "helengine.ShaderAsset", "featureIds": [ "shaders", "text_processing" ] },
-    { "typeName": "helengine.ShaderRuntimeMaterial", "featureIds": [ "shaders", "text_processing" ] },
-    { "typeName": "helengine.IShaderRenderManager3D", "featureIds": [ "shaders", "text_processing" ] },
-    { "typeName": "helengine.core.content.RuntimeManifestJsonReader", "featureIds": [ "runtime_json", "text_processing" ] },
-    { "typeName": "helengine.TextContentProcessor", "featureIds": [ "text_processing" ] },
-    { "typeName": "helengine.core.content.RuntimeStartupManifest", "featureIds": [ "runtime_json", "host_file_system" ] },
-    { "typeName": "helengine.core.content.RuntimeCodeModuleManifest", "featureIds": [ "runtime_json", "host_file_system" ] },
-    { "typeName": "helengine.ContentManager", "featureIds": [ "host_file_system", "text_processing" ] }
+    { "typeName": "ExampleEngine.RenderManager2D", "featureIds": [ "render2d" ] },
+    { "typeName": "ExampleEngine.IDrawable2D", "featureIds": [ "render2d" ] },
+    { "typeName": "ExampleEngine.ISpriteDrawable2D", "featureIds": [ "sprites", "render2d" ] },
+    { "typeName": "ExampleEngine.Core.Graphics.ISpriteRenderable", "featureIds": [ "sprites", "render2d" ] },
+    { "typeName": "ExampleEngine.SpriteComponent", "featureIds": [ "sprites", "render2d" ] },
+    { "typeName": "ExampleEngine.ITextDrawable2D", "featureIds": [ "text2d", "render2d" ] },
+    { "typeName": "ExampleEngine.TextComponent", "featureIds": [ "text2d", "render2d" ] },
+    { "typeName": "ExampleEngine.DebugComponent", "featureIds": [ "debug_overlay" ] },
+    { "typeName": "ExampleEngine.DebugOverlayComponent", "featureIds": [ "debug_overlay" ] },
+    { "typeName": "ExampleEngine.ShaderAsset", "featureIds": [ "shaders", "text_processing" ] },
+    { "typeName": "ExampleEngine.ShaderRuntimeMaterial", "featureIds": [ "shaders", "text_processing" ] },
+    { "typeName": "ExampleEngine.IShaderRenderManager3D", "featureIds": [ "shaders", "text_processing" ] },
+    { "typeName": "ExampleEngine.Core.Content.RuntimeManifestJsonReader", "featureIds": [ "runtime_json", "text_processing" ] },
+    { "typeName": "ExampleEngine.TextContentProcessor", "featureIds": [ "text_processing" ] },
+    { "typeName": "ExampleEngine.Core.Content.RuntimeStartupManifest", "featureIds": [ "runtime_json", "host_file_system" ] },
+    { "typeName": "ExampleEngine.Core.Content.RuntimeCodeModuleManifest", "featureIds": [ "runtime_json", "host_file_system" ] },
+    { "typeName": "ExampleEngine.ContentManager", "featureIds": [ "host_file_system", "text_processing" ] }
   ],
   "runtimeRequirements": [
     { "requirementId": "StringBuilder", "featureIds": [ "debug_overlay", "shaders", "text_processing" ] },

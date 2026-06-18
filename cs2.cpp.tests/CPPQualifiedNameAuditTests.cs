@@ -38,14 +38,14 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithNamespaceQualifiedEngineTypes_UsesLocalGeneratedHeaderIncludes() {
             string source = """
-                namespace helengine {
+                namespace ExampleMath {
                     public class float3 {
                     }
 
                     public class float4 {
-                        public helengine.float3 Axis;
+                        public ExampleMath.float3 Axis;
 
-                        public static helengine.float3 Rotate(helengine.float3 value) {
+                        public static ExampleMath.float3 Rotate(ExampleMath.float3 value) {
                             return value;
                         }
                     }
@@ -57,10 +57,10 @@ namespace cs2.cpp.tests {
             string float4Source = File.ReadAllText(Path.Combine(output.OutputPath, "float4.cpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"examplemath.float3.hpp\"", float4Header, StringComparison.Ordinal);
             Assert.Contains("#include \"float3.hpp\"", float4Source);
-            Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Source, StringComparison.Ordinal);
-            Assert.False(File.Exists(Path.Combine(output.OutputPath, "helengine_float4.hpp")));
+            Assert.DoesNotContain("#include \"examplemath.float3.hpp\"", float4Source, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "examplemath_float4.hpp")));
         }
 
         /// <summary>
@@ -69,7 +69,7 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithCaseOnlyQualifiedTypeCollision_EmitsDistinctHeaderPaths() {
             string source = """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -84,14 +84,14 @@ namespace cs2.cpp.tests {
                 }
 
                 public class CollisionFixture {
-                    public helengine.int2 EngineSize;
+                    public ExampleMath.int2 EngineSize;
                     public BepuUtilities.Int2 UtilitySize;
                 }
                 """;
 
             ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
             string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "CollisionFixture.hpp"));
-            string engineHeaderPath = Path.Combine(output.OutputPath, "helengine_int2.hpp");
+            string engineHeaderPath = Path.Combine(output.OutputPath, "examplemath_int2.hpp");
             string utilityHeaderPath = Path.Combine(output.OutputPath, "BepuUtilities_Int2.hpp");
 
             AssertNoDiagnostic(report, "IdentifierName");
@@ -99,7 +99,7 @@ namespace cs2.cpp.tests {
             Assert.True(File.Exists(utilityHeaderPath));
             Assert.Contains("class int2", File.ReadAllText(engineHeaderPath));
             Assert.Contains("class Int2", File.ReadAllText(utilityHeaderPath));
-            Assert.Contains("#include \"helengine_int2.hpp\"", fixtureHeader);
+            Assert.Contains("#include \"examplemath_int2.hpp\"", fixtureHeader);
             Assert.Contains("#include \"BepuUtilities_Int2.hpp\"", fixtureHeader);
             Assert.DoesNotContain("#include \"int2.hpp\"", fixtureHeader, StringComparison.Ordinal);
         }
@@ -126,7 +126,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 coreSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -144,7 +144,7 @@ namespace cs2.cpp.tests {
                 }
 
                 public class CollisionFixture {
-                    public helengine.int2 EngineSize;
+                    public ExampleMath.int2 EngineSize;
                     public BepuUtilities.Int2 UtilitySize;
                 }
                 """);
@@ -161,10 +161,10 @@ namespace cs2.cpp.tests {
                 .ToArray()!;
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.True(File.Exists(Path.Combine(coreOutputPath, "helengine_int2.hpp")));
-            Assert.True(File.Exists(Path.Combine(physicsOutputPath, "helengine_int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(coreOutputPath, "examplemath_int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(physicsOutputPath, "examplemath_int2.hpp")));
             Assert.Contains("BepuUtilities_Int2.hpp", physicsHeaderFileNames);
-            Assert.Contains("helengine_int2.hpp", coreHeaderFileNames);
+            Assert.Contains("examplemath_int2.hpp", coreHeaderFileNames);
             Assert.DoesNotContain("int2.hpp", physicsHeaderFileNames, StringComparer.Ordinal);
         }
 
@@ -199,7 +199,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 coreSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -212,14 +212,14 @@ namespace cs2.cpp.tests {
                 """
                 using System.Runtime.CompilerServices;
 
-                [assembly: TypeForwardedTo(typeof(helengine.int2))]
+                [assembly: TypeForwardedTo(typeof(ExampleMath.int2))]
                 """);
 
             File.WriteAllText(
                 appSourcePath,
                 """
                 public class App {
-                    public helengine.int2 Size;
+                    public ExampleMath.int2 Size;
                 }
                 """);
 
@@ -228,8 +228,8 @@ namespace cs2.cpp.tests {
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.cpp")));
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.hpp")));
-            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.cpp")));
-            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "examplemath_int2.cpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "examplemath_int2.hpp")));
         }
 
         /// <summary>
@@ -254,7 +254,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 sharedSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -280,7 +280,7 @@ namespace cs2.cpp.tests {
                 bridgeSourcePath,
                 """
                 public class BridgeType {
-                    public helengine.int2 Size;
+                    public ExampleMath.int2 Size;
                 }
                 """);
 
@@ -288,7 +288,7 @@ namespace cs2.cpp.tests {
                 appSourcePath,
                 """
                 public class App {
-                    public helengine.int2 Size;
+                    public ExampleMath.int2 Size;
                     public BridgeType Bridge;
                 }
                 """);
@@ -296,7 +296,7 @@ namespace cs2.cpp.tests {
             RunConversionForProject(appProjectPath, outputPath, out JsonDocument report);
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.cpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "examplemath_int2.cpp")));
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.cpp")));
         }
 
@@ -329,7 +329,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 coreSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -351,7 +351,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 appSourcePath,
                 """
-                global using helengine;
+                global using ExampleMath;
 
                 public class Fixture {
                     public int2 EngineSize;
@@ -365,7 +365,7 @@ namespace cs2.cpp.tests {
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.Contains("::int2 EngineSize;", fixtureHeader);
             Assert.Contains("::Int2 UtilitySize;", fixtureHeader);
-            Assert.DoesNotContain("::helengine_int2 EngineSize;", fixtureHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("::examplemath_int2 EngineSize;", fixtureHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -391,7 +391,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 coreSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                         public float X;
                         public float Y;
@@ -422,7 +422,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 appSourcePath,
                 """
-                using helengine;
+                using ExampleMath;
 
                 public class Fixture {
                     public void Tick() {
@@ -440,13 +440,13 @@ namespace cs2.cpp.tests {
             string fixtureSource = File.ReadAllText(Path.Combine(outputPath, "Fixture.cpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.Contains("#include \"helengine_float4.hpp\"", fixtureSource);
+            Assert.Contains("#include \"examplemath_float4.hpp\"", fixtureSource);
             Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, 1.0f, delta);", fixtureSource);
             Assert.Contains("float4::Concatenate__ref0_ref1_out2(current, delta, next);", fixtureSource);
         }
 
         /// <summary>
-        /// Ensures gameplay modules that reference helengine assemblies as metadata still emit deterministic overload suffixes for imported engine math helpers.
+        /// Ensures gameplay modules that reference metadata-only assemblies still emit deterministic overload suffixes for imported math helpers.
         /// </summary>
         [Fact]
         public void WriteOutput_WithMetadataReferencedEngineStaticOverloads_UsesEmittedFunctionSuffixes() {
@@ -456,7 +456,7 @@ namespace cs2.cpp.tests {
             string coreSourcePath = Path.Combine(rootPath, "core", "MathTypes.cs");
             string appSourcePath = Path.Combine(rootPath, "app", "Fixture.cs");
             string outputPath = Path.Combine(rootPath, "out");
-            string coreAssemblyPath = Path.Combine(rootPath, "core", "bin", "Debug", "net9.0", "helengine.core.dll");
+            string coreAssemblyPath = Path.Combine(rootPath, "core", "bin", "Debug", "net9.0", "examplemath.core.dll");
 
             Directory.CreateDirectory(Path.GetDirectoryName(coreProjectPath) ?? rootPath);
             Directory.CreateDirectory(Path.GetDirectoryName(appProjectPath) ?? rootPath);
@@ -470,20 +470,20 @@ namespace cs2.cpp.tests {
                     <LangVersion>preview</LangVersion>
                     <ImplicitUsings>enable</ImplicitUsings>
                     <Nullable>disable</Nullable>
-                    <AssemblyName>helengine.core</AssemblyName>
+                    <AssemblyName>examplemath.core</AssemblyName>
                   </PropertyGroup>
                 </Project>
                 """);
             File.WriteAllText(
                 appProjectPath,
                 CreateProjectFileWithAssemblyReference(
-                    "helengine.core",
+                    "examplemath.core",
                     Path.GetRelativePath(Path.GetDirectoryName(appProjectPath) ?? rootPath, coreAssemblyPath)));
 
             File.WriteAllText(
                 coreSourcePath,
                 """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                         public float X;
                         public float Y;
@@ -514,7 +514,7 @@ namespace cs2.cpp.tests {
             File.WriteAllText(
                 appSourcePath,
                 """
-                using helengine;
+                using ExampleMath;
 
                 public class Fixture {
                     public void Tick() {
@@ -555,7 +555,7 @@ namespace cs2.cpp.tests {
             string fixtureSource = File.ReadAllText(Path.Combine(outputPath, "Fixture.cpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.Contains("#include \"helengine_float4.hpp\"", fixtureSource);
+            Assert.Contains("#include \"examplemath_float4.hpp\"", fixtureSource);
             Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, 1.0f, delta);", fixtureSource);
             Assert.Contains("float4::Concatenate__ref0_ref1_out2(current, delta, next);", fixtureSource);
         }

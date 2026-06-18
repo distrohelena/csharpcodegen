@@ -13,11 +13,11 @@ public class CPPWindowsHandoffWriterTests {
         string projectPath = Path.Combine(rootPath, "Fixture.csproj");
         string sourcePath = Path.Combine(rootPath, "Fixture.cs");
         string outputPath = Path.Combine(rootPath, "out");
-        string handoffPath = Path.Combine(rootPath, "helengine-windows", "generated", "helengine.core");
+        string handoffPath = Path.Combine(rootPath, "sample-windows", "generated", "sample.core");
 
         Directory.CreateDirectory(rootPath);
         File.WriteAllText(projectPath, CreateProjectFile());
-        File.WriteAllText(sourcePath, "namespace helengine.core { public class CoreBootstrap { } }");
+        File.WriteAllText(sourcePath, "namespace ExampleEngine.Core { public class CoreBootstrap { } }");
 
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.LoadNativeRuntimeMetadata = false;
@@ -27,12 +27,12 @@ public class CPPWindowsHandoffWriterTests {
         converter.AddCsproj(projectPath);
         converter.WriteOutput(outputPath);
 
-        string handoffContractPath = Path.Combine(handoffPath, "helengine_windows_handoff.cmake");
+        string handoffContractPath = Path.Combine(handoffPath, "generated_windows_handoff.cmake");
 
         Assert.True(File.Exists(Path.Combine(handoffPath, "helcpp_config.hpp")));
         Assert.True(File.Exists(Path.Combine(handoffPath, "runtime", "feature_manifest.hpp")));
         Assert.True(File.Exists(handoffContractPath));
-        Assert.Contains("HELENGINE_GENERATED_CORE_ROOT", File.ReadAllText(handoffContractPath), StringComparison.Ordinal);
+        Assert.Contains("CPP_GENERATED_CORE_ROOT", File.ReadAllText(handoffContractPath), StringComparison.Ordinal);
     }
 
     /// <summary>

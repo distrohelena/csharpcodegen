@@ -16,12 +16,12 @@ public class CPPReachabilityPlannerTests {
     [Fact]
     public void Build_WhenShadersAreDisabled_ExcludesShaderTypesFromReachableSet() {
         ConversionProgram program = CreateProgram("""
-namespace helengine {
+namespace ExampleEngine {
     public class ShaderAsset {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -29,22 +29,22 @@ namespace helengine.core.scene {
 
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
             .WithMode("shaders", CPPFeatureMode.Disabled);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         CPPBuildUsageReport report = CPPFeatureResolver.Resolve(
             profile,
             catalog,
             new[] {
                 new CPPFeatureUsageRoot {
                     FeatureId = "shaders",
-                    RootId = "helengine.core.shaders.ShaderAsset",
+                    RootId = "ExampleEngine.Core.Shaders.ShaderAsset",
                     SourceKind = "TypeReference",
                 }
             });
 
         CPPReachabilityPlan plan = CPPReachabilityPlanner.Build(program, report, catalog);
 
-        Assert.DoesNotContain(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.ShaderAsset");
-        Assert.Contains(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "helengine.core.scene.SceneNode");
+        Assert.DoesNotContain(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "ExampleEngine.ShaderAsset");
+        Assert.Contains(plan.Types, type => type.TypeSymbol?.ToDisplayString() == "ExampleEngine.Core.Scene.SceneNode");
     }
 
     /// <summary>

@@ -59,12 +59,12 @@ public sealed class CodegenCliArgumentParserTests {
             Language = "cpp",
             Endianness = "little"
         };
-        parsedArguments.SelectedOptions["type-remaps"] = "System.Numerics.Vector3=helengine.float3|System.Numerics.Quaternion=helengine.float4";
+        parsedArguments.SelectedOptions["type-remaps"] = "System.Numerics.Vector3=Example.Math.Float3|System.Numerics.Quaternion=Example.Math.Float4";
 
         CPPConversionOptions options = CodegenCliOptionsBuilder.CreateConversionOptions(parsedArguments);
 
-        Assert.Equal("helengine.float3", options.TypeRemaps["System.Numerics.Vector3"]);
-        Assert.Equal("helengine.float4", options.TypeRemaps["System.Numerics.Quaternion"]);
+        Assert.Equal("Example.Math.Float3", options.TypeRemaps["System.Numerics.Vector3"]);
+        Assert.Equal("Example.Math.Float4", options.TypeRemaps["System.Numerics.Quaternion"]);
     }
 
     /// <summary>

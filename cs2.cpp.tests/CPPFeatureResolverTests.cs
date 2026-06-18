@@ -12,7 +12,7 @@ public class CPPFeatureResolverTests {
     /// </summary>
     [Fact]
     public void Resolve_WhenFeatureIsForceDisabled_WinsOverDetectedUsage() {
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
             .WithMode("shaders", CPPFeatureMode.Disabled)
             .WithConflictPolicy("shaders", CPPFeatureConflictPolicy.Error);
@@ -20,7 +20,7 @@ public class CPPFeatureResolverTests {
         CPPBuildUsageReport report = CPPFeatureResolver.Resolve(profile, catalog, new[] {
             new CPPFeatureUsageRoot {
                 FeatureId = "shaders",
-                RootId = "helengine.core.shaders.ShaderAsset",
+                RootId = "ExampleEngine.Core.Shaders.ShaderAsset",
                 SourceKind = "Type",
             }
         });
@@ -36,7 +36,7 @@ public class CPPFeatureResolverTests {
     /// </summary>
     [Fact]
     public void Resolve_WhenFeatureIsForceEnabled_StaysEnabledWithoutDetectedUsage() {
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         CPPBuildFeatureProfile profile = CPPBuildFeatureProfile.CreateDefault()
             .WithMode("sprites", CPPFeatureMode.Enabled);
 

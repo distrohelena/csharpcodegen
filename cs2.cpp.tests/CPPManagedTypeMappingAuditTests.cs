@@ -3,7 +3,7 @@ using cs2.cpp;
 
 namespace cs2.cpp.tests {
     /// <summary>
-    /// Covers managed type mapping regressions that surfaced during native compile validation of generated helengine.core output.
+    /// Covers managed type mapping regressions that surfaced during native compile validation of generated C++ output.
     /// </summary>
     public class CPPManagedTypeMappingAuditTests {
         /// <summary>

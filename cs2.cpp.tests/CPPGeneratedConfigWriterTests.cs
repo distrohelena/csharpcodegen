@@ -29,7 +29,7 @@ public class CPPGeneratedConfigWriterTests {
     /// </summary>
     [Fact]
     public void Register_WhenFeatureOwnedRequirementIsDisabled_SkipsRegistration() {
-        CPPExternalFeatureCatalog catalogMetadata = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalogMetadata = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         CPPConversionReport report = new CPPConversionReport();
         CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog(catalogMetadata);
         CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(catalog, report);
@@ -89,7 +89,7 @@ public class CPPGeneratedConfigWriterTests {
             LoadNativeRuntimeMetadata = true,
             PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
                 ["native-file-system-header"] = "\"platform/retro/RetroDiscFileSystem.hpp\"",
-                ["native-file-system-type"] = "helengine::retro::RetroDiscFileSystem"
+                ["native-file-system-type"] = "ExamplePlatform::RetroDiscFileSystem"
             }
         };
         CPPConversionReport report = new CPPConversionReport();
@@ -107,7 +107,7 @@ public class CPPGeneratedConfigWriterTests {
         Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", output);
         Assert.Contains("#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM 1", output);
         Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER \"platform/retro/RetroDiscFileSystem.hpp\"", output);
-        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE helengine::retro::RetroDiscFileSystem", output);
+        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE ExamplePlatform::RetroDiscFileSystem", output);
     }
 
     /// <summary>

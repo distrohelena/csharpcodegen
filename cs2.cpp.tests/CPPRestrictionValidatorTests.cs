@@ -12,14 +12,14 @@ public class CPPRestrictionValidatorTests {
     /// </summary>
     [Fact]
     public void Validate_WhenShadersAreForbiddenAndReachable_ReturnsDiagnostic() {
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         CPPBuildUsageReport usageReport = CPPFeatureResolver.Resolve(
             CPPBuildFeatureProfile.CreateDefault(),
             catalog,
             [
                 new CPPFeatureUsageRoot {
                     FeatureId = "shaders",
-                    RootId = "helengine.core.shaders.ShaderAsset",
+                    RootId = "ExampleEngine.Core.Shaders.ShaderAsset",
                     SourceKind = "Type"
                 }
             ]);

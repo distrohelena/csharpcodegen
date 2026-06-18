@@ -22,7 +22,7 @@ namespace cs2.cpp {
             }
 
             if (options.PlatformProfile.GeneratedMathConvention == CPPGeneratedMathConventionKind.NativeColumnVector &&
-                TryWriteNativeColumnVectorFloat4x4Override(function, writer)) {
+                TryWriteNativeColumnVectorMatrixOverride(function, writer)) {
                 return true;
             }
 
@@ -30,13 +30,13 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Writes one native-column-vector specialization for the shared <c>helengine.float4x4</c> math helpers.
+        /// Writes one native-column-vector specialization for shared matrix helper methods based on structural function shape rather than caller-owned type names.
         /// </summary>
         /// <param name="function">Generated function being emitted.</param>
         /// <param name="writer">Writer that receives the specialized body.</param>
         /// <returns><c>true</c> when a specialization was emitted; otherwise <c>false</c>.</returns>
-        static bool TryWriteNativeColumnVectorFloat4x4Override(ConversionFunction function, TextWriter writer) {
-            if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreateLookAt(ref helengine.float3, ref helengine.float3, ref helengine.float3, out helengine.float4x4)", StringComparison.Ordinal)) {
+        static bool TryWriteNativeColumnVectorMatrixOverride(ConversionFunction function, TextWriter writer) {
+            if (IsCreateLookAtOverride(function)) {
                 WriteLines(writer, [
                     "::float3 vector = float3::Normalize(cameraPosition - cameraTarget);",
                     "::float3 vector2 = float3::Normalize(float3::Cross(cameraUpVector, vector));",
@@ -59,7 +59,7 @@ namespace cs2.cpp {
                     "result.M44 = 1.0f;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreateOrthographicOffCenter(float, float, float, float, float, float, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsCreateOrthographicOffCenterOverride(function)) {
                 WriteLines(writer, [
                     "result.M11 = static_cast<float>((2.0 / (static_cast<double>(right) - static_cast<double>(left))));",
                     "result.M12 = 0.0f;",
@@ -79,7 +79,7 @@ namespace cs2.cpp {
                     "result.M44 = 1.0f;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreatePerspectiveFieldOfView(float, float, float, float, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsCreatePerspectiveFieldOfViewOverride(function)) {
                 WriteLines(writer, [
                     "if ((fieldOfView <= 0.0f) || (fieldOfView >= 3.141593f))",
                     "{",
@@ -117,7 +117,7 @@ namespace cs2.cpp {
                     "result.M44 = 0.0f;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreateTranslation(float, float, float, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsCreateTranslationScalarOverride(function)) {
                 WriteLines(writer, [
                     "result.M11 = 1;",
                     "result.M12 = 0;",
@@ -137,7 +137,7 @@ namespace cs2.cpp {
                     "result.M44 = 1;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreateTranslation(ref helengine.float3, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsCreateTranslationVectorOverride(function)) {
                 WriteLines(writer, [
                     "result.M11 = 1;",
                     "result.M12 = 0;",
@@ -157,7 +157,7 @@ namespace cs2.cpp {
                     "result.M44 = 1;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.Multiply(ref helengine.float4x4, ref helengine.float4x4, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsMultiplyOverride(function)) {
                 WriteLines(writer, [
                     "float m11 = (((matrix2.M11 * matrix1.M11) + (matrix2.M12 * matrix1.M21)) + (matrix2.M13 * matrix1.M31)) + (matrix2.M14 * matrix1.M41);",
                     "float m12 = (((matrix2.M11 * matrix1.M12) + (matrix2.M12 * matrix1.M22)) + (matrix2.M13 * matrix1.M32)) + (matrix2.M14 * matrix1.M42);",
@@ -193,7 +193,7 @@ namespace cs2.cpp {
                     "result.M44 = m44;"
                 ]);
                 return true;
-            } else if (string.Equals(function.SourceMethodKey, "helengine.float4x4.CreateFromQuaternion(ref helengine.float4, out helengine.float4x4)", StringComparison.Ordinal)) {
+            } else if (IsCreateFromQuaternionOverride(function)) {
                 WriteLines(writer, [
                     "float num9 = quaternion.X * quaternion.X;",
                     "float num8 = quaternion.Y * quaternion.Y;",
@@ -225,6 +225,222 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the structural matrix look-at helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the look-at helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreateLookAtOverride(ConversionFunction function) {
+            if (!HasFunctionName(function, "CreateLookAt") ||
+                !TryGetOutParameterTypeName(function, 3, out string matrixTypeName)) {
+                return false;
+            }
+
+            return HasParameter(function, 0, ParameterModifier.Ref, out string vectorTypeName) &&
+                HasParameter(function, 1, ParameterModifier.Ref, vectorTypeName) &&
+                HasParameter(function, 2, ParameterModifier.Ref, vectorTypeName) &&
+                HasParameter(function, 3, ParameterModifier.Out, matrixTypeName);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the structural matrix orthographic helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the orthographic helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreateOrthographicOffCenterOverride(ConversionFunction function) {
+            return HasFunctionName(function, "CreateOrthographicOffCenter") &&
+                IsFloatScalarParameter(function, 0) &&
+                IsFloatScalarParameter(function, 1) &&
+                IsFloatScalarParameter(function, 2) &&
+                IsFloatScalarParameter(function, 3) &&
+                IsFloatScalarParameter(function, 4) &&
+                IsFloatScalarParameter(function, 5) &&
+                HasOutParameter(function, 6);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the structural matrix perspective helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the perspective helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreatePerspectiveFieldOfViewOverride(ConversionFunction function) {
+            return HasFunctionName(function, "CreatePerspectiveFieldOfView") &&
+                IsFloatScalarParameter(function, 0) &&
+                IsFloatScalarParameter(function, 1) &&
+                IsFloatScalarParameter(function, 2) &&
+                IsFloatScalarParameter(function, 3) &&
+                HasOutParameter(function, 4);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the scalar translation helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the scalar translation helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreateTranslationScalarOverride(ConversionFunction function) {
+            return HasFunctionName(function, "CreateTranslation") &&
+                IsFloatScalarParameter(function, 0) &&
+                IsFloatScalarParameter(function, 1) &&
+                IsFloatScalarParameter(function, 2) &&
+                HasOutParameter(function, 3);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the vector translation helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the vector translation helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreateTranslationVectorOverride(ConversionFunction function) {
+            return HasFunctionName(function, "CreateTranslation") &&
+                HasParameter(function, 0, ParameterModifier.Ref, out _) &&
+                HasOutParameter(function, 1);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the matrix multiply helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the matrix multiply helper shape; otherwise <c>false</c>.</returns>
+        static bool IsMultiplyOverride(ConversionFunction function) {
+            if (!HasFunctionName(function, "Multiply") ||
+                !TryGetOutParameterTypeName(function, 2, out string matrixTypeName)) {
+                return false;
+            }
+
+            return HasParameter(function, 0, ParameterModifier.Ref, matrixTypeName) &&
+                HasParameter(function, 1, ParameterModifier.Ref, matrixTypeName) &&
+                HasParameter(function, 2, ParameterModifier.Out, matrixTypeName);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the quaternion conversion helper contract.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <returns><c>true</c> when the function matches the quaternion conversion helper shape; otherwise <c>false</c>.</returns>
+        static bool IsCreateFromQuaternionOverride(ConversionFunction function) {
+            return HasFunctionName(function, "CreateFromQuaternion") &&
+                HasParameter(function, 0, ParameterModifier.Ref, out _) &&
+                HasOutParameter(function, 1);
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the supplied function name and parameter count.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="expectedName">Expected source method name.</param>
+        /// <returns><c>true</c> when the function name and required parameters match; otherwise <c>false</c>.</returns>
+        static bool HasFunctionName(ConversionFunction function, string expectedName) {
+            return function != null &&
+                string.Equals(function.Name, expectedName, StringComparison.Ordinal) &&
+                function.InParameters != null;
+        }
+
+        /// <summary>
+        /// Determines whether one parameter is a scalar float input.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <returns><c>true</c> when the parameter is one by-value float input; otherwise <c>false</c>.</returns>
+        static bool IsFloatScalarParameter(ConversionFunction function, int index) {
+            if (!TryGetParameter(function, index, out ConversionVariable parameter) ||
+                parameter.Modifier != ParameterModifier.None) {
+                return false;
+            }
+
+            string typeName = GetCanonicalTypeName(parameter.VarType);
+            return string.Equals(typeName, "float", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Single", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether one parameter exists with the requested modifier and captures its canonical type name.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <param name="modifier">Expected parameter modifier.</param>
+        /// <param name="typeName">Resolved canonical type name when the parameter matches.</param>
+        /// <returns><c>true</c> when the parameter matches; otherwise <c>false</c>.</returns>
+        static bool HasParameter(ConversionFunction function, int index, ParameterModifier modifier, out string typeName) {
+            typeName = string.Empty;
+            if (!TryGetParameter(function, index, out ConversionVariable parameter) ||
+                parameter.Modifier != modifier) {
+                return false;
+            }
+
+            typeName = GetCanonicalTypeName(parameter.VarType);
+            return !string.IsNullOrWhiteSpace(typeName);
+        }
+
+        /// <summary>
+        /// Determines whether one parameter exists with the requested modifier and canonical type name.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <param name="modifier">Expected parameter modifier.</param>
+        /// <param name="expectedTypeName">Expected canonical type name.</param>
+        /// <returns><c>true</c> when the parameter matches; otherwise <c>false</c>.</returns>
+        static bool HasParameter(ConversionFunction function, int index, ParameterModifier modifier, string expectedTypeName) {
+            return HasParameter(function, index, modifier, out string resolvedTypeName) &&
+                string.Equals(resolvedTypeName, expectedTypeName, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Determines whether one parameter exists as an out parameter and captures its canonical type name.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <param name="typeName">Resolved canonical type name when the parameter matches.</param>
+        /// <returns><c>true</c> when the out parameter matches; otherwise <c>false</c>.</returns>
+        static bool TryGetOutParameterTypeName(ConversionFunction function, int index, out string typeName) {
+            return HasParameter(function, index, ParameterModifier.Out, out typeName);
+        }
+
+        /// <summary>
+        /// Determines whether one parameter exists as an out parameter.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <returns><c>true</c> when the out parameter matches; otherwise <c>false</c>.</returns>
+        static bool HasOutParameter(ConversionFunction function, int index) {
+            return HasParameter(function, index, ParameterModifier.Out, out _);
+        }
+
+        /// <summary>
+        /// Attempts to resolve one parameter by index.
+        /// </summary>
+        /// <param name="function">Generated function being emitted.</param>
+        /// <param name="index">Zero-based parameter index.</param>
+        /// <param name="parameter">Resolved parameter when the lookup succeeds.</param>
+        /// <returns><c>true</c> when the parameter exists; otherwise <c>false</c>.</returns>
+        static bool TryGetParameter(ConversionFunction function, int index, out ConversionVariable parameter) {
+            parameter = null;
+            if (function?.InParameters == null ||
+                index < 0 ||
+                index >= function.InParameters.Count) {
+                return false;
+            }
+
+            parameter = function.InParameters[index];
+            return parameter != null && parameter.VarType != null;
+        }
+
+        /// <summary>
+        /// Resolves one canonical source type name for structural override matching.
+        /// </summary>
+        /// <param name="type">Type to normalize.</param>
+        /// <returns>Canonical qualified type name when available; otherwise the simple source type name.</returns>
+        static string GetCanonicalTypeName(VariableType type) {
+            if (type == null) {
+                return string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(type.QualifiedTypeName)) {
+                return type.QualifiedTypeName;
+            }
+
+            return type.TypeName ?? string.Empty;
         }
 
         /// <summary>

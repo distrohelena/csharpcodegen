@@ -13,12 +13,12 @@ public class CPPFeatureManifestWriterTests {
     [Fact]
     public void WriteOutput_WhenShadersAreForceDisabled_WritesFeatureDecisionsToConversionReport() {
         string source = """
-namespace helengine.core.shaders {
+namespace ExampleEngine.Core.Shaders {
     public class ShaderAsset {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -44,12 +44,12 @@ namespace helengine.core.scene {
     [Fact]
     public void WriteOutput_WhenShadersAreForceDisabled_EmitsRuntimeFeatureManifest() {
         string source = """
-namespace helengine.core.shaders {
+namespace ExampleEngine.Core.Shaders {
     public class ShaderAsset {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -88,7 +88,7 @@ namespace helengine.core.scene {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.BuildFeatureProfile = featureProfile;
-        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);

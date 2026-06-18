@@ -13,12 +13,12 @@ public class CPPFeaturePruningEndToEndTests {
     [Fact]
     public void WriteOutput_WhenShadersAreDisabled_DoesNotEmitShaderTypes() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class ShaderAsset {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -42,7 +42,7 @@ namespace helengine.core.scene {
         string source = """
 using System.Text;
 
-namespace helengine {
+namespace ExampleEngine {
     public class DebugOverlayComponent {
         public string BuildText() {
             StringBuilder builder = new StringBuilder();
@@ -52,7 +52,7 @@ namespace helengine {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -75,14 +75,14 @@ namespace helengine.core.scene {
     [Fact]
     public void WriteOutput_WhenPresetForbidsRuntimeJson_FailsBeforeCopyingOutput() {
         string source = """
-namespace helengine.core.content {
+namespace ExampleEngine.Core.Content {
     public class RuntimeManifestJsonReader {
     }
 }
 
-namespace helengine.core.runtime {
+namespace ExampleEngine.Core.Runtime {
     public class RuntimeBootstrap {
-        public helengine.core.content.RuntimeManifestJsonReader Reader;
+        public ExampleEngine.Core.Content.RuntimeManifestJsonReader Reader;
     }
 }
 """;
@@ -98,12 +98,12 @@ namespace helengine.core.runtime {
     [Fact]
     public void WriteOutput_WhenPresetIsNativeCoreBoot_WritesGenericConfigAndDisablesShaders() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class ShaderAsset {
     }
 }
 
-namespace helengine.core.scene {
+namespace ExampleEngine.Core.Scene {
     public class SceneNode {
     }
 }
@@ -122,12 +122,12 @@ namespace helengine.core.scene {
     }
 
     /// <summary>
-    /// Verifies that native-column-vector conversions specialize the generated <c>helengine.float4x4</c> method bodies during emission instead of rewriting emitted files afterward.
+    /// Verifies that native-column-vector conversions specialize generated matrix helper bodies during emission instead of rewriting emitted files afterward.
     /// </summary>
     [Fact]
     public void WriteOutput_WhenPresetIsNativeCoreBoot_SpecializesFloat4x4BodiesDuringEmission() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public struct float3 {
         public float X;
         public float Y;
@@ -225,7 +225,7 @@ namespace helengine {
     [Fact]
     public void WriteOutput_WhenCustomPlatformDeclaresNativeFileSystem_HooksSharedFileRuntimeTemplate() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public sealed class SceneNode {
     }
 }
@@ -260,10 +260,10 @@ namespace helengine {
             ],
             LoadNativeRuntimeMetadata = false,
             WriteConversionReport = true,
-            FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog(),
+            FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog(),
             PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
                 ["native-file-system-header"] = "\"platform/gamecube/GameCubeDiscFileSystem.hpp\"",
-                ["native-file-system-type"] = "helengine::gamecube::GameCubeDiscFileSystem"
+                ["native-file-system-type"] = "ExamplePlatform::GameCubeDiscFileSystem"
             }
         };
 
@@ -276,7 +276,7 @@ namespace helengine {
         string fileStreamSource = File.ReadAllText(Path.Combine(outputPath, "system", "io", "file-stream.cpp"));
         Assert.Contains("#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM 1", configOutput);
         Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER \"platform/gamecube/GameCubeDiscFileSystem.hpp\"", configOutput);
-        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE helengine::gamecube::GameCubeDiscFileSystem", configOutput);
+        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE ExamplePlatform::GameCubeDiscFileSystem", configOutput);
         Assert.Contains("#include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER", fileSource);
         Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(fileName)", fileSource);
         Assert.Contains("HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::Exists(fileName)", fileSource);
@@ -294,7 +294,7 @@ namespace helengine {
     [Fact]
     public void WriteOutput_WhenPresetIsNativeCoreBoot_KeepsShaderAssetDataContract() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class ShaderAsset {
         public string Id;
     }
@@ -328,7 +328,7 @@ namespace helengine {
         File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "RuntimeContracts.cs"),
             """
-namespace helengine {
+namespace ExampleEngine {
     public interface IScriptTypeResolver {
     }
 
@@ -343,7 +343,7 @@ namespace helengine {
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "AutomaticScriptComponentRuntimeDeserializer.cs"),
             """
 #if !HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION
-namespace helengine {
+namespace ExampleEngine {
     public sealed class AutomaticScriptComponentRuntimeDeserializer : IRuntimeComponentDeserializer {
     }
 }
@@ -353,7 +353,7 @@ namespace helengine {
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "ScriptTypeResolver.cs"),
             """
 #if !HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION
-namespace helengine {
+namespace ExampleEngine {
     public sealed class ScriptTypeResolver : IScriptTypeResolver {
     }
 }
@@ -362,7 +362,7 @@ namespace helengine {
         File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "MenuDefinitionProviderResolver.cs"),
             """
-namespace helengine {
+namespace ExampleEngine {
     public class MenuDefinitionProviderResolver {
         readonly IScriptTypeResolver scriptTypeResolver;
 
@@ -384,7 +384,7 @@ namespace helengine {
         File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "RuntimeComponentRegistry.cs"),
             """
-namespace helengine {
+namespace ExampleEngine {
     public sealed class RuntimeComponentRegistry {
         public static RuntimeComponentRegistry CreateDefault() {
             return new RuntimeComponentRegistry();
@@ -408,9 +408,9 @@ namespace helengine {
         File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(rootProjectPath) ?? throw new InvalidOperationException("Root project directory path must resolve."), "SceneNode.cs"),
             """
-using helengine;
+using ExampleEngine;
 
-namespace helengine {
+namespace ExampleEngine {
     public class SceneNode {
         public RuntimeComponentRegistry Registry = RuntimeComponentRegistry.CreateDefault();
         public MenuDefinitionProviderResolver Resolver = new MenuDefinitionProviderResolver();
@@ -422,7 +422,7 @@ namespace helengine {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.PresetId = "native-core-boot";
-        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(rootProjectPath);
@@ -447,7 +447,7 @@ namespace helengine {
 using System;
 using System.IO;
 
-namespace helengine {
+namespace ExampleEngine {
     public class TextContent {
         public string Text { get; set; }
     }
@@ -495,7 +495,7 @@ namespace helengine {
         string source = """
 using System;
 
-namespace helengine {
+namespace ExampleEngine {
     [AttributeUsage(AttributeTargets.Property)]
     public sealed class EditorPropertyDisplayNameAttribute : Attribute {
         public string DisplayName { get; }
@@ -517,7 +517,7 @@ namespace helengine {
         Assert.True(File.Exists(Path.Combine(outputPath, "CameraSettings.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "EditorPropertyDisplayNameAttribute.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "EditorPropertyDisplayNameAttribute.cpp")));
-        string unitySource = File.ReadAllText(Path.Combine(outputPath, "helengine_core_unity.cpp"));
+        string unitySource = File.ReadAllText(Path.Combine(outputPath, "generated_unity.cpp"));
         Assert.DoesNotContain("EditorPropertyDisplayNameAttribute.cpp", unitySource);
     }
 
@@ -527,7 +527,7 @@ namespace helengine {
     [Fact]
     public void WriteOutput_WhenSourceUsesPointerLikeSignatureType_IncludesConcreteHeaderInSource() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public sealed class Child {
         public int Value { get; set; }
     }
@@ -552,7 +552,7 @@ namespace helengine {
     [Fact]
     public void WriteOutput_WhenConstructorInitializerUsesEnumValue_EmitsScopedEnumAccess() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public enum LightType {
         Ambient,
         Spot
@@ -582,7 +582,7 @@ namespace helengine {
     [Fact]
     public void WriteOutput_WhenSourceUsesPrimitiveFiniteChecks_LowersToNativeNumberRuntime() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public sealed class StepValidator {
         public bool IsFinite(double value) {
             return !double.IsNaN(value) && !double.IsInfinity(value);
@@ -623,7 +623,7 @@ namespace helengine {
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.PresetId = presetId ?? string.Empty;
-        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
         if (featureProfile != null && string.IsNullOrWhiteSpace(options.PresetId)) {
             options.BuildFeatureProfile = featureProfile;
         }

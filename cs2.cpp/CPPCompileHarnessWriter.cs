@@ -6,7 +6,7 @@ namespace cs2.cpp {
         /// <summary>
         /// Gets the generated unity translation unit file name.
         /// </summary>
-        public const string UnityFileName = "helengine_core_unity.cpp";
+        public const string UnityFileName = "generated_unity.cpp";
 
         /// <summary>
         /// Gets the generated GCC build script file name.
@@ -91,7 +91,7 @@ namespace cs2.cpp {
                 "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"",
                 "BUILD_DIR=\"$SCRIPT_DIR/build/gcc\"",
                 "mkdir -p \"$BUILD_DIR\"",
-                $"g++ -std={ResolveGccLanguageStandard(options)} -I\"$SCRIPT_DIR\" -I\"$SCRIPT_DIR/runtime\" -c \"$SCRIPT_DIR/{UnityFileName}\" -o \"$BUILD_DIR/helengine_core_unity.o\"",
+                $"g++ -std={ResolveGccLanguageStandard(options)} -I\"$SCRIPT_DIR\" -I\"$SCRIPT_DIR/runtime\" -c \"$SCRIPT_DIR/{UnityFileName}\" -o \"$BUILD_DIR/generated_unity.o\"",
                 string.Empty
             });
         }
@@ -108,7 +108,7 @@ namespace cs2.cpp {
                 "set SCRIPT_DIR=%~dp0",
                 "set BUILD_DIR=%SCRIPT_DIR%build\\msvc",
                 "if not exist \"%BUILD_DIR%\" mkdir \"%BUILD_DIR%\"",
-                $"cl /nologo /std:{ResolveMsvcLanguageStandard(options)} /EHsc /I\"%SCRIPT_DIR%\" /I\"%SCRIPT_DIR%runtime\" /c \"%SCRIPT_DIR%{UnityFileName}\" /Fo\"%BUILD_DIR%\\helengine_core_unity.obj\"",
+                $"cl /nologo /std:{ResolveMsvcLanguageStandard(options)} /EHsc /I\"%SCRIPT_DIR%\" /I\"%SCRIPT_DIR%runtime\" /c \"%SCRIPT_DIR%{UnityFileName}\" /Fo\"%BUILD_DIR%\\generated_unity.obj\"",
                 string.Empty
             });
         }

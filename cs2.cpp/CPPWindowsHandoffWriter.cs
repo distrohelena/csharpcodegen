@@ -6,7 +6,7 @@ namespace cs2.cpp {
         /// <summary>
         /// Gets the generated handoff contract file name.
         /// </summary>
-        public const string FileName = "helengine_windows_handoff.cmake";
+        public const string FileName = "generated_windows_handoff.cmake";
 
         /// <summary>
         /// Writes the Windows handoff contract into the generated output folder.
@@ -31,10 +31,10 @@ namespace cs2.cpp {
         /// <returns>The CMake contract source text.</returns>
         static string BuildFileText() {
             return """
-set(HELENGINE_GENERATED_CORE_ROOT "${CMAKE_CURRENT_LIST_DIR}")
-set(HELENGINE_GENERATED_CONFIG_HEADER "${HELENGINE_GENERATED_CORE_ROOT}/helcpp_config.hpp")
-set(HELENGINE_GENERATED_UNITY_SOURCE "${HELENGINE_GENERATED_CORE_ROOT}/helengine_core_unity.cpp")
-set(HELENGINE_GENERATED_FEATURE_MANIFEST_HEADER "${HELENGINE_GENERATED_CORE_ROOT}/runtime/feature_manifest.hpp")
+set(CPP_GENERATED_CORE_ROOT "${CMAKE_CURRENT_LIST_DIR}")
+set(CPP_GENERATED_CONFIG_HEADER "${CPP_GENERATED_CORE_ROOT}/helcpp_config.hpp")
+set(CPP_GENERATED_UNITY_SOURCE "${CPP_GENERATED_CORE_ROOT}/generated_unity.cpp")
+set(CPP_GENERATED_FEATURE_MANIFEST_HEADER "${CPP_GENERATED_CORE_ROOT}/runtime/feature_manifest.hpp")
 """;
         }
     }

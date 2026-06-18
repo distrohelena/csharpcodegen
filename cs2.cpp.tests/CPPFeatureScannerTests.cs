@@ -13,7 +13,7 @@ public class CPPFeatureScannerTests {
     [Fact]
     public void Scan_WhenShaderRuntimeTypesAreReferenced_DetectsShaders() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class ShaderAsset {
     }
 
@@ -22,7 +22,7 @@ namespace helengine {
 }
 
 namespace SampleGame {
-    using helengine;
+    using ExampleEngine;
 
     public class MaterialHost {
         public ShaderAsset Asset { get; set; }
@@ -35,7 +35,7 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
@@ -48,13 +48,13 @@ namespace SampleGame {
     [Fact]
     public void Scan_WhenSpriteInterfaceIsReferenced_DetectsSpritesAndRender2D() {
         string source = """
-namespace helengine.core.graphics {
+namespace ExampleEngine.Core.Graphics {
     public interface ISpriteRenderable {
     }
 }
 
 namespace SampleGame {
-    using helengine.core.graphics;
+    using ExampleEngine.Core.Graphics;
 
     public class SpriteCard : ISpriteRenderable {
     }
@@ -62,7 +62,7 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
@@ -76,7 +76,7 @@ namespace SampleGame {
     [Fact]
     public void Scan_WhenTextComponentIsReferenced_DetectsText2DAndRender2D() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public interface IDrawable2D {
     }
 
@@ -88,7 +88,7 @@ namespace helengine {
 }
 
 namespace SampleGame {
-    using helengine;
+    using ExampleEngine;
 
     public class HudLabel {
         public TextComponent Value { get; set; }
@@ -97,7 +97,7 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
@@ -111,13 +111,13 @@ namespace SampleGame {
     [Fact]
     public void Scan_WhenDebugOverlayComponentIsReferenced_DetectsDebugOverlay() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class DebugOverlayComponent {
     }
 }
 
 namespace SampleGame {
-    using helengine;
+    using ExampleEngine;
 
     public class DebugScreen {
         public DebugOverlayComponent Overlay { get; set; }
@@ -126,7 +126,7 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 
@@ -139,13 +139,13 @@ namespace SampleGame {
     [Fact]
     public void Scan_WhenDebugComponentIsReferenced_DetectsDebugOverlay() {
         string source = """
-namespace helengine {
+namespace ExampleEngine {
     public class DebugComponent {
     }
 }
 
 namespace SampleGame {
-    using helengine;
+    using ExampleEngine;
 
     public class DebugScreen {
         public DebugComponent Overlay { get; set; }
@@ -154,7 +154,7 @@ namespace SampleGame {
 """;
 
         CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(source);
-        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+        CPPExternalFeatureCatalog catalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
 
         CPPFeatureUsageRoot[] roots = CPPFeatureScanner.Scan(compilation, catalog).ToArray();
 

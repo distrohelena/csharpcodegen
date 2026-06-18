@@ -2050,24 +2050,13 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Determines whether one metadata-backed method symbol belongs to a helengine assembly that still uses deterministic generated overload suffixes even when the declaring source project is not part of the current conversion.
-        /// </summary>
-        /// <param name="methodSymbol">Method symbol to inspect.</param>
-        /// <returns><c>true</c> when the symbol belongs to one helengine assembly; otherwise <c>false</c>.</returns>
-        static bool IsHelengineMetadataMethod(IMethodSymbol methodSymbol) {
-            string assemblyName = methodSymbol?.ContainingAssembly?.Name ?? string.Empty;
-            return !string.IsNullOrWhiteSpace(assemblyName) &&
-                assemblyName.StartsWith("helengine.", StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>
         /// Determines whether one method call should use the emitted overload suffix derived from symbol metadata even when the current conversion graph does not contain the declaring generated class.
         /// </summary>
         /// <param name="methodSymbol">Method symbol to inspect.</param>
         /// <returns><c>true</c> when emitted overload suffixes should be derived directly from the symbol; otherwise <c>false</c>.</returns>
         static bool ShouldUseEmittedMethodNameFromSymbol(IMethodSymbol methodSymbol) {
             return HasSourceDeclaration(methodSymbol) ||
-                IsHelengineMetadataMethod(methodSymbol);
+                !string.IsNullOrEmpty(GetRefModifierSuffix(methodSymbol));
         }
 
         string ResolveConvertedFunctionName(IMethodSymbol methodSymbol, ConversionFunction generatedFunction = null) {

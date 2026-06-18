@@ -51,7 +51,7 @@ namespace codegen.sample {
 
             //CPPCodeConverter cppConverter = new CPPCodeConverter(rules);
             //cppConverter.AddCsproj(Path.Combine(sourceTestProj, "codegen.testproj.csproj"));
-            ////cppConverter.AddCsproj("C:\\dev\\helengine\\engine\\helengine.core\\helengine.core.csproj");
+            ////cppConverter.AddCsproj("C:\\path\\to\\your\\project.csproj");
             //cppConverter.WriteOutput(outputCppFolder);
         }
     }

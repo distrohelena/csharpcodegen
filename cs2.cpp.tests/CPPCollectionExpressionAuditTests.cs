@@ -3,7 +3,7 @@ using cs2.cpp;
 
 namespace cs2.cpp.tests {
     /// <summary>
-    /// Verifies that the C++ converter lowers collection-expression and omitted-array-size patterns used by helengine.core.
+    /// Verifies that the C++ converter lowers collection-expression and omitted-array-size patterns used by caller-owned runtime projects.
     /// </summary>
     public class CPPCollectionExpressionAuditTests {
         /// <summary>

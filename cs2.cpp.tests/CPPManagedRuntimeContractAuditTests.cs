@@ -278,7 +278,7 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithConfiguredSystemNumericsRemap_UsesGeneratedMathHeaders() {
             string source = """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                     }
 
@@ -295,13 +295,13 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(
                 source,
                 options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["System.Numerics.Vector3"] = "helengine.float3",
-                    ["System.Numerics.Quaternion"] = "helengine.float4"
+                    ["System.Numerics.Vector3"] = "ExampleMath.float3",
+                    ["System.Numerics.Quaternion"] = "ExampleMath.float4"
                 });
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
 
-            Assert.Contains("#include \"helengine_float4.hpp\"", headerOutput);
-            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.Contains("#include \"examplemath_float4.hpp\"", headerOutput);
+            Assert.Contains("#include \"examplemath_float3.hpp\"", headerOutput);
             Assert.DoesNotContain("#include \"Quaternion.hpp\"", headerOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
         }
@@ -446,7 +446,7 @@ namespace cs2.cpp.tests {
                 using System.Numerics;
                 using System.Runtime.Intrinsics;
 
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                         public float X;
                         public float Y;
@@ -455,7 +455,7 @@ namespace cs2.cpp.tests {
                 }
 
                 public static class BoundsGate {
-                    public static Vector128<float> Promote(helengine.float3 value) {
+                    public static Vector128<float> Promote(ExampleMath.float3 value) {
                         return Vector128.AsVector128(value);
                     }
                 }
@@ -464,7 +464,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(
                 source,
                 options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["System.Numerics.Vector3"] = "helengine.float3"
+                    ["System.Numerics.Vector3"] = "ExampleMath.float3"
                 });
             string vector128Header = File.ReadAllText(Path.Combine(output.OutputPath, "system", "runtime", "intrinsics", "vector128.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BoundsGate.cpp"));
@@ -481,7 +481,7 @@ namespace cs2.cpp.tests {
             string source = """
                 using System.Numerics;
 
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                     }
                 }
@@ -494,11 +494,11 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(
                 source,
                 options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["System.Numerics.Vector3"] = "helengine.float3"
+                    ["System.Numerics.Vector3"] = "ExampleMath.float3"
                 });
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
 
-            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.Contains("#include \"examplemath_float3.hpp\"", headerOutput);
             Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
         }
 
@@ -510,7 +510,7 @@ namespace cs2.cpp.tests {
             string source = """
                 using System.Numerics;
 
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                         public static float Dot(float3 first, float3 second) {
                             return 0f;
@@ -528,12 +528,12 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(
                 source,
                 options => options.TypeRemaps = new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["System.Numerics.Vector3"] = "helengine.float3"
+                    ["System.Numerics.Vector3"] = "ExampleMath.float3"
                 });
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Pose.cpp"));
 
-            Assert.Contains("#include \"helengine_float3.hpp\"", headerOutput);
+            Assert.Contains("#include \"examplemath_float3.hpp\"", headerOutput);
             Assert.DoesNotContain("#include \"Vector3.hpp\"", headerOutput, StringComparison.Ordinal);
             Assert.Contains("float3::Dot(value, value)", sourceOutput);
         }
@@ -2116,7 +2116,7 @@ namespace cs2.cpp.tests {
                 .WithMode("host_file_system", CPPFeatureMode.Enabled)
                 .WithMode("reflection_like_runtime", CPPFeatureMode.Enabled)
                 .WithMode("text_processing", CPPFeatureMode.Enabled);
-            options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateHelengineCatalog();
+            options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
             configureOptions?.Invoke(options);
 
             CPPConversionRules rules = new CPPConversionRules();

@@ -5,7 +5,7 @@ using cs2.cpp;
 
 namespace cs2.cpp.tests {
     /// <summary>
-    /// Covers compile-validation regressions that surfaced from native compilation of generated helengine.core output.
+    /// Covers compile-validation regressions that surfaced from native compilation of generated C++ output.
     /// </summary>
     public class CPPCompileValidationRegressionTests {
         /// <summary>
@@ -536,7 +536,7 @@ namespace cs2.cpp.tests {
                 using System.Numerics;
                 using System.Runtime.InteropServices;
 
-                namespace helengine {
+                namespace ExampleMath {
                     public struct float3 {
                         public float X;
                         public float Y;
@@ -561,8 +561,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversionWithTypeRemaps(
                 source,
                 new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["System.Numerics.Vector3"] = "helengine.float3",
-                    ["System.Numerics.Vector4"] = "helengine.float4"
+                    ["System.Numerics.Vector3"] = "ExampleMath.float3",
+                    ["System.Numerics.Vector4"] = "ExampleMath.float4"
                 });
             string poseHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PackedPose.hpp"));
 
@@ -2119,7 +2119,7 @@ namespace cs2.cpp.tests {
             string source = """
                 using System.Collections.Generic;
 
-                namespace helengine {
+                namespace ExampleUi {
                     public class ComboBoxItemVisual {
                     }
 
@@ -2135,7 +2135,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ComboBoxGate.cpp"));
 
             Assert.Contains("return new List<::ComboBoxItemVisual*>(count);", sourceOutput);
-            Assert.DoesNotContain("helengine.ComboBoxItemVisual", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ExampleUi.ComboBoxItemVisual", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -6083,7 +6083,7 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithNativeOwnershipOnLocalTypeMatchingMemberName_EmitsDirectDeleteWithoutHelperCall() {
             string source = """
-                namespace helengine {
+                namespace ExampleAssets {
                     public class FontInfo {
                     }
 
@@ -8948,7 +8948,7 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithAutoPropertyOnCaseCollidedLowercaseValueType_UsesCanonicalQualifiedEmittedTypeName() {
             string source = """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -8985,14 +8985,14 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugOverlayComponent.cpp"));
             string bepuHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Int2.hpp"));
 
-            Assert.Contains("#include \"helengine_int2.hpp\"", headerOutput);
+            Assert.Contains("#include \"examplemath_int2.hpp\"", headerOutput);
             Assert.Contains("::int2 Padding;", headerOutput);
             Assert.Contains("void set_Padding(::int2 value);", headerOutput);
             Assert.Contains("DebugOverlayComponent() : Padding(::int2(static_cast<int32_t>(8), static_cast<int32_t>(6)))", sourceOutput);
             Assert.Contains("roundedRectComponent->set_Size(::int2(static_cast<int32_t>(200), static_cast<int32_t>(80)));", sourceOutput);
             Assert.Contains("class Int2", bepuHeaderOutput);
-            Assert.DoesNotContain("::helengine_int2 Padding;", headerOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("set_Padding(::helengine_int2 value)", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("::examplemath_int2 Padding;", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("set_Padding(::examplemath_int2 value)", headerOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -9001,7 +9001,7 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithLowercaseValueType_UsesCanonicalQualifiedFileStems() {
             string source = """
-                namespace helengine {
+                namespace ExampleMath {
                     public struct int2 {
                         public int X;
                         public int Y;
@@ -9023,11 +9023,11 @@ namespace cs2.cpp.tests {
 
             Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.hpp")));
             Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.cpp")));
-            Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.hpp")));
-            Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.cpp")));
-            Assert.Contains("#include \"helengine_int2.hpp\"", overlayHeader, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "examplemath_int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "examplemath_int2.cpp")));
+            Assert.Contains("#include \"examplemath_int2.hpp\"", overlayHeader, StringComparison.Ordinal);
             Assert.Contains("::int2 Padding;", overlayHeader, StringComparison.Ordinal);
-            Assert.DoesNotContain("::helengine_int2 Padding;", overlayHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("::examplemath_int2 Padding;", overlayHeader, StringComparison.Ordinal);
         }
 
         /// <summary>

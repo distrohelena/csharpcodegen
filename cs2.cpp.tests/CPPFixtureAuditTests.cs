@@ -6,7 +6,7 @@ namespace cs2.cpp.tests;
 /// <summary>
 /// Verifies that the C++ backend can write a deterministic audit report for a real project conversion run.
 /// </summary>
-public class CPPHelengineCoreAuditTests {
+public class CPPFixtureAuditTests {
     /// <summary>
     /// Ensures the serialized audit report contains stable profile and unsupported-syntax summary sections.
     /// </summary>
