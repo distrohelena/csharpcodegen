@@ -8873,10 +8873,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures case-only type-name differences do not force lowercase generated value types to change their emitted C++ identifier, while file stems remain Windows-safe.
+        /// Ensures case-only type-name differences emit the canonical qualified lowercase generated type directly while keeping Windows-safe file stems.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithAutoPropertyOnCaseCollidedLowercaseValueType_PreservesCaseSensitiveEmittedTypeName() {
+        public void WriteOutput_WithAutoPropertyOnCaseCollidedLowercaseValueType_UsesCanonicalQualifiedEmittedTypeName() {
             string source = """
                 namespace helengine {
                     public struct int2 {
@@ -8913,23 +8913,23 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugOverlayComponent.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugOverlayComponent.cpp"));
-            string bepuHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BepuUtilities_Int2.hpp"));
+            string bepuHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Int2.hpp"));
 
             Assert.Contains("#include \"helengine_int2.hpp\"", headerOutput);
-            Assert.Contains("::int2 Padding;", headerOutput);
-            Assert.Contains("void set_Padding(::int2 value);", headerOutput);
-            Assert.Contains("DebugOverlayComponent() : Padding(::int2(8, 6))", sourceOutput);
-            Assert.Contains("roundedRectComponent->set_Size(::int2(200, 80));", sourceOutput);
+            Assert.Contains("::helengine_int2 Padding;", headerOutput);
+            Assert.Contains("void set_Padding(::helengine_int2 value);", headerOutput);
+            Assert.Contains("DebugOverlayComponent() : Padding(::helengine_int2(static_cast<int32_t>(8), static_cast<int32_t>(6)))", sourceOutput);
+            Assert.Contains("roundedRectComponent->set_Size(::helengine_int2(static_cast<int32_t>(200), static_cast<int32_t>(80)));", sourceOutput);
             Assert.Contains("class Int2", bepuHeaderOutput);
-            Assert.DoesNotContain("::helengine_int2 Padding;", headerOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("set_Padding(::helengine_int2 value)", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("::int2 Padding;", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("set_Padding(::int2 value)", headerOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
-        /// Ensures lowercase generated types emit one namespace-qualified alias header so separately converted project graphs can reference the same managed type through either emitted name.
+        /// Ensures lowercase generated types emit canonical qualified artifacts directly without compatibility headers.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithLowercaseValueType_EmitsNamespaceQualifiedAliasHeader() {
+        public void WriteOutput_WithLowercaseValueType_UsesCanonicalQualifiedArtifactsWithoutCompatibilityHeaders() {
             string source = """
                 namespace helengine {
                     public struct int2 {
@@ -8949,11 +8949,15 @@ namespace cs2.cpp.tests {
                 """;
 
             ConversionOutput output = RunConversion(source);
-            string aliasHeaderPath = Path.Combine(output.OutputPath, "helengine_helengine_int2.hpp");
+            string overlayHeader = File.ReadAllText(Path.Combine(output.OutputPath, "OverlayBox.hpp"));
 
-            Assert.True(File.Exists(aliasHeaderPath));
-            Assert.Contains("#include \"helengine_int2.hpp\"", File.ReadAllText(aliasHeaderPath));
-            Assert.Contains("using helengine_int2 = int2;", File.ReadAllText(aliasHeaderPath));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.cpp")));
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.hpp")));
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "helengine_helengine_int2.hpp")));
+            Assert.Contains("#include \"helengine_int2.hpp\"", overlayHeader, StringComparison.Ordinal);
+            Assert.Contains("::helengine_int2 Padding;", overlayHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("::int2 Padding;", overlayHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -10481,6 +10485,69 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("private:\r\n    int32_t get_Count();", manifoldHeader, StringComparison.Ordinal);
             Assert.DoesNotContain("private:\n    int32_t get_Count();", manifoldHeader, StringComparison.Ordinal);
             Assert.Contains("return manifold.get_Count() > 0;", fixtureSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures rotation-style value-type flows emit final native syntax without downstream text normalization.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRotationValueTypes_EmitsFinalValidNativeSyntax() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+
+                    public static float3 Normalize(float3 value) {
+                        return value;
+                    }
+                }
+
+                public struct float4 {
+                    public void Normalize() {
+                    }
+
+                    public static void CreateFromYawPitchRoll(float yaw, float pitch, float roll, out float4 result) {
+                        result = new float4();
+                    }
+
+                    public static void CreateFromAxisAngle(float3 axis, float angle, out float4 result) {
+                        result = new float4();
+                    }
+
+                    public static void Concatenate(ref float4 left, ref float4 right, out float4 result) {
+                        result = left;
+                    }
+                }
+
+                public sealed class RotationFixture {
+                    public void Update(float yawRadians, float pitchRadians, float3 axis, float angle, float4 currentOrientation, float4 deltaRotation) {
+                        float4 orientation;
+                        float4.CreateFromYawPitchRoll(yawRadians, pitchRadians, 0.0f, out orientation);
+                        orientation.Normalize();
+
+                        float4 axisAngleRotation;
+                        float4.CreateFromAxisAngle(axis, angle, out axisAngleRotation);
+
+                        float4 mergedOrientation;
+                        float4.Concatenate(ref currentOrientation, ref deltaRotation, out mergedOrientation);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RotationFixture.cpp"));
+
+            Assert.Contains("float4 orientation;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("float4::CreateFromYawPitchRoll__out3(yawRadians, pitchRadians, 0.0f, orientation);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("orientation.Normalize();", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, angle, axisAngleRotation);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("float4::Concatenate__ref0_ref1_out2(currentOrientation, deltaRotation, mergedOrientation);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float4 *orientation;", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float4->CreateFromYawPitchRoll", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("orientation->Normalize()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float4::CreateFromAxisAngle(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float4::Concatenate(", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

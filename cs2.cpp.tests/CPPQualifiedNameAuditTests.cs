@@ -54,12 +54,13 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
             string float4Header = File.ReadAllText(Path.Combine(output.OutputPath, "helengine_float4.hpp"));
-            string float4CompatibilityHeader = File.ReadAllText(Path.Combine(output.OutputPath, "float4.hpp"));
+            string float4Source = File.ReadAllText(Path.Combine(output.OutputPath, "helengine_float4.cpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.Contains("#include \"helengine_float3.hpp\"", float4Header);
             Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Header, StringComparison.Ordinal);
-            Assert.Contains("#include \"helengine_float4.hpp\"", float4CompatibilityHeader);
+            Assert.Contains("#include \"helengine_float3.hpp\"", float4Source);
+            Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Source, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "float4.hpp")));
         }
 
         /// <summary>
@@ -91,15 +92,15 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
             string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "CollisionFixture.hpp"));
             string engineHeaderPath = Path.Combine(output.OutputPath, "helengine_int2.hpp");
-            string utilityHeaderPath = Path.Combine(output.OutputPath, "BepuUtilities_Int2.hpp");
+            string utilityHeaderPath = Path.Combine(output.OutputPath, "Int2.hpp");
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.True(File.Exists(engineHeaderPath));
             Assert.True(File.Exists(utilityHeaderPath));
-            Assert.Contains("class int2", File.ReadAllText(engineHeaderPath));
+            Assert.Contains("class helengine_int2", File.ReadAllText(engineHeaderPath));
             Assert.Contains("class Int2", File.ReadAllText(utilityHeaderPath));
             Assert.Contains("#include \"helengine_int2.hpp\"", fixtureHeader);
-            Assert.Contains("#include \"BepuUtilities_Int2.hpp\"", fixtureHeader);
+            Assert.Contains("#include \"Int2.hpp\"", fixtureHeader);
             Assert.DoesNotContain("#include \"int2.hpp\"", fixtureHeader, StringComparison.Ordinal);
         }
 
@@ -150,12 +151,21 @@ namespace cs2.cpp.tests {
 
             RunConversionForProject(coreProjectPath, coreOutputPath, out JsonDocument _);
             RunConversionForProject(physicsProjectPath, physicsOutputPath, out JsonDocument report);
+            string[] coreHeaderFileNames = Directory.GetFiles(coreOutputPath, "*.hpp")
+                .Select(Path.GetFileName)
+                .Where(static fileName => !string.IsNullOrWhiteSpace(fileName))
+                .ToArray()!;
+            string[] physicsHeaderFileNames = Directory.GetFiles(physicsOutputPath, "*.hpp")
+                .Select(Path.GetFileName)
+                .Where(static fileName => !string.IsNullOrWhiteSpace(fileName))
+                .ToArray()!;
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.True(File.Exists(Path.Combine(coreOutputPath, "helengine_int2.hpp")));
             Assert.True(File.Exists(Path.Combine(physicsOutputPath, "helengine_int2.hpp")));
-            Assert.Contains("#include \"helengine_int2.hpp\"", File.ReadAllText(Path.Combine(coreOutputPath, "int2.hpp")));
-            Assert.DoesNotContain("class int2", File.ReadAllText(Path.Combine(coreOutputPath, "int2.hpp")), StringComparison.Ordinal);
+            Assert.Contains("Int2.hpp", physicsHeaderFileNames);
+            Assert.DoesNotContain("int2.hpp", coreHeaderFileNames, StringComparer.Ordinal);
+            Assert.DoesNotContain("int2.hpp", physicsHeaderFileNames, StringComparer.Ordinal);
         }
 
         /// <summary>
@@ -217,9 +227,9 @@ namespace cs2.cpp.tests {
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.cpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.hpp")));
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.cpp")));
-            Assert.True(File.Exists(Path.Combine(outputPath, "int2.hpp")));
-            Assert.Contains("#include \"helengine_int2.hpp\"", File.ReadAllText(Path.Combine(outputPath, "int2.hpp")));
+            Assert.False(File.Exists(Path.Combine(outputPath, "int2.hpp")));
         }
 
         /// <summary>
@@ -354,7 +364,7 @@ namespace cs2.cpp.tests {
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.Contains("::helengine_int2 EngineSize;", fixtureHeader);
-            Assert.Contains("::Int2* UtilitySize;", fixtureHeader);
+            Assert.Contains("::Int2 UtilitySize;", fixtureHeader);
             Assert.DoesNotContain("::int2 EngineSize;", fixtureHeader, StringComparison.Ordinal);
         }
 

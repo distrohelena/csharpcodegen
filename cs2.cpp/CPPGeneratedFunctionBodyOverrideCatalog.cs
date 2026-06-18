@@ -1,3 +1,5 @@
+using cs2.core;
+
 namespace cs2.cpp {
     /// <summary>
     /// Owns backend-emitter substitutions for specific generated function bodies whose implementation must vary by generic platform shape.

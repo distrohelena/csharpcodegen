@@ -270,6 +270,7 @@ namespace cs2.core {
             MemberAccessType accessType;
             MemberDeclarationType type;
             MemberUtil.GetModifiers(constructor.Modifiers, out isStatic, out isOverride, out accessType, out type);
+            IMethodSymbol constructorSymbol = semantic.GetDeclaredSymbol(constructor) as IMethodSymbol;
 
             ConversionFunction func = context.StartFn();
             func.Semantic = semantic;
@@ -310,7 +311,7 @@ namespace cs2.core {
                             break;
                     }
                 }
-                v.Modifier = modifier;
+                v.Modifier = ApplyGeneratedValueTypeReferenceModifier(modifier, constructorSymbol, constructorSymbol?.Parameters[inParams.Count]?.Type);
 
                 inParams.Add(v);
             }
@@ -372,6 +373,7 @@ namespace cs2.core {
                 //Debugger.Break();
             }
 
+            int parameterIndex = 0;
             foreach (ParameterSyntax inParam in method.ParameterList.ChildNodes()) {
                 ConversionVariable v = new ConversionVariable();
                 v.Semantic = semantic;
@@ -402,9 +404,10 @@ namespace cs2.core {
                             break;
                     }
                 }
-                v.Modifier = modifier;
+                v.Modifier = ApplyGeneratedValueTypeReferenceModifier(modifier, methodSymbol, methodSymbol?.Parameters[parameterIndex]?.Type);
 
                 func.InParameters.Add(v);
+                parameterIndex++;
             }
 
             func.GenericParameters = method.TypeParameterList?
@@ -437,15 +440,21 @@ namespace cs2.core {
             func.IsStatic = true;
             func.AccessType = access;
             func.Name = $"operator{operatorDeclaration.OperatorToken.Text}";
-            func.SourceMethodKey = BuildSourceMethodKey(semantic.GetDeclaredSymbol(operatorDeclaration) as IMethodSymbol);
+            IMethodSymbol operatorMethodSymbol = semantic.GetDeclaredSymbol(operatorDeclaration) as IMethodSymbol;
+            func.SourceMethodKey = BuildSourceMethodKey(operatorMethodSymbol);
             func.DeclarationType = type;
             ApplyFunctionReturnType(operatorDeclaration.ReturnType, semantic, func);
 
-            foreach (ParameterSyntax parameter in operatorDeclaration.ParameterList.Parameters) {
+            for (int parameterIndex = 0; parameterIndex < operatorDeclaration.ParameterList.Parameters.Count; parameterIndex++) {
+                ParameterSyntax parameter = operatorDeclaration.ParameterList.Parameters[parameterIndex];
                 ConversionVariable variable = new ConversionVariable();
                 variable.Semantic = semantic;
                 variable.Name = parameter.Identifier.ToString();
                 variable.VarType = VariableUtil.GetVarType(parameter.Type!, semantic);
+                variable.Modifier = ApplyGeneratedValueTypeReferenceModifier(
+                    GetParameterModifier(parameter.Modifiers),
+                    operatorMethodSymbol,
+                    operatorMethodSymbol?.Parameters[parameterIndex]?.Type);
                 func.InParameters.Add(variable);
             }
 
@@ -478,11 +487,16 @@ namespace cs2.core {
             func.DeclarationType = type;
             ApplyFunctionReturnType(conversionOperatorDeclaration.Type, semantic, func);
 
-            foreach (ParameterSyntax parameter in conversionOperatorDeclaration.ParameterList.Parameters) {
+            for (int parameterIndex = 0; parameterIndex < conversionOperatorDeclaration.ParameterList.Parameters.Count; parameterIndex++) {
+                ParameterSyntax parameter = conversionOperatorDeclaration.ParameterList.Parameters[parameterIndex];
                 ConversionVariable variable = new ConversionVariable();
                 variable.Semantic = semantic;
                 variable.Name = parameter.Identifier.ToString();
                 variable.VarType = VariableUtil.GetVarType(parameter.Type!, semantic);
+                variable.Modifier = ApplyGeneratedValueTypeReferenceModifier(
+                    GetParameterModifier(parameter.Modifiers),
+                    methodSymbol,
+                    methodSymbol?.Parameters[parameterIndex]?.Type);
                 func.InParameters.Add(variable);
             }
 
@@ -516,7 +530,7 @@ namespace cs2.core {
                 typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
                 genericsOptions: SymbolDisplayGenericsOptions.None,
                 memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
-                parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeRef,
+                parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeParamsRefOut,
                 miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
             return methodSymbol.OriginalDefinition.ToDisplayString(displayFormat);
         }
@@ -1000,6 +1014,24 @@ namespace cs2.core {
             }
 
             return modifier;
+        }
+
+        static ParameterModifier ApplyGeneratedValueTypeReferenceModifier(
+            ParameterModifier modifier,
+            IMethodSymbol containingMethodSymbol,
+            ITypeSymbol parameterTypeSymbol) {
+            if ((modifier & (ParameterModifier.Ref | ParameterModifier.Out | ParameterModifier.In | ParameterModifier.Params)) != 0) {
+                return modifier;
+            }
+
+            if (containingMethodSymbol?.ContainingType?.IsValueType != true ||
+                parameterTypeSymbol is not INamedTypeSymbol namedParameterTypeSymbol ||
+                namedParameterTypeSymbol.TypeKind != TypeKind.Struct ||
+                namedParameterTypeSymbol.SpecialType != SpecialType.None) {
+                return modifier;
+            }
+
+            return modifier | ParameterModifier.Ref;
         }
 
         /// <summary>

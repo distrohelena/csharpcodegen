@@ -617,6 +617,10 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (emittedTypeName.StartsWith($"{qualifiedPrefix}_", StringComparison.Ordinal)) {
+                return false;
+            }
+
             bool hasCaseInsensitiveCollision = program.Classes.Any(candidate =>
                 !ReferenceEquals(candidate, conversionClass) &&
                 !candidate.IsNative &&
@@ -644,7 +648,7 @@ namespace cs2.cpp {
             }
 
             HashSet<string> collisions = conversionClass.Program.GetBaseEmittedTypeNameCollisions(GetBaseEmittedTypeName);
-            return collisions.Contains(emittedTypeName);
+            return collisions.Contains(emittedTypeName) || StartsWithLowercaseLetter(emittedTypeName);
         }
 
         /// <summary>
