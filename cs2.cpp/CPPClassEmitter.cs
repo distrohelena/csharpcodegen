@@ -1427,6 +1427,10 @@ namespace cs2.cpp {
                 return "system/text/regular_expressions/regex";
             }
 
+            if (variableType.TryResolveConfiguredTypeRemapIncludePath(program, out string remappedIncludePath)) {
+                return remappedIncludePath;
+            }
+
             ConversionClass generatedClass = null;
             if (TryResolveGeneratedClass(normalizedIncludeCandidate, out generatedClass)) {
                 return generatedClass.GetEmittedFileStem(program);
@@ -1435,6 +1439,10 @@ namespace cs2.cpp {
             generatedClass = program.FindGeneratedClass(variableType);
             if (generatedClass != null) {
                 return generatedClass.GetEmittedFileStem(program);
+            }
+
+            if (variableType.TryBuildQualifiedLowercaseFileStem(out string qualifiedIncludePath)) {
+                return qualifiedIncludePath;
             }
 
             CPPKnownClass knownSourceClass = program.Requirements.FirstOrDefault(requirement => requirement.Name == variableType.TypeName);

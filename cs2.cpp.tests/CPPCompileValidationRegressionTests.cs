@@ -159,6 +159,35 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures delegate-typed properties invoke the delegate instance itself instead of incorrectly lowering to one nonexistent Invoke member on the owning class.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDelegatePropertyInvocation_InvokesResolvedDelegateInstance() {
+            string source = """
+                public delegate int IterationScheduler(int substepIndex);
+
+                public class SolverFixture {
+                    public IterationScheduler VelocityIterationScheduler { get; set; }
+
+                    public int GetVelocityIterationCountForSubstepIndex(int substepIndex) {
+                        if (VelocityIterationScheduler != null) {
+                            int scheduledCount = VelocityIterationScheduler(substepIndex);
+                            return scheduledCount;
+                        }
+
+                        return 0;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string generatedSource = File.ReadAllText(Path.Combine(output.OutputPath, "SolverFixture.cpp"));
+
+            Assert.Contains("(*this->VelocityIterationScheduler)(static_cast<int32_t>(substepIndex))", generatedSource);
+            Assert.DoesNotContain("this->Invoke", generatedSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures converted value types stay nonpolymorphic so unmanaged layout-sensitive structs do not gain vtables.
         /// </summary>
         [Fact]
@@ -8957,20 +8986,20 @@ namespace cs2.cpp.tests {
             string bepuHeaderOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Int2.hpp"));
 
             Assert.Contains("#include \"helengine_int2.hpp\"", headerOutput);
-            Assert.Contains("::helengine_int2 Padding;", headerOutput);
-            Assert.Contains("void set_Padding(::helengine_int2 value);", headerOutput);
-            Assert.Contains("DebugOverlayComponent() : Padding(::helengine_int2(static_cast<int32_t>(8), static_cast<int32_t>(6)))", sourceOutput);
-            Assert.Contains("roundedRectComponent->set_Size(::helengine_int2(static_cast<int32_t>(200), static_cast<int32_t>(80)));", sourceOutput);
+            Assert.Contains("::int2 Padding;", headerOutput);
+            Assert.Contains("void set_Padding(::int2 value);", headerOutput);
+            Assert.Contains("DebugOverlayComponent() : Padding(::int2(static_cast<int32_t>(8), static_cast<int32_t>(6)))", sourceOutput);
+            Assert.Contains("roundedRectComponent->set_Size(::int2(static_cast<int32_t>(200), static_cast<int32_t>(80)));", sourceOutput);
             Assert.Contains("class Int2", bepuHeaderOutput);
-            Assert.DoesNotContain("::int2 Padding;", headerOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("set_Padding(::int2 value)", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("::helengine_int2 Padding;", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("set_Padding(::helengine_int2 value)", headerOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
-        /// Ensures lowercase generated types emit canonical qualified artifacts directly without compatibility headers.
+        /// Ensures lowercase generated value types keep their source type names while emitting canonical namespace-qualified file stems.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithLowercaseValueType_UsesCanonicalQualifiedArtifactsWithoutCompatibilityHeaders() {
+        public void WriteOutput_WithLowercaseValueType_UsesCanonicalQualifiedFileStems() {
             string source = """
                 namespace helengine {
                     public struct int2 {
@@ -8992,13 +9021,13 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string overlayHeader = File.ReadAllText(Path.Combine(output.OutputPath, "OverlayBox.hpp"));
 
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.hpp")));
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.cpp")));
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.hpp")));
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "helengine_int2.cpp")));
-            Assert.False(File.Exists(Path.Combine(output.OutputPath, "int2.hpp")));
-            Assert.False(File.Exists(Path.Combine(output.OutputPath, "helengine_helengine_int2.hpp")));
             Assert.Contains("#include \"helengine_int2.hpp\"", overlayHeader, StringComparison.Ordinal);
-            Assert.Contains("::helengine_int2 Padding;", overlayHeader, StringComparison.Ordinal);
-            Assert.DoesNotContain("::int2 Padding;", overlayHeader, StringComparison.Ordinal);
+            Assert.Contains("::int2 Padding;", overlayHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("::helengine_int2 Padding;", overlayHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -10589,6 +10618,46 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("orientation->Normalize()", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("float4::CreateFromAxisAngle(", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("float4::Concatenate(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures by-value generated value-type parameters keep their original public method names instead of gaining synthetic ref-mangled overload suffixes.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithByValueValueTypeParameters_DoesNotIntroduceSyntheticRefMangling() {
+            string source = """
+                public struct float3 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                }
+
+                public struct float4 {
+                    public float X;
+                    public float Y;
+                    public float Z;
+                    public float W;
+
+                    public static float3 RotateVector(float3 value, float4 rotation) {
+                        return value;
+                    }
+                }
+
+                public sealed class RotationFixture {
+                    public float3 Rotate(float3 value, float4 rotation) {
+                        return float4.RotateVector(value, rotation);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "float4.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RotationFixture.cpp"));
+
+            Assert.Contains("static ::float3 RotateVector(::float3 value, ::float4 rotation);", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("RotateVector__ref0_ref1", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("return float4::RotateVector(value, rotation);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("RotateVector__ref0_ref1", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

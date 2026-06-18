@@ -207,7 +207,7 @@ namespace helengine {
 """;
 
         string outputPath = RunConversionWithPreset(source, "native-core-boot");
-        string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "helengine_float4x4.cpp"));
+        string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "float4x4.cpp"));
 
         Assert.Contains("result.M41 = -float3::Dot(vector2, cameraPosition);", float4x4Source);
         Assert.Contains("result.M43 = static_cast<float>((static_cast<double>(zNearPlane) / (static_cast<double>(zNearPlane) - static_cast<double>(zFarPlane))));", float4x4Source);

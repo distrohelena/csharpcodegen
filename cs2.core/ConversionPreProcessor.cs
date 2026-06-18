@@ -1020,18 +1020,7 @@ namespace cs2.core {
             ParameterModifier modifier,
             IMethodSymbol containingMethodSymbol,
             ITypeSymbol parameterTypeSymbol) {
-            if ((modifier & (ParameterModifier.Ref | ParameterModifier.Out | ParameterModifier.In | ParameterModifier.Params)) != 0) {
-                return modifier;
-            }
-
-            if (containingMethodSymbol?.ContainingType?.IsValueType != true ||
-                parameterTypeSymbol is not INamedTypeSymbol namedParameterTypeSymbol ||
-                namedParameterTypeSymbol.TypeKind != TypeKind.Struct ||
-                namedParameterTypeSymbol.SpecialType != SpecialType.None) {
-                return modifier;
-            }
-
-            return modifier | ParameterModifier.Ref;
+            return modifier;
         }
 
         /// <summary>
@@ -1233,48 +1222,36 @@ namespace cs2.core {
                 return;
             }
 
-            string type = typeSymbol.ToString();
             ConversionClass cl = context.CurrentClass;
-            if (!cl.ReferencedClasses.Contains(type)) {
-                cl.ReferencedClasses.Add(type);
-            }
+            AddReferencedClass(cl, typeSymbol);
 
             ConversionFunction fn = context.CurrentFunction;
             if (fn.AnalyzedReturns == null) {
                 fn.AnalyzedReturns = new List<VariableType>();
             }
 
-            fn.AnalyzedReturns.Add(VariableUtil.GetVarType(type));
+            fn.AnalyzedReturns.Add(VariableUtil.GetVarType(typeSymbol));
         }
 
         protected static void PreProcessIdentifierNameSyntax(SemanticModel semantic, ConversionContext context, IdentifierNameSyntax identifier) {
             string name = identifier.ToString();
-            bool isMethod = false;
 
             ISymbol? nsSymbol = semantic.GetSymbolInfo(identifier).Symbol;
             if (nsSymbol is INamespaceSymbol namespaceSymbol) {
                 if (namespaceSymbol.IsNamespace) {
                     return;
                 }
-            } else if (nsSymbol is IMethodSymbol methodSymbol) {
-                isMethod = true;
-            }
-
-            if (nsSymbol is ITypeSymbol typeSymbol) {
-                int kksk = -1;
-            }
-
-            if (nsSymbol is ITypeSymbol namedTypeSymbol) {
-                int kksk = -1;
             }
 
             if (nsSymbol is INamespaceOrTypeSymbol nameSpaceType) {
                 bool isType = nameSpaceType.IsType;
-
-                string type = identifier.ToString();
-                ConversionClass cl = context.CurrentClass;
-                if (!cl.ReferencedClasses.Contains(type)) {
-                    cl.ReferencedClasses.Add(type);
+                if (isType) {
+                    ConversionClass cl = context.CurrentClass;
+                    if (nameSpaceType is ITypeSymbol referencedTypeSymbol) {
+                        AddReferencedClass(cl, referencedTypeSymbol);
+                    } else {
+                        AddReferencedClass(cl, identifier.ToString());
+                    }
                 }
             }
         }
@@ -1342,6 +1319,34 @@ namespace cs2.core {
         }
 
         /// <summary>
+        /// Registers a referenced class on the current conversion class using Roslyn type metadata so namespace-qualified generated types keep their canonical identity.
+        /// </summary>
+        /// <param name="conversionClass">Class that owns the currently preprocessed member body.</param>
+        /// <param name="typeSymbol">Referenced Roslyn type metadata.</param>
+        static void AddReferencedClass(ConversionClass conversionClass, ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return;
+            }
+
+            AddReferencedClass(conversionClass, NormalizeQualifiedTypeName(typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)));
+        }
+
+        /// <summary>
+        /// Normalizes one qualified type name by trimming the Roslyn global alias prefix so generated type lookup keys stay stable across compiler stages.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Qualified type name to normalize.</param>
+        /// <returns>Normalized qualified type name without a leading <c>global::</c> alias.</returns>
+        static string NormalizeQualifiedTypeName(string qualifiedTypeName) {
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            return qualifiedTypeName.StartsWith("global::", StringComparison.Ordinal)
+                ? qualifiedTypeName["global::".Length..]
+                : qualifiedTypeName;
+        }
+
+        /// <summary>
         /// Resolves a static type reference from a member-access receiver so the emitted class can track body-only type dependencies.
         /// </summary>
         /// <param name="semantic">Semantic model that resolves symbols for the current syntax tree.</param>
@@ -1371,10 +1376,12 @@ namespace cs2.core {
         }
 
         protected static void PreProcessObjectCreationExpressionSyntax(SemanticModel semantic, ConversionContext context, ObjectCreationExpressionSyntax objectCreationExpression) {
-            string type = objectCreationExpression.Type.ToString();
             ConversionClass cl = context.CurrentClass;
-            if (!cl.ReferencedClasses.Contains(type)) {
-                cl.ReferencedClasses.Add(type);
+            ITypeSymbol typeSymbol = semantic.GetTypeInfo(objectCreationExpression).Type ?? semantic.GetTypeInfo(objectCreationExpression.Type).Type;
+            if (typeSymbol != null) {
+                AddReferencedClass(cl, typeSymbol);
+            } else {
+                AddReferencedClass(cl, objectCreationExpression.Type.ToString());
             }
 
             if (objectCreationExpression.ArgumentList != null) {
@@ -1400,14 +1407,24 @@ namespace cs2.core {
                 usage.Name = variable.Identifier.ToString();
 
                 string type = declaration.Type.ToString();
-                if (type != "var" && !cl.ReferencedClasses.Contains(type)) {
-                    cl.ReferencedClasses.Add(type);
+                if (type != "var") {
+                    ITypeSymbol declaredTypeSymbol = semantic.GetTypeInfo(declaration.Type).Type;
+                    if (declaredTypeSymbol != null) {
+                        AddReferencedClass(cl, declaredTypeSymbol);
+                    } else {
+                        AddReferencedClass(cl, type);
+                    }
                 }
 
                 if (type == "var" && variable.Initializer != null) {
-                    string inferredType = semantic.GetTypeInfo(variable.Initializer.Value).Type?.ToString();
-                    if (!string.IsNullOrWhiteSpace(inferredType) && !cl.ReferencedClasses.Contains(inferredType)) {
-                        cl.ReferencedClasses.Add(inferredType);
+                    ITypeSymbol inferredTypeSymbol = semantic.GetTypeInfo(variable.Initializer.Value).Type;
+                    if (inferredTypeSymbol != null) {
+                        AddReferencedClass(cl, inferredTypeSymbol);
+                    } else {
+                        string inferredType = semantic.GetTypeInfo(variable.Initializer.Value).Type?.ToString();
+                        if (!string.IsNullOrWhiteSpace(inferredType)) {
+                            AddReferencedClass(cl, inferredType);
+                        }
                     }
                 }
 

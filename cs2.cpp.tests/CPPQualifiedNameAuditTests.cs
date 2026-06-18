@@ -53,14 +53,14 @@ namespace cs2.cpp.tests {
                 """;
 
             ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
-            string float4Header = File.ReadAllText(Path.Combine(output.OutputPath, "helengine_float4.hpp"));
-            string float4Source = File.ReadAllText(Path.Combine(output.OutputPath, "helengine_float4.cpp"));
+            string float4Header = File.ReadAllText(Path.Combine(output.OutputPath, "float4.hpp"));
+            string float4Source = File.ReadAllText(Path.Combine(output.OutputPath, "float4.cpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Header, StringComparison.Ordinal);
-            Assert.Contains("#include \"helengine_float3.hpp\"", float4Source);
+            Assert.Contains("#include \"float3.hpp\"", float4Source);
             Assert.DoesNotContain("#include \"helengine.float3.hpp\"", float4Source, StringComparison.Ordinal);
-            Assert.False(File.Exists(Path.Combine(output.OutputPath, "float4.hpp")));
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "helengine_float4.hpp")));
         }
 
         /// <summary>
@@ -92,15 +92,15 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversionWithOutput(source, out JsonDocument report);
             string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "CollisionFixture.hpp"));
             string engineHeaderPath = Path.Combine(output.OutputPath, "helengine_int2.hpp");
-            string utilityHeaderPath = Path.Combine(output.OutputPath, "Int2.hpp");
+            string utilityHeaderPath = Path.Combine(output.OutputPath, "BepuUtilities_Int2.hpp");
 
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.True(File.Exists(engineHeaderPath));
             Assert.True(File.Exists(utilityHeaderPath));
-            Assert.Contains("class helengine_int2", File.ReadAllText(engineHeaderPath));
+            Assert.Contains("class int2", File.ReadAllText(engineHeaderPath));
             Assert.Contains("class Int2", File.ReadAllText(utilityHeaderPath));
             Assert.Contains("#include \"helengine_int2.hpp\"", fixtureHeader);
-            Assert.Contains("#include \"Int2.hpp\"", fixtureHeader);
+            Assert.Contains("#include \"BepuUtilities_Int2.hpp\"", fixtureHeader);
             Assert.DoesNotContain("#include \"int2.hpp\"", fixtureHeader, StringComparison.Ordinal);
         }
 
@@ -163,8 +163,8 @@ namespace cs2.cpp.tests {
             AssertNoDiagnostic(report, "IdentifierName");
             Assert.True(File.Exists(Path.Combine(coreOutputPath, "helengine_int2.hpp")));
             Assert.True(File.Exists(Path.Combine(physicsOutputPath, "helengine_int2.hpp")));
-            Assert.Contains("Int2.hpp", physicsHeaderFileNames);
-            Assert.DoesNotContain("int2.hpp", coreHeaderFileNames, StringComparer.Ordinal);
+            Assert.Contains("BepuUtilities_Int2.hpp", physicsHeaderFileNames);
+            Assert.Contains("helengine_int2.hpp", coreHeaderFileNames);
             Assert.DoesNotContain("int2.hpp", physicsHeaderFileNames, StringComparer.Ordinal);
         }
 
@@ -226,10 +226,10 @@ namespace cs2.cpp.tests {
             RunConversionForProject(appProjectPath, outputPath, out JsonDocument report);
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.cpp")));
-            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.hpp")));
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.cpp")));
             Assert.False(File.Exists(Path.Combine(outputPath, "int2.hpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.cpp")));
+            Assert.True(File.Exists(Path.Combine(outputPath, "helengine_int2.hpp")));
         }
 
         /// <summary>
@@ -363,9 +363,201 @@ namespace cs2.cpp.tests {
             string fixtureHeader = File.ReadAllText(Path.Combine(outputPath, "Fixture.hpp"));
 
             AssertNoDiagnostic(report, "IdentifierName");
-            Assert.Contains("::helengine_int2 EngineSize;", fixtureHeader);
+            Assert.Contains("::int2 EngineSize;", fixtureHeader);
             Assert.Contains("::Int2 UtilitySize;", fixtureHeader);
-            Assert.DoesNotContain("::int2 EngineSize;", fixtureHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("::helengine_int2 EngineSize;", fixtureHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures static invocations against source-backed imported engine value types keep the emitted overload suffix so downstream generated modules can call shared generated math helpers correctly.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithImportedEngineStaticOverloads_UsesEmittedFunctionSuffixes() {
+            string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-qualified-name-tests", Guid.NewGuid().ToString("N"));
+            string coreProjectPath = Path.Combine(rootPath, "core", "Core.csproj");
+            string appProjectPath = Path.Combine(rootPath, "app", "App.csproj");
+            string coreSourcePath = Path.Combine(rootPath, "core", "MathTypes.cs");
+            string appSourcePath = Path.Combine(rootPath, "app", "Fixture.cs");
+            string outputPath = Path.Combine(rootPath, "out");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(coreProjectPath) ?? rootPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(appProjectPath) ?? rootPath);
+
+            File.WriteAllText(coreProjectPath, CreateProjectFile());
+            File.WriteAllText(
+                appProjectPath,
+                CreateProjectFileWithReference(Path.GetRelativePath(Path.GetDirectoryName(appProjectPath) ?? rootPath, coreProjectPath)));
+
+            File.WriteAllText(
+                coreSourcePath,
+                """
+                namespace helengine {
+                    public struct float3 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                    }
+
+                    public struct float4 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                        public float W;
+
+                        public static void CreateFromAxisAngle(float3 axis, float angle, out float4 result) {
+                            CreateFromAxisAngle(ref axis, angle, out result);
+                        }
+
+                        public static void CreateFromAxisAngle(ref float3 axis, float angle, out float4 result) {
+                            result = default;
+                        }
+
+                        public static void Concatenate(ref float4 value1, ref float4 value2, out float4 result) {
+                            result = default;
+                        }
+                    }
+                }
+                """);
+
+            File.WriteAllText(
+                appSourcePath,
+                """
+                using helengine;
+
+                public class Fixture {
+                    public void Tick() {
+                        float3 axis = default;
+                        float4 delta;
+                        float4 current = default;
+                        float4 next = default;
+                        float4.CreateFromAxisAngle(ref axis, 1.0f, out delta);
+                        float4.Concatenate(ref current, ref delta, out next);
+                    }
+                }
+                """);
+
+            RunConversionForProject(appProjectPath, outputPath, out JsonDocument report);
+            string fixtureSource = File.ReadAllText(Path.Combine(outputPath, "Fixture.cpp"));
+
+            AssertNoDiagnostic(report, "IdentifierName");
+            Assert.Contains("#include \"helengine_float4.hpp\"", fixtureSource);
+            Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, 1.0f, delta);", fixtureSource);
+            Assert.Contains("float4::Concatenate__ref0_ref1_out2(current, delta, next);", fixtureSource);
+        }
+
+        /// <summary>
+        /// Ensures gameplay modules that reference helengine assemblies as metadata still emit deterministic overload suffixes for imported engine math helpers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMetadataReferencedEngineStaticOverloads_UsesEmittedFunctionSuffixes() {
+            string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-qualified-name-tests", Guid.NewGuid().ToString("N"));
+            string coreProjectPath = Path.Combine(rootPath, "core", "Core.csproj");
+            string appProjectPath = Path.Combine(rootPath, "app", "App.csproj");
+            string coreSourcePath = Path.Combine(rootPath, "core", "MathTypes.cs");
+            string appSourcePath = Path.Combine(rootPath, "app", "Fixture.cs");
+            string outputPath = Path.Combine(rootPath, "out");
+            string coreAssemblyPath = Path.Combine(rootPath, "core", "bin", "Debug", "net9.0", "helengine.core.dll");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(coreProjectPath) ?? rootPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(appProjectPath) ?? rootPath);
+
+            File.WriteAllText(
+                coreProjectPath,
+                """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net9.0</TargetFramework>
+                    <LangVersion>preview</LangVersion>
+                    <ImplicitUsings>enable</ImplicitUsings>
+                    <Nullable>disable</Nullable>
+                    <AssemblyName>helengine.core</AssemblyName>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(
+                appProjectPath,
+                CreateProjectFileWithAssemblyReference(
+                    "helengine.core",
+                    Path.GetRelativePath(Path.GetDirectoryName(appProjectPath) ?? rootPath, coreAssemblyPath)));
+
+            File.WriteAllText(
+                coreSourcePath,
+                """
+                namespace helengine {
+                    public struct float3 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                    }
+
+                    public struct float4 {
+                        public float X;
+                        public float Y;
+                        public float Z;
+                        public float W;
+
+                        public static void CreateFromAxisAngle(float3 axis, float angle, out float4 result) {
+                            CreateFromAxisAngle(ref axis, angle, out result);
+                        }
+
+                        public static void CreateFromAxisAngle(ref float3 axis, float angle, out float4 result) {
+                            result = default;
+                        }
+
+                        public static void Concatenate(ref float4 value1, ref float4 value2, out float4 result) {
+                            result = default;
+                        }
+                    }
+                }
+                """);
+
+            File.WriteAllText(
+                appSourcePath,
+                """
+                using helengine;
+
+                public class Fixture {
+                    public void Tick() {
+                        float3 axis = default;
+                        float4 delta;
+                        float4 current = default;
+                        float4 next = default;
+                        float4.CreateFromAxisAngle(ref axis, 1.0f, out delta);
+                        float4.Concatenate(ref current, ref delta, out next);
+                    }
+                }
+                """);
+
+            System.Diagnostics.ProcessStartInfo buildStartInfo = new("dotnet") {
+                WorkingDirectory = Path.GetDirectoryName(coreProjectPath) ?? rootPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            buildStartInfo.ArgumentList.Add("build");
+            buildStartInfo.ArgumentList.Add(coreProjectPath);
+            buildStartInfo.ArgumentList.Add("-c");
+            buildStartInfo.ArgumentList.Add("Debug");
+
+            using (System.Diagnostics.Process buildProcess = System.Diagnostics.Process.Start(buildStartInfo) ?? throw new InvalidOperationException("Core metadata build process could not start.")) {
+                string standardOutput = buildProcess.StandardOutput.ReadToEnd();
+                string standardError = buildProcess.StandardError.ReadToEnd();
+                buildProcess.WaitForExit();
+                Assert.True(
+                    buildProcess.ExitCode == 0,
+                    $"Core metadata build failed.{Environment.NewLine}{standardOutput}{Environment.NewLine}{standardError}");
+            }
+
+            Assert.True(File.Exists(coreAssemblyPath));
+
+            RunConversionForProject(appProjectPath, outputPath, out JsonDocument report);
+            string fixtureSource = File.ReadAllText(Path.Combine(outputPath, "Fixture.cpp"));
+
+            AssertNoDiagnostic(report, "IdentifierName");
+            Assert.Contains("#include \"helengine_float4.hpp\"", fixtureSource);
+            Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, 1.0f, delta);", fixtureSource);
+            Assert.Contains("float4::Concatenate__ref0_ref1_out2(current, delta, next);", fixtureSource);
         }
 
         /// <summary>
@@ -462,6 +654,30 @@ namespace cs2.cpp.tests {
                   </PropertyGroup>
                   <ItemGroup>
                     <ProjectReference Include="{{relativeProjectReferencePath}}" />
+                  </ItemGroup>
+                </Project>
+                """;
+        }
+
+        /// <summary>
+        /// Creates a minimal SDK-style project file that references one compiled assembly through a hint path.
+        /// </summary>
+        /// <param name="assemblyName">Logical assembly reference name.</param>
+        /// <param name="relativeAssemblyPath">Relative hint path from the temporary project to the referenced assembly.</param>
+        /// <returns>Project file content suitable for Roslyn metadata-reference analysis.</returns>
+        static string CreateProjectFileWithAssemblyReference(string assemblyName, string relativeAssemblyPath) {
+            return $$"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net9.0</TargetFramework>
+                    <LangVersion>preview</LangVersion>
+                    <ImplicitUsings>enable</ImplicitUsings>
+                    <Nullable>disable</Nullable>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Reference Include="{{assemblyName}}">
+                      <HintPath>{{relativeAssemblyPath}}</HintPath>
+                    </Reference>
                   </ItemGroup>
                 </Project>
                 """;

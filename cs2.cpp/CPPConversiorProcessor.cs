@@ -1915,6 +1915,13 @@ namespace cs2.cpp {
                         }
 
                         lines.Add(GetEmittedFunctionName(emittedFunction));
+                    } else if (nsSymbol is IMethodSymbol sourceBackedMethodSymbol &&
+                        ShouldUseEmittedMethodNameFromSymbol(sourceBackedMethodSymbol)) {
+                        if (emitTemplateDisambiguator) {
+                            lines.Add("template ");
+                        }
+
+                        lines.Add(GetEmittedFunctionName(sourceBackedMethodSymbol));
                     } else if (stackVar != null || functionInVar != null) {
                         lines.Add(emittedIdentifierName);
                     } else if (varOnClass == null || string.IsNullOrEmpty(varOnClass.Remap)) {
@@ -1993,6 +2000,10 @@ namespace cs2.cpp {
 
             if (identifier.Parent is InvocationExpressionSyntax directInvocation &&
                 ReferenceEquals(directInvocation.Expression, identifier)) {
+                if (TryResolveDelegateTypeSymbol(semantic, identifier, out _)) {
+                    return false;
+                }
+
                 methodSymbol = ResolveInvokedMethodSymbol(semantic, directInvocation);
                 return methodSymbol != null;
             }
@@ -2001,6 +2012,10 @@ namespace cs2.cpp {
                 ReferenceEquals(memberAccess.Name, identifier) &&
                 memberAccess.Parent is InvocationExpressionSyntax memberInvocation &&
                 ReferenceEquals(memberInvocation.Expression, memberAccess)) {
+                if (TryResolveDelegateTypeSymbol(semantic, memberAccess, out _)) {
+                    return false;
+                }
+
                 methodSymbol = ResolveInvokedMethodSymbol(semantic, memberInvocation);
                 return methodSymbol != null;
             }
@@ -2022,6 +2037,37 @@ namespace cs2.cpp {
             }
 
             return methodSymbol.Name + GetRefModifierSuffix(methodSymbol);
+        }
+
+        /// <summary>
+        /// Determines whether a Roslyn method symbol comes from source available to the converter so emitted overload suffixes remain stable even when the declaring type is imported from another generated project.
+        /// </summary>
+        /// <param name="methodSymbol">Method symbol to inspect.</param>
+        /// <returns><c>true</c> when the method has source declarations; otherwise <c>false</c>.</returns>
+        static bool HasSourceDeclaration(IMethodSymbol methodSymbol) {
+            return methodSymbol?.OriginalDefinition != null &&
+                methodSymbol.OriginalDefinition.DeclaringSyntaxReferences.Length > 0;
+        }
+
+        /// <summary>
+        /// Determines whether one metadata-backed method symbol belongs to a helengine assembly that still uses deterministic generated overload suffixes even when the declaring source project is not part of the current conversion.
+        /// </summary>
+        /// <param name="methodSymbol">Method symbol to inspect.</param>
+        /// <returns><c>true</c> when the symbol belongs to one helengine assembly; otherwise <c>false</c>.</returns>
+        static bool IsHelengineMetadataMethod(IMethodSymbol methodSymbol) {
+            string assemblyName = methodSymbol?.ContainingAssembly?.Name ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(assemblyName) &&
+                assemblyName.StartsWith("helengine.", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Determines whether one method call should use the emitted overload suffix derived from symbol metadata even when the current conversion graph does not contain the declaring generated class.
+        /// </summary>
+        /// <param name="methodSymbol">Method symbol to inspect.</param>
+        /// <returns><c>true</c> when emitted overload suffixes should be derived directly from the symbol; otherwise <c>false</c>.</returns>
+        static bool ShouldUseEmittedMethodNameFromSymbol(IMethodSymbol methodSymbol) {
+            return HasSourceDeclaration(methodSymbol) ||
+                IsHelengineMetadataMethod(methodSymbol);
         }
 
         string ResolveConvertedFunctionName(IMethodSymbol methodSymbol, ConversionFunction generatedFunction = null) {
@@ -3375,7 +3421,8 @@ namespace cs2.cpp {
                     IMethodSymbol invokedMemberMethodSymbol = ResolveInvokedMethodSymbol(semantic, containingInvocation);
                     if (invokedMemberMethodSymbol != null &&
                         (TryResolveGeneratedContainingClass(invokedMemberMethodSymbol, out _) ||
-                         staticReceiverGeneratedClass != null)) {
+                         staticReceiverGeneratedClass != null ||
+                         ShouldUseEmittedMethodNameFromSymbol(invokedMemberMethodSymbol))) {
                         if (ShouldEmitDependentTemplateQualifier(invokedMemberMethodSymbol, ReceiverRequiresDependentTemplateQualifier(semantic, memberAccess.Expression))) {
                             lines.Add("template ");
                         }
@@ -4430,19 +4477,20 @@ namespace cs2.cpp {
             if (receiverSymbol is IFieldSymbol receiverFieldSymbol &&
                 receiverFieldSymbol.IsStatic &&
                 receiverFieldSymbol.ContainingType != null) {
-                referencedTypeName = receiverFieldSymbol.ContainingType.Name;
+                referencedTypeName = receiverFieldSymbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             } else if (receiverSymbol is IPropertySymbol receiverPropertySymbol &&
                 receiverPropertySymbol.IsStatic &&
                 receiverPropertySymbol.ContainingType != null) {
-                referencedTypeName = receiverPropertySymbol.ContainingType.Name;
+                referencedTypeName = receiverPropertySymbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             } else if (receiverSymbol is IMethodSymbol receiverMethodSymbol &&
                 receiverMethodSymbol.IsStatic &&
                 receiverMethodSymbol.ContainingType != null) {
-                referencedTypeName = receiverMethodSymbol.ContainingType.Name;
+                referencedTypeName = receiverMethodSymbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             } else if (receiverSymbol is INamedTypeSymbol receiverTypeSymbol) {
-                referencedTypeName = receiverTypeSymbol.Name;
+                referencedTypeName = receiverTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             } else if (receiverResult.Class != null) {
-                referencedTypeName = receiverResult.Class.Name;
+                referencedTypeName = receiverResult.Class.TypeSymbol?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ??
+                    receiverResult.Class.Name;
             }
 
             if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
@@ -4460,6 +4508,22 @@ namespace cs2.cpp {
             if (!currentClass.ReferencedClasses.Contains(referencedTypeName)) {
                 currentClass.ReferencedClasses.Add(referencedTypeName);
             }
+        }
+
+        /// <summary>
+        /// Registers one generated type dependency using the most specific source identity available so later include resolution can recover the canonical generated file stem.
+        /// </summary>
+        /// <param name="context">Active conversion layer context.</param>
+        /// <param name="generatedClass">Generated type dependency to register.</param>
+        void RegisterGeneratedTypeDependency(LayerContext context, ConversionClass generatedClass) {
+            if (generatedClass?.TypeSymbol != null) {
+                RegisterGeneratedTypeDependency(
+                    context,
+                    generatedClass.TypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                return;
+            }
+
+            RegisterGeneratedTypeDependency(context, generatedClass?.GetEmittedTypeName());
         }
 
         void AppendInvocationGenericArgumentsFromSyntax(
@@ -4490,13 +4554,13 @@ namespace cs2.cpp {
                 if (genericArgumentTypeSymbol is INamedTypeSymbol namedGenericArgumentTypeSymbol) {
                     ConversionClass symbolResolvedGeneratedClass = context.Program.FindGeneratedClass(namedGenericArgumentTypeSymbol);
                     if (symbolResolvedGeneratedClass != null) {
-                        RegisterGeneratedTypeDependency(context, symbolResolvedGeneratedClass.GetEmittedTypeName());
+                        RegisterGeneratedTypeDependency(context, symbolResolvedGeneratedClass);
                     }
                 }
                 string renderedGenericArgumentType = RenderConvertedGenericArgumentType(semantic, context, genericArgumentSyntax);
                 ConversionClass renderedGeneratedClass = context.Program.FindGeneratedClass(renderedGenericArgumentType, genericArgumentType.GenericArgs.Count);
                 if (renderedGeneratedClass != null) {
-                    RegisterGeneratedTypeDependency(context, renderedGeneratedClass.GetEmittedTypeName());
+                    RegisterGeneratedTypeDependency(context, renderedGeneratedClass);
                 }
                 lines.Add(renderedGenericArgumentType);
             }
@@ -4908,7 +4972,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            RegisterGeneratedTypeDependency(context, generatedClass.Name);
+            RegisterGeneratedTypeDependency(context, generatedClass);
             lines.Add(GetContainingTypeAccessName(context, invokedMethodSymbol.ContainingType));
             lines.Add("::");
             if (RequiresDependentTemplateQualifier(invokedMethodSymbol)) {
@@ -5963,7 +6027,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            RegisterGeneratedTypeDependency(context, generatedClass.Name);
+            RegisterGeneratedTypeDependency(context, generatedClass);
             argumentLines.Add(GetContainingTypeAccessName(context, conversionMethodSymbol.ContainingType));
             argumentLines.Add("::");
             argumentLines.Add(GetConversionOperatorFunctionName(conversionMethodSymbol));
@@ -7016,6 +7080,14 @@ namespace cs2.cpp {
                         return true;
                     case IPropertySymbol propertySymbol when propertySymbol.Type?.TypeKind == TypeKind.Delegate:
                         delegateTypeSymbol = propertySymbol.Type;
+                        return true;
+                    case IMethodSymbol methodSymbol when methodSymbol.AssociatedSymbol is IPropertySymbol associatedPropertySymbol &&
+                        associatedPropertySymbol.Type?.TypeKind == TypeKind.Delegate:
+                        delegateTypeSymbol = associatedPropertySymbol.Type;
+                        return true;
+                    case IMethodSymbol methodSymbol when methodSymbol.MethodKind == MethodKind.DelegateInvoke &&
+                        methodSymbol.ContainingType?.TypeKind == TypeKind.Delegate:
+                        delegateTypeSymbol = methodSymbol.ContainingType;
                         return true;
                 }
             }
@@ -14752,9 +14824,14 @@ namespace cs2.cpp {
 
             ConversionClass generatedClass = context.Program.FindGeneratedClass(variableType);
             if (generatedClass != null) {
-                RegisterGeneratedTypeDependency(context, generatedClass.GetEmittedTypeName());
+                RegisterGeneratedTypeDependency(context, generatedClass);
             } else {
-            RegisterGeneratedTypeReference(context, variableType.TypeName, variableType.GenericArgs.Count);
+                RegisterGeneratedTypeReference(
+                    context,
+                    !string.IsNullOrWhiteSpace(variableType.QualifiedTypeName)
+                        ? variableType.QualifiedTypeName
+                        : variableType.TypeName,
+                    variableType.GenericArgs.Count);
             }
 
             if (variableType.GenericArgs == null) {
@@ -14771,18 +14848,7 @@ namespace cs2.cpp {
                 return;
             }
 
-            string normalizedTypeName = typeName;
-            int lastDotIndex = normalizedTypeName.LastIndexOf('.');
-            if (lastDotIndex >= 0 && lastDotIndex < normalizedTypeName.Length - 1) {
-                normalizedTypeName = normalizedTypeName[(lastDotIndex + 1)..];
-            }
-
-            int nestedSeparatorIndex = normalizedTypeName.LastIndexOf('+');
-            if (nestedSeparatorIndex >= 0 && nestedSeparatorIndex < normalizedTypeName.Length - 1) {
-                normalizedTypeName = normalizedTypeName[(nestedSeparatorIndex + 1)..];
-            }
-
-            ConversionClass generatedClass = context.Program.FindGeneratedClass(normalizedTypeName, genericArgCount);
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(typeName, genericArgCount);
             if (generatedClass == null) {
                 return;
             }
