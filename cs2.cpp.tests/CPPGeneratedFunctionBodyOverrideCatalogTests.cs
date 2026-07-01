@@ -4,14 +4,14 @@ using cs2.cpp;
 namespace cs2.cpp.tests;
 
 /// <summary>
-/// Verifies that generated function body overrides are selected from structural function shape rather than caller-owned engine type names.
+/// Verifies that source-owned matrix helper implementations are no longer replaced by codegen-owned structural overrides.
 /// </summary>
-public class CPPGeneratedFunctionBodyOverrideCatalogTests {
+public sealed class CPPGeneratedFunctionBodyOverrideCatalogTests {
     /// <summary>
-    /// Ensures the native-column-vector look-at override applies to arbitrary caller-owned vector and matrix type identities.
+    /// Ensures codegen no longer claims ownership of source-authored matrix look-at bodies.
     /// </summary>
     [Fact]
-    public void TryWriteOverride_WithGenericLookAtShape_DoesNotRequireEngineTypeNames() {
+    public void TryWriteOverride_WithGenericLookAtShape_DoesNotEmitStructuralOverride() {
         CPPGeneratedFunctionBodyOverrideCatalog catalog = new CPPGeneratedFunctionBodyOverrideCatalog();
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.PlatformProfile.GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector;
@@ -24,21 +24,19 @@ public class CPPGeneratedFunctionBodyOverrideCatalogTests {
                 CreateParameter("result", "Example.Math.Matrix4x4", ParameterModifier.Out)
             ]
         };
-
+        ConversionClass conversionClass = CreateScalarMatrixConversionClass();
         using StringWriter writer = new StringWriter();
-        bool wroteOverride = catalog.TryWriteOverride(options, function, writer);
-        string output = writer.ToString();
+        bool wroteOverride = catalog.TryWriteOverride(options, conversionClass, function, writer);
 
-        Assert.True(wroteOverride);
-        Assert.Contains("float3::Normalize(cameraPosition - cameraTarget)", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("helengine.", output, StringComparison.OrdinalIgnoreCase);
+        Assert.False(wroteOverride);
+        Assert.Equal(string.Empty, writer.ToString());
     }
 
     /// <summary>
-    /// Ensures the native-column-vector multiply override applies to arbitrary caller-owned matrix type identities.
+    /// Ensures codegen no longer claims ownership of source-authored matrix multiply bodies.
     /// </summary>
     [Fact]
-    public void TryWriteOverride_WithGenericMultiplyShape_DoesNotRequireEngineTypeNames() {
+    public void TryWriteOverride_WithGenericMultiplyShape_DoesNotEmitStructuralOverride() {
         CPPGeneratedFunctionBodyOverrideCatalog catalog = new CPPGeneratedFunctionBodyOverrideCatalog();
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.PlatformProfile.GeneratedMathConvention = CPPGeneratedMathConventionKind.NativeColumnVector;
@@ -50,14 +48,12 @@ public class CPPGeneratedFunctionBodyOverrideCatalogTests {
                 CreateParameter("result", "Example.Math.Matrix4x4", ParameterModifier.Out)
             ]
         };
-
+        ConversionClass conversionClass = CreateScalarMatrixConversionClass();
         using StringWriter writer = new StringWriter();
-        bool wroteOverride = catalog.TryWriteOverride(options, function, writer);
-        string output = writer.ToString();
+        bool wroteOverride = catalog.TryWriteOverride(options, conversionClass, function, writer);
 
-        Assert.True(wroteOverride);
-        Assert.Contains("matrix2.M11 * matrix1.M11", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("helengine.", output, StringComparison.OrdinalIgnoreCase);
+        Assert.False(wroteOverride);
+        Assert.Equal(string.Empty, writer.ToString());
     }
 
     /// <summary>
@@ -75,5 +71,16 @@ public class CPPGeneratedFunctionBodyOverrideCatalogTests {
                 QualifiedTypeName = qualifiedTypeName
             }
         };
+    }
+
+    /// <summary>
+    /// Creates one scalar matrix conversion class shape that exposes <c>M11</c> through <c>M44</c> so scalar-matrix matching can be exercised in isolation.
+    /// </summary>
+    /// <returns>Configured conversion class shape.</returns>
+    static ConversionClass CreateScalarMatrixConversionClass() {
+        ConversionClass conversionClass = new ConversionClass();
+        conversionClass.Variables.Add(new ConversionVariable { Name = "M11" });
+        conversionClass.Variables.Add(new ConversionVariable { Name = "M44" });
+        return conversionClass;
     }
 }

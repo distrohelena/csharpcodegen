@@ -3213,7 +3213,7 @@ namespace cs2.cpp {
                 WriteExplicitLayoutFieldAssignments(conversionClass, sourceWriter);
             }
 
-            if (functionBodyOverrideCatalog.TryWriteOverride(processor?.Options, function, sourceWriter)) {
+            if (functionBodyOverrideCatalog.TryWriteOverride(processor?.Options, conversionClass, function, sourceWriter)) {
             } else if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
             } else {

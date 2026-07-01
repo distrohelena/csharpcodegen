@@ -122,41 +122,12 @@ namespace ExampleEngine.Core.Scene {
     }
 
     /// <summary>
-    /// Verifies that native-column-vector conversions specialize generated matrix helper bodies during emission instead of rewriting emitted files afterward.
+    /// Verifies that helengine-owned preprocessor symbols can select the source-owned GameCube/Wii GX matrix ABI branch without codegen replacing the body structurally.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsNativeCoreBoot_SpecializesFloat4x4BodiesDuringEmission() {
+    public void WriteOutput_WhenNativeCoreBootUsesGameCubeWiiGxMatrixSymbol_EmitsSourceOwnedGameCubeWiiGxMatrixBodies() {
         string source = """
 namespace ExampleEngine {
-    public struct float3 {
-        public float X;
-        public float Y;
-        public float Z;
-
-        public static float3 Normalize(float3 value) {
-            return value;
-        }
-
-        public static float3 Cross(float3 left, float3 right) {
-            return left;
-        }
-
-        public static float Dot(float3 left, float3 right) {
-            return 0f;
-        }
-
-        public static float3 operator -(float3 left, float3 right) {
-            return left;
-        }
-    }
-
-    public struct float4 {
-        public float X;
-        public float Y;
-        public float Z;
-        public float W;
-    }
-
     public struct float4x4 {
         public float M11;
         public float M12;
@@ -175,48 +146,59 @@ namespace ExampleEngine {
         public float M43;
         public float M44;
 
-        public static void CreateLookAt(ref float3 cameraPosition, ref float3 cameraTarget, ref float3 cameraUpVector, out float4x4 result) {
-            result = new float4x4();
-        }
-
-        public static void CreateOrthographicOffCenter(float left, float right, float bottom, float top, float zNearPlane, float zFarPlane, out float4x4 result) {
-            result = new float4x4();
-        }
-
         public static void CreatePerspectiveFieldOfView(float fieldOfView, float aspectRatio, float nearPlaneDistance, float farPlaneDistance, out float4x4 result) {
             result = new float4x4();
+#if HELENGINE_CODEGEN_MATRIX_ABI_GX_GAMECUBE_WII
+            result.M34 = nearPlaneDistance * (farPlaneDistance / (nearPlaneDistance - farPlaneDistance));
+            result.M43 = -1.0f;
+#else
+            float negFarRange = float.IsPositiveInfinity(farPlaneDistance) ? -1.0f : farPlaneDistance / (nearPlaneDistance - farPlaneDistance);
+            result.M34 = -1.0f;
+            result.M43 = nearPlaneDistance * negFarRange;
+#endif
         }
 
         public static void CreateTranslation(float x, float y, float z, out float4x4 result) {
             result = new float4x4();
-        }
-
-        public static void CreateTranslation(ref float3 position, out float4x4 result) {
-            result = new float4x4();
+#if HELENGINE_CODEGEN_MATRIX_ABI_GX_GAMECUBE_WII
+            result.M14 = x;
+            result.M24 = y;
+            result.M34 = z;
+#else
+            result.M41 = x;
+            result.M42 = y;
+            result.M43 = z;
+#endif
         }
 
         public static void Multiply(ref float4x4 matrix1, ref float4x4 matrix2, out float4x4 result) {
+#if HELENGINE_CODEGEN_MATRIX_ABI_GX_GAMECUBE_WII
+            float m11 = (((matrix2.M11 * matrix1.M11) + (matrix2.M12 * matrix1.M21)) + (matrix2.M13 * matrix1.M31)) + (matrix2.M14 * matrix1.M41);
+#else
+            float m11 = (((matrix1.M11 * matrix2.M11) + (matrix1.M12 * matrix2.M21)) + (matrix1.M13 * matrix2.M31)) + (matrix1.M14 * matrix2.M41);
+#endif
             result = new float4x4();
-        }
-
-        public static void CreateFromQuaternion(ref float4 quaternion, out float4x4 result) {
-            result = new float4x4();
+            result.M11 = m11;
         }
     }
 }
 """;
 
-        string outputPath = RunConversionWithPreset(source, "native-core-boot");
+        string outputPath = RunConversionWithPreset(
+            source,
+            "native-core-boot",
+            options => options.AdditionalPreprocessorSymbols = ["HELENGINE_CODEGEN_MATRIX_ABI_GX_GAMECUBE_WII"]);
         string float4x4Source = File.ReadAllText(Path.Combine(outputPath, "float4x4.cpp"));
 
-        Assert.Contains("result.M41 = -float3::Dot(vector2, cameraPosition);", float4x4Source);
-        Assert.Contains("result.M43 = static_cast<float>((static_cast<double>(zNearPlane) / (static_cast<double>(zNearPlane) - static_cast<double>(zFarPlane))));", float4x4Source);
+        Assert.Contains("result.M34 = nearPlaneDistance * (farPlaneDistance / (nearPlaneDistance - farPlaneDistance));", float4x4Source);
         Assert.Contains("result.M43 = -1.0f;", float4x4Source);
         Assert.Contains("result.M14 = x;", float4x4Source);
-        Assert.Contains("result.M24 = position.Y;", float4x4Source);
+        Assert.Contains("result.M24 = y;", float4x4Source);
+        Assert.Contains("result.M34 = z;", float4x4Source);
         Assert.Contains("float m11 = (((matrix2.M11 * matrix1.M11) + (matrix2.M12 * matrix1.M21)) + (matrix2.M13 * matrix1.M31)) + (matrix2.M14 * matrix1.M41);", float4x4Source);
-        Assert.Contains("result.M12 = 2.0f * (num6 + num5);", float4x4Source);
+        Assert.DoesNotContain("float negFarRange = Number::IsPositiveInfinity(farPlaneDistance)", float4x4Source, StringComparison.Ordinal);
         Assert.DoesNotContain("result.M41 = x;", float4x4Source, StringComparison.Ordinal);
+        Assert.DoesNotContain("matrix1.M11 * matrix2.M11", float4x4Source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -610,6 +592,19 @@ namespace ExampleEngine {
     /// <param name="featureProfile">Resolved feature configuration for the conversion.</param>
     /// <returns>The output directory that contains the generated C++ files.</returns>
     static string RunConversion(string source, CPPBuildFeatureProfile featureProfile, string presetId = "") {
+        return RunConversion(source, featureProfile, presetId, options => {
+        });
+    }
+
+    /// <summary>
+    /// Runs the C++ converter against a temporary single-file project and allows one caller-provided options mutator after preset resolution.
+    /// </summary>
+    /// <param name="source">C# source file content to convert.</param>
+    /// <param name="featureProfile">Feature profile to apply when no preset owns feature selection.</param>
+    /// <param name="presetId">Optional named preset identifier.</param>
+    /// <param name="configureOptions">Optional test-owned options mutator applied after preset resolution.</param>
+    /// <returns>The output directory that contains the generated C++ files.</returns>
+    static string RunConversion(string source, CPPBuildFeatureProfile featureProfile, string presetId, Action<CPPConversionOptions> configureOptions) {
         string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-feature-pruning-tests", Guid.NewGuid().ToString("N"));
         string projectPath = Path.Combine(rootPath, "Fixture.csproj");
         string sourcePath = Path.Combine(rootPath, "Fixture.cs");
@@ -619,14 +614,18 @@ namespace ExampleEngine {
         File.WriteAllText(projectPath, CreateProjectFile());
         File.WriteAllText(sourcePath, source);
 
+        bool hasPreset = !string.IsNullOrWhiteSpace(presetId);
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.LoadNativeRuntimeMetadata = false;
         options.WriteConversionReport = true;
         options.PresetId = presetId ?? string.Empty;
         options.FeatureCatalog = CPPTestFeatureCatalogFactory.CreateSampleFeatureCatalog();
-        if (featureProfile != null && string.IsNullOrWhiteSpace(options.PresetId)) {
+        options = new CPPConversionPresetCatalog().ApplyTo(options);
+        if (featureProfile != null && !hasPreset) {
             options.BuildFeatureProfile = featureProfile;
         }
+        options.PresetId = string.Empty;
+        configureOptions(options);
 
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);
@@ -645,6 +644,17 @@ namespace ExampleEngine {
     /// <returns>The output directory that contains the generated C++ files.</returns>
     static string RunConversionWithPreset(string source, string presetId) {
         return RunConversion(source, new CPPBuildFeatureProfile(), presetId);
+    }
+
+    /// <summary>
+    /// Runs the C++ converter against a temporary single-file project using a named preset and one caller-provided options mutator.
+    /// </summary>
+    /// <param name="source">C# source file content to convert.</param>
+    /// <param name="presetId">Stable preset id to resolve for the conversion.</param>
+    /// <param name="configureOptions">Optional test-owned options mutator applied after preset resolution.</param>
+    /// <returns>The output directory that contains the generated C++ files.</returns>
+    static string RunConversionWithPreset(string source, string presetId, Action<CPPConversionOptions> configureOptions) {
+        return RunConversion(source, new CPPBuildFeatureProfile(), presetId, configureOptions);
     }
 
     /// <summary>
