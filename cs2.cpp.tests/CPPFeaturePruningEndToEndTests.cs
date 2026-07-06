@@ -122,6 +122,44 @@ namespace ExampleEngine.Core.Scene {
     }
 
     /// <summary>
+    /// Verifies generic forced-disabled feature options preserve DS runtime shape while disabling the debug overlay.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenForcedDisabledFeaturesDisableDebugOverlay_PreservesDsConfig() {
+        string source = """
+namespace ExampleEngine {
+    public class DebugOverlayComponent {
+    }
+}
+""";
+
+        string outputPath = RunConversion(
+            source,
+            CPPBuildFeatureProfile.CreateDefault(),
+            string.Empty,
+            options => {
+                options.CompilerProfile = CPPCompilerProfile.CreateGcc();
+                options.PlatformProfile = CPPPlatformProfile.CreateNintendoDsHeadless();
+                options.RuntimeProfile = CPPRuntimeProfile.CreateStlLite();
+                options.IncludeProjectDefinedPreprocessorSymbols = false;
+                options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "debug_overlay"
+                };
+                options.BuildFeatureProfile = CPPFeatureProfileOptionResolver.BuildProfile(options.PlatformOptionValues, options.FeatureCatalog);
+            });
+        string configPath = Path.Combine(outputPath, "helcpp_config.hpp");
+        string config = File.ReadAllText(configPath);
+
+        Assert.Contains("#define HE_CPP_COMPILER_GCC 1", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_DS 1", config);
+        Assert.Contains("#define HE_CPP_RUNTIME_STL_LITE 1", config);
+        Assert.Contains("#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0", config);
+        Assert.Contains("#define HE_CPP_FEATURE_DEBUG_OVERLAY 0", config);
+        Assert.False(File.Exists(Path.Combine(outputPath, "DebugOverlayComponent.hpp")));
+        Assert.False(File.Exists(Path.Combine(outputPath, "DebugOverlayComponent.cpp")));
+    }
+
+    /// <summary>
     /// Verifies that helengine-owned preprocessor symbols can select the source-owned GameCube/Wii GX matrix ABI branch without codegen replacing the body structurally.
     /// </summary>
     [Fact]

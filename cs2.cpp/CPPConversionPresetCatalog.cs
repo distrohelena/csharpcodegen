@@ -22,11 +22,103 @@ namespace cs2.cpp {
             options.CompilerProfile = preset.CompilerProfile;
             options.PlatformProfile = preset.PlatformProfile;
             options.RuntimeProfile = preset.RuntimeProfile;
-            options.BuildFeatureProfile = preset.BuildFeatureProfile;
+            options.PlatformOptionValues = MergePlatformOptionValues(
+                preset.PlatformOptionValues,
+                options.PlatformOptionValues);
+            options.BuildFeatureProfile = CPPFeatureProfileOptionResolver.BuildProfile(
+                options.PlatformOptionValues,
+                options.FeatureCatalog);
             options.RestrictionProfile = preset.RestrictionProfile;
-            options.AdditionalPreprocessorSymbols = preset.AdditionalPreprocessorSymbols;
+            options.AdditionalPreprocessorSymbols = MergeAdditionalPreprocessorSymbols(
+                options.AdditionalPreprocessorSymbols,
+                preset.AdditionalPreprocessorSymbols);
             options.IncludeProjectDefinedPreprocessorSymbols = preset.IncludeProjectDefinedPreprocessorSymbols;
             return options;
+        }
+
+        /// <summary>
+        /// Merges preset-owned option defaults with caller-selected option overrides.
+        /// </summary>
+        /// <param name="presetValues">Generic option defaults owned by the preset.</param>
+        /// <param name="callerValues">Caller-selected generic option values.</param>
+        /// <returns>Merged generic option map with caller values taking precedence.</returns>
+        static IReadOnlyDictionary<string, string> MergePlatformOptionValues(
+            IReadOnlyDictionary<string, string> presetValues,
+            IReadOnlyDictionary<string, string> callerValues) {
+            Dictionary<string, string> mergedValues = new(StringComparer.OrdinalIgnoreCase);
+            AppendOptionValues(mergedValues, presetValues);
+            AppendOptionValues(mergedValues, callerValues);
+            return mergedValues;
+        }
+
+        /// <summary>
+        /// Merges caller-provided preprocessor symbols with preset-owned symbols while preserving the caller ordering.
+        /// </summary>
+        /// <param name="callerSymbols">Symbols already supplied by the caller before preset application.</param>
+        /// <param name="presetSymbols">Symbols owned by the resolved preset.</param>
+        /// <returns>Ordered unique symbol list containing both caller and preset entries.</returns>
+        static IReadOnlyList<string> MergeAdditionalPreprocessorSymbols(
+            IReadOnlyList<string> callerSymbols,
+            IReadOnlyList<string> presetSymbols) {
+            HashSet<string> seenSymbols = new(StringComparer.Ordinal);
+            List<string> mergedSymbols = new();
+            AppendUniqueSymbols(mergedSymbols, seenSymbols, callerSymbols);
+            AppendUniqueSymbols(mergedSymbols, seenSymbols, presetSymbols);
+            return mergedSymbols;
+        }
+
+        /// <summary>
+        /// Appends non-empty preprocessor symbols that have not already been added to the merged preset symbol list.
+        /// </summary>
+        /// <param name="destination">Ordered merged symbol list.</param>
+        /// <param name="seenSymbols">Set tracking symbols already appended.</param>
+        /// <param name="symbols">Candidate symbols to append.</param>
+        static void AppendUniqueSymbols(
+            List<string> destination,
+            HashSet<string> seenSymbols,
+            IReadOnlyList<string> symbols) {
+            if (destination == null) {
+                throw new ArgumentNullException(nameof(destination));
+            }
+            if (seenSymbols == null) {
+                throw new ArgumentNullException(nameof(seenSymbols));
+            }
+            if (symbols == null) {
+                return;
+            }
+
+            for (int index = 0; index < symbols.Count; index++) {
+                string symbol = symbols[index];
+                if (string.IsNullOrWhiteSpace(symbol) || !seenSymbols.Add(symbol)) {
+                    continue;
+                }
+
+                destination.Add(symbol);
+            }
+        }
+
+        /// <summary>
+        /// Appends non-empty generic option values into the merged option map.
+        /// </summary>
+        /// <param name="destination">Merged option map receiving the values.</param>
+        /// <param name="values">Option map to append.</param>
+        static void AppendOptionValues(
+            Dictionary<string, string> destination,
+            IReadOnlyDictionary<string, string> values) {
+            if (destination == null) {
+                throw new ArgumentNullException(nameof(destination));
+            }
+            if (values == null) {
+                return;
+            }
+
+            foreach (KeyValuePair<string, string> pair in values) {
+                if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value)) {
+                    continue;
+                }
+
+                destination[pair.Key] = pair.Value;
+            }
         }
 
         /// <summary>
@@ -51,6 +143,10 @@ namespace cs2.cpp {
                 return CreatePlayStation2LitePreset();
             }
 
+            if (string.Equals(presetId, "ds-lite", StringComparison.OrdinalIgnoreCase)) {
+                return CreateNintendoDsLitePreset();
+            }
+
             if (string.Equals(presetId, "native-core-boot", StringComparison.OrdinalIgnoreCase)) {
                 return CreateNativeCoreBootPreset();
             }
@@ -72,7 +168,6 @@ namespace cs2.cpp {
                 CompilerProfile = CPPCompilerProfile.CreateMsvc(),
                 PlatformProfile = CPPPlatformProfile.CreateWindowsHeadless(),
                 RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
-                BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
                 RestrictionProfile = CPPRestrictionProfile.CreatePermissive("desktop"),
                 IncludeProjectDefinedPreprocessorSymbols = true,
                 AdditionalPreprocessorSymbols = Array.Empty<string>()
@@ -84,21 +179,20 @@ namespace cs2.cpp {
         /// </summary>
         /// <returns>The resolved Windows shader-disabled preset.</returns>
         static CPPConversionPreset CreateWindowsNoShadersPreset() {
-            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode("shaders", CPPFeatureMode.Disabled);
-
             return new CPPConversionPreset {
                 Id = "windows-no-shaders",
                 CompilerProfile = CPPCompilerProfile.CreateMsvc(),
                 PlatformProfile = CPPPlatformProfile.CreateWindowsHeadless(),
                 RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
-                BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "desktop-no-shaders",
                     ForbidShaders = true
                 },
                 IncludeProjectDefinedPreprocessorSymbols = true,
-                AdditionalPreprocessorSymbols = Array.Empty<string>()
+                AdditionalPreprocessorSymbols = Array.Empty<string>(),
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "shaders"
+                }
             };
         }
 
@@ -107,16 +201,11 @@ namespace cs2.cpp {
         /// </summary>
         /// <returns>The resolved PlayStation 2 preset.</returns>
         static CPPConversionPreset CreatePlayStation2LitePreset() {
-            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode("shaders", CPPFeatureMode.Disabled)
-                .WithMode("debug_overlay", CPPFeatureMode.Disabled);
-
             return new CPPConversionPreset {
                 Id = "ps2-lite",
                 CompilerProfile = CPPCompilerProfile.CreateGcc(),
                 PlatformProfile = CPPPlatformProfile.CreatePlayStation2Headless(),
                 RuntimeProfile = CPPRuntimeProfile.CreateCustomRetro(),
-                BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "ps2-lite",
                     ForbidShaders = true,
@@ -130,6 +219,31 @@ namespace cs2.cpp {
                     "HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED",
                     "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+                },
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "shaders;debug_overlay"
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates the low-footprint Nintendo DS preset.
+        /// </summary>
+        /// <returns>The resolved Nintendo DS preset.</returns>
+        static CPPConversionPreset CreateNintendoDsLitePreset() {
+            return new CPPConversionPreset {
+                Id = "ds-lite",
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateNintendoDsHeadless(),
+                RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+                RestrictionProfile = new CPPRestrictionProfile {
+                    Name = "ds-lite",
+                    ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = Array.Empty<string>(),
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "debug_overlay"
                 }
             };
         }
@@ -139,16 +253,11 @@ namespace cs2.cpp {
         /// </summary>
         /// <returns>The resolved stripped native core-boot preset.</returns>
         static CPPConversionPreset CreateNativeCoreBootPreset() {
-            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode("shaders", CPPFeatureMode.Disabled)
-                .WithMode("debug_overlay", CPPFeatureMode.Disabled);
-
             return new CPPConversionPreset {
                 Id = "native-core-boot",
                 CompilerProfile = CPPCompilerProfile.CreateGcc(),
                 PlatformProfile = CPPPlatformProfile.CreateCustomHeadless("retroppc", false, CPPGeneratedMathConventionKind.NativeColumnVector, 4),
                 RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
-                BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "native-core-boot",
                     ForbidShaders = true,
@@ -160,6 +269,9 @@ namespace cs2.cpp {
                 AdditionalPreprocessorSymbols = new[] {
                     "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+                },
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "shaders;debug_overlay"
                 }
             };
         }
@@ -169,18 +281,11 @@ namespace cs2.cpp {
         /// </summary>
         /// <returns>The resolved Nintendo 64 preset.</returns>
         static CPPConversionPreset CreateNintendo64MinimalPreset() {
-            CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
-                .WithMode("shaders", CPPFeatureMode.Disabled)
-                .WithMode("debug_overlay", CPPFeatureMode.Disabled)
-                .WithMode("render2d", CPPFeatureMode.Disabled)
-                .WithMode("text2d", CPPFeatureMode.Disabled);
-
             return new CPPConversionPreset {
                 Id = "n64-minimal",
                 CompilerProfile = CPPCompilerProfile.CreateGcc(),
                 PlatformProfile = CPPPlatformProfile.CreateNintendo64Headless(),
                 RuntimeProfile = CPPRuntimeProfile.CreateCustomRetro(),
-                BuildFeatureProfile = featureProfile,
                 RestrictionProfile = new CPPRestrictionProfile {
                     Name = "n64-minimal",
                     ForbidShaders = true,
@@ -193,6 +298,9 @@ namespace cs2.cpp {
                 AdditionalPreprocessorSymbols = new[] {
                     "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+                },
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "shaders;debug_overlay;render2d;text2d"
                 }
             };
         }

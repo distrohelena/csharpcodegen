@@ -29,6 +29,12 @@ namespace cs2.cpp {
         public CPPBuildFeatureProfile BuildFeatureProfile { get; set; } = CPPBuildFeatureProfile.CreateDefault();
 
         /// <summary>
+        /// Gets or sets generic option defaults contributed by the preset before caller-selected overrides are applied.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> PlatformOptionValues { get; set; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// Gets or sets the restriction profile used by the preset.
         /// </summary>
         public CPPRestrictionProfile RestrictionProfile { get; set; } = CPPRestrictionProfile.CreatePermissive(string.Empty);
