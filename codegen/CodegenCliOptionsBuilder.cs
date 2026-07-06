@@ -21,7 +21,6 @@ public static class CodegenCliOptionsBuilder {
         options.CompilerProfile = CreateCompilerProfile(parsedArguments.PlatformId, parsedArguments.CompilerProfileName);
         options.PlatformProfile = CreatePlatformProfile(parsedArguments.PlatformId, parsedArguments.Endianness, parsedArguments.SelectedOptions);
         options.RuntimeProfile = CreateRuntimeProfile(parsedArguments.RuntimeProfileName);
-        options.BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault();
         options.FeatureCatalog = LoadFeatureCatalog(parsedArguments.FeatureCatalogPath);
         options.CollectDiagnostics = true;
         options.FailOnError = true;
@@ -47,6 +46,7 @@ public static class CodegenCliOptionsBuilder {
             options.TypeRemaps = ParseTypeRemaps(typeRemaps);
         }
         options.PlatformOptionValues = new Dictionary<string, string>(parsedArguments.SelectedOptions, StringComparer.OrdinalIgnoreCase);
+        options.BuildFeatureProfile = CPPFeatureProfileOptionResolver.BuildProfile(options.PlatformOptionValues, options.FeatureCatalog);
 
         return options;
     }
