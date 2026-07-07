@@ -2,7 +2,9 @@
 #define STREAM_HPP
 
 #include <cstdint>  // For uint8_t
-#include <stdexcept>
+
+#include "helcpp_config.hpp"
+#include "../../runtime/native_exceptions.hpp"
 #include "../../runtime/array.hpp"
 #include "../../runtime/native_span.hpp"
 #include "seek-origin.hpp"  // Assuming this exists like in your TypeScript
@@ -51,19 +53,35 @@ public:
     virtual bool CanTimeout() const { return false; }
 
     virtual size_t ReadTimeout() const {
-        throw std::runtime_error("Timeout not supported");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw NotSupportedException();
+#else
+        throw NotSupportedException("Timeout not supported");
+#endif
     }
 
     virtual void SetReadTimeout(size_t) {
-        throw std::runtime_error("Timeout not supported");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw NotSupportedException();
+#else
+        throw NotSupportedException("Timeout not supported");
+#endif
     }
 
     virtual size_t WriteTimeout() const {
-        throw std::runtime_error("Timeout not supported");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw NotSupportedException();
+#else
+        throw NotSupportedException("Timeout not supported");
+#endif
     }
 
     virtual void SetWriteTimeout(size_t) {
-        throw std::runtime_error("Timeout not supported");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw NotSupportedException();
+#else
+        throw NotSupportedException("Timeout not supported");
+#endif
     }
 
     virtual void InternalReserve(size_t count) = 0;

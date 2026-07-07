@@ -1,7 +1,8 @@
 #pragma once
 
-#include <stdexcept>
+#include "helcpp_config.hpp"
 
+#include "../../runtime/native_exceptions.hpp"
 #include "runtime/native_string.hpp"
 
 namespace System {
@@ -22,7 +23,12 @@ public:
     }
 
     static void Fail(const std::string& message) {
-        throw std::runtime_error(message);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        (void)message;
+        throw InvalidOperationException();
+#else
+        throw InvalidOperationException(message);
+#endif
     }
 };
 }

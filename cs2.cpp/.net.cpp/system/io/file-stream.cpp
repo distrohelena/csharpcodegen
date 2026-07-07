@@ -3,7 +3,7 @@
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
 #include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
 #endif
-#include <stdexcept>  // For exceptions
+#include "../../runtime/native_exceptions.hpp"
 #include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
 #include <memory>
@@ -54,11 +54,19 @@ namespace {
             const off_t fileLength = lseek(fileDescriptor, 0, SEEK_END);
             if (fileLength < 0) {
                 close(fileDescriptor);
-                throw std::runtime_error(std::string("Failed to determine file length: ") + candidatePath);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+                throw InvalidOperationException();
+#else
+                throw InvalidOperationException(std::string("Failed to determine file length: ") + candidatePath);
+#endif
             }
             if (lseek(fileDescriptor, 0, SEEK_SET) < 0) {
                 close(fileDescriptor);
-                throw std::runtime_error(std::string("Failed to seek file: ") + candidatePath);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+                throw InvalidOperationException();
+#else
+                throw InvalidOperationException(std::string("Failed to seek file: ") + candidatePath);
+#endif
             }
 
             std::vector<uint8_t> bytes(static_cast<size_t>(fileLength));
@@ -70,7 +78,11 @@ namespace {
                     bytes.size() - totalBytesRead);
                 if (bytesRead <= 0) {
                     close(fileDescriptor);
-                    throw std::runtime_error(std::string("Failed to read file: ") + candidatePath);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+                    throw InvalidOperationException();
+#else
+                    throw InvalidOperationException(std::string("Failed to read file: ") + candidatePath);
+#endif
                 }
 
                 totalBytesRead += static_cast<size_t>(bytesRead);
@@ -78,13 +90,21 @@ namespace {
 
             close(fileDescriptor);
             if (totalBytesRead != bytes.size()) {
-                throw std::runtime_error(std::string("Failed to read file: ") + candidatePath);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+                throw InvalidOperationException();
+#else
+                throw InvalidOperationException(std::string("Failed to read file: ") + candidatePath);
+#endif
             }
 
             return bytes;
         }
 
-        throw std::runtime_error(std::string("Failed to open file: ") + path);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw FileNotFoundException();
+#else
+        throw FileNotFoundException(std::string("Failed to open file: ") + path);
+#endif
     }
 }
 #endif
@@ -98,7 +118,12 @@ const char* GetFileMode(FileMode mode) {
     case FileMode::Open: return "rb";
     case FileMode::OpenOrCreate: return "r+b";
     case FileMode::Truncate: return "wb";
-    default: throw std::runtime_error("Invalid FileMode");
+    default:
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw NotSupportedException();
+#else
+        throw NotSupportedException("Invalid FileMode");
+#endif
     }
 }
 
@@ -106,7 +131,11 @@ const char* GetFileMode(FileMode mode) {
 FileStream::FileStream(const uint8_t* data, size_t dataLength)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(true), writable(false) {
     if (data == nullptr && dataLength > 0) {
-        throw std::runtime_error("Cannot create a memory-backed file stream from a null buffer.");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw InvalidOperationException();
+#else
+        throw InvalidOperationException("Cannot create a memory-backed file stream from a null buffer.");
+#endif
     }
 
     memoryBuffer.assign(data, data + dataLength);
@@ -142,7 +171,11 @@ FileStream::FileStream(const char* path, FileMode mode)
 #endif
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
-        throw std::runtime_error(std::string("Failed to open file: ") + path);
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw FileNotFoundException();
+#else
+        throw FileNotFoundException(std::string("Failed to open file: ") + path);
+#endif
     }
 
     UpdateLength();

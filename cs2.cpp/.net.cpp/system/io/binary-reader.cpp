@@ -1,4 +1,6 @@
 #include "binary-reader.hpp"
+#include "helcpp_config.hpp"
+#include "../../runtime/native_exceptions.hpp"
 #include <algorithm>
 #include <cstring>  // For memcpy
 
@@ -16,7 +18,11 @@ T BinaryReader::Read() {
     uint8_t buffer[sizeof(T)];
 
     if (stream.Read(buffer, 0, sizeof(T)) != sizeof(T)) {
-        throw std::runtime_error("Failed to read expected bytes");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw EndOfStreamException();
+#else
+        throw EndOfStreamException("Failed to read expected bytes");
+#endif
     }
 
     T value = 0;
@@ -34,7 +40,11 @@ T BinaryReader::Read() {
 std::vector<uint8_t> BinaryReader::ReadBytes(size_t count) {
     std::vector<uint8_t> buffer(count);
     if (stream.Read(buffer.data(), 0, count) != count) {
-        throw std::runtime_error("Failed to read expected bytes");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw EndOfStreamException();
+#else
+        throw EndOfStreamException("Failed to read expected bytes");
+#endif
     }
     return buffer;
 }
@@ -56,11 +66,19 @@ char* BinaryReader::ReadString() {
     uint32_t length = ReadUInt32();
     char* buffer = static_cast<char*>(std::malloc(length + 1));
     if (!buffer) {
-        throw std::runtime_error("Memory allocation failed");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw InvalidOperationException();
+#else
+        throw InvalidOperationException("Memory allocation failed");
+#endif
     }
     if (stream.Read(reinterpret_cast<uint8_t*>(buffer), 0, length) != length) {
         std::free(buffer);
-        throw std::runtime_error("Failed to read expected bytes");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        throw EndOfStreamException();
+#else
+        throw EndOfStreamException("Failed to read expected bytes");
+#endif
     }
     buffer[length] = '\0'; // Null-terminate the string
     return buffer;

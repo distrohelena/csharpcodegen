@@ -3,8 +3,8 @@
 
 #include "helcpp_config.hpp"
 
-#include <stdexcept>
 #include <string>
+#include "../runtime/native_exceptions.hpp"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -20,7 +20,11 @@ public:
         char buffer[MAX_PATH];
         DWORD length = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
         if (length == 0) {
-            throw std::runtime_error("Failed to resolve the current executable path.");
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+            throw InvalidOperationException();
+#else
+            throw InvalidOperationException("Failed to resolve the current executable path.");
+#endif
         }
 
         std::string executablePath(buffer, length);
