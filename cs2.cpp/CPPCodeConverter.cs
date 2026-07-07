@@ -605,6 +605,7 @@ namespace cs2.cpp {
         private void writeClasses(string folder, CPPBuildUsageReport buildUsageReport) {
             SortProgram();
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
+            tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
 
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];

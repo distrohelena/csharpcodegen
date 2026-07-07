@@ -245,6 +245,8 @@ namespace cs2.cpp.tests {
             Assert.Contains("static Vector128_1<T> As(const Vector128_1<T>& value)", vector128Runtime, StringComparison.Ordinal);
             Assert.Contains("static Vector256<T> As(const Vector256<T>& value)", vector256Runtime, StringComparison.Ordinal);
             Assert.Contains("class Func<TResult>", funcRuntime, StringComparison.Ordinal);
+            Assert.Contains("#include <functional>", funcRuntime, StringComparison.Ordinal);
+            Assert.Contains("using FuncType = std::function<TResult()>;", funcRuntime, StringComparison.Ordinal);
             Assert.Contains("TResult operator()() const", funcRuntime, StringComparison.Ordinal);
             Assert.Contains("Array<T>* ToArray() const", spanRuntime, StringComparison.Ordinal);
             Assert.Contains("bool operator==(std::nullptr_t) const", nullableRuntime, StringComparison.Ordinal);

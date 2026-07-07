@@ -1,5 +1,6 @@
 ﻿using cs2.core;
 using Microsoft.CodeAnalysis;
+using System.Text;
 
 namespace cs2.cpp {
     /// <summary>
@@ -16,20 +17,13 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
-            string emittedTypeName = conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0
-                ? conversionClass.Name
-                : $"{conversionClass.Name}_{conversionClass.GenericArgs.Count}";
-
-            string qualifiedPrefix = BuildQualifiedFileStemPrefix(conversionClass);
-            if (!ShouldQualifyEmittedTypeName(conversionClass, emittedTypeName, qualifiedPrefix)) {
-                return emittedTypeName;
-            }
-
-            return $"{qualifiedPrefix}_{emittedTypeName}";
+            string emittedTypeName = GetBaseEmittedTypeName(conversionClass);
+            AssertNoEmittedTypeNameCollision(conversionClass, emittedTypeName);
+            return emittedTypeName;
         }
 
         /// <summary>
-        /// Resolves the generated file stem for one converted class, adding a namespace-derived prefix only when another emitted type collides on case-insensitive filesystems.
+        /// Resolves the generated file stem for one converted class, using a qualified collision-safe stem when another emitted type collides on case-insensitive filesystems.
         /// </summary>
         /// <param name="conversionClass">The converted class whose generated file stem is needed.</param>
         /// <param name="program">Program model used to detect emitted-name collisions.</param>
@@ -40,12 +34,13 @@ namespace cs2.cpp {
                 return emittedTypeName;
             }
 
-            string qualifiedPrefix = BuildQualifiedFileStemPrefix(conversionClass);
-            if (!ShouldQualifyFileStem(conversionClass, program, emittedTypeName, qualifiedPrefix)) {
-                return emittedTypeName;
+            string collisionSafeFileStem = TryResolveCollisionSafeFileStem(conversionClass, program, emittedTypeName);
+            if (!string.IsNullOrWhiteSpace(collisionSafeFileStem)) {
+                return collisionSafeFileStem;
             }
 
-            return $"{qualifiedPrefix}_{emittedTypeName}";
+            AssertNoEmittedFileStemCollision(conversionClass, program, emittedTypeName);
+            return emittedTypeName;
         }
 
         /// <summary>
@@ -381,11 +376,6 @@ namespace cs2.cpp {
                 return true;
             }
 
-            if (TryBuildQualifiedLowercaseFileStem(remappedType, out string qualifiedFileStem)) {
-                includePath = qualifiedFileStem;
-                return true;
-            }
-
             includePath = NormalizeLeafTypeName(remappedType.TypeName);
             return !string.IsNullOrWhiteSpace(includePath);
         }
@@ -636,53 +626,231 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Determines whether one emitted file stem must include its namespace prefix so the same source type stays stable across independently converted project graphs on case-insensitive filesystems.
+        /// Throws when two generated classes would emit the same C++ type identifier.
         /// </summary>
-        /// <param name="conversionClass">Converted class whose emitted file stem is being resolved.</param>
-        /// <param name="program">Program model used to inspect reachable generated classes.</param>
-        /// <param name="emittedTypeName">Resolved emitted type name for the class.</param>
-        /// <param name="qualifiedPrefix">Namespace-derived file stem prefix for the class.</param>
-        /// <returns>True when the generated file stem should include the namespace-derived prefix; otherwise false.</returns>
-        static bool ShouldQualifyFileStem(
+        /// <param name="conversionClass">Converted class whose emitted type name is being validated.</param>
+        /// <param name="emittedTypeName">Resolved emitted type name before emission.</param>
+        static void AssertNoEmittedTypeNameCollision(ConversionClass conversionClass, string emittedTypeName) {
+            if (conversionClass?.Program == null || string.IsNullOrWhiteSpace(emittedTypeName)) {
+                return;
+            }
+
+            HashSet<string> collisions = conversionClass.Program.GetBaseEmittedTypeNameCollisions(GetBaseEmittedTypeName);
+            if (!collisions.Contains(emittedTypeName)) {
+                return;
+            }
+
+            ConversionClass collidingClass = conversionClass.Program.Classes.FirstOrDefault(candidate =>
+                candidate != null &&
+                !ReferenceEquals(candidate, conversionClass) &&
+                !candidate.IsNative &&
+                string.Equals(GetBaseEmittedTypeName(candidate), emittedTypeName, StringComparison.Ordinal));
+            if (collidingClass == null) {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Generated C++ type name collision for '{emittedTypeName}' between '{DescribeConversionClass(conversionClass)}' and '{DescribeConversionClass(collidingClass)}'.");
+        }
+
+        /// <summary>
+        /// Throws when two generated classes would emit the same header/source file stem on case-insensitive filesystems.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose emitted file stem is being validated.</param>
+        /// <param name="program">Program model that owns the generated classes.</param>
+        /// <param name="emittedTypeName">Resolved emitted type name before file emission.</param>
+        static void AssertNoEmittedFileStemCollision(
             ConversionClass conversionClass,
             ConversionProgram program,
-            string emittedTypeName,
-            string qualifiedPrefix) {
-            if (conversionClass == null || program == null || string.IsNullOrWhiteSpace(emittedTypeName) || string.IsNullOrWhiteSpace(qualifiedPrefix)) {
+            string emittedTypeName) {
+            if (conversionClass == null || program == null || string.IsNullOrWhiteSpace(emittedTypeName)) {
+                return;
+            }
+
+            if (program is CPPProgram cppProgram &&
+                cppProgram.ReachableGeneratedTypesByFileStem.TryGetValue(emittedTypeName, out List<ConversionClass> collidingTypes)) {
+                ConversionClass collidingReachableType = collidingTypes.FirstOrDefault(candidate =>
+                    candidate != null &&
+                    !ReferenceEquals(candidate, conversionClass) &&
+                    !candidate.IsNative);
+                if (collidingReachableType == null) {
+                    return;
+                }
+
+                throw new InvalidOperationException(
+                    $"Generated C++ file stem collision for '{emittedTypeName}' between '{DescribeConversionClass(conversionClass)}' and '{DescribeConversionClass(collidingReachableType)}'.");
+            }
+
+            ConversionClass collidingClass = program.Classes.FirstOrDefault(candidate =>
+                candidate != null &&
+                !ReferenceEquals(candidate, conversionClass) &&
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), emittedTypeName, StringComparison.OrdinalIgnoreCase));
+            if (collidingClass == null) {
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Generated C++ file stem collision for '{emittedTypeName}' between '{DescribeConversionClass(conversionClass)}' and '{DescribeConversionClass(collidingClass)}'.");
+        }
+
+        /// <summary>
+        /// Attempts to resolve one case-insensitive collision-safe file stem from the qualified source type identity.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose generated file stem is being resolved.</param>
+        /// <param name="program">Program model that owns the generated classes.</param>
+        /// <param name="emittedTypeName">Resolved emitted type name before file emission.</param>
+        /// <returns>Qualified collision-safe file stem when one is required and available; otherwise an empty string.</returns>
+        static string TryResolveCollisionSafeFileStem(
+            ConversionClass conversionClass,
+            ConversionProgram program,
+            string emittedTypeName) {
+            if (!HasEmittedFileStemCollision(conversionClass, program, emittedTypeName)) {
+                return string.Empty;
+            }
+            if (IsPrimaryCaseInsensitiveFileStemOwner(conversionClass, program, emittedTypeName)) {
+                return emittedTypeName;
+            }
+
+            string qualifiedFileStem = BuildQualifiedCollisionSafeFileStem(conversionClass);
+            if (string.IsNullOrWhiteSpace(qualifiedFileStem) ||
+                string.Equals(qualifiedFileStem, emittedTypeName, StringComparison.OrdinalIgnoreCase)) {
+                return string.Empty;
+            }
+
+            return qualifiedFileStem;
+        }
+
+        /// <summary>
+        /// Returns whether the supplied generated class currently collides with another emitted file stem on a case-insensitive filesystem.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose generated file stem is being evaluated.</param>
+        /// <param name="program">Program model that owns the generated classes.</param>
+        /// <param name="emittedTypeName">Resolved emitted type name before file emission.</param>
+        /// <returns>True when another generated class would reuse the same case-insensitive file stem.</returns>
+        static bool HasEmittedFileStemCollision(
+            ConversionClass conversionClass,
+            ConversionProgram program,
+            string emittedTypeName) {
+            if (conversionClass == null || program == null || string.IsNullOrWhiteSpace(emittedTypeName)) {
                 return false;
             }
 
-            if (emittedTypeName.StartsWith($"{qualifiedPrefix}_", StringComparison.Ordinal)) {
-                return false;
-            }
-
-            if (conversionClass.TypeSymbol?.IsValueType == true && StartsWithLowercaseLetter(emittedTypeName)) {
-                return true;
+            if (program is CPPProgram cppProgram &&
+                cppProgram.ReachableGeneratedTypesByFileStem.TryGetValue(emittedTypeName, out List<ConversionClass> collidingTypes)) {
+                return collidingTypes.Any(candidate =>
+                    candidate != null &&
+                    !ReferenceEquals(candidate, conversionClass) &&
+                    !candidate.IsNative);
             }
 
             return program.Classes.Any(candidate =>
+                candidate != null &&
                 !ReferenceEquals(candidate, conversionClass) &&
                 !candidate.IsNative &&
                 string.Equals(candidate.GetEmittedTypeName(), emittedTypeName, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
-        /// Determines whether one emitted C++ type name must include its namespace-derived prefix to avoid global identifier collisions.
+        /// Returns whether the supplied generated class should keep the canonical unqualified file stem within one case-insensitive collision group.
         /// </summary>
-        /// <param name="conversionClass">Converted class whose emitted type name is being resolved.</param>
-        /// <param name="emittedTypeName">Resolved emitted type name before collision qualification.</param>
-        /// <param name="qualifiedPrefix">Namespace-derived prefix for the converted class.</param>
-        /// <returns>True when the emitted C++ type name should include the namespace-derived prefix; otherwise false.</returns>
-        static bool ShouldQualifyEmittedTypeName(
+        /// <param name="conversionClass">Converted class whose generated file stem ownership is being evaluated.</param>
+        /// <param name="program">Program model that owns the generated classes.</param>
+        /// <param name="emittedTypeName">Resolved emitted type name before file emission.</param>
+        /// <returns>True when the class should retain the original unqualified emitted file stem; otherwise false.</returns>
+        static bool IsPrimaryCaseInsensitiveFileStemOwner(
             ConversionClass conversionClass,
-            string emittedTypeName,
-            string qualifiedPrefix) {
-            if (conversionClass?.Program == null || string.IsNullOrWhiteSpace(emittedTypeName) || string.IsNullOrWhiteSpace(qualifiedPrefix)) {
+            ConversionProgram program,
+            string emittedTypeName) {
+            if (conversionClass == null || program == null || string.IsNullOrWhiteSpace(emittedTypeName)) {
                 return false;
             }
 
-            HashSet<string> collisions = conversionClass.Program.GetBaseEmittedTypeNameCollisions(GetBaseEmittedTypeName);
-            return collisions.Contains(emittedTypeName);
+            if (program is CPPProgram cppProgram &&
+                cppProgram.ReachableGeneratedTypesByFileStem.TryGetValue(emittedTypeName, out List<ConversionClass> collidingTypes)) {
+                ConversionClass primaryReachableType = collidingTypes
+                    .Where(candidate => candidate != null && !candidate.IsNative)
+                    .OrderByDescending(candidate => IsPreferredCanonicalFileStem(candidate.GetEmittedTypeName()))
+                    .ThenByDescending(candidate => candidate.GetEmittedTypeName(), StringComparer.Ordinal)
+                    .ThenBy(candidate => DescribeConversionClass(candidate), StringComparer.Ordinal)
+                    .FirstOrDefault();
+                return ReferenceEquals(primaryReachableType, conversionClass);
+            }
+
+            ConversionClass primaryClass = program.Classes
+                .Where(candidate =>
+                    candidate != null &&
+                    !candidate.IsNative &&
+                    string.Equals(candidate.GetEmittedTypeName(), emittedTypeName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(candidate => IsPreferredCanonicalFileStem(candidate.GetEmittedTypeName()))
+                .ThenByDescending(candidate => candidate.GetEmittedTypeName(), StringComparer.Ordinal)
+                .ThenBy(candidate => DescribeConversionClass(candidate), StringComparer.Ordinal)
+                .FirstOrDefault();
+            return ReferenceEquals(primaryClass, conversionClass);
+        }
+
+        /// <summary>
+        /// Returns whether one emitted type name should keep the canonical unqualified file stem when a case-insensitive collision exists.
+        /// </summary>
+        /// <param name="emittedTypeName">Emitted type name under evaluation.</param>
+        /// <returns>True when the emitted type name is already all lowercase and should retain the canonical stem.</returns>
+        static bool IsPreferredCanonicalFileStem(string emittedTypeName) {
+            if (string.IsNullOrWhiteSpace(emittedTypeName)) {
+                return false;
+            }
+
+            for (int index = 0; index < emittedTypeName.Length; index++) {
+                char character = emittedTypeName[index];
+                if (char.IsLetter(character) && char.IsUpper(character)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Builds one qualified case-insensitive-safe file stem from the source type identity.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose qualified source identity should be encoded into the generated file stem.</param>
+        /// <returns>Sanitized qualified file stem when the source type exposes a qualified identity; otherwise an empty string.</returns>
+        static string BuildQualifiedCollisionSafeFileStem(ConversionClass conversionClass) {
+            string qualifiedTypeName = GetNormalizedQualifiedTypeName(conversionClass);
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            return SanitizeQualifiedFileStem(qualifiedTypeName);
+        }
+
+        /// <summary>
+        /// Sanitizes one qualified source type identity into a stable file-system-safe generated file stem.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Qualified source type identity to sanitize.</param>
+        /// <returns>Stable sanitized file stem derived from the qualified source type identity.</returns>
+        static string SanitizeQualifiedFileStem(string qualifiedTypeName) {
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(qualifiedTypeName.Length);
+            bool previousWasUnderscore = false;
+            for (int index = 0; index < qualifiedTypeName.Length; index++) {
+                char character = qualifiedTypeName[index];
+                if (char.IsLetterOrDigit(character)) {
+                    builder.Append(character);
+                    previousWasUnderscore = false;
+                } else if (!previousWasUnderscore) {
+                    builder.Append('_');
+                    previousWasUnderscore = true;
+                }
+            }
+
+            while (builder.Length > 0 && builder[^1] == '_') {
+                builder.Length--;
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>
@@ -695,93 +863,73 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
-            return conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0
+            string configuredEmittedTypeName = GetConfiguredEmittedTypeName(conversionClass);
+            if (!string.IsNullOrWhiteSpace(configuredEmittedTypeName)) {
+                return configuredEmittedTypeName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(conversionClass.CodeGenRename)) {
+                return conversionClass.CodeGenRename;
+            }
+
+            string emittedLeafTypeName = conversionClass.GenericArgs == null || conversionClass.GenericArgs.Count == 0
                 ? conversionClass.Name
                 : $"{conversionClass.Name}_{conversionClass.GenericArgs.Count}";
+            if (conversionClass.TypeSymbol?.ContainingType == null) {
+                return emittedLeafTypeName;
+            }
+
+            string containingTypePrefix = BuildContainingTypePrefix(conversionClass.TypeSymbol.ContainingType);
+            if (string.IsNullOrWhiteSpace(containingTypePrefix)) {
+                return emittedLeafTypeName;
+            }
+
+            return $"{containingTypePrefix}_{emittedLeafTypeName}";
         }
 
         /// <summary>
-        /// Builds a namespace-derived prefix that keeps generated file names distinct when emitted type names collide by case only.
+        /// Resolves one configured emitted type name override for a generated source class when the conversion run supplied a matching type remap.
         /// </summary>
-        /// <param name="conversionClass">Converted class whose source namespace should be encoded.</param>
-        /// <returns>Sanitized namespace-derived prefix, or an empty string when no namespace is available.</returns>
-        static string BuildQualifiedFileStemPrefix(ConversionClass conversionClass) {
-            if (conversionClass?.TypeSymbol == null) {
+        /// <param name="conversionClass">Generated source class whose emitted name is being resolved.</param>
+        /// <returns>Configured emitted leaf type name, or an empty string when no configured override exists.</returns>
+        static string GetConfiguredEmittedTypeName(ConversionClass conversionClass) {
+            if (conversionClass?.Program?.TypeMap == null || conversionClass.TypeSymbol == null) {
                 return string.Empty;
             }
 
-            string namespaceName = conversionClass.TypeSymbol.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-            string namespacePrefix = string.IsNullOrWhiteSpace(namespaceName) || namespaceName == "<global namespace>"
-                ? string.Empty
-                : namespaceName
-                .Replace("global::", string.Empty, StringComparison.Ordinal)
-                .Replace('.', '_')
-                .Replace(':', '_');
-
-            string containingTypePrefix = BuildContainingTypePrefix(conversionClass.TypeSymbol.ContainingType);
-            if (string.IsNullOrWhiteSpace(namespacePrefix)) {
-                return containingTypePrefix;
+            string qualifiedSourceTypeName = conversionClass.TypeSymbol.ToDisplayString();
+            if (conversionClass.Program.TypeMap.TryGetValue(qualifiedSourceTypeName, out string configuredQualifiedTargetTypeName) &&
+                !string.IsNullOrWhiteSpace(configuredQualifiedTargetTypeName)) {
+                return NormalizeLeafTypeName(configuredQualifiedTargetTypeName);
             }
 
-            if (string.IsNullOrWhiteSpace(containingTypePrefix)) {
-                return namespacePrefix;
+            if (conversionClass.Program.TypeMap.TryGetValue(conversionClass.Name, out string configuredLeafTargetTypeName) &&
+                !string.IsNullOrWhiteSpace(configuredLeafTargetTypeName)) {
+                return NormalizeLeafTypeName(configuredLeafTargetTypeName);
             }
 
-            return $"{namespacePrefix}_{containingTypePrefix}";
+            return string.Empty;
         }
 
         /// <summary>
-        /// Builds a canonical qualified file stem for one lowercase qualified type reference when the conversion graph does not own the referenced generated type.
+        /// Describes one conversion class using its fully qualified source type name when available.
         /// </summary>
-        /// <param name="variableType">Qualified type reference to inspect.</param>
-        /// <param name="qualifiedFileStem">Resolved canonical qualified file stem when one can be derived.</param>
-        /// <returns>True when a canonical qualified file stem was derived; otherwise false.</returns>
-        public static bool TryBuildQualifiedLowercaseFileStem(this VariableType variableType, out string qualifiedFileStem) {
-            qualifiedFileStem = string.Empty;
-            if (variableType == null || string.IsNullOrWhiteSpace(variableType.QualifiedTypeName)) {
-                return false;
+        /// <param name="conversionClass">Converted class to describe.</param>
+        /// <returns>Fully qualified source type name when Roslyn metadata is available; otherwise the converted class name.</returns>
+        static string DescribeConversionClass(ConversionClass conversionClass) {
+            if (conversionClass?.TypeSymbol != null) {
+                return conversionClass.TypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                    .Replace("global::", string.Empty, StringComparison.Ordinal);
             }
 
-            string leafTypeName = NormalizeLeafTypeName(variableType.QualifiedTypeName);
-            if (!StartsWithLowercaseLetter(leafTypeName)) {
-                return false;
-            }
-
-            string qualifiedTypeName = variableType.QualifiedTypeName
-                .Replace("global::", string.Empty, StringComparison.Ordinal)
-                .Replace('+', '.');
-            int separatorIndex = qualifiedTypeName.LastIndexOf('.');
-            if (separatorIndex <= 0) {
-                return false;
-            }
-
-            string qualifiedPrefix = qualifiedTypeName[..separatorIndex]
-                .Replace('.', '_')
-                .Replace(':', '_');
-            if (string.IsNullOrWhiteSpace(qualifiedPrefix)) {
-                return false;
-            }
-
-            qualifiedFileStem = $"{qualifiedPrefix}_{leafTypeName}";
-            return true;
+            return conversionClass?.Name ?? string.Empty;
         }
 
         /// <summary>
-        /// Returns whether one emitted identifier starts with a lowercase ASCII letter.
+        /// Builds a stable underscore-delimited emitted-name prefix from the containing type chain of one nested source type.
         /// </summary>
-        /// <param name="identifier">Identifier to inspect.</param>
-        /// <returns>True when the identifier starts with a lowercase ASCII letter; otherwise false.</returns>
-        static bool StartsWithLowercaseLetter(string identifier) {
-            return !string.IsNullOrWhiteSpace(identifier) &&
-                identifier[0] >= 'a' &&
-                identifier[0] <= 'z';
-        }
-
-        /// <summary>
-        /// Builds a stable underscore-delimited prefix from the containing type chain of a nested source type.
-        /// </summary>
-        /// <param name="containingTypeSymbol">Containing source type for the converted nested declaration.</param>
-        /// <returns>Sanitized containing-type prefix, or an empty string when the declaration is top-level.</returns>
+        /// <param name="containingTypeSymbol">Containing source type for the nested declaration being emitted.</param>
+        /// <returns>Containing-type emitted-name prefix, or an empty string when the declaration is top-level.</returns>
         static string BuildContainingTypePrefix(INamedTypeSymbol containingTypeSymbol) {
             if (containingTypeSymbol == null) {
                 return string.Empty;
@@ -791,7 +939,6 @@ namespace cs2.cpp {
             string currentSegment = containingTypeSymbol.Arity > 0
                 ? $"{containingTypeSymbol.Name}_{containingTypeSymbol.Arity}"
                 : containingTypeSymbol.Name;
-
             if (string.IsNullOrWhiteSpace(parentPrefix)) {
                 return currentSegment;
             }

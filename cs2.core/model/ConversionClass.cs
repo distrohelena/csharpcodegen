@@ -21,6 +21,7 @@ namespace cs2.core {
 
         public List<ConversionVariable> Variables { get; set; }
         public List<ConversionFunction> Functions { get; set; }
+        public string CodeGenRename { get; set; }
 
         public List<object>? EnumMembers { get; set; }
         public List<string>? GenericArgs { get; set; }
@@ -40,6 +41,7 @@ namespace cs2.core {
             SequentialStructLayoutSize = 0;
             Variables = new List<ConversionVariable>();
             Functions = new List<ConversionFunction>();
+            CodeGenRename = string.Empty;
             Extensions = new List<string>();
             ReferencedClasses = new List<string>();
             SourceIncludes = new List<string>();

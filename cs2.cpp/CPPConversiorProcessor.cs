@@ -797,7 +797,7 @@ namespace cs2.cpp {
             List<string> lines) {
             IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
             if (invokedMethodSymbol != null &&
-                TryResolveGeneratedContainingClass(invokedMethodSymbol, out _)) {
+                ShouldUseEmittedMethodNameFromSymbol(invokedMethodSymbol)) {
                 if (ShouldEmitDependentTemplateQualifier(invokedMethodSymbol, ReceiverRequiresDependentTemplateQualifier(semantic, receiverExpression))) {
                     lines.Add("template ");
                 }
@@ -1611,7 +1611,7 @@ namespace cs2.cpp {
             string name = identifier.ToString();
             if (string.Equals(name, "_", StringComparison.Ordinal) &&
                 identifier.Parent is ArgumentSyntax discardArgument &&
-                !string.IsNullOrEmpty(discardArgument.RefKindKeyword.ToString())) {
+                !string.IsNullOrEmpty(discardArgument.RefOrOutKeyword.ToString())) {
                 lines.Add(GetDiscardTemporaryName(identifier));
                 return new ExpressionResult(true);
             }
@@ -2039,27 +2039,43 @@ namespace cs2.cpp {
             return methodSymbol.Name + GetRefModifierSuffix(methodSymbol);
         }
 
-        /// <summary>
-        /// Determines whether a Roslyn method symbol comes from source available to the converter so emitted overload suffixes remain stable even when the declaring type is imported from another generated project.
-        /// </summary>
-        /// <param name="methodSymbol">Method symbol to inspect.</param>
-        /// <returns><c>true</c> when the method has source declarations; otherwise <c>false</c>.</returns>
         static bool HasSourceDeclaration(IMethodSymbol methodSymbol) {
             return methodSymbol?.OriginalDefinition != null &&
                 methodSymbol.OriginalDefinition.DeclaringSyntaxReferences.Length > 0;
         }
 
         /// <summary>
-        /// Determines whether one method call should use the emitted overload suffix derived from symbol metadata even when the current conversion graph does not contain the declaring generated class.
+        /// Determines whether one method call should use the emitted generated-member name rather than the original Roslyn symbol name.
         /// </summary>
         /// <param name="methodSymbol">Method symbol to inspect.</param>
-        /// <returns><c>true</c> when emitted overload suffixes should be derived directly from the symbol; otherwise <c>false</c>.</returns>
-        static bool ShouldUseEmittedMethodNameFromSymbol(IMethodSymbol methodSymbol) {
-            return HasSourceDeclaration(methodSymbol) ||
-                !string.IsNullOrEmpty(GetRefModifierSuffix(methodSymbol));
+        /// <returns><c>true</c> when the method resolves to generated output owned by the current conversion graph; otherwise <c>false</c>.</returns>
+        bool ShouldUseEmittedMethodNameFromSymbol(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null) {
+                return false;
+            }
+
+            if (HasSourceDeclaration(methodSymbol)) {
+                return true;
+            }
+
+            if (!TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) ||
+                generatedClass == null ||
+                generatedClass.IsNative) {
+                return false;
+            }
+
+            return TryResolveGeneratedFunction(methodSymbol, out _) || generatedClass != null;
         }
 
         string ResolveConvertedFunctionName(IMethodSymbol methodSymbol, ConversionFunction generatedFunction = null) {
+            if (methodSymbol != null &&
+                TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) &&
+                generatedClass != null &&
+                generatedClass.IsNative &&
+                !HasSourceDeclaration(methodSymbol)) {
+                return methodSymbol.Name;
+            }
+
             if (generatedFunction != null) {
                 return GetEmittedFunctionName(generatedFunction);
             }
@@ -2068,7 +2084,222 @@ namespace cs2.cpp {
                 return GetEmittedFunctionName(resolvedGeneratedFunction);
             }
 
-            return GetEmittedFunctionName(methodSymbol);
+            if (TryResolveGeneratedFunctionByModifierShape(methodSymbol, out ConversionFunction modifierShapeFunction)) {
+                return GetEmittedFunctionName(modifierShapeFunction);
+            }
+
+            if (ShouldPreserveModifierSuffixWithoutGeneratedClass(methodSymbol)) {
+                return GetEmittedFunctionName(methodSymbol);
+            }
+
+            if (ShouldUseEmittedMethodNameFromSymbol(methodSymbol)) {
+                return GetEmittedFunctionName(methodSymbol);
+            }
+
+            return methodSymbol?.Name ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Determines whether one method should retain emitted ref/out suffixes even when the containing generated type is not part of the current conversion graph.
+        /// </summary>
+        /// <param name="methodSymbol">Method symbol to inspect.</param>
+        /// <returns><c>true</c> when the method is a static value-type member whose signature depends on emitted modifier suffixes; otherwise <c>false</c>.</returns>
+        static bool ShouldPreserveModifierSuffixWithoutGeneratedClass(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null ||
+                !methodSymbol.IsStatic ||
+                methodSymbol.ContainingType == null ||
+                !methodSymbol.ContainingType.IsValueType) {
+                return false;
+            }
+
+            return methodSymbol.Parameters.Any(parameter =>
+                parameter.RefKind == RefKind.Ref ||
+                parameter.RefKind == RefKind.Out ||
+                parameter.RefKind == RefKind.In);
+        }
+
+        bool TryResolveGeneratedFunctionByModifierShape(IMethodSymbol methodSymbol, out ConversionFunction function) {
+            function = null;
+            if (methodSymbol == null ||
+                !TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) ||
+                generatedClass?.Functions == null) {
+                return false;
+            }
+
+            string expectedRefModifierSuffix = GetRefModifierSuffix(methodSymbol);
+            List<ConversionFunction> matches = generatedClass.Functions
+                .Where(candidate =>
+                    candidate != null &&
+                    string.Equals(candidate.Name, methodSymbol.Name, StringComparison.Ordinal) &&
+                    (candidate.InParameters?.Count ?? 0) == methodSymbol.Parameters.Length &&
+                    string.Equals(GetRefModifierSuffix(candidate), expectedRefModifierSuffix, StringComparison.Ordinal))
+                .ToList();
+            if (matches.Count != 1) {
+                return false;
+            }
+
+            function = matches[0];
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves one generated invocation directly from syntax when Roslyn cannot provide a method symbol for a generated receiver.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to infer argument types.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="generatedClass">Generated receiver class that owns the candidate methods.</param>
+        /// <param name="function">Resolved generated function when one unique match exists.</param>
+        /// <returns><c>true</c> when a unique generated function match was found; otherwise <c>false</c>.</returns>
+        bool TryResolveGeneratedInvocationFunctionByArguments(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            ConversionClass generatedClass,
+            out ConversionFunction function) {
+            function = null;
+            if (semantic == null ||
+                invocationExpression == null ||
+                generatedClass?.Functions == null) {
+                return false;
+            }
+
+            if (!TryGetInvokedSimpleName(invocationExpression.Expression, out SimpleNameSyntax invokedSimpleName)) {
+                return false;
+            }
+
+            List<VariableType> argumentTypes = invocationExpression.ArgumentList.Arguments
+                .Select(argument => ResolveInvocationArgumentType(semantic, argument.Expression))
+                .ToList();
+            int genericArgumentCount = GetInvocationGenericArgumentCount(invokedSimpleName);
+
+            List<ConversionFunction> strictMatches = generatedClass.Functions
+                .Where(candidate =>
+                    candidate != null &&
+                    string.Equals(candidate.Name, invokedSimpleName.Identifier.Text, StringComparison.Ordinal) &&
+                    candidate.InParameters?.Count == invocationExpression.ArgumentList.Arguments.Count &&
+                    (candidate.GenericParameters?.Count ?? 0) == genericArgumentCount &&
+                    MatchesGenericInvocationArguments(generatedClass, candidate, invocationExpression.ArgumentList.Arguments, argumentTypes))
+                .ToList();
+            if (strictMatches.Count == 1) {
+                function = strictMatches[0];
+                return true;
+            }
+
+            List<ConversionFunction> modifierShapeMatches = generatedClass.Functions
+                .Where(candidate =>
+                    candidate != null &&
+                    string.Equals(candidate.Name, invokedSimpleName.Identifier.Text, StringComparison.Ordinal) &&
+                    candidate.InParameters?.Count == invocationExpression.ArgumentList.Arguments.Count &&
+                    (candidate.GenericParameters?.Count ?? 0) == genericArgumentCount &&
+                    MatchesInvocationArgumentModifiers(candidate, invocationExpression.ArgumentList.Arguments))
+                .ToList();
+            if (modifierShapeMatches.Count != 1) {
+                return false;
+            }
+
+            function = modifierShapeMatches[0];
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves one generated invocation by scanning candidate generated receiver classes derived from the receiver syntax and matching the invocation shape against each candidate.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to infer argument types.</param>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="receiverExpression">Static receiver expression that names the generated type.</param>
+        /// <param name="function">Resolved generated function when one unique match exists across candidate receiver classes.</param>
+        /// <returns><c>true</c> when a unique generated function match was found; otherwise <c>false</c>.</returns>
+        bool TryResolveGeneratedInvocationFunctionByReceiverSyntax(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            ExpressionSyntax receiverExpression,
+            out ConversionFunction function) {
+            function = null;
+            List<ConversionClass> candidateClasses = GetGeneratedReceiverSyntaxCandidates(context, receiverExpression);
+            if (candidateClasses.Count == 0) {
+                return false;
+            }
+
+            List<ConversionFunction> matches = new List<ConversionFunction>();
+            foreach (ConversionClass candidateClass in candidateClasses) {
+                if (TryResolveGeneratedInvocationFunctionByArguments(semantic, invocationExpression, candidateClass, out ConversionFunction candidateFunction)) {
+                    matches.Add(candidateFunction);
+                }
+            }
+
+            matches = matches.Distinct().ToList();
+            if (matches.Count != 1) {
+                return false;
+            }
+
+            function = matches[0];
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves the invoked simple-name syntax from a direct or member-qualified invocation expression.
+        /// </summary>
+        /// <param name="invocationExpression">Invocation expression whose callable name is needed.</param>
+        /// <param name="simpleName">Resolved simple name when available.</param>
+        /// <returns><c>true</c> when a simple invocation name was found; otherwise <c>false</c>.</returns>
+        static bool TryGetInvokedSimpleName(ExpressionSyntax invocationExpression, out SimpleNameSyntax simpleName) {
+            simpleName = invocationExpression switch {
+                SimpleNameSyntax directSimpleName => directSimpleName,
+                MemberAccessExpressionSyntax memberAccess => memberAccess.Name,
+                _ => null
+            };
+            return simpleName != null;
+        }
+
+        /// <summary>
+        /// Gets the generic argument count declared on one invoked simple name.
+        /// </summary>
+        /// <param name="simpleName">Invocation name syntax.</param>
+        /// <returns>The generic argument count, or zero for non-generic invocations.</returns>
+        static int GetInvocationGenericArgumentCount(SimpleNameSyntax simpleName) {
+            return simpleName is GenericNameSyntax genericName
+                ? genericName.TypeArgumentList.Arguments.Count
+                : 0;
+        }
+
+        /// <summary>
+        /// Determines whether one generated function matches the invocation argument modifier shape regardless of resolved semantic types.
+        /// </summary>
+        /// <param name="function">Generated function candidate.</param>
+        /// <param name="arguments">Invocation arguments being lowered.</param>
+        /// <returns><c>true</c> when every argument modifier matches the generated parameter modifiers; otherwise <c>false</c>.</returns>
+        static bool MatchesInvocationArgumentModifiers(ConversionFunction function, SeparatedSyntaxList<ArgumentSyntax> arguments) {
+            if (function?.InParameters == null || function.InParameters.Count != arguments.Count) {
+                return false;
+            }
+
+            for (int index = 0; index < arguments.Count; index++) {
+                if (!MatchesArgumentSyntaxModifier(function.InParameters[index], arguments[index])) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether one syntax-resolved invocation still requires the dependent-template disambiguator on the emitted call target.
+        /// </summary>
+        /// <param name="semantic">Semantic model that can resolve whether the receiver expression depends on template parameters.</param>
+        /// <param name="receiverExpression">Receiver expression that owns the invoked member.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <returns><c>true</c> when the emitted call target requires <c>template</c>; otherwise <c>false</c>.</returns>
+        bool ShouldEmitDependentTemplateQualifierForSyntaxInvocation(
+            SemanticModel semantic,
+            ExpressionSyntax receiverExpression,
+            InvocationExpressionSyntax invocationExpression) {
+            if (!TryGetInvokedSimpleName(invocationExpression?.Expression, out SimpleNameSyntax simpleName) ||
+                simpleName is not GenericNameSyntax) {
+                return false;
+            }
+
+            return ReceiverRequiresDependentTemplateQualifier(semantic, receiverExpression);
         }
 
         static string GetConversionOperatorFunctionName(IMethodSymbol methodSymbol) {
@@ -3401,16 +3632,42 @@ namespace cs2.cpp {
                     return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
                 }
 
-                ConversionClass staticReceiverGeneratedClass = useStaticAccess
-                    ? TryResolveGeneratedReceiverClass(context, result.Type)
-                    : null;
+                ConversionClass staticReceiverGeneratedClass = null;
+                if (useStaticAccess) {
+                    staticReceiverGeneratedClass = TryResolveGeneratedReceiverClass(context, result.Type);
+                    if (staticReceiverGeneratedClass == null) {
+                        TryResolveGeneratedReceiverClass(context, semantic, memberAccess.Expression, out staticReceiverGeneratedClass);
+                    }
+
+                    if (staticReceiverGeneratedClass == null) {
+                        staticReceiverGeneratedClass = TryResolveGeneratedReceiverClassFromSyntax(context, memberAccess.Expression);
+                    }
+
+                    if (staticReceiverGeneratedClass == null) {
+                        staticReceiverGeneratedClass = TryResolveGeneratedReceiverClassFromIdentifier(context, memberAccess.Expression);
+                    }
+                }
 
                 if (memberAccess.Parent is InvocationExpressionSyntax containingInvocation &&
                     ReferenceEquals(containingInvocation.Expression, memberAccess)) {
                     IMethodSymbol invokedMemberMethodSymbol = ResolveInvokedMethodSymbol(semantic, containingInvocation);
+                    if (TryResolveGeneratedInvocationFunctionByArguments(semantic, containingInvocation, staticReceiverGeneratedClass, out ConversionFunction syntaxResolvedGeneratedFunction) ||
+                        TryResolveGeneratedInvocationFunctionByReceiverSyntax(semantic, context, containingInvocation, memberAccess.Expression, out syntaxResolvedGeneratedFunction)) {
+                        if (ShouldEmitDependentTemplateQualifierForSyntaxInvocation(semantic, memberAccess.Expression, containingInvocation)) {
+                            lines.Add("template ");
+                        }
+
+                        lines.Add(GetEmittedFunctionName(syntaxResolvedGeneratedFunction));
+                        AppendInvocationGenericArgumentsFromSyntax(semantic, context, containingInvocation.Expression, lines);
+                        VariableType resolvedInvocationType = syntaxResolvedGeneratedFunction.ReturnType ?? VariableUtil.GetVarType("void");
+                        return new ExpressionResult(true, VariablePath.Unknown, resolvedInvocationType);
+                    }
+
                     if (invokedMemberMethodSymbol != null &&
                         (TryResolveGeneratedContainingClass(invokedMemberMethodSymbol, out _) ||
                          staticReceiverGeneratedClass != null ||
+                         invokedMemberMethodSymbol.IsGenericMethod ||
+                         ShouldPreserveModifierSuffixWithoutGeneratedClass(invokedMemberMethodSymbol) ||
                          ShouldUseEmittedMethodNameFromSymbol(invokedMemberMethodSymbol))) {
                         if (ShouldEmitDependentTemplateQualifier(invokedMemberMethodSymbol, ReceiverRequiresDependentTemplateQualifier(semantic, memberAccess.Expression))) {
                             lines.Add("template ");
@@ -3481,6 +3738,77 @@ namespace cs2.cpp {
             }
 
             return context.Program.FindGeneratedClass(cppReceiverType);
+        }
+
+        /// <summary>
+        /// Resolves one generated receiver class directly from static receiver syntax text when semantic lookup cannot recover the generated type identity.
+        /// </summary>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="receiverExpression">Receiver expression that names the generated static type.</param>
+        /// <returns>The generated receiver class when syntax text uniquely names one generated type; otherwise <c>null</c>.</returns>
+        ConversionClass TryResolveGeneratedReceiverClassFromSyntax(LayerContext context, ExpressionSyntax receiverExpression) {
+            if (context?.Program == null || receiverExpression == null) {
+                return null;
+            }
+
+            string receiverTypeName = receiverExpression.ToString();
+            if (string.IsNullOrWhiteSpace(receiverTypeName)) {
+                return null;
+            }
+
+            int genericArgumentCount = receiverExpression is GenericNameSyntax genericName
+                ? genericName.TypeArgumentList.Arguments.Count
+                : 0;
+            ConversionClass generatedClass = context.Program.FindGeneratedClass(receiverTypeName, genericArgumentCount);
+            if (generatedClass != null) {
+                return generatedClass;
+            }
+
+            return context.Program.Classes.FirstOrDefault(candidate =>
+                candidate != null &&
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), receiverTypeName, StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// Resolves one generated receiver class by scanning generated classes for a static receiver identifier when formal source-type lookup cannot recover the same type.
+        /// </summary>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="receiverExpression">Receiver expression whose identifier names the generated type.</param>
+        /// <returns>The unique generated receiver class when one name match exists; otherwise <c>null</c>.</returns>
+        ConversionClass TryResolveGeneratedReceiverClassFromIdentifier(LayerContext context, ExpressionSyntax receiverExpression) {
+            List<ConversionClass> matches = GetGeneratedReceiverSyntaxCandidates(context, receiverExpression);
+            return matches.Count == 1
+                ? matches[0]
+                : null;
+        }
+
+        /// <summary>
+        /// Collects generated receiver classes that match one static receiver identifier by source name, Roslyn type name, or emitted native type name.
+        /// </summary>
+        /// <param name="context">Current conversion context.</param>
+        /// <param name="receiverExpression">Receiver expression whose identifier names the generated type.</param>
+        /// <returns>Matching generated receiver classes.</returns>
+        List<ConversionClass> GetGeneratedReceiverSyntaxCandidates(LayerContext context, ExpressionSyntax receiverExpression) {
+            List<ConversionClass> matches = new List<ConversionClass>();
+            if (context?.Program?.Classes == null ||
+                receiverExpression is not IdentifierNameSyntax receiverIdentifier) {
+                return matches;
+            }
+
+            string receiverName = receiverIdentifier.Identifier.Text;
+            if (string.IsNullOrWhiteSpace(receiverName)) {
+                return matches;
+            }
+
+            return context.Program.Classes
+                .Where(candidate =>
+                    candidate != null &&
+                    !candidate.IsNative &&
+                    (string.Equals(candidate.Name, receiverName, StringComparison.Ordinal) ||
+                     string.Equals(candidate.TypeSymbol?.Name, receiverName, StringComparison.Ordinal) ||
+                     string.Equals(candidate.GetEmittedTypeName(), receiverName, StringComparison.Ordinal)))
+                .ToList();
         }
 
         bool TryProcessComputedPropertyAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
@@ -4688,7 +5016,7 @@ namespace cs2.cpp {
                         beforeLines,
                         argLines);
 
-                    if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                    if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
                         AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
                     }
 
@@ -4696,7 +5024,7 @@ namespace cs2.cpp {
                 }
             } else {
                 foreach (var arg in invocationExpression.ArgumentList.Arguments) {
-                    string refKeyword = arg.RefKindKeyword.ToString();
+                    string refKeyword = arg.RefOrOutKeyword.ToString();
                     bool isRef = false;
                     if (refKeyword != "") {
                         isRef = true;
@@ -4923,7 +5251,7 @@ namespace cs2.cpp {
                     beforeLines,
                     invocationLines);
 
-                if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
                     AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
                 }
 
@@ -4972,7 +5300,7 @@ namespace cs2.cpp {
             AppendInvocationGenericArgumentsFromSyntax(semantic, context, invocationExpression.Expression, lines);
 
             VariableType invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
-            result = new ExpressionResult(true, VariablePath.Static, invocationType);
+            result = new ExpressionResult(true, VariablePath.Unknown, invocationType);
             return true;
         }
 
@@ -5846,7 +6174,7 @@ namespace cs2.cpp {
 
             if (parameterSymbol != null &&
                 methodGroupSymbol != null &&
-                TryGetDelegateWrapperTypeName(parameterSymbol.Type, methodGroupSymbol, context, out string delegateWrapperTypeName)) {
+                TryGetDelegateWrapperTypeName(parameterSymbol.Type, context, out string delegateWrapperTypeName)) {
                 List<string> delegateConstructionLines = new List<string>();
                 if (!TryAppendDelegateWrapperConstruction(
                     semantic,
@@ -5864,6 +6192,29 @@ namespace cs2.cpp {
                     string temporaryName = CreateTemporaryName("__delegateArg");
                     beforeLines.Add($"auto {temporaryName} = ");
                     beforeLines.Add(string.Concat(delegateConstructionLines));
+                    beforeLines.Add(";\n");
+                    AppendDeleteGuard(beforeLines, temporaryName, "__delegateArgDeleteGuard");
+                    argumentLines.Add(temporaryName);
+                    return;
+                }
+
+                argumentLines.AddRange(delegateConstructionLines);
+                return;
+            }
+
+            if (parameterSymbol != null &&
+                argumentExpression is AnonymousFunctionExpressionSyntax &&
+                TryGetDelegateWrapperTypeName(parameterSymbol.Type, context, out string lambdaDelegateWrapperTypeName)) {
+                List<string> delegateConstructionLines = new List<string> {
+                    $"new {lambdaDelegateWrapperTypeName}("
+                };
+                delegateConstructionLines.AddRange(argumentExpressionLines);
+                delegateConstructionLines.Add(")");
+
+                if (ShouldScopeDeleteDelegateInvocationArgument(invokedMethodSymbol, parameterSymbol)) {
+                    string temporaryName = CreateTemporaryName("__delegateArg");
+                    beforeLines.Add($"auto {temporaryName} = ");
+                    beforeLines.AddRange(delegateConstructionLines);
                     beforeLines.Add(";\n");
                     AppendDeleteGuard(beforeLines, temporaryName, "__delegateArgDeleteGuard");
                     argumentLines.Add(temporaryName);
@@ -7023,7 +7374,7 @@ namespace cs2.cpp {
                     beforeLines,
                     argumentLines);
 
-                if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
                     AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
                 }
 
@@ -7356,6 +7707,10 @@ namespace cs2.cpp {
                 memberAccess.Parent is not InvocationExpressionSyntax invocationExpression ||
                 !ReferenceEquals(invocationExpression.Expression, memberAccess)) {
                 return false;
+            }
+
+            if (ReceiverRequiresDependentTemplateQualifier(semantic, memberAccess.Expression)) {
+                return true;
             }
 
             IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
@@ -7735,7 +8090,7 @@ namespace cs2.cpp {
         }
 
         static bool MatchesArgumentModifier(ArgumentSyntax argumentSyntax, IParameterSymbol parameterSymbol) {
-            RefKind argumentRefKind = argumentSyntax?.RefKindKeyword.Kind() switch {
+            RefKind argumentRefKind = argumentSyntax?.RefOrOutKeyword.Kind() switch {
                 SyntaxKind.RefKeyword => RefKind.Ref,
                 SyntaxKind.OutKeyword => RefKind.Out,
                 SyntaxKind.InKeyword => RefKind.In,
@@ -8835,7 +9190,7 @@ namespace cs2.cpp {
             bool isOut = (parameter.Modifier & ParameterModifier.Out) != 0;
             bool isIn = (parameter.Modifier & ParameterModifier.In) != 0;
 
-            return argumentSyntax?.RefKindKeyword.Kind() switch {
+            return argumentSyntax?.RefOrOutKeyword.Kind() switch {
                 SyntaxKind.RefKeyword => isRef && !isOut,
                 SyntaxKind.OutKeyword => isOut,
                 SyntaxKind.InKeyword => isIn || (!isRef && !isOut),
@@ -9114,9 +9469,13 @@ namespace cs2.cpp {
 
             if (targetTypeSymbol is IArrayTypeSymbol arrayTypeSymbol) {
                 string arrayElementTypeName = GetCppTypeToken(VariableUtil.GetVarType(arrayTypeSymbol.ElementType), context.Program);
-                lines.Add($"new Array<{arrayElementTypeName}>(");
-                AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
-                lines.Add(")");
+                if (ContainsSpreadCollectionElement(collectionExpression)) {
+                    AppendArrayCollectionExpressionWithSpreadElements(semantic, context, collectionExpression, arrayElementTypeName, lines);
+                } else {
+                    lines.Add($"new Array<{arrayElementTypeName}>(");
+                    AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
+                    lines.Add(")");
+                }
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(targetTypeSymbol));
             }
 
@@ -9158,6 +9517,132 @@ namespace cs2.cpp {
             }
 
             lines.Add(" }");
+        }
+
+        /// <summary>
+        /// Returns whether the supplied collection expression contains one or more spread elements.
+        /// </summary>
+        /// <param name="collectionExpression">Collection expression to inspect.</param>
+        /// <returns><c>true</c> when one or more spread elements are present.</returns>
+        static bool ContainsSpreadCollectionElement(CollectionExpressionSyntax collectionExpression) {
+            if (collectionExpression == null) {
+                throw new ArgumentNullException(nameof(collectionExpression));
+            }
+
+            for (int index = 0; index < collectionExpression.Elements.Count; index++) {
+                if (collectionExpression.Elements[index] is SpreadElementSyntax) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Emits one array-producing lambda for collection expressions that include spread elements.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the collection expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="collectionExpression">Collection expression being lowered.</param>
+        /// <param name="arrayElementTypeName">Resolved native array element type name.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        void AppendArrayCollectionExpressionWithSpreadElements(
+            SemanticModel semantic,
+            LayerContext context,
+            CollectionExpressionSyntax collectionExpression,
+            string arrayElementTypeName,
+            List<string> lines) {
+            if (semantic == null) {
+                throw new ArgumentNullException(nameof(semantic));
+            } else if (context == null) {
+                throw new ArgumentNullException(nameof(context));
+            } else if (collectionExpression == null) {
+                throw new ArgumentNullException(nameof(collectionExpression));
+            } else if (string.IsNullOrWhiteSpace(arrayElementTypeName)) {
+                throw new ArgumentException("Array element type name must be provided.", nameof(arrayElementTypeName));
+            } else if (lines == null) {
+                throw new ArgumentNullException(nameof(lines));
+            }
+
+            codeConverter?.RegisterRuntimeRequirement("NativeArray");
+            lines.Add("([&]() { ");
+            lines.Add("int32_t __collectionLength = 0; ");
+
+            List<string> spreadSourceVariableNames = new List<string>();
+            int spreadIndex = 0;
+            for (int elementIndex = 0; elementIndex < collectionExpression.Elements.Count; elementIndex++) {
+                CollectionElementSyntax element = collectionExpression.Elements[elementIndex];
+                if (element is ExpressionElementSyntax) {
+                    lines.Add("__collectionLength++; ");
+                    continue;
+                }
+
+                if (element is not SpreadElementSyntax spreadElement) {
+                    continue;
+                }
+
+                string spreadSourceVariableName = $"__spreadSource{spreadIndex}";
+                spreadSourceVariableNames.Add(spreadSourceVariableName);
+                lines.Add($"auto {spreadSourceVariableName} = ");
+                AppendCollectionElementExpression(semantic, context, spreadElement.Expression, lines);
+                lines.Add("; ");
+                lines.Add($"__collectionLength += ({spreadSourceVariableName} != nullptr ? {spreadSourceVariableName}->get_Length() : 0); ");
+                spreadIndex++;
+            }
+
+            lines.Add($"Array<{arrayElementTypeName}>* __collectionResult = new Array<{arrayElementTypeName}>(__collectionLength); ");
+            lines.Add("int32_t __collectionIndex = 0; ");
+
+            spreadIndex = 0;
+            for (int elementIndex = 0; elementIndex < collectionExpression.Elements.Count; elementIndex++) {
+                CollectionElementSyntax element = collectionExpression.Elements[elementIndex];
+                if (element is ExpressionElementSyntax expressionElement) {
+                    lines.Add("(*__collectionResult)[__collectionIndex++] = ");
+                    AppendCollectionElementExpression(semantic, context, expressionElement.Expression, lines);
+                    lines.Add("; ");
+                    continue;
+                }
+
+                if (element is not SpreadElementSyntax) {
+                    continue;
+                }
+
+                string spreadSourceVariableName = spreadSourceVariableNames[spreadIndex];
+                lines.Add($"if ({spreadSourceVariableName} != nullptr && {spreadSourceVariableName}->get_Length() > 0) {{ ");
+                lines.Add($"Array<{arrayElementTypeName}>::Copy({spreadSourceVariableName}, 0, __collectionResult, __collectionIndex, {spreadSourceVariableName}->get_Length()); ");
+                lines.Add($"__collectionIndex += {spreadSourceVariableName}->get_Length(); ");
+                lines.Add("} ");
+                spreadIndex++;
+            }
+
+            lines.Add("return __collectionResult; })()");
+        }
+
+        /// <summary>
+        /// Appends one collection element expression while restoring the class-stack depth after lowering.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the collection expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="expression">Element expression being lowered.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        void AppendCollectionElementExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax expression,
+            List<string> lines) {
+            if (semantic == null) {
+                throw new ArgumentNullException(nameof(semantic));
+            } else if (context == null) {
+                throw new ArgumentNullException(nameof(context));
+            } else if (expression == null) {
+                throw new ArgumentNullException(nameof(expression));
+            } else if (lines == null) {
+                throw new ArgumentNullException(nameof(lines));
+            }
+
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, expression, lines);
+            context.PopClass(startDepth);
         }
 
         protected override ExpressionResult ProcessParenthesizedExpression(SemanticModel semantic, LayerContext context, ParenthesizedExpressionSyntax parenthesizedExpression, List<string> lines) {
@@ -11688,6 +12173,19 @@ namespace cs2.cpp {
 
             VariableType containingType = VariableUtil.GetVarType(methodSymbol.ContainingType);
             generatedClass = ResolveGeneratedClass(containingType);
+            if (generatedClass != null) {
+                return true;
+            }
+
+            generatedClass = codeConverter.Program.FindGeneratedClass(methodSymbol.ContainingType.Name, methodSymbol.ContainingType.TypeArguments.Length);
+            if (generatedClass != null) {
+                return true;
+            }
+
+            generatedClass = codeConverter.Program.Classes.FirstOrDefault(candidate =>
+                candidate != null &&
+                !candidate.IsNative &&
+                string.Equals(candidate.GetEmittedTypeName(), methodSymbol.ContainingType.Name, StringComparison.Ordinal));
             return generatedClass != null;
         }
 
@@ -12354,7 +12852,6 @@ namespace cs2.cpp {
 
         bool TryGetDelegateWrapperTypeName(
             ITypeSymbol typeSymbol,
-            IMethodSymbol methodGroupSymbol,
             LayerContext context,
             out string delegateWrapperTypeName) {
             delegateWrapperTypeName = string.Empty;
@@ -12378,9 +12875,14 @@ namespace cs2.cpp {
                 return false;
             }
 
+            IMethodSymbol invokeMethod = namedTypeSymbol.DelegateInvokeMethod;
+            if (invokeMethod == null) {
+                return false;
+            }
+
             if (IsActionTypeSymbol(namedTypeSymbol)) {
                 List<string> actionArgumentTypes = new List<string>();
-                foreach (IParameterSymbol parameterSymbol in methodGroupSymbol.Parameters) {
+                foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
                     actionArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
                 }
 
@@ -12393,11 +12895,11 @@ namespace cs2.cpp {
             }
 
             List<string> funcArgumentTypes = new List<string>();
-            foreach (IParameterSymbol parameterSymbol in methodGroupSymbol.Parameters) {
+            foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
                 funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
             }
 
-            funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(methodGroupSymbol.ReturnType), context.Program));
+            funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(invokeMethod.ReturnType), context.Program));
             delegateWrapperTypeName = $"Func<{string.Join(", ", funcArgumentTypes)}>";
             return true;
         }
@@ -12459,7 +12961,7 @@ namespace cs2.cpp {
             IMethodSymbol methodGroupSymbol,
             ExpressionSyntax methodGroupExpression,
             List<string> lines) {
-            if (!TryGetDelegateWrapperTypeName(delegateTypeSymbol, methodGroupSymbol, context, out string delegateWrapperTypeName)) {
+            if (!TryGetDelegateWrapperTypeName(delegateTypeSymbol, context, out string delegateWrapperTypeName)) {
                 return false;
             }
 

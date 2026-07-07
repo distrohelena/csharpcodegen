@@ -56,6 +56,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures array clone collection expressions preserve spread elements instead of collapsing to an empty native array.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithArrayCloneCollectionExpression_PreservesSpreadSourceElements() {
+            string source = """
+                using System;
+
+                public class ByteArrayCloneGate {
+                    byte[] dataValue;
+
+                    public byte[] Data {
+                        get {
+                            return dataValue ?? throw new InvalidOperationException();
+                        }
+                        set {
+                            if (value == null) {
+                                throw new ArgumentNullException(nameof(value));
+                            }
+
+                            dataValue = [.. value];
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            AssertNoDiagnostic(output.Report, "CollectionExpression");
+            Assert.DoesNotContain("new Array<uint8_t>({  });", output.GeneratedText);
+            Assert.Contains("Array<uint8_t>::Copy", output.GeneratedText);
+        }
+
+        /// <summary>
         /// Ensures generated member access and primitive headers use native C++ syntax required by compile validation.
         /// </summary>
         [Fact]
@@ -634,6 +667,93 @@ namespace cs2.cpp.tests {
             Assert.DoesNotContain("Vector2", combinedOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Vector3", combinedOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Vector4", combinedOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures one type-level <c>CodeGenRename</c> attribute overrides the default emitted C++ type name.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCodeGenRenameAttribute_UsesRequestedEmittedTypeName() {
+            IReadOnlyDictionary<string, string> sources = new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["Fixture.cs"] = """
+                    using cs2.attributes;
+
+                    namespace Example {
+                        [CodeGenRename("RenamedThing")]
+                        public class OriginalThing {
+                        }
+
+                        public class Fixture {
+                            public OriginalThing Value;
+                        }
+                    }
+                    """
+            };
+
+            ConversionOutput output = RunConversion(sources, includeAttributesProjectReference: true);
+            string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+            string renamedHeader = File.ReadAllText(Path.Combine(output.OutputPath, "RenamedThing.hpp"));
+
+            Assert.Contains("::RenamedThing* Value;", fixtureHeader, StringComparison.Ordinal);
+            Assert.Contains("class RenamedThing", renamedHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("OriginalThing.hpp", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures configured type remaps still take precedence over a source-level <c>CodeGenRename</c> contract.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithTypeRemapAndCodeGenRename_PrefersConfiguredRemap() {
+            string source = """
+                using cs2.attributes;
+
+                namespace Example {
+                    [CodeGenRename("FromAttribute")]
+                    public class OriginalThing {
+                    }
+
+                    public class Fixture {
+                        public OriginalThing Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversionWithTypeRemaps(
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["Fixture.cs"] = source
+                },
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["Example.OriginalThing"] = "Example.FromRemap"
+                },
+                includeAttributesProjectReference: true);
+            string fixtureHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.Contains("::FromRemap* Value;", fixtureHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures duplicate final emitted type names fail fast when two declarations request the same <c>CodeGenRename</c>.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDuplicateCodeGenRenameTypeNames_Throws() {
+            IReadOnlyDictionary<string, string> sources = new Dictionary<string, string>(StringComparer.Ordinal) {
+                ["Fixture.cs"] = """
+                    using cs2.attributes;
+
+                    namespace Example {
+                        [CodeGenRename("SharedName")]
+                        public class First {
+                        }
+
+                        [CodeGenRename("SharedName")]
+                        public class Second {
+                        }
+                    }
+                    """
+            };
+
+            Exception exception = Assert.ThrowsAny<Exception>(() => RunConversion(sources, includeAttributesProjectReference: true));
+            Assert.Contains("SharedName", exception.ToString(), StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -5333,6 +5453,71 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures captured lambdas passed to EngineBinaryReader.ReadArray lower through a scoped Func temporary instead of being emitted as raw lambda arguments.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadArrayCapturedLambdaCoalesce_EmitsScopedDelegateTemporary() {
+            string source = """
+                using System;
+
+                public abstract class EngineBinaryReader {
+                    public abstract T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement);
+                }
+
+                public sealed class BinaryReaderLE : EngineBinaryReader {
+                    public override T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public sealed class BinaryReaderBE : EngineBinaryReader {
+                    public override T[] ReadArray<T>(Func<EngineBinaryReader, T> readElement) {
+                        return null;
+                    }
+                }
+
+                public static class ReaderFactory {
+                    public static EngineBinaryReader Create(bool useBigEndian) {
+                        if (useBigEndian) {
+                            return new BinaryReaderBE();
+                        }
+
+                        return new BinaryReaderLE();
+                    }
+                }
+
+                public class Node {
+                }
+
+                public class Asset {
+                    public Node[] Values;
+                }
+
+                public class Widget {
+                    public Asset Read(bool useBigEndian, byte version) {
+                        EngineBinaryReader reader = ReaderFactory.Create(useBigEndian);
+                        return new Asset {
+                            Values = reader.ReadArray(currentReader => ReadValue(currentReader, version)) ?? Array.Empty<Node>()
+                        };
+                    }
+
+                    static Node ReadValue(EngineBinaryReader reader, byte version) {
+                        return new Node();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("auto __delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("new Func<EngineBinaryReader*, Node*>", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("[&](EngineBinaryReader* currentReader)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("ReadArray<Node*>(__delegateArg", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("ReadArray<Node*>([&](EngineBinaryReader* currentReader)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures repeated out-var names in disjoint branch scopes do not lower to duplicate native declarations in the same outer function scope.
         /// </summary>
         [Fact]
@@ -7826,7 +8011,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture_1.cpp"));
 
-            Assert.Contains("Cache_1<TState>::template Call<TValue>(typeIndex, value)", sourceOutput);
+            Assert.Contains("Outer_1_Cache_1<TState>::template Call<TValue>(static_cast<int32_t>(typeIndex), value)", sourceOutput);
         }
 
         /// <summary>
@@ -9113,6 +9298,81 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("static_cast<void (Fixture::*)(int32_t)>(&Fixture::Work)", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("std::bind_front(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures overloaded static scene deserializers passed into runtime content registration stay bound to the binary processor instead of regressing to the generic asset processor path.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSceneBinaryContentProcessorRegistration_EmitsBinaryProcessorConstruction() {
+            string source = """
+                using System;
+
+                public class Stream {
+                }
+
+                public class EngineBinaryHeader {
+                }
+
+                public class Asset {
+                }
+
+                public class SceneAsset : Asset {
+                    public static string FileExtension => ".hasset";
+                }
+
+                public class ContentManager {
+                }
+
+                public interface IContentProcessor<T> {
+                }
+
+                public static class RuntimeContentProcessorIds {
+                    public const string SceneAsset = "SceneAsset";
+                }
+
+                public class BinaryContentProcessor<T> : IContentProcessor<T> {
+                    public BinaryContentProcessor(Func<Stream, T> reader) {
+                    }
+                }
+
+                public class AssetContentProcessor<TAsset> : IContentProcessor<TAsset> where TAsset : Asset {
+                }
+
+                public static class EditorAssetBinarySerializer {
+                    public static SceneAsset DeserializeSceneAsset(Stream stream) {
+                        return null;
+                    }
+
+                    public static SceneAsset DeserializeSceneAsset(Stream stream, EngineBinaryHeader header) {
+                        return DeserializeSceneAsset(stream);
+                    }
+                }
+
+                public static class RuntimeContentManagerConfiguration {
+                    static void RegisterProcessorIfMissing<T>(
+                        ContentManager contentManager,
+                        string processorId,
+                        IContentProcessor<T> processor,
+                        string[] extensions = null) {
+                    }
+
+                    public static void ConfigureSharedAssetContentManager(ContentManager contentManager) {
+                        RegisterProcessorIfMissing(
+                            contentManager,
+                            RuntimeContentProcessorIds.SceneAsset,
+                            new BinaryContentProcessor<SceneAsset>(EditorAssetBinarySerializer.DeserializeSceneAsset),
+                            new[] { SceneAsset.FileExtension });
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeContentManagerConfiguration.cpp"));
+
+            Assert.Contains("new ::BinaryContentProcessor_1<::SceneAsset*>", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("static_cast<SceneAsset* (*)(Stream*)>(&EditorAssetBinarySerializer::DeserializeSceneAsset)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("new ::AssetContentProcessor_1<::SceneAsset*>()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -10611,12 +10871,12 @@ namespace cs2.cpp.tests {
             Assert.Contains("float4 orientation;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("float4::CreateFromYawPitchRoll__out3(yawRadians, pitchRadians, 0.0f, orientation);", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("orientation.Normalize();", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("float4::CreateFromAxisAngle__ref0_out2(axis, angle, axisAngleRotation);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("float4::CreateFromAxisAngle__out2(axis, angle, axisAngleRotation);", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("float4::Concatenate__ref0_ref1_out2(currentOrientation, deltaRotation, mergedOrientation);", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("float4 *orientation;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("float4->CreateFromYawPitchRoll", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("orientation->Normalize()", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("float4::CreateFromAxisAngle(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("float4::CreateFromAxisAngle__ref0_out2", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("float4::Concatenate(", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -10665,10 +10925,10 @@ namespace cs2.cpp.tests {
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(string source, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false) {
+        static ConversionOutput RunConversion(string source, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
             return RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
                 ["Fixture.cs"] = source
-            }, allowUnsafe, loadNativeRuntimeMetadata);
+            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference);
         }
 
         /// <summary>
@@ -10677,12 +10937,13 @@ namespace cs2.cpp.tests {
         /// <param name="source">C# source file content to convert.</param>
         /// <param name="typeRemaps">Configured source-to-target type remaps used by the conversion run.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversionWithTypeRemaps(string source, IReadOnlyDictionary<string, string> typeRemaps) {
+        static ConversionOutput RunConversionWithTypeRemaps(string source, IReadOnlyDictionary<string, string> typeRemaps, bool includeAttributesProjectReference = false) {
             return RunConversionWithTypeRemaps(
                 new Dictionary<string, string>(StringComparer.Ordinal) {
                     ["Fixture.cs"] = source
                 },
-                typeRemaps);
+                typeRemaps,
+                includeAttributesProjectReference);
         }
 
         /// <summary>
@@ -10690,13 +10951,13 @@ namespace cs2.cpp.tests {
         /// </summary>
         /// <param name="sources">Source file content keyed by relative file name.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(IReadOnlyDictionary<string, string> sources, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false) {
+        static ConversionOutput RunConversion(IReadOnlyDictionary<string, string> sources, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string outputPath = Path.Combine(rootPath, "out");
 
             Directory.CreateDirectory(rootPath);
-            File.WriteAllText(projectPath, CreateProjectFile(allowUnsafe));
+            File.WriteAllText(projectPath, CreateProjectFile(allowUnsafe, includeAttributesProjectReference));
             foreach (KeyValuePair<string, string> source in sources) {
                 File.WriteAllText(Path.Combine(rootPath, source.Key), source.Value);
             }
@@ -10722,13 +10983,13 @@ namespace cs2.cpp.tests {
         /// <param name="sources">Source file content keyed by relative file name.</param>
         /// <param name="typeRemaps">Configured source-to-target type remaps used by the conversion run.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversionWithTypeRemaps(IReadOnlyDictionary<string, string> sources, IReadOnlyDictionary<string, string> typeRemaps) {
+        static ConversionOutput RunConversionWithTypeRemaps(IReadOnlyDictionary<string, string> sources, IReadOnlyDictionary<string, string> typeRemaps, bool includeAttributesProjectReference = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string outputPath = Path.Combine(rootPath, "out");
 
             Directory.CreateDirectory(rootPath);
-            File.WriteAllText(projectPath, CreateProjectFile(false));
+            File.WriteAllText(projectPath, CreateProjectFile(false, includeAttributesProjectReference));
             foreach (KeyValuePair<string, string> source in sources) {
                 File.WriteAllText(Path.Combine(rootPath, source.Key), source.Value);
             }
@@ -10753,8 +11014,13 @@ namespace cs2.cpp.tests {
         /// Creates a minimal SDK-style project file for temporary converter fixtures.
         /// </summary>
         /// <returns>Project file content suitable for Roslyn-based analysis.</returns>
-        static string CreateProjectFile(bool allowUnsafe) {
+        static string CreateProjectFile(bool allowUnsafe, bool includeAttributesProjectReference) {
             string allowUnsafeElement = allowUnsafe ? "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n" : string.Empty;
+            string attributesProjectReference = includeAttributesProjectReference
+                ? "  <ItemGroup>\n" +
+                  $"    <ProjectReference Include=\"{GetAttributesProjectPath()}\" />\n" +
+                  "  </ItemGroup>\n"
+                : string.Empty;
             return
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
                 "  <PropertyGroup>\n" +
@@ -10764,7 +11030,16 @@ namespace cs2.cpp.tests {
                 "    <Nullable>disable</Nullable>\n" +
                 allowUnsafeElement +
                 "  </PropertyGroup>\n" +
+                attributesProjectReference +
                 "</Project>\n";
+        }
+
+        /// <summary>
+        /// Resolves the checked-in <c>cs2.attributes</c> project path for temporary fixture projects.
+        /// </summary>
+        /// <returns>Absolute path to the attributes project file.</returns>
+        static string GetAttributesProjectPath() {
+            return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "cs2.attributes", "cs2.attributes.csproj"));
         }
 
         /// <summary>

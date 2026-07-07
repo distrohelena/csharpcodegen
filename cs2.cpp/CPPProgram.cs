@@ -10,6 +10,16 @@ public class CPPProgram : ConversionProgram {
     public CPPConversionOptions Options { get; set; }
     public CPPConversionReport Report { get; set; }
     public List<string> EmittedFiles { get; } = new List<string>();
+
+    /// <summary>
+    /// Gets the reachable generated source types selected for the current emit pass.
+    /// </summary>
+    public List<ConversionClass> ReachableGeneratedTypes { get; } = new List<ConversionClass>();
+
+    /// <summary>
+    /// Gets the reachable generated source types grouped by emitted file stem using case-insensitive filesystem rules.
+    /// </summary>
+    public Dictionary<string, List<ConversionClass>> ReachableGeneratedTypesByFileStem { get; } = new Dictionary<string, List<ConversionClass>>(StringComparer.OrdinalIgnoreCase);
     public List<string> RuntimeRequirements { get; } = new List<string>();
 
     public CPPProgram(ConversionRules rules)
@@ -98,6 +108,33 @@ public class CPPProgram : ConversionProgram {
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Replaces the reachable generated type set and rebuilds the case-insensitive file-stem lookup used during emission.
+    /// </summary>
+    /// <param name="reachableGeneratedTypes">Reachable generated source types selected for the current emit pass.</param>
+    public void SetReachableGeneratedTypes(IEnumerable<ConversionClass> reachableGeneratedTypes) {
+        ReachableGeneratedTypes.Clear();
+        ReachableGeneratedTypesByFileStem.Clear();
+        if (reachableGeneratedTypes == null) {
+            return;
+        }
+
+        foreach (ConversionClass conversionClass in reachableGeneratedTypes) {
+            if (conversionClass == null) {
+                continue;
+            }
+
+            ReachableGeneratedTypes.Add(conversionClass);
+            string emittedTypeName = conversionClass.GetEmittedTypeName();
+            if (!ReachableGeneratedTypesByFileStem.TryGetValue(emittedTypeName, out List<ConversionClass> collidingTypes)) {
+                collidingTypes = new List<ConversionClass>();
+                ReachableGeneratedTypesByFileStem.Add(emittedTypeName, collidingTypes);
+            }
+
+            collidingTypes.Add(conversionClass);
         }
     }
 

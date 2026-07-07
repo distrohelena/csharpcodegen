@@ -10,7 +10,6 @@ namespace cs2.core {
         int GeneratedClassLookupByNameAndArityCount;
         HashSet<string> BaseEmittedTypeNameCollisions;
         int BaseEmittedTypeNameCollisionCount;
-
         public ConversionProgram(ConversionRules rules) {
             Classes = new List<ConversionClass>();
             TypeMap = new Dictionary<string, string>();
@@ -19,7 +18,7 @@ namespace cs2.core {
             QualifiedGeneratedClassLookupCount = -1;
             GeneratedClassLookupByNameAndArity = new Dictionary<string, ConversionClass>(StringComparer.Ordinal);
             GeneratedClassLookupByNameAndArityCount = -1;
-            BaseEmittedTypeNameCollisions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            BaseEmittedTypeNameCollisions = new HashSet<string>(StringComparer.Ordinal);
             BaseEmittedTypeNameCollisionCount = -1;
         }
 

@@ -158,6 +158,34 @@ namespace cs2.core {
             return false;
         }
 
+        /// <summary>
+        /// Applies one source-level code generation rename contract from a type symbol onto the current conversion class when present.
+        /// </summary>
+        /// <param name="conversionClass">Conversion class receiving the resolved rename metadata.</param>
+        static void ApplyCodeGenRenameAttribute(ConversionClass conversionClass) {
+            if (conversionClass?.TypeSymbol == null) {
+                return;
+            }
+
+            foreach (AttributeData attribute in conversionClass.TypeSymbol.GetAttributes()) {
+                if (!string.Equals(attribute.AttributeClass?.ToDisplayString(), "cs2.attributes.CodeGenRenameAttribute", StringComparison.Ordinal)) {
+                    continue;
+                }
+
+                if (attribute.ConstructorArguments.Length == 0) {
+                    throw new InvalidOperationException($"Type '{conversionClass.TypeSymbol.ToDisplayString()}' must supply one CodeGenRename value.");
+                }
+
+                string requestedName = attribute.ConstructorArguments[0].Value?.ToString() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(requestedName)) {
+                    throw new InvalidOperationException($"Type '{conversionClass.TypeSymbol.ToDisplayString()}' must supply one non-empty CodeGenRename value.");
+                }
+
+                conversionClass.CodeGenRename = requestedName;
+                return;
+            }
+        }
+
         private static void ProcessClassDeclaration(SemanticModel semantic, ClassDeclarationSyntax classDecl, ConversionContext context) {
             List<string> outerGenericArgs = CloneCurrentGenericArguments(context);
 
@@ -179,6 +207,7 @@ namespace cs2.core {
             cl.IsValueType = false;
             cl.Semantic = semantic;
             cl.TypeSymbol = semantic.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
+            ApplyCodeGenRenameAttribute(cl);
             if (TryGetStructLayout(cl.TypeSymbol, out LayoutKind classLayoutKind, out int classLayoutPack, out int classLayoutSize)) {
                 cl.HasExplicitLayout = classLayoutKind == LayoutKind.Explicit;
                 cl.HasSequentialStructLayout = classLayoutKind == LayoutKind.Sequential;
@@ -232,6 +261,7 @@ namespace cs2.core {
             cl.IsValueType = true;
             cl.Semantic = semantic;
             cl.TypeSymbol = semantic.GetDeclaredSymbol(structDecl) as INamedTypeSymbol;
+            ApplyCodeGenRenameAttribute(cl);
             if (TryGetStructLayout(cl.TypeSymbol, out LayoutKind structLayoutKind, out int structLayoutPack, out int structLayoutSize)) {
                 cl.HasExplicitLayout = structLayoutKind == LayoutKind.Explicit;
                 cl.HasSequentialStructLayout = structLayoutKind == LayoutKind.Sequential;
@@ -556,6 +586,7 @@ namespace cs2.core {
             cl.DeclarationType = MemberDeclarationType.Delegate;
             cl.Semantic = semantic;
             cl.TypeSymbol = semantic.GetDeclaredSymbol(delegateDecl) as INamedTypeSymbol;
+            ApplyCodeGenRenameAttribute(cl);
 
             ConversionFunction func = context.StartFn();
             func.Semantic = semantic;
@@ -849,6 +880,7 @@ namespace cs2.core {
                 cl.IsValueType = false;
                 cl.Semantic = semantic;
                 cl.TypeSymbol = semantic.GetDeclaredSymbol(ifaceDecl) as INamedTypeSymbol;
+                ApplyCodeGenRenameAttribute(cl);
 
                 ApplyTypeGenericArguments(cl, outerGenericArgs, ifaceDecl.TypeParameterList);
 
@@ -879,6 +911,7 @@ namespace cs2.core {
                 cl.EnumMembers = new List<object>();
                 cl.Semantic = semantic;
                 cl.TypeSymbol = semantic.GetDeclaredSymbol(Enum) as INamedTypeSymbol;
+                ApplyCodeGenRenameAttribute(cl);
 
                 if (Enum.BaseList != null) {
                     foreach (var baseType in Enum.BaseList.ChildNodes()) {

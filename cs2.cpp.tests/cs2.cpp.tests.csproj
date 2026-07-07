@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\codegen\codegen.csproj" />
+    <ProjectReference Include="..\cs2.attributes\cs2.attributes.csproj" />
     <ProjectReference Include="..\cs2.cpp\cs2.cpp.csproj" />
   </ItemGroup>
 

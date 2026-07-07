@@ -1441,10 +1441,6 @@ namespace cs2.cpp {
                 return generatedClass.GetEmittedFileStem(program);
             }
 
-            if (variableType.TryBuildQualifiedLowercaseFileStem(out string qualifiedIncludePath)) {
-                return qualifiedIncludePath;
-            }
-
             CPPKnownClass knownSourceClass = program.Requirements.FirstOrDefault(requirement => requirement.Name == variableType.TypeName);
             if (knownSourceClass != null && !string.IsNullOrWhiteSpace(knownSourceClass.Path)) {
                 return knownSourceClass.Path;

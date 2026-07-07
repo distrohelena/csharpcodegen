@@ -1,4 +1,7 @@
-#pragma once
+#ifndef FUNC_HPP
+#define FUNC_HPP
+
+#include <functional>
 
 template <typename... TArgs>
 class Func {
@@ -7,41 +10,43 @@ class Func {
 template <typename TResult>
 class Func<TResult> {
 public:
-    using FuncType = TResult(*)();
+    using FuncType = std::function<TResult()>;
 
-    Func()
-        : func(nullptr) {
-    }
+    Func() = default;
 
-    explicit Func(FuncType value)
-        : func(value) {
-    }
+    explicit Func(FuncType value);
 
-    TResult operator()() const {
-        return func();
-    }
+    template<typename TCallable>
+    explicit Func(TCallable value);
+
+    TResult operator()() const;
+
+    explicit operator bool() const;
 
 private:
-    FuncType func;
+    FuncType func{};
 };
 
 template <typename TArg, typename TResult>
 class Func<TArg, TResult> {
 public:
-    using FuncType = TResult(*)(TArg);
+    using FuncType = std::function<TResult(TArg)>;
 
-    Func()
-        : func(nullptr) {
-    }
+    Func() = default;
 
-    explicit Func(FuncType value)
-        : func(value) {
-    }
+    explicit Func(FuncType value);
 
-    TResult operator()(TArg arg) const {
-        return func(arg);
-    }
+    template<typename TCallable>
+    explicit Func(TCallable value);
+
+    TResult operator()(TArg arg) const;
+
+    explicit operator bool() const;
 
 private:
-    FuncType func;
+    FuncType func{};
 };
+
+#include "func.tpp"
+
+#endif // FUNC_HPP
