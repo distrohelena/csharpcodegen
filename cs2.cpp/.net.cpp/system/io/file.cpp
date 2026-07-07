@@ -6,7 +6,7 @@
 #include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
 #endif
 
-#include <fstream>
+#include <sys/stat.h>
 
 bool File::Exists(const char* fileName) {
 	if (!fileName)
@@ -20,8 +20,8 @@ bool File::Exists(const char* fileName) {
 	}
 #endif
 
-	std::ifstream file(fileName);
-	return file.good();
+	struct stat status;
+	return stat(fileName, &status) == 0;
 }
 
 bool File::Exists(const std::string& fileName) {

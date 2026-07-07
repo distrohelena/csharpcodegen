@@ -3,10 +3,8 @@
 
 #include "helcpp_config.hpp"
 
-#include <filesystem>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -19,21 +17,21 @@ public:
 #if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
         return std::string(".");
 #elif defined(_WIN32)
-        wchar_t buffer[MAX_PATH];
-        DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+        char buffer[MAX_PATH];
+        DWORD length = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
         if (length == 0) {
             throw std::runtime_error("Failed to resolve the current executable path.");
         }
 
-        return std::filesystem::path(buffer).parent_path().string();
-#else
-        std::error_code errorCode;
-        std::filesystem::path executablePath = std::filesystem::read_symlink("/proc/self/exe", errorCode);
-        if (errorCode) {
-            throw std::runtime_error("Failed to resolve the current executable path.");
+        std::string executablePath(buffer, length);
+        std::size_t separatorIndex = executablePath.find_last_of("\\/");
+        if (separatorIndex == std::string::npos) {
+            return std::string(".");
         }
 
-        return executablePath.parent_path().string();
+        return executablePath.substr(0, separatorIndex);
+#else
+        return std::string(".");
 #endif
     }();
 };

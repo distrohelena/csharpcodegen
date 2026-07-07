@@ -1,42 +1,57 @@
 #include "console.hpp"
-#include "io/file.hpp"
-#include <iostream>
-
-using namespace std;
+#include <cstdio>
 
 bool Console::Write(char* fileName)
 {
-	cout << fileName;
+    if (fileName == nullptr) {
+        return false;
+    }
+
+    std::fputs(fileName, stdout);
     return true;
 }
 
 bool Console::Write(const std::string& text)
 {
-	cout << text;
+    std::fputs(text.c_str(), stdout);
     return true;
 }
 
 bool Console::WriteLine(char* fileName) 
 {
-	cout << fileName << std::endl;
+    if (fileName == nullptr) {
+        return false;
+    }
+
+    std::fputs(fileName, stdout);
+    std::fputc('\n', stdout);
     return true;
 }
 
 bool Console::WriteLine(const std::string& text)
 {
-	cout << text << std::endl;
+    std::fputs(text.c_str(), stdout);
+    std::fputc('\n', stdout);
     return true;
 }
 
 bool Console::WriteLine()
 {
-	cout << std::endl;
+    std::fputc('\n', stdout);
     return true;
 }
 
 std::string Console::ReadLine()
 {
-    std::string line;
-    std::getline(cin, line);
+    char buffer[4096];
+    if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
+        return std::string();
+    }
+
+    std::string line(buffer);
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+    }
+
     return line;
 }

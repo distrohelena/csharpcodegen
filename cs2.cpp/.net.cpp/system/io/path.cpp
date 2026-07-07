@@ -3,7 +3,15 @@
 #include "helcpp_config.hpp"
 
 #include <algorithm>
-#include <filesystem>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#if defined(_WIN32)
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #if HE_CPP_PLATFORM_PS2
 namespace {
@@ -118,6 +126,96 @@ namespace {
 }
 #endif
 
+namespace {
+    bool IsGenericDirectorySeparator(char character) {
+        return character == Path::DirectorySeparatorChar || character == Path::AltDirectorySeparatorChar;
+    }
+
+    std::size_t GetRootLength(const std::string& path) {
+        if (path.empty()) {
+            return 0;
+        }
+
+        if (path.size() >= 2 && path[1] == ':') {
+            if (path.size() >= 3 && IsGenericDirectorySeparator(path[2])) {
+                return 3;
+            }
+
+            return 2;
+        }
+
+        if (IsGenericDirectorySeparator(path[0])) {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    std::string NormalizeGenericPath(const std::string& path) {
+        if (path.empty()) {
+            return std::string();
+        }
+
+        std::string normalized = path;
+        std::replace(normalized.begin(), normalized.end(), Path::AltDirectorySeparatorChar, Path::DirectorySeparatorChar);
+        const std::size_t rootLength = GetRootLength(normalized);
+        const bool rooted = rootLength > 0;
+        std::string root = normalized.substr(0, rootLength);
+        std::vector<std::string> segments;
+        std::string segment;
+
+        for (std::size_t index = rootLength; index <= normalized.size(); index++) {
+            const bool endOfPath = index == normalized.size();
+            const char character = endOfPath ? Path::DirectorySeparatorChar : normalized[index];
+            if (!endOfPath && character != Path::DirectorySeparatorChar) {
+                segment.push_back(character);
+                continue;
+            }
+
+            if (segment == "..") {
+                if (!segments.empty() && segments.back() != "..") {
+                    segments.pop_back();
+                } else if (!rooted) {
+                    segments.push_back(segment);
+                }
+            } else if (!segment.empty() && segment != ".") {
+                segments.push_back(segment);
+            }
+
+            segment.clear();
+        }
+
+        std::string result = root;
+        for (std::size_t segmentIndex = 0; segmentIndex < segments.size(); segmentIndex++) {
+            if (!result.empty() && result.back() != Path::DirectorySeparatorChar) {
+                result.push_back(Path::DirectorySeparatorChar);
+            }
+
+            result += segments[segmentIndex];
+        }
+
+        if (result.empty()) {
+            return rooted ? root : std::string(".");
+        }
+
+        return result;
+    }
+
+    std::string GetCurrentDirectoryPath() {
+        char buffer[4096];
+#if defined(_WIN32)
+        if (_getcwd(buffer, static_cast<int>(sizeof(buffer))) == nullptr) {
+            return std::string(".");
+        }
+#else
+        if (getcwd(buffer, sizeof(buffer)) == nullptr) {
+            return std::string(".");
+        }
+#endif
+        return NormalizeGenericPath(buffer);
+    }
+}
+
 std::string Path::Combine(const std::string& left, const std::string& right) {
 #if HE_CPP_PLATFORM_PS2
     if (IsPs2DevicePath(left) || IsPs2DevicePath(right)) {
@@ -138,14 +236,24 @@ std::string Path::Combine(const std::string& left, const std::string& right) {
     }
 #endif
     if (left.empty()) {
-        return right;
+        return NormalizeGenericPath(right);
     }
 
     if (right.empty()) {
-        return left;
+        return NormalizeGenericPath(left);
     }
 
-    return (std::filesystem::path(left) / right).lexically_normal().string();
+    if (IsPathRooted(right)) {
+        return GetFullPath(right);
+    }
+
+    std::string combined = left;
+    if (!combined.empty() && !IsGenericDirectorySeparator(combined.back())) {
+        combined.push_back(DirectorySeparatorChar);
+    }
+
+    combined += right;
+    return NormalizeGenericPath(combined);
 }
 
 std::string Path::Combine(const std::string& first, const std::string& second, const std::string& third) {
@@ -162,7 +270,19 @@ std::string Path::GetDirectoryName(const std::string& path) {
         return GetPs2DirectoryName(path);
     }
 #endif
-    return std::filesystem::path(path).parent_path().string();
+
+    std::string normalized = NormalizeGenericPath(path);
+    const std::size_t rootLength = GetRootLength(normalized);
+    const std::size_t separatorIndex = normalized.find_last_of("\\/");
+    if (separatorIndex == std::string::npos) {
+        return std::string();
+    }
+
+    if (separatorIndex < rootLength) {
+        return normalized.substr(0, rootLength);
+    }
+
+    return normalized.substr(0, separatorIndex);
 }
 
 std::string Path::GetFileName(const std::string& path) {
@@ -175,7 +295,14 @@ std::string Path::GetFileName(const std::string& path) {
         return GetPs2FileName(path);
     }
 #endif
-    return std::filesystem::path(path).filename().string();
+
+    std::string normalized = NormalizeGenericPath(path);
+    const std::size_t separatorIndex = normalized.find_last_of("\\/");
+    if (separatorIndex == std::string::npos) {
+        return normalized;
+    }
+
+    return normalized.substr(separatorIndex + 1);
 }
 
 std::string Path::GetFullPath(const std::string& path) {
@@ -194,13 +321,17 @@ std::string Path::GetFullPath(const std::string& path) {
         return NormalizePs2Path(path);
     }
 #endif
-    return std::filesystem::path(path).lexically_normal().string();
+    return NormalizeGenericPath(path);
 #else
     if (path.empty()) {
-        return std::filesystem::current_path().string();
+        return GetCurrentDirectoryPath();
     }
 
-    return std::filesystem::absolute(std::filesystem::path(path)).lexically_normal().string();
+    if (IsPathRooted(path)) {
+        return NormalizeGenericPath(path);
+    }
+
+    return Combine(GetCurrentDirectoryPath(), path);
 #endif
 }
 
@@ -209,9 +340,23 @@ std::string Path::ChangeExtension(const std::string& path, const std::string& ex
         return std::string();
     }
 
-    std::filesystem::path updatedPath(path);
-    updatedPath.replace_extension(extension);
-    return updatedPath.string();
+    std::string normalized = NormalizeGenericPath(path);
+    const std::size_t separatorIndex = normalized.find_last_of("\\/");
+    const std::size_t extensionIndex = normalized.find_last_of('.');
+    std::string updated = normalized;
+    if (extensionIndex != std::string::npos && (separatorIndex == std::string::npos || extensionIndex > separatorIndex)) {
+        updated.erase(extensionIndex);
+    }
+
+    if (!extension.empty()) {
+        if (extension[0] != '.') {
+            updated.push_back('.');
+        }
+
+        updated += extension;
+    }
+
+    return updated;
 }
 
 bool Path::IsPathRooted(const std::string& path) {
@@ -229,5 +374,5 @@ bool Path::IsPathRooted(const std::string& path) {
         return true;
     }
 #endif
-    return std::filesystem::path(path).is_absolute();
+    return GetRootLength(path) > 0;
 }

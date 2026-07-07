@@ -2,8 +2,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <iomanip>
-#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -14,9 +12,21 @@ class Guid {
     std::string value;
 
     static std::string FormatCounterGuid(std::uint64_t counter) {
-        std::ostringstream builder;
-        builder << std::hex << std::nouppercase << std::setw(32) << std::setfill('0') << counter;
-        return builder.str();
+        constexpr char HexDigits[] = "0123456789abcdef";
+        char buffer[33];
+        for (int32_t index = 0; index < 32; index++) {
+            buffer[index] = '0';
+        }
+
+        buffer[32] = '\0';
+        int32_t writeIndex = 31;
+        while (counter != 0 && writeIndex >= 0) {
+            buffer[writeIndex] = HexDigits[counter & 0xf];
+            counter >>= 4;
+            writeIndex--;
+        }
+
+        return std::string(buffer, 32);
     }
 
 public:

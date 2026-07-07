@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
-#include <sstream>
 #include <string>
 #include <type_traits>
 #include "../../runtime/native_span.hpp"
@@ -141,18 +141,37 @@ public:
     }
 
     std::string ToString() const {
-        std::ostringstream builder;
-        builder << "<";
+        std::string builder = "<";
         for (int32_t laneIndex = 0; laneIndex < LaneCount; ++laneIndex) {
             if (laneIndex > 0) {
-                builder << ", ";
+                builder += ", ";
             }
 
-            builder << Values[laneIndex];
+            AppendValueToString(builder, Values[laneIndex]);
         }
 
-        builder << ">";
-        return builder.str();
+        builder += ">";
+        return builder;
+    }
+
+private:
+    static void AppendValueToString(std::string& builder, const T& value) {
+        if constexpr (std::is_same_v<T, bool>) {
+            builder += value ? "true" : "false";
+        } else if constexpr (std::is_integral_v<T>) {
+            builder += std::to_string(value);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            char buffer[64];
+            if constexpr (std::is_same_v<T, float>) {
+                std::snprintf(buffer, sizeof(buffer), "%.9g", static_cast<double>(value));
+            } else {
+                std::snprintf(buffer, sizeof(buffer), "%.17g", static_cast<double>(value));
+            }
+
+            builder += buffer;
+        } else {
+            builder += value.ToString();
+        }
     }
 };
 

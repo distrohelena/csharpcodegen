@@ -5,6 +5,133 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPRuntimeTemplateContractTests {
     /// <summary>
+    /// Verifies the shared path runtime template avoids heavyweight <c>std::filesystem</c> dependencies.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_path_runtime_avoids_std_filesystem() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "path.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::filesystem", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared directory runtime template avoids heavyweight <c>std::filesystem</c> dependencies.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_directory_runtime_avoids_std_filesystem() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "directory.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::filesystem", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared file runtime template avoids stream-based existence probing.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_file_runtime_avoids_ifstream_existence_probe() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "file.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::ifstream", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared guid runtime template avoids locale-heavy stream formatting.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_guid_runtime_avoids_ostringstream() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "guid.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::ostringstream", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared vector runtime template avoids locale-heavy stream formatting.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_vector_runtime_avoids_ostringstream() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "numerics",
+            "vector.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::ostringstream", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared console runtime template avoids heavyweight iostream dependencies.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_console_runtime_avoids_iostream() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "console.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("<iostream>", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("std::getline", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("cout", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("cin", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared stream runtime template avoids unused fstream includes.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_stream_runtime_avoids_fstream_include() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "stream.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("<fstream>", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the native dictionary runtime template declares the managed-style <c>Clear()</c> surface directly.
     /// </summary>
     [Fact]
