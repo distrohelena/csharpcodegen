@@ -608,16 +608,16 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeValueReader.cpp"));
             string nullableHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_nullable.hpp"));
-            string dateTimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_datetime.hpp"));
+            string timeSpanHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_timespan.hpp"));
 
             Assert.Contains("value.get_HasValue()", sourceOutput);
             Assert.Contains("value.get_Value()", sourceOutput);
             Assert.Contains("elapsed.get_TotalMilliseconds()", sourceOutput);
             Assert.Contains("bool get_HasValue() const", nullableHeader);
             Assert.Contains("const T& get_Value() const", nullableHeader);
-            Assert.Contains("double get_TotalMilliseconds() const", dateTimeHeader);
+            Assert.Contains("double get_TotalMilliseconds() const", timeSpanHeader);
             AssertRuntimeRequirement(output.Report, "NativeNullable");
-            AssertRuntimeRequirement(output.Report, "NativeDateTime");
+            AssertRuntimeRequirement(output.Report, "NativeTimeSpan");
         }
 
         /// <summary>

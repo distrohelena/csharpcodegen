@@ -1727,7 +1727,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::to_string(", sourceOutput);
+            Assert.Contains("String::ToJoinString(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData->LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -1760,7 +1761,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::to_string(", sourceOutput);
+            Assert.Contains("String::ToJoinString(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData.LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData->LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
         }
@@ -1794,7 +1796,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::to_string(", sourceOutput);
+            Assert.Contains("String::ToJoinString(", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData.LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("anchorData->LeftDistance.Value->ToString()", sourceOutput, StringComparison.Ordinal);
         }
@@ -4269,7 +4272,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Counter.cpp"));
 
-            Assert.Contains("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("String::ToJoinString(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("std::to_string(Index)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -4303,8 +4307,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContinuationIndex.cpp"));
 
-            Assert.Contains("std::to_string(this->get_Type())", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("String::ToJoinString(this->get_Type())", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("String::ToJoinString(this->get_Index())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(this->get_Type())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(this->get_Index())", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("std::to_string(Index)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -4932,7 +4938,8 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("items->get_Capacity()", sourceOutput);
             Assert.Contains("items->SetCapacity(desired)", sourceOutput);
-            Assert.Contains("std::to_string(this->items->get_Capacity())", sourceOutput);
+            Assert.Contains("String::ToJoinString(this->items->get_Capacity())", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::to_string(this->items->get_Capacity())", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("items->Capacity = ", sourceOutput, StringComparison.Ordinal);
         }
 

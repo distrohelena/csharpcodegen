@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -455,7 +456,9 @@ public:
             return value ? "True" : "False";
         }
 
-        return std::to_string(value);
+        std::string builder;
+        AppendArithmeticToString(builder, value);
+        return builder;
     }
 
     template <typename TValue>
@@ -478,4 +481,170 @@ public:
     }
 
 private:
+    /// <summary>
+    /// Appends an arithmetic value using a lightweight managed-style formatting path.
+    /// </summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_integral_v<TValue> && !std::is_same_v<TValue, bool>, void> AppendArithmeticToString(std::string& builder, TValue value) {
+        AppendIntegralToString(builder, value);
+    }
+
+    /// <summary>
+    /// Appends a floating-point value using a lightweight managed-style formatting path.
+    /// </summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_floating_point_v<TValue>, void> AppendArithmeticToString(std::string& builder, TValue value) {
+        AppendFloatingPointToString(builder, value);
+    }
+
+    /// <summary>
+    /// Appends an unsigned integral value in base-10 without locale-aware standard library formatting.
+    /// </summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_integral_v<TValue> && std::is_unsigned_v<TValue>, void> AppendIntegralToString(std::string& builder, TValue value) {
+        char digits[32];
+        int32_t digitCount = 0;
+        TValue remainingValue = value;
+
+        do {
+            TValue digit = remainingValue % static_cast<TValue>(10);
+            digits[digitCount++] = static_cast<char>('0' + digit);
+            remainingValue /= static_cast<TValue>(10);
+        } while (remainingValue != 0);
+
+        while (digitCount > 0) {
+            builder += digits[--digitCount];
+        }
+    }
+
+    /// <summary>
+    /// Appends a signed integral value in base-10 without locale-aware standard library formatting.
+    /// </summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_integral_v<TValue> && std::is_signed_v<TValue>, void> AppendIntegralToString(std::string& builder, TValue value) {
+        using UnsignedValue = std::make_unsigned_t<TValue>;
+        if (value < 0) {
+            builder += '-';
+            UnsignedValue magnitude = static_cast<UnsignedValue>(-(value + 1));
+            magnitude += 1;
+            AppendIntegralToString(builder, magnitude);
+            return;
+        }
+
+        AppendIntegralToString(builder, static_cast<UnsignedValue>(value));
+    }
+
+    /// <summary>
+    /// Appends a floating-point value while preserving managed-friendly literals for special values.
+    /// </summary>
+    template <typename TValue>
+    static void AppendFloatingPointToString(std::string& builder, TValue value) {
+        if (std::isnan(value)) {
+            builder += "NaN";
+            return;
+        }
+
+        if (std::isinf(value)) {
+            builder += value < static_cast<TValue>(0) ? "-Infinity" : "Infinity";
+            return;
+        }
+
+        if (value == static_cast<TValue>(0)) {
+            builder += "0";
+            return;
+        }
+
+        double absoluteValue = static_cast<double>(value);
+        if (absoluteValue < 0.0) {
+            builder += '-';
+            absoluteValue = -absoluteValue;
+        }
+
+        int32_t precision = std::is_same_v<TValue, float> ? 9 : 17;
+        int32_t integerDigitCount = CountIntegerDigits(absoluteValue);
+        if (absoluteValue < 0.0001 || integerDigitCount > precision) {
+            AppendScientificFloatingPoint(builder, absoluteValue, precision);
+            return;
+        }
+
+        AppendFixedFloatingPoint(builder, absoluteValue, precision - integerDigitCount);
+    }
+
+    /// <summary>
+    /// Appends a floating-point value using scientific notation.
+    /// </summary>
+    static void AppendScientificFloatingPoint(std::string& builder, double positiveValue, int32_t precision) {
+        int32_t exponent = 0;
+        while (positiveValue >= 10.0) {
+            positiveValue /= 10.0;
+            exponent++;
+        }
+
+        while (positiveValue < 1.0) {
+            positiveValue *= 10.0;
+            exponent--;
+        }
+
+        AppendFixedFloatingPoint(builder, positiveValue, precision - 1);
+        builder += 'e';
+        if (exponent >= 0) {
+            builder += '+';
+        }
+
+        AppendIntegralToString(builder, exponent);
+    }
+
+    /// <summary>
+    /// Appends a floating-point value using fixed notation and trims trailing zeroes.
+    /// </summary>
+    static void AppendFixedFloatingPoint(std::string& builder, double positiveValue, int32_t fractionalDigitCount) {
+        uint64_t integerPart = static_cast<uint64_t>(positiveValue);
+        AppendIntegralToString(builder, integerPart);
+        if (fractionalDigitCount <= 0) {
+            return;
+        }
+
+        double fractionalPart = positiveValue - static_cast<double>(integerPart);
+        if (fractionalPart <= 0.0) {
+            return;
+        }
+
+        std::size_t fractionalStartIndex = builder.size();
+        builder += '.';
+
+        for (int32_t digitIndex = 0; digitIndex < fractionalDigitCount; digitIndex++) {
+            fractionalPart *= 10.0;
+            int32_t digit = static_cast<int32_t>(fractionalPart);
+            if (digit > 9) {
+                digit = 9;
+            }
+
+            builder += static_cast<char>('0' + digit);
+            fractionalPart -= static_cast<double>(digit);
+            if (fractionalPart <= 0.0) {
+                break;
+            }
+        }
+
+        while (builder.size() > fractionalStartIndex + 1 && builder.back() == '0') {
+            builder.pop_back();
+        }
+
+        if (!builder.empty() && builder.back() == '.') {
+            builder.pop_back();
+        }
+    }
+
+    /// <summary>
+    /// Counts the number of decimal digits in the integer portion of a positive floating-point value.
+    /// </summary>
+    static int32_t CountIntegerDigits(double positiveValue) {
+        int32_t digitCount = 1;
+        while (positiveValue >= 10.0) {
+            positiveValue /= 10.0;
+            digitCount++;
+        }
+
+        return digitCount;
+    }
 };

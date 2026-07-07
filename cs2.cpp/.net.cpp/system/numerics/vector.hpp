@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include "../../runtime/native_string.hpp"
 #include "../../runtime/native_span.hpp"
 
 template <typename T>
@@ -159,19 +159,116 @@ private:
         if constexpr (std::is_same_v<T, bool>) {
             builder += value ? "true" : "false";
         } else if constexpr (std::is_integral_v<T>) {
-            builder += std::to_string(value);
+            builder += String::ToJoinString(value);
         } else if constexpr (std::is_floating_point_v<T>) {
-            char buffer[64];
-            if constexpr (std::is_same_v<T, float>) {
-                std::snprintf(buffer, sizeof(buffer), "%.9g", static_cast<double>(value));
-            } else {
-                std::snprintf(buffer, sizeof(buffer), "%.17g", static_cast<double>(value));
-            }
-
-            builder += buffer;
+            AppendFloatingPointToString(builder, value);
         } else {
             builder += value.ToString();
         }
+    }
+
+    static void AppendFloatingPointToString(std::string& builder, const T& value) {
+        if (std::isnan(value)) {
+            builder += "NaN";
+            return;
+        }
+        if (std::isinf(value)) {
+            builder += value < static_cast<T>(0) ? "-Infinity" : "Infinity";
+            return;
+        }
+        if (value == static_cast<T>(0)) {
+            builder += "0";
+            return;
+        }
+
+        double absoluteValue = static_cast<double>(value);
+        if (absoluteValue < 0.0) {
+            builder += '-';
+            absoluteValue = -absoluteValue;
+        }
+
+        int32_t precision = std::is_same_v<T, float> ? 9 : 17;
+        int32_t integerDigitCount = CountIntegerDigits(absoluteValue);
+        if (absoluteValue < 0.0001 || integerDigitCount > precision) {
+            AppendScientificFloatingPoint(builder, absoluteValue, precision);
+            return;
+        }
+
+        AppendFixedFloatingPoint(builder, absoluteValue, precision - integerDigitCount);
+    }
+
+    static void AppendScientificFloatingPoint(std::string& builder, double positiveValue, int32_t precision) {
+        int32_t exponent = 0;
+        while (positiveValue >= 10.0) {
+            positiveValue /= 10.0;
+            exponent++;
+        }
+
+        while (positiveValue < 1.0) {
+            positiveValue *= 10.0;
+            exponent--;
+        }
+
+        AppendFixedFloatingPoint(builder, positiveValue, precision - 1);
+        builder += 'e';
+        if (exponent >= 0) {
+            builder += '+';
+        }
+
+        builder += String::ToJoinString(exponent);
+    }
+
+    static void AppendFixedFloatingPoint(std::string& builder, double positiveValue, int32_t fractionalDigitCount) {
+        uint64_t integerPart = static_cast<uint64_t>(positiveValue);
+        builder += String::ToJoinString(integerPart);
+        if (fractionalDigitCount <= 0) {
+            return;
+        }
+
+        double fractionalPart = positiveValue - static_cast<double>(integerPart);
+        if (fractionalPart <= 0.0) {
+            return;
+        }
+
+        size_t decimalPointIndex = builder.size();
+        builder += '.';
+        size_t lastSignificantIndex = decimalPointIndex;
+        for (int32_t digitIndex = 0; digitIndex < fractionalDigitCount; digitIndex++) {
+            fractionalPart *= 10.0;
+            int32_t digit = static_cast<int32_t>(fractionalPart);
+            if (digit < 0) {
+                digit = 0;
+            } else if (digit > 9) {
+                digit = 9;
+            }
+
+            builder += static_cast<char>('0' + digit);
+            if (digit != 0) {
+                lastSignificantIndex = builder.size();
+            }
+
+            fractionalPart -= static_cast<double>(digit);
+            if (fractionalPart <= 0.0) {
+                break;
+            }
+        }
+
+        if (lastSignificantIndex == decimalPointIndex) {
+            builder.resize(decimalPointIndex);
+            return;
+        }
+
+        builder.resize(lastSignificantIndex);
+    }
+
+    static int32_t CountIntegerDigits(double positiveValue) {
+        int32_t digitCount = 1;
+        while (positiveValue >= 10.0) {
+            positiveValue /= 10.0;
+            digitCount++;
+        }
+
+        return digitCount;
     }
 };
 

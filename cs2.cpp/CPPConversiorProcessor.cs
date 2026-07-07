@@ -7810,7 +7810,8 @@ namespace cs2.cpp {
             }
 
             if (receiverTypeSymbol?.TypeKind == TypeKind.Enum) {
-                lines.Add($"std::to_string(static_cast<int32_t>({receiverText}))");
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add($"String::ToJoinString(static_cast<int32_t>({receiverText}))");
                 return true;
             }
 
@@ -7822,7 +7823,8 @@ namespace cs2.cpp {
                 toStringMethodSymbol == null &&
                 memberAccess.Expression is MemberAccessExpressionSyntax unresolvedNullableValueAccess &&
                 string.Equals(unresolvedNullableValueAccess.Name.Identifier.Text, "Value", StringComparison.Ordinal)) {
-                lines.Add($"std::to_string({receiverText})");
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add($"String::ToJoinString({receiverText})");
                 return true;
             }
 
@@ -7836,7 +7838,8 @@ namespace cs2.cpp {
                 return false;
             }
 
-            lines.Add($"std::to_string({receiverText})");
+            RegisterRuntimeRequirement("NativeString");
+            lines.Add($"String::ToJoinString({receiverText})");
             return true;
         }
 
@@ -10188,7 +10191,8 @@ namespace cs2.cpp {
             }
 
             if (expressionType.IsEnum) {
-                return $"std::to_string(static_cast<int32_t>({expressionText}))";
+                RegisterRuntimeRequirement("NativeString");
+                return $"String::ToJoinString(static_cast<int32_t>({expressionText}))";
             }
 
             if (IsNativeTypeNamePropertyAccess(semantic, expression)) {
@@ -10196,21 +10200,24 @@ namespace cs2.cpp {
             }
 
             if (IsNativeInterpolationType(expressionType.Type)) {
-                return $"std::to_string({expressionText})";
+                RegisterRuntimeRequirement("NativeString");
+                return $"String::ToJoinString({expressionText})";
             }
 
             if (expression is MemberAccessExpressionSyntax nullableValueAccess &&
                 string.Equals(nullableValueAccess.Name.Identifier.Text, "Value", StringComparison.Ordinal) &&
                 TryResolveNullableUnderlyingType(semantic, nullableValueAccess.Expression, out ITypeSymbol nullableUnderlyingType) &&
                 IsNativeInterpolationType(VariableUtil.GetVarType(nullableUnderlyingType).Type)) {
-                return $"std::to_string({expressionText})";
+                RegisterRuntimeRequirement("NativeString");
+                return $"String::ToJoinString({expressionText})";
             }
 
             if ((TryResolveNativeCollectionPropertyTypeSymbol(semantic, expression, out ITypeSymbol collectionPropertyTypeSymbol) &&
                  IsNativeToStringTypeSymbol(collectionPropertyTypeSymbol)) ||
                 (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol interpolationTypeSymbol) &&
                  IsNativeToStringTypeSymbol(interpolationTypeSymbol))) {
-                return $"std::to_string({expressionText})";
+                RegisterRuntimeRequirement("NativeString");
+                return $"String::ToJoinString({expressionText})";
             }
 
             if (TryGetExpressionTypeSymbol(semantic, expression, out ITypeSymbol toStringTypeSymbol) &&
@@ -11789,7 +11796,7 @@ namespace cs2.cpp {
 
                         if (string.Equals(parsedType.TypeName, "TimeSpan", StringComparison.Ordinal) ||
                             string.Equals(parsedType.TypeName, "System.TimeSpan", StringComparison.Ordinal)) {
-                            codeConverter?.RegisterRuntimeRequirement("NativeDateTime");
+                            codeConverter?.RegisterRuntimeRequirement("NativeTimeSpan");
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
                             return new VariableType(parsedType.Type, "TimeSpan");

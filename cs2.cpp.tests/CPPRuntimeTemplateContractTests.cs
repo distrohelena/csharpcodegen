@@ -91,6 +91,118 @@ public sealed class CPPRuntimeTemplateContractTests {
         string source = File.ReadAllText(templatePath);
 
         Assert.DoesNotContain("std::ostringstream", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("std::snprintf", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("std::to_string", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared stopwatch runtime template uses a monotonic native clock directly instead of routing through DateTime wall-clock helpers.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_stopwatch_runtime_avoids_datetime_wall_clock_dependency() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "diagnostics",
+            "stopwatch.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("DateTime::Now()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("runtime/native_datetime.hpp", source, StringComparison.Ordinal);
+        Assert.Contains("runtime/native_timespan.hpp", source, StringComparison.Ordinal);
+        Assert.Contains("std::chrono::steady_clock", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared DateTime runtime template delegates duration support to the narrower TimeSpan runtime template.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_datetime_runtime_delegates_timespan_support() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_datetime.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#include \"native_timespan.hpp\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("class TimeSpan", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared exception runtime template accepts literal messages without requiring caller-side <c>std::string</c> construction.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_exceptions_support_literal_message_overloads() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_exceptions.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("explicit Exception(const char* message)", source, StringComparison.Ordinal);
+        Assert.Contains("explicit InvalidOperationException(const char* message)", source, StringComparison.Ordinal);
+        Assert.Contains("explicit ArgumentNullException(const char* parameterName)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared native string runtime avoids heavyweight standard integer formatting helpers.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_string_runtime_avoids_std_to_string() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_string.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::to_string", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared string builder runtime avoids heavyweight standard integer formatting helpers.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_string_builder_runtime_avoids_std_to_string() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "text",
+            "string-builder.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.DoesNotContain("std::to_string", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared bit-converter runtime exposes the managed float byte-packing helper used by generated material defaults.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_bit_converter_runtime_declares_float_get_bytes() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "bit_converter.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("static Array<uint8_t>* GetBytes(float value)", source, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include "../runtime/array.hpp"
 
 /// <summary>
 /// Provides the minimal managed BitConverter surface required by transpiled serializer code.
@@ -42,5 +43,14 @@ public:
         int32_t result = 0;
         std::memcpy(&result, &value, sizeof(result));
         return result;
+    }
+
+    /// <summary>
+    /// Packs the supplied single-precision floating point value into a managed-style byte array.
+    /// </summary>
+    static Array<uint8_t>* GetBytes(float value) {
+        Array<uint8_t>* bytes = new Array<uint8_t>(sizeof(value));
+        std::memcpy(bytes->Data, &value, sizeof(value));
+        return bytes;
     }
 };

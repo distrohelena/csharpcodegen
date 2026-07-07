@@ -1041,13 +1041,17 @@ namespace cs2.cpp {
             if (string.Equals(referencedClass, "DateTime", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.DateTime", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "DateTime", StringComparison.Ordinal) ||
-                string.Equals(referencedTypeName, "DateTime", StringComparison.Ordinal) ||
-                string.Equals(referencedClass, "TimeSpan", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "DateTime", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeDateTime");
+                return "runtime/native_datetime";
+            }
+
+            if (string.Equals(referencedClass, "TimeSpan", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.TimeSpan", StringComparison.Ordinal) ||
                 string.Equals(normalizedReferencedClass, "TimeSpan", StringComparison.Ordinal) ||
                 string.Equals(referencedTypeName, "TimeSpan", StringComparison.Ordinal)) {
-                processor?.RegisterRuntimeRequirement("NativeDateTime");
-                return "runtime/native_datetime";
+                processor?.RegisterRuntimeRequirement("NativeTimeSpan");
+                return "runtime/native_timespan";
             }
 
             if (string.Equals(referencedClass, "StringBuilder", StringComparison.Ordinal) ||

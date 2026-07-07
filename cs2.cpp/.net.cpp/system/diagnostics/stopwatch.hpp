@@ -1,6 +1,8 @@
 #pragma once
 
-#include "runtime/native_datetime.hpp"
+#include <chrono>
+
+#include "runtime/native_timespan.hpp"
 
 namespace System {
 namespace Diagnostics {
@@ -10,6 +12,8 @@ namespace Diagnostics {
 /// </summary>
 class Stopwatch {
 public:
+    using TickClock = std::chrono::steady_clock;
+
     class LiveMilliseconds {
     public:
         LiveMilliseconds()
@@ -52,7 +56,7 @@ public:
     /// Initializes a new stopwatch in the stopped state.
     /// </summary>
     Stopwatch()
-        : Elapsed(this), IsRunningValue(false), StartTime(), TotalElapsedMilliseconds(0.0) {
+        : Elapsed(this), IsRunningValue(false), StartTimestamp(), TotalElapsedMilliseconds(0.0) {
     }
 
     /// <summary>
@@ -78,7 +82,7 @@ public:
     /// </summary>
     void Start() {
         if (!IsRunningValue) {
-            StartTime = DateTime::Now();
+            StartTimestamp = TickClock::now();
             IsRunningValue = true;
         }
     }
@@ -88,7 +92,7 @@ public:
     /// </summary>
     void Restart() {
         TotalElapsedMilliseconds = 0.0;
-        StartTime = DateTime::Now();
+        StartTimestamp = TickClock::now();
         IsRunningValue = true;
     }
 
@@ -97,7 +101,7 @@ public:
     /// </summary>
     void Stop() {
         if (IsRunningValue) {
-            TotalElapsedMilliseconds += (DateTime::Now() - StartTime).TotalMilliseconds;
+            TotalElapsedMilliseconds += ComputeRunningElapsedMilliseconds();
             IsRunningValue = false;
         }
     }
@@ -124,16 +128,33 @@ private:
     /// <summary>
     /// Captures the instant at which the current running interval started.
     /// </summary>
-    DateTime StartTime;
+    TickClock::time_point StartTimestamp;
 
     /// <summary>
     /// Accumulates elapsed time across stopped and running intervals.
     /// </summary>
     double TotalElapsedMilliseconds;
 
+    /// <summary>
+    /// Converts one native monotonic duration into managed-style milliseconds.
+    /// </summary>
+    /// <param name="duration">Native monotonic duration to convert.</param>
+    /// <returns>Elapsed milliseconds represented by the supplied duration.</returns>
+    static double ConvertDurationToMilliseconds(TickClock::duration duration) {
+        return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(duration).count();
+    }
+
+    /// <summary>
+    /// Computes the elapsed milliseconds since the current running interval began.
+    /// </summary>
+    /// <returns>Elapsed milliseconds since the current start timestamp.</returns>
+    double ComputeRunningElapsedMilliseconds() const {
+        return ConvertDurationToMilliseconds(TickClock::now() - StartTimestamp);
+    }
+
     double ComputeElapsedMilliseconds() const {
         if (IsRunningValue) {
-            return TotalElapsedMilliseconds + (DateTime::Now() - StartTime).TotalMilliseconds;
+            return TotalElapsedMilliseconds + ComputeRunningElapsedMilliseconds();
         }
 
         return TotalElapsedMilliseconds;

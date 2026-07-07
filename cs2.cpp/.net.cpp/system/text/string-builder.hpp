@@ -4,6 +4,7 @@
 #include <string_view>
 #include <cstddef>
 #include <cstdint>
+#include "../../runtime/native_string.hpp"
 
 /// <summary>
 /// Provides a lightweight append-oriented string builder for transpiled managed code.
@@ -67,7 +68,7 @@ public:
     /// <param name="value">Integer value to append.</param>
     /// <returns>The current builder instance.</returns>
     StringBuilder& Append(int32_t value) {
-        buffer.append(std::to_string(value));
+        buffer.append(String::ToJoinString(value));
         Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
@@ -78,7 +79,7 @@ public:
     /// <param name="value">Unsigned integer value to append.</param>
     /// <returns>The current builder instance.</returns>
     StringBuilder& Append(uint32_t value) {
-        buffer.append(std::to_string(value));
+        buffer.append(String::ToJoinString(value));
         Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
