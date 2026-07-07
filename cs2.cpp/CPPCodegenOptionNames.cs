@@ -7,5 +7,10 @@ namespace cs2.cpp {
         /// Gets the generic option name that forces selected runtime features off.
         /// </summary>
         public const string ForcedDisabledFeatures = "codegen-forced-disabled-features";
+
+        /// <summary>
+        /// Gets the generic option name that strips native exception constructor messages from generated C++ output.
+        /// </summary>
+        public const string CompactNativeExceptionMessages = "codegen-compact-native-exception-messages";
     }
 }

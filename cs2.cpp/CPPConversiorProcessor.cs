@@ -26,6 +26,21 @@ namespace cs2.cpp {
         public CPPConversionOptions Options => codeConverter?.Options;
 
         /// <summary>
+        /// Returns whether generated native exception construction should omit message arguments to reduce runtime string payload size.
+        /// </summary>
+        /// <returns>True when native exception object creation should compact away message arguments.</returns>
+        bool UsesCompactNativeExceptionMessages() {
+            if (Options?.PlatformOptionValues == null) {
+                return false;
+            }
+            if (!Options.PlatformOptionValues.TryGetValue(CPPCodegenOptionNames.CompactNativeExceptionMessages, out string rawValue)) {
+                return false;
+            }
+
+            return bool.TryParse(rawValue, out bool parsedValue) && parsedValue;
+        }
+
+        /// <summary>
         /// Begins runtime-helper tracking for the currently emitted type when a converter-backed registrar is available.
         /// </summary>
         /// <returns>The active type scope, or an empty scope when no converter-backed registrar is available.</returns>
@@ -2670,6 +2685,9 @@ namespace cs2.cpp {
                 objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
                 out string runtimeObjectTypeName,
                 out string runtimeRequirementName);
+            bool compactNativeExceptionMessages = IsNativeExceptionTypeName(objectCreationTypeName)
+                && UsesCompactNativeExceptionMessages();
+            ArgumentListSyntax effectiveArgumentList = compactNativeExceptionMessages ? null : argumentList;
 
             if (IsNativeExceptionTypeName(objectCreationTypeName)) {
                 sourceType = VariableUtil.GetVarType(NormalizeNativeExceptionTypeName(objectCreationTypeName));
@@ -2702,23 +2720,23 @@ namespace cs2.cpp {
                 ? !(IsValueRuntimeTypeName(objectCreationTypeSyntax.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
                 : cppTypeData.IsPointer;
             IMethodSymbol constructorSymbol = semanticObjectCreation != null
-                ? ResolveObjectCreationConstructorSymbol(semantic, semanticObjectCreation)
-                : ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, argumentList);
+                ? ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, effectiveArgumentList)
+                : ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, effectiveArgumentList);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
                 ? constructorSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
-            int explicitArgumentCount = argumentList?.Arguments.Count ?? 0;
+            int explicitArgumentCount = effectiveArgumentList?.Arguments.Count ?? 0;
             bool hasOptionalConstructorArguments = constructorParameterSymbols.Length > explicitArgumentCount &&
                 constructorParameterSymbols.Skip(explicitArgumentCount).Any(parameter => parameter.HasExplicitDefaultValue);
             bool requiresStableArgumentEvaluation = explicitArgumentCount > 1 &&
-                argumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
+                effectiveArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
             if (requiresStableArgumentEvaluation) {
                 lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
 
                 List<string> temporaryArgumentNames = new List<string>();
                 List<string> constructorBeforeLines = new List<string>();
                 for (int i = 0; i < explicitArgumentCount; i++) {
-                    ArgumentSyntax arg = argumentList.Arguments[i];
+                    ArgumentSyntax arg = effectiveArgumentList.Arguments[i];
                     string temporaryName = CreateTemporaryName("__ctor_arg");
                     List<string> argumentExpressionLines = new List<string>();
 
@@ -2815,9 +2833,9 @@ namespace cs2.cpp {
                 runtimeObjectTypeName);
             lines.Add("(");
             List<string> argumentLines = new List<string>();
-            if (argumentList != null) {
-                for (int i = 0; i < argumentList.Arguments.Count; i++) {
-                    ArgumentSyntax arg = argumentList.Arguments[i];
+            if (effectiveArgumentList != null) {
+                for (int i = 0; i < effectiveArgumentList.Arguments.Count; i++) {
+                    ArgumentSyntax arg = effectiveArgumentList.Arguments[i];
                     List<string> argumentExpressionLines = new List<string>();
 
                     int startArg = context.DepthClass;
@@ -2851,8 +2869,8 @@ namespace cs2.cpp {
                         lines.AddRange(beforeLines);
                     }
 
-                    if (i != argumentList.Arguments.Count - 1 ||
-                        (i == argumentList.Arguments.Count - 1 && hasOptionalConstructorArguments)) {
+                    if (i != effectiveArgumentList.Arguments.Count - 1 ||
+                        (i == effectiveArgumentList.Arguments.Count - 1 && hasOptionalConstructorArguments)) {
                         argumentLines.Add(", ");
                     }
                 }

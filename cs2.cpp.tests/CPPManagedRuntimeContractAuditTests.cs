@@ -621,6 +621,38 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures the compact native exception message option strips managed exception constructor payloads from generated C++ output.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCompactNativeExceptionMessagesEnabled_OmitsNativeExceptionMessageArguments() {
+            string source = """
+                using System;
+
+                public class RuntimeFailureGate {
+                    public void Validate(object value) {
+                        if (value == null) {
+                            throw new ArgumentNullException(nameof(value));
+                        }
+
+                        throw new InvalidOperationException("RuntimeFailureGate requires a valid object.");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(
+                source,
+                options => options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.CompactNativeExceptionMessages] = "true"
+                });
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "RuntimeFailureGate.cpp"));
+
+            Assert.Contains("throw new ArgumentNullException();", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("throw new InvalidOperationException();", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("nameof(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("RuntimeFailureGate requires a valid object.", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures managed StringComparer property access lowers through the lightweight runtime getter contract.
         /// </summary>
         [Fact]
