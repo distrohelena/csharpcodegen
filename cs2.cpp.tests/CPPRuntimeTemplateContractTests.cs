@@ -154,6 +154,26 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the shared exception runtime template honors the generic compact-message config switch instead of always constructing heavyweight standard-library exception payloads.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_exceptions_honor_compact_message_config_switch() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_exceptions.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#include \"helcpp_config.hpp\"", source, StringComparison.Ordinal);
+        Assert.Contains("#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES", source, StringComparison.Ordinal);
+        Assert.Contains("class Exception : public std::exception", source, StringComparison.Ordinal);
+        Assert.Contains("const char* what() const noexcept override", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the shared native string runtime avoids heavyweight standard integer formatting helpers.
     /// </summary>
     [Fact]
@@ -168,6 +188,26 @@ public sealed class CPPRuntimeTemplateContractTests {
         string source = File.ReadAllText(templatePath);
 
         Assert.DoesNotContain("std::to_string", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the shared native string runtime keeps the bool join path separate from the arithmetic append helpers.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_string_runtime_special_cases_bool_join_formatting() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_string.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("if constexpr (std::is_same_v<TValue, bool>) {", source, StringComparison.Ordinal);
+        Assert.Contains("return value ? \"True\" : \"False\";", source, StringComparison.Ordinal);
+        Assert.Contains("} else {", source, StringComparison.Ordinal);
+        Assert.Contains("AppendArithmeticToString(builder, value);", source, StringComparison.Ordinal);
     }
 
     /// <summary>

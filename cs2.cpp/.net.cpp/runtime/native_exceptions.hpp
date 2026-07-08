@@ -1,7 +1,243 @@
 #pragma once
 
-#include <stdexcept>
+#include "helcpp_config.hpp"
+
+#include <exception>
 #include <string>
+
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+
+class Exception : public std::exception {
+protected:
+    const char* Message;
+
+public:
+    Exception() noexcept
+        : Message("Exception") {
+    }
+
+    explicit Exception(const char* message) noexcept
+        : Message("Exception") {
+        (void)message;
+    }
+
+    explicit Exception(const std::string& message) noexcept
+        : Message("Exception") {
+        (void)message;
+    }
+
+    const char* what() const noexcept override {
+        return Message;
+    }
+};
+
+class ArgumentException : public Exception {
+public:
+    ArgumentException() noexcept
+        : Exception() {
+        Message = "Invalid argument.";
+    }
+
+    explicit ArgumentException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Invalid argument.";
+    }
+
+    explicit ArgumentException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Invalid argument.";
+    }
+
+    ArgumentException(const char* message, const char* parameterName) noexcept
+        : Exception() {
+        (void)message;
+        (void)parameterName;
+        Message = "Invalid argument.";
+    }
+
+    ArgumentException(const std::string& message, const std::string& parameterName) noexcept
+        : Exception() {
+        (void)message;
+        (void)parameterName;
+        Message = "Invalid argument.";
+    }
+};
+
+class ArgumentNullException : public ArgumentException {
+public:
+    ArgumentNullException() noexcept
+        : ArgumentException() {
+        Message = "Value cannot be null.";
+    }
+
+    explicit ArgumentNullException(const char* parameterName) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        Message = "Value cannot be null.";
+    }
+
+    explicit ArgumentNullException(const std::string& parameterName) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        Message = "Value cannot be null.";
+    }
+
+    ArgumentNullException(const char* parameterName, const char* message) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        (void)message;
+        Message = "Value cannot be null.";
+    }
+
+    ArgumentNullException(const std::string& parameterName, const std::string& message) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        (void)message;
+        Message = "Value cannot be null.";
+    }
+};
+
+class ArgumentOutOfRangeException : public ArgumentException {
+public:
+    ArgumentOutOfRangeException() noexcept
+        : ArgumentException() {
+        Message = "Specified argument was out of range.";
+    }
+
+    explicit ArgumentOutOfRangeException(const char* parameterName) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        Message = "Specified argument was out of range.";
+    }
+
+    explicit ArgumentOutOfRangeException(const std::string& parameterName) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        Message = "Specified argument was out of range.";
+    }
+
+    ArgumentOutOfRangeException(const char* parameterName, const char* message) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        (void)message;
+        Message = "Specified argument was out of range.";
+    }
+
+    ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message) noexcept
+        : ArgumentException() {
+        (void)parameterName;
+        (void)message;
+        Message = "Specified argument was out of range.";
+    }
+};
+
+class InvalidOperationException : public Exception {
+public:
+    InvalidOperationException() noexcept
+        : Exception() {
+        Message = "Operation is not valid due to the current state of the object.";
+    }
+
+    explicit InvalidOperationException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Operation is not valid due to the current state of the object.";
+    }
+
+    explicit InvalidOperationException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Operation is not valid due to the current state of the object.";
+    }
+};
+
+class EndOfStreamException : public Exception {
+public:
+    EndOfStreamException() noexcept
+        : Exception() {
+        Message = "Unable to read beyond the end of the stream.";
+    }
+
+    explicit EndOfStreamException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Unable to read beyond the end of the stream.";
+    }
+
+    explicit EndOfStreamException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Unable to read beyond the end of the stream.";
+    }
+};
+
+class FileNotFoundException : public Exception {
+public:
+    FileNotFoundException() noexcept
+        : Exception() {
+        Message = "Unable to find the specified file.";
+    }
+
+    explicit FileNotFoundException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Unable to find the specified file.";
+    }
+
+    explicit FileNotFoundException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Unable to find the specified file.";
+    }
+
+    FileNotFoundException(const char* message, const char* fileName) noexcept
+        : Exception() {
+        (void)message;
+        (void)fileName;
+        Message = "Unable to find the specified file.";
+    }
+
+    FileNotFoundException(const std::string& message, const std::string& fileName) noexcept
+        : Exception() {
+        (void)message;
+        (void)fileName;
+        Message = "Unable to find the specified file.";
+    }
+};
+
+class DirectoryNotFoundException : public Exception {
+public:
+    DirectoryNotFoundException() noexcept
+        : Exception() {
+        Message = "Unable to find the specified directory.";
+    }
+
+    explicit DirectoryNotFoundException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Unable to find the specified directory.";
+    }
+
+    explicit DirectoryNotFoundException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Unable to find the specified directory.";
+    }
+};
+
+class NotSupportedException : public Exception {
+public:
+    NotSupportedException() noexcept
+        : Exception() {
+        Message = "Specified method is not supported.";
+    }
+
+    explicit NotSupportedException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Specified method is not supported.";
+    }
+
+    explicit NotSupportedException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Specified method is not supported.";
+    }
+};
+
+#else
+
+#include <stdexcept>
 
 class Exception : public std::runtime_error {
 public:
@@ -184,3 +420,5 @@ public:
         : Exception(message) {
     }
 };
+
+#endif

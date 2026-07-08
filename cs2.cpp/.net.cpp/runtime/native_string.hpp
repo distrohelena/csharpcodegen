@@ -454,11 +454,11 @@ public:
     static std::enable_if_t<std::is_arithmetic_v<TValue>, std::string> ToJoinString(const TValue& value) {
         if constexpr (std::is_same_v<TValue, bool>) {
             return value ? "True" : "False";
+        } else {
+            std::string builder;
+            AppendArithmeticToString(builder, value);
+            return builder;
         }
-
-        std::string builder;
-        AppendArithmeticToString(builder, value);
-        return builder;
     }
 
     template <typename TValue>
