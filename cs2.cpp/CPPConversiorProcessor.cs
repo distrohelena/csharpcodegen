@@ -2720,7 +2720,7 @@ namespace cs2.cpp {
                 ? !(IsValueRuntimeTypeName(objectCreationTypeSyntax.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
                 : cppTypeData.IsPointer;
             IMethodSymbol constructorSymbol = semanticObjectCreation != null
-                ? ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, effectiveArgumentList)
+                ? ResolveObjectCreationConstructorSymbol(semantic, semanticObjectCreation)
                 : ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, effectiveArgumentList);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
                 ? constructorSymbol.Parameters
@@ -3301,7 +3301,10 @@ namespace cs2.cpp {
 
             int argumentCount = argumentList?.Arguments.Count ?? 0;
             return namedTypeSymbol.InstanceConstructors
-                .FirstOrDefault(constructorSymbol => CanMethodMatchInvocationArguments(constructorSymbol, argumentCount));
+                .Where(constructorSymbol => CanMethodMatchInvocationArguments(constructorSymbol, argumentCount))
+                .OrderByDescending(constructorSymbol => constructorSymbol.Parameters.Length == argumentCount)
+                .ThenBy(constructorSymbol => constructorSymbol.Parameters.Length)
+                .FirstOrDefault();
         }
 
         static ITypeSymbol ResolveObjectCreationTypeSymbolFromText(SemanticModel semantic, string typeName) {

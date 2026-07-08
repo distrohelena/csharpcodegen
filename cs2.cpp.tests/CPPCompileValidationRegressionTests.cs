@@ -2072,6 +2072,70 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures object creation prefers the exact constructor overload instead of appending optional defaults from an earlier arity-compatible overload.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConstructorOverloadShadowedByOptionalDefault_PrefersExactOverload() {
+            string source = """
+                public class Pool {
+                }
+
+                public class Widget {
+                    public Widget(int a, int b, Pool pool, int tablePowerOffset = 2) {
+                    }
+
+                    public Widget(int a, int b, Pool pool) {
+                    }
+                }
+
+                public class Runner {
+                    public Widget Build(int a, int b, Pool pool) {
+                        return new Widget(a, b, pool);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Runner.cpp"));
+
+            Assert.Contains("return new ::Widget(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains(", pool);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(", pool, 2);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures object creation does not bind one earlier optional-parameter overload when a later overload exactly matches the explicit argument types.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConstructorOverloadShadowedByOptionalPointerLikeShape_PrefersTypedMatch() {
+            string source = """
+                public class Pool {
+                }
+
+                public class BufferLike {
+                    public BufferLike(object memory, int length, int id = -1) {
+                    }
+
+                    public BufferLike(int length, Pool pool) {
+                    }
+                }
+
+                public class Runner {
+                    public BufferLike Build(int length, Pool pool) {
+                        return new BufferLike(length, pool);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Runner.cpp"));
+
+            Assert.Contains("return new ::BufferLike(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains(", pool);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(", pool, -1);", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures nameof arguments lower to stable string literals inside exception construction.
         /// </summary>
         [Fact]
