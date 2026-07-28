@@ -55,6 +55,52 @@ public class CPPGeneratedFunctionProfilingTests {
         Assert.DoesNotContain("tracy::ScopedZone", sourceOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("generated_profiler.hpp", sourceOutput, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Ensures a profiling-enabled conversion instruments generated NativeMemory allocation and release calls with the original pointer value.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenGeneratedFunctionProfilingIsEnabled_EmitsPointerSafeNativeMemoryEvents() {
+        string outputPath = CPPGeneratedFunctionProfilingTestFixture.RunConversion(true);
+        string nativeMemoryHeader = File.ReadAllText(Path.Combine(outputPath, "system", "runtime", "interopservices", "native_memory.hpp"));
+
+        Assert.Contains("#include \"../../../runtime/generated_profiler.hpp\"", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_ALLOCATE(alignedAllocation, alignedByteCount, \"NativeMemory::AlignedAlloc\");", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.Contains("return alignedAllocation;", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_FREE(value, \"NativeMemory::AlignedFree\");", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.Equal(2, nativeMemoryHeader.Split("HE_CPP_GENERATED_PROFILE_FREE(value", StringSplitOptions.None).Length - 1);
+    }
+
+    /// <summary>
+    /// Ensures a profiling-enabled conversion instruments only the generated SpinLock runtime with contention-aware lock events.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenGeneratedFunctionProfilingIsEnabled_EmitsSpinLockContentionEvents() {
+        string outputPath = CPPGeneratedFunctionProfilingTestFixture.RunConversion(true);
+        string spinLockHeader = File.ReadAllText(Path.Combine(outputPath, "system", "threading", "spin_lock.hpp"));
+
+        Assert.Contains("#include \"../../runtime/generated_profiler.hpp\"", spinLockHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_LOCKABLE(std::mutex, ProfileLock, \"SpinLock\");", spinLockHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_BEFORE_LOCK(ProfileLock, profileLockQueued);", spinLockHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_AFTER_LOCK(ProfileLock, profileLockQueued);", spinLockHeader, StringComparison.Ordinal);
+        Assert.Contains("HE_CPP_GENERATED_PROFILE_AFTER_UNLOCK(ProfileLock);", spinLockHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("lock (", spinLockHeader, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a profiling-disabled conversion leaves runtime allocation and lock templates free of Tracy support references.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenGeneratedFunctionProfilingIsDisabled_LeavesRuntimeTemplatesUninstrumented() {
+        string outputPath = CPPGeneratedFunctionProfilingTestFixture.RunConversion(false);
+        string nativeMemoryHeader = File.ReadAllText(Path.Combine(outputPath, "system", "runtime", "interopservices", "native_memory.hpp"));
+        string spinLockHeader = File.ReadAllText(Path.Combine(outputPath, "system", "threading", "spin_lock.hpp"));
+
+        Assert.DoesNotContain("generated_profiler.hpp", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("HE_CPP_GENERATED_PROFILE_", nativeMemoryHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("generated_profiler.hpp", spinLockHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("HE_CPP_GENERATED_PROFILE_", spinLockHeader, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>

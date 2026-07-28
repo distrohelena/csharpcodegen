@@ -182,11 +182,13 @@ namespace cs2.cpp {
         }
 
         public void WriteOutput(string outputFolder) {
+            bool generatedFunctionProfilingEnabled = CPPGeneratedFunctionProfilingOptionResolver.Resolve(Options);
             var replacements = new Dictionary<string, string>() {
                 { "ASSEMBLY_NAME", assemblyName },
                 { "ASSEMBLY_VERSION", version },
                 { "ASSEMBLY_DESCRIPTION", targetFramework }
             };
+            CPPGeneratedRuntimeProfilingTemplateReplacements.Add(replacements, generatedFunctionProfilingEnabled);
 
             if (Directory.Exists(outputFolder)) {
                 Directory.Delete(outputFolder, true);
@@ -216,7 +218,6 @@ namespace cs2.cpp {
             string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
 
-            bool generatedFunctionProfilingEnabled = CPPGeneratedFunctionProfilingOptionResolver.Resolve(Options);
             foreach (string profilingSupportFile in CPPGeneratedFunctionProfilingSupportWriter.Write(outputFolder, generatedFunctionProfilingEnabled, generatedFunctionProfilingManifest)) {
                 TrackEmittedFile(profilingSupportFile);
             }

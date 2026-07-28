@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+$GENERATED_FUNCTION_PROFILING_SPIN_LOCK_INCLUDE$
 
 /// <summary>
 /// Represents the managed SpinLock helper surface expected by transpiled multithreaded coordination code.
@@ -19,9 +20,11 @@ public:
     /// </summary>
     /// <param name="lockTaken">Receives <c>true</c> once the lock has been acquired.</param>
     void Enter(bool& lockTaken) {
+        $GENERATED_FUNCTION_PROFILING_SPIN_LOCK_BEFORE_ENTER$
         while (Locked.exchange(true, std::memory_order_acquire)) {
         }
 
+        $GENERATED_FUNCTION_PROFILING_SPIN_LOCK_AFTER_ENTER$
         lockTaken = true;
     }
 
@@ -30,8 +33,10 @@ public:
     /// </summary>
     void Exit() {
         Locked.store(false, std::memory_order_release);
+        $GENERATED_FUNCTION_PROFILING_SPIN_LOCK_AFTER_EXIT$
     }
 
 private:
     std::atomic<bool> Locked;
+    $GENERATED_FUNCTION_PROFILING_SPIN_LOCK_FIELD$
 };

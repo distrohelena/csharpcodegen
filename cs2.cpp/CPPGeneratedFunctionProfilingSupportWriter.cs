@@ -61,6 +61,13 @@ namespace cs2.cpp {
 
 #if HE_CPP_GENERATED_FUNCTION_PROFILING
 #include <tracy/Tracy.hpp>
+
+#define HE_CPP_GENERATED_PROFILE_ALLOCATE(pointer, byteCount, name) TracyAllocN(pointer, byteCount, name)
+#define HE_CPP_GENERATED_PROFILE_FREE(pointer, name) TracyFreeN(pointer, name)
+#define HE_CPP_GENERATED_PROFILE_LOCKABLE(type, lock, name) TracyLockableN(type, lock, name)
+#define HE_CPP_GENERATED_PROFILE_BEFORE_LOCK(lock, queued) const bool queued = lock.BeforeLock()
+#define HE_CPP_GENERATED_PROFILE_AFTER_LOCK(lock, queued) if (queued) { lock.AfterLock(); }
+#define HE_CPP_GENERATED_PROFILE_AFTER_UNLOCK(lock) lock.AfterUnlock()
 #endif
 """;
         }

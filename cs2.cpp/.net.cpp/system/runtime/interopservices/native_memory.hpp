@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <malloc.h>
+$GENERATED_FUNCTION_PROFILING_NATIVE_MEMORY_INCLUDE$
 
 /// <summary>
 /// Provides a portable aligned unmanaged allocation surface compatible with System.Runtime.InteropServices.NativeMemory.
@@ -29,7 +30,9 @@ public:
         }
 
 #if defined(_MSC_VER)
-        return _aligned_malloc(alignedByteCount, normalizedAlignment);
+        void* alignedAllocation = _aligned_malloc(alignedByteCount, normalizedAlignment);
+        $GENERATED_FUNCTION_PROFILING_NATIVE_MEMORY_ALLOCATE$
+        return alignedAllocation;
 #else
         size_t metadataSize = sizeof(void*);
         size_t totalByteCount = alignedByteCount + normalizedAlignment + metadataSize;
@@ -46,7 +49,9 @@ public:
             : minimumAlignedAddress + (normalizedAlignment - remainder);
         void** metadataSlot = reinterpret_cast<void**>(alignedAddress - metadataSize);
         *metadataSlot = baseAllocation;
-        return reinterpret_cast<void*>(alignedAddress);
+        void* alignedAllocation = reinterpret_cast<void*>(alignedAddress);
+        $GENERATED_FUNCTION_PROFILING_NATIVE_MEMORY_ALLOCATE$
+        return alignedAllocation;
 #endif
     }
 
@@ -60,9 +65,11 @@ public:
         }
 
 #if defined(_MSC_VER)
+        $GENERATED_FUNCTION_PROFILING_NATIVE_MEMORY_FREE$
         _aligned_free(value);
 #else
         void* baseAllocation = *(reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(value) - sizeof(void*)));
+        $GENERATED_FUNCTION_PROFILING_NATIVE_MEMORY_FREE$
         std::free(baseAllocation);
 #endif
     }
