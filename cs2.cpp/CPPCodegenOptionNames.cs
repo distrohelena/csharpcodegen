@@ -12,5 +12,10 @@ namespace cs2.cpp {
         /// Gets the generic option name that strips native exception constructor messages from generated C++ output.
         /// </summary>
         public const string CompactNativeExceptionMessages = "codegen-compact-native-exception-messages";
+
+        /// <summary>
+        /// Gets the generic option name that enables direct Tracy scopes for generated C++ function bodies.
+        /// </summary>
+        public const string GeneratedFunctionProfiling = "codegen-generated-function-profiling";
     }
 }

@@ -17,6 +17,7 @@ namespace cs2.cpp {
         CPPConversiorProcessor conversion;
         CPPProgram tsProgram;
         readonly CPPClassEmitter classEmitter;
+        readonly CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest;
         public CPPConversionRules CPPRules { get; private set; }
         public CPPConversionOptions Options { get; private set; }
         public CPPConversionReport Report { get; private set; }
@@ -54,7 +55,8 @@ namespace cs2.cpp {
             context = new ConversionContext(program);
 
             conversion = new CPPConversiorProcessor(this);
-            classEmitter = new CPPClassEmitter(conversion, tsProgram);
+            generatedFunctionProfilingManifest = new CPPGeneratedFunctionProfilingManifest();
+            classEmitter = new CPPClassEmitter(conversion, tsProgram, generatedFunctionProfilingManifest);
 
             if (Options.LoadNativeRuntimeMetadata) {
                 tsProgram.AddDotNet();
@@ -191,6 +193,7 @@ namespace cs2.cpp {
             }
 
             Directory.CreateDirectory(outputFolder);
+            generatedFunctionProfilingManifest.Clear();
 
             BuildUsageReport = ResolveBuildUsageReport();
             Report.BuildUsageReport = BuildUsageReport;
@@ -212,6 +215,11 @@ namespace cs2.cpp {
 
             string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
+
+            bool generatedFunctionProfilingEnabled = CPPGeneratedFunctionProfilingOptionResolver.Resolve(Options);
+            foreach (string profilingSupportFile in CPPGeneratedFunctionProfilingSupportWriter.Write(outputFolder, generatedFunctionProfilingEnabled, generatedFunctionProfilingManifest)) {
+                TrackEmittedFile(profilingSupportFile);
+            }
 
             foreach (string manifestFile in CPPFeatureManifestWriter.Write(outputFolder, BuildUsageReport)) {
                 TrackEmittedFile(manifestFile);

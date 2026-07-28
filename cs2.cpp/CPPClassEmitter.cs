@@ -12,6 +12,7 @@ namespace cs2.cpp {
         readonly CPPConversiorProcessor processor;
         readonly CPPProgram program;
         readonly CPPGeneratedFunctionBodyOverrideCatalog functionBodyOverrideCatalog;
+        readonly CPPGeneratedFunctionProfilingScopeEmitter generatedFunctionProfilingScopeEmitter;
 
         /// <summary>
         /// Initializes a class emitter bound to the current processor and program state.
@@ -22,6 +23,19 @@ namespace cs2.cpp {
             this.processor = processor;
             this.program = program;
             functionBodyOverrideCatalog = new CPPGeneratedFunctionBodyOverrideCatalog();
+        }
+
+        /// <summary>
+        /// Initializes a class emitter bound to the current processor, program state, and optional profiling manifest.
+        /// </summary>
+        /// <param name="processor">Processor used to lower method and accessor bodies.</param>
+        /// <param name="program">Program model that resolves known C++ runtime types.</param>
+        /// <param name="generatedFunctionProfilingManifest">Manifest that receives scopes emitted by this class emitter.</param>
+        public CPPClassEmitter(CPPConversiorProcessor processor, CPPProgram program, CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest) {
+            this.processor = processor;
+            this.program = program;
+            functionBodyOverrideCatalog = new CPPGeneratedFunctionBodyOverrideCatalog();
+            generatedFunctionProfilingScopeEmitter = new CPPGeneratedFunctionProfilingScopeEmitter(generatedFunctionProfilingManifest);
         }
 
         /// <summary>
@@ -464,6 +478,10 @@ namespace cs2.cpp {
             sourceWriter.WriteLine("#undef DrawText");
             sourceWriter.WriteLine("#endif");
             sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedFileStem(program)}.hpp\"");
+
+            if (UsesGeneratedFunctionProfiling()) {
+                sourceWriter.WriteLine("#include \"runtime/generated_profiler.hpp\"");
+            }
 
             HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
@@ -2130,6 +2148,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::{accessorName}()");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateSourceLocation(conversionClass, interfacePropertySymbol));
             sourceWriter.WriteLine($"return {qualifier}get_{implementationPropertySymbol.Name}();");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
@@ -2153,6 +2172,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::{accessorName}({typeName} value)");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateSourceLocation(conversionClass, interfacePropertySymbol));
             sourceWriter.WriteLine($"{qualifier}set_{implementationPropertySymbol.Name}(value);");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
@@ -2176,6 +2196,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{typeName} {GetQualifiedClassName(conversionClass)}::{accessorName}()");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, baseVariable.SourceLocation);
             sourceWriter.WriteLine($"return {qualifier}{accessorName}();");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
@@ -2199,6 +2220,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::{accessorName}({typeName} value)");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, baseVariable.SourceLocation);
             sourceWriter.WriteLine($"{qualifier}{accessorName}(value);");
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
@@ -2916,6 +2938,7 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{returnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
 
             List<string> expressionLines = new List<string>();
             LayerContext context = new CPPLayerContext(program);
@@ -2963,6 +2986,7 @@ namespace cs2.cpp {
                 WriteTemplateDeclaration(conversionClass, sourceWriter);
                 sourceWriter.WriteLine($"{getterReturnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
                 sourceWriter.WriteLine("{");
+                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
                 sourceWriter.WriteLine(variable.IsStatic
                     ? $"return {GetQualifiedClassName(conversionClass)}::{variable.Name};"
                     : $"return this->{variable.Name};");
@@ -2975,6 +2999,7 @@ namespace cs2.cpp {
                 WriteTemplateDeclaration(conversionClass, sourceWriter);
                 sourceWriter.WriteLine($"void {GetQualifiedClassName(conversionClass)}::set_{variable.Name}({typeName} value)");
                 sourceWriter.WriteLine("{");
+                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateSetter(variable));
                 sourceWriter.WriteLine(variable.IsStatic
                     ? $"{GetQualifiedClassName(conversionClass)}::{variable.Name} = value;"
                     : $"this->{variable.Name} = value;");
@@ -3129,6 +3154,58 @@ namespace cs2.cpp {
             WriteFunctionDefinition(conversionClass, function, sourceWriter);
         }
 
+        /// <summary>
+        /// Returns whether the active converter requested direct Tracy instrumentation for generated function bodies.
+        /// </summary>
+        /// <returns>True when source instrumentation should be emitted.</returns>
+        bool UsesGeneratedFunctionProfiling() {
+            return processor?.Options != null && CPPGeneratedFunctionProfilingOptionResolver.Resolve(processor.Options);
+        }
+
+        /// <summary>
+        /// Writes and records a profiling scope when the active function has maintained source identity.
+        /// </summary>
+        /// <param name="sourceWriter">Writer for the generated C++ implementation file.</param>
+        /// <param name="conversionClass">Generated class that owns the function.</param>
+        /// <param name="function">Function whose body receives a profiling scope.</param>
+        void WriteGeneratedFunctionProfilingScope(TextWriter sourceWriter, ConversionClass conversionClass, ConversionFunction function) {
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, function?.SourceLocation);
+        }
+
+        /// <summary>
+        /// Writes and records a profiling scope when the active generated body can be mapped to maintained source.
+        /// </summary>
+        /// <param name="sourceWriter">Writer for the generated C++ implementation file.</param>
+        /// <param name="conversionClass">Generated class that owns the body.</param>
+        /// <param name="sourceLocation">Maintained source identity represented by the body.</param>
+        void WriteGeneratedFunctionProfilingScope(TextWriter sourceWriter, ConversionClass conversionClass, ConversionSourceLocation sourceLocation) {
+            if (!UsesGeneratedFunctionProfiling() || generatedFunctionProfilingScopeEmitter == null || sourceLocation == null) {
+                return;
+            }
+
+            generatedFunctionProfilingScopeEmitter.Write(sourceWriter, $"{conversionClass.GetEmittedFileStem(program)}.cpp", sourceLocation);
+        }
+
+        /// <summary>
+        /// Builds maintained source identity for a Roslyn-backed bridge member when no converted member model exists.
+        /// </summary>
+        /// <param name="conversionClass">Generated class that receives the bridge.</param>
+        /// <param name="symbol">Maintained Roslyn member represented by the bridge.</param>
+        /// <returns>Source identity for the bridge, or <c>null</c> when the symbol has no file location.</returns>
+        ConversionSourceLocation CreateSourceLocation(ConversionClass conversionClass, ISymbol symbol) {
+            Location location = symbol?.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+            if (location == null || string.IsNullOrWhiteSpace(location.SourceTree?.FilePath) || conversionClass?.TypeSymbol?.ContainingAssembly == null) {
+                return null;
+            }
+
+            FileLinePositionSpan lineSpan = location.GetLineSpan();
+            return new ConversionSourceLocation(
+                conversionClass.TypeSymbol.ContainingAssembly.Name,
+                symbol.ToDisplayString(),
+                lineSpan.Path,
+                lineSpan.StartLinePosition.Line + 1);
+        }
+
         void WriteFreeOperatorFunctions(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
             List<ConversionFunction> freeOperatorFunctions = conversionClass.Functions
                 .Where(IsFreeOperatorFunction)
@@ -3208,6 +3285,7 @@ namespace cs2.cpp {
             WriteConstructorInitializer(conversionClass, function, sourceWriter);
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, function);
 
             if (function.IsConstructor &&
                 ShouldEmitExplicitLayoutFieldAssignments(conversionClass) &&
@@ -3290,6 +3368,7 @@ namespace cs2.cpp {
             WriteParameters(conversionClass, function, sourceWriter);
             sourceWriter.WriteLine(")");
             sourceWriter.WriteLine("{");
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, function);
 
             if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);

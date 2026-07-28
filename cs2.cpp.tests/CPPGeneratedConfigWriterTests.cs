@@ -71,6 +71,7 @@ public class CPPGeneratedConfigWriterTests {
         Assert.Contains("#define HE_CPP_PLATFORM_WINDOWS 1", output);
         Assert.Contains("#define HE_CPP_RUNTIME_STL_LITE 1", output);
         Assert.Contains("#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 0", output);
+        Assert.Contains("#define HE_CPP_GENERATED_FUNCTION_PROFILING 0", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_STRING 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_LIST 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_DICTIONARY 1", output);
