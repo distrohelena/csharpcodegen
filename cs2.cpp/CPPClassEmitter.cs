@@ -2998,6 +2998,7 @@ namespace cs2.cpp {
                 ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(variable),
                 ReturnsReference = variable.ReturnsReference,
                 Semantic = variable.Semantic,
+                SourceLocation = variable.SourceLocation,
                 ReturnType = new VariableType(variable.VarType),
                 RawBlock = variable.GetBlock
             };
@@ -3100,6 +3101,7 @@ namespace cs2.cpp {
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
                 Semantic = variable.Semantic,
+                SourceLocation = variable.SourceLocation,
                 RawBlock = variable.SetBlock
             };
 
