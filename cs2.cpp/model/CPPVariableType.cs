@@ -68,9 +68,18 @@ namespace cs2.cpp {
             string normalizedTypeName = NormalizeLeafTypeName(typeName);
             string lookupKey = BuildNameAndArityLookupKey(normalizedTypeName, genericArgumentCount);
             Dictionary<string, ConversionClass> lookup = program.GetGeneratedClassLookupByNameAndArity(GetNameAndArityLookupKey);
-            return lookup.TryGetValue(lookupKey, out ConversionClass conversionClass)
-                ? conversionClass
-                : null;
+            if (lookup.TryGetValue(lookupKey, out ConversionClass conversionClass)) {
+                return conversionClass;
+            }
+
+            if (TryStripGeneratedAritySuffix(normalizedTypeName, genericArgumentCount, out string strippedTypeName)) {
+                string strippedLookupKey = BuildNameAndArityLookupKey(strippedTypeName, genericArgumentCount);
+                if (lookup.TryGetValue(strippedLookupKey, out conversionClass)) {
+                    return conversionClass;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -173,6 +182,10 @@ namespace cs2.cpp {
         /// <param name="varType">The source variable type.</param>
         /// <returns>The normalized C++ type token.</returns>
         static string ResolveCppTypeName(VariableType varType, ConversionProgram program) {
+            if (varType.Type == VariableDataType.Void) {
+                return "void";
+            }
+
             if (varType.Type == VariableDataType.Single) {
                 return "float";
             }
@@ -241,6 +254,10 @@ namespace cs2.cpp {
 
             if (typeName == "string" || typeName == "String") {
                 return "std::string";
+            }
+
+            if (typeName == "void" || typeName == "Void") {
+                return "void";
             }
 
             if (typeName == "byte" || typeName == "Byte") {
@@ -321,6 +338,10 @@ namespace cs2.cpp {
                 return generatedClass.GetEmittedTypeName();
             }
 
+            if (TryResolveDirectExternalGeneratedTypeName(varType, out string emittedExternalTypeName)) {
+                return emittedExternalTypeName;
+            }
+
             if (!string.IsNullOrWhiteSpace(typeName) && typeName.Contains('.', StringComparison.Ordinal)) {
                 return NormalizeLeafTypeName(typeName);
             }
@@ -391,6 +412,10 @@ namespace cs2.cpp {
             }
 
             bool hasGenericArguments = varType.GenericArgs != null && varType.GenericArgs.Count > 0;
+            if (MatchesRuntimeType(varType, "Array", "System.Array")) {
+                return "Array";
+            }
+
             if (MatchesRuntimeType(varType, "Span", "System.Span")) {
                 return "Span";
             }
@@ -399,12 +424,64 @@ namespace cs2.cpp {
                 return "ReadOnlySpan";
             }
 
+            if (MatchesRuntimeType(varType, "HashSet", "System.Collections.Generic.HashSet")) {
+                return "HashSet";
+            }
+
+            if (MatchesRuntimeType(varType, "List", "System.Collections.Generic.List")) {
+                return "List";
+            }
+
+            if (MatchesRuntimeType(varType, "Dictionary", "System.Collections.Generic.Dictionary")) {
+                return "Dictionary";
+            }
+
+            if (MatchesRuntimeType(varType, "Stack", "System.Collections.Generic.Stack")) {
+                return "Stack";
+            }
+
+            if (MatchesRuntimeType(varType, "ValueTuple", "System.ValueTuple")) {
+                return "ValueTuple";
+            }
+
+            if (MatchesRuntimeType(varType, "Action", "System.Action")) {
+                return "Action";
+            }
+
+            if (MatchesRuntimeType(varType, "Func", "System.Func")) {
+                return "Func";
+            }
+
+            if (MatchesRuntimeType(varType, "FunctionPointer", "FunctionPointer")) {
+                return "FunctionPointer";
+            }
+
+            if (MatchesRuntimeType(varType, "Nullable", "System.Nullable")) {
+                return "Nullable";
+            }
+
+            if (MatchesRuntimeType(varType, "ValueTuple", "System.ValueTuple")) {
+                return "ValueTuple";
+            }
+
+            if (MatchesRuntimeType(varType, "Stack", "System.Collections.Generic.Stack")) {
+                return "Stack";
+            }
+
             if (MatchesRuntimeType(varType, "Vector", "System.Numerics.Vector")) {
                 return hasGenericArguments ? "Vector_1" : "Vector";
             }
 
             if (MatchesRuntimeType(varType, "Vector128", "System.Runtime.Intrinsics.Vector128")) {
                 return hasGenericArguments ? "Vector128_1" : "Vector128";
+            }
+
+            if (MatchesRuntimeType(varType, "Vector256", "System.Runtime.Intrinsics.Vector256")) {
+                return hasGenericArguments ? "Vector256" : "Vector256";
+            }
+
+            if (MatchesRuntimeType(varType, "Vector512", "System.Runtime.Intrinsics.Vector512")) {
+                return hasGenericArguments ? "Vector512" : "Vector512";
             }
 
             if (MatchesRuntimeType(varType, "KeyValuePair", "System.Collections.Generic.KeyValuePair")) {
@@ -439,10 +516,48 @@ namespace cs2.cpp {
             }
 
             string typeName = NormalizeLeafTypeName(varType.TypeName);
+            int genericArgumentCount = varType.GenericArgs?.Count ?? 0;
             string normalizedQualifiedTypeName = NormalizeQualifiedTypeName(varType.QualifiedTypeName);
-            return string.Equals(typeName, shortTypeName, StringComparison.Ordinal) ||
+            if (string.Equals(typeName, shortTypeName, StringComparison.Ordinal) ||
                 string.Equals(typeName, qualifiedTypeName, StringComparison.Ordinal) ||
-                string.Equals(normalizedQualifiedTypeName, qualifiedTypeName, StringComparison.Ordinal);
+                string.Equals(normalizedQualifiedTypeName, qualifiedTypeName, StringComparison.Ordinal)) {
+                return true;
+            }
+
+            if (TryStripGeneratedAritySuffix(typeName, genericArgumentCount, out string strippedTypeName) &&
+                (string.Equals(strippedTypeName, shortTypeName, StringComparison.Ordinal) ||
+                 string.Equals(strippedTypeName, qualifiedTypeName, StringComparison.Ordinal))) {
+                return true;
+            }
+
+            return TryStripQualifiedGeneratedAritySuffix(normalizedQualifiedTypeName, genericArgumentCount, out string strippedQualifiedTypeName) &&
+                string.Equals(strippedQualifiedTypeName, qualifiedTypeName, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Attempts to remove one generated arity suffix from the leaf segment of a qualified type identity while preserving any namespace or containing-type prefix.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Qualified type name that may contain a generated arity suffix on its leaf segment.</param>
+        /// <param name="genericArgumentCount">Expected generic arity used to validate the generated suffix.</param>
+        /// <param name="strippedQualifiedTypeName">Qualified type name without the generated arity suffix when one was removed.</param>
+        /// <returns>True when the suffix was removed; otherwise false.</returns>
+        static bool TryStripQualifiedGeneratedAritySuffix(string qualifiedTypeName, int genericArgumentCount, out string strippedQualifiedTypeName) {
+            strippedQualifiedTypeName = string.Empty;
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return false;
+            }
+
+            int separatorIndex = Math.Max(
+                qualifiedTypeName.LastIndexOf('.'),
+                qualifiedTypeName.LastIndexOf('+'));
+            string prefix = separatorIndex >= 0 ? qualifiedTypeName[..(separatorIndex + 1)] : string.Empty;
+            string leafTypeName = separatorIndex >= 0 ? qualifiedTypeName[(separatorIndex + 1)..] : qualifiedTypeName;
+            if (!TryStripGeneratedAritySuffix(leafTypeName, genericArgumentCount, out string strippedLeafTypeName)) {
+                return false;
+            }
+
+            strippedQualifiedTypeName = prefix + strippedLeafTypeName;
+            return true;
         }
 
         /// <summary>
@@ -491,6 +606,67 @@ namespace cs2.cpp {
             return generatedClass.GenericArgs
                 .Select(CreateImplicitGenericArgument)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Resolves the emitted type token for one unresolved external managed generic so references to generated classes from other projects keep the backend arity suffix convention.
+        /// </summary>
+        /// <param name="varType">Referenced type metadata to inspect.</param>
+        /// <param name="emittedTypeName">Receives the emitted type token when one can be inferred safely.</param>
+        /// <returns>True when one external generated type name was inferred; otherwise false.</returns>
+        static bool TryResolveDirectExternalGeneratedTypeName(VariableType varType, out string emittedTypeName) {
+            emittedTypeName = string.Empty;
+            if (varType == null || varType.GenericArgs == null || varType.GenericArgs.Count == 0) {
+                return false;
+            }
+
+            string qualifiedTypeName = NormalizeQualifiedTypeName(varType.QualifiedTypeName);
+            string sourceTypeName = !string.IsNullOrWhiteSpace(qualifiedTypeName)
+                ? qualifiedTypeName
+                : varType.TypeName;
+            if (string.IsNullOrWhiteSpace(sourceTypeName)) {
+                return false;
+            }
+
+            if (sourceTypeName.StartsWith("System.", StringComparison.Ordinal) ||
+                sourceTypeName.StartsWith("Microsoft.", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            string leafTypeName = NormalizeLeafTypeName(varType.TypeName);
+            if (string.IsNullOrWhiteSpace(leafTypeName)) {
+                return false;
+            }
+
+            if (TryStripGeneratedAritySuffix(leafTypeName, varType.GenericArgs.Count, out string strippedLeafTypeName)) {
+                emittedTypeName = $"{strippedLeafTypeName}_{varType.GenericArgs.Count}";
+                return true;
+            }
+
+            emittedTypeName = $"{leafTypeName}_{varType.GenericArgs.Count}";
+            return true;
+        }
+
+        /// <summary>
+        /// Removes one trailing generated arity suffix when a referenced type token already uses the emitted-name convention.
+        /// </summary>
+        /// <param name="typeName">Leaf type token that may already end with one generated arity suffix.</param>
+        /// <param name="genericArgumentCount">Generic arity currently being rendered.</param>
+        /// <param name="strippedTypeName">Receives the unsuffixed type token when one matching suffix was removed.</param>
+        /// <returns>True when one matching generated arity suffix was removed; otherwise false.</returns>
+        static bool TryStripGeneratedAritySuffix(string typeName, int genericArgumentCount, out string strippedTypeName) {
+            strippedTypeName = string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName) || genericArgumentCount <= 0) {
+                return false;
+            }
+
+            string suffix = "_" + genericArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!typeName.EndsWith(suffix, StringComparison.Ordinal) || typeName.Length <= suffix.Length) {
+                return false;
+            }
+
+            strippedTypeName = typeName[..^suffix.Length];
+            return !string.IsNullOrWhiteSpace(strippedTypeName);
         }
 
         /// <summary>

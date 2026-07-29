@@ -83,6 +83,7 @@ namespace cs2.cpp {
                 headerWriter.WriteLine("#include <array>");
             }
             headerWriter.WriteLine("#include <cstdint>");
+            headerWriter.WriteLine("#include \"runtime/native_string.hpp\"");
             headerWriter.WriteLine();
 
             bool wroteInclude = false;
@@ -267,6 +268,21 @@ namespace cs2.cpp {
             }
 
             processor.ConvertToCPPType(variableType, out CPPTypeData typeData);
+            bool canUseReferenceOrPointerForwardDeclaration = allowReferenceForwardDeclaration ||
+                (typeData.IsPointer && !typeData.IsArray && !typeData.IsNativeType);
+
+            if (variableType.GenericArgs != null && variableType.GenericArgs.Count > 0) {
+                if (!canUseReferenceOrPointerForwardDeclaration) {
+                    return false;
+                }
+
+                string referencedTypeName = GetReferencedTypeName(variableType);
+                return !string.IsNullOrWhiteSpace(referencedTypeName) &&
+                    TryResolveGeneratedClass(referencedTypeName, out _) &&
+                    !typeData.IsArray &&
+                    !typeData.IsNativeType;
+            }
+
             if (typeData.IsPointer && !typeData.IsArray && !typeData.IsNativeType) {
                 return true;
             }
@@ -287,6 +303,45 @@ namespace cs2.cpp {
             return parameter.Modifier.HasFlag(ParameterModifier.In) ||
                 parameter.Modifier.HasFlag(ParameterModifier.Out) ||
                 parameter.Modifier.HasFlag(ParameterModifier.Ref);
+        }
+
+        /// <summary>
+        /// Resolves the emitted C++ parameter type, preserving readonly references for value-type <c>in</c> parameters.
+        /// </summary>
+        /// <param name="parameter">Parameter metadata to lower.</param>
+        /// <param name="conversionClass">Owning converted type.</param>
+        /// <param name="function">Function that owns the parameter.</param>
+        /// <returns>The emitted parameter type token for the native signature.</returns>
+        string GetParameterType(ConversionVariable parameter, ConversionClass conversionClass, ConversionFunction function) {
+            if (parameter == null) {
+                throw new ArgumentNullException(nameof(parameter));
+            }
+
+            string parameterType = ConvertType(parameter.VarType, conversionClass, function);
+            if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
+                return parameterType + "&";
+            }
+
+            if (IsValueTypeInParameter(parameter)) {
+                return "const " + parameterType + "&";
+            }
+
+            return parameterType;
+        }
+
+        /// <summary>
+        /// Determines whether a parameter is a value-type readonly reference that requires C# <c>in</c> lowering.
+        /// </summary>
+        /// <param name="parameter">Parameter metadata to inspect.</param>
+        /// <returns>True when the parameter is a value-type <c>in</c> parameter; otherwise false.</returns>
+        static bool IsValueTypeInParameter(ConversionVariable parameter) {
+            return parameter != null &&
+                (parameter.Modifier & ParameterModifier.In) != 0 &&
+                parameter.VarType != null &&
+                parameter.VarType.IsValueType &&
+                !parameter.VarType.IsPointer &&
+                !parameter.VarType.IsReference &&
+                !parameter.VarType.IsConstReference;
         }
 
         /// <summary>
@@ -353,8 +408,25 @@ namespace cs2.cpp {
                 return false;
             }
 
+            VariableType includeVariableType = VariableUtil.GetVarType(normalizedIncludeCandidate);
+            if (TryGetKnownPrimitiveSize(includeVariableType.TypeName, out _)) {
+                return false;
+            }
+
+            if (processor != null) {
+                processor.ConvertToCPPType(includeVariableType, out CPPTypeData includeTypeData);
+                if (includeTypeData.IsNativeType && (includeVariableType.GenericArgs == null || includeVariableType.GenericArgs.Count == 0)) {
+                    return false;
+                }
+            }
+
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
             string currentEmittedTypeName = conversionClass.GetEmittedTypeName();
+
+            if (string.Equals(normalizedReferencedClass, "object", StringComparison.Ordinal) ||
+                string.Equals(normalizedIncludeCandidate, "System.Object", StringComparison.Ordinal)) {
+                return false;
+            }
 
             if (TryResolveGeneratedClass(normalizedIncludeCandidate, out ConversionClass generatedClass) &&
                 string.Equals(generatedClass.GetEmittedTypeName(), currentEmittedTypeName, StringComparison.Ordinal)) {
@@ -373,8 +445,15 @@ namespace cs2.cpp {
             }
 
             string includePath = ResolveIncludePath(normalizedIncludeCandidate);
-            if (string.IsNullOrWhiteSpace(includePath)) {
+            if (string.IsNullOrWhiteSpace(includePath) &&
+                !TryResolveDirectExternalGeneratedHeaderStem(normalizedIncludeCandidate, out includePath)) {
                 return false;
+            }
+
+            if (!includePath.Contains('/', StringComparison.Ordinal) &&
+                !includePath.Contains('\\', StringComparison.Ordinal) &&
+                includePath.Contains('.', StringComparison.Ordinal)) {
+                includePath = NormalizeReferencedClassName(includePath);
             }
 
             headerWriter.WriteLine($"#include \"{includePath}.hpp\"");
@@ -738,6 +817,63 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Resolves one direct generated-header file stem for a referenced external type name when the current conversion program does not own that class.
+        /// </summary>
+        /// <param name="referencedClass">Referenced type text discovered in one header signature.</param>
+        /// <param name="headerStem">Receives the direct generated-header file stem when one can be inferred safely.</param>
+        /// <returns>True when a direct generated-header file stem was inferred; otherwise false.</returns>
+        bool TryResolveDirectExternalGeneratedHeaderStem(string referencedClass, out string headerStem) {
+            headerStem = string.Empty;
+            if (string.IsNullOrWhiteSpace(referencedClass)) {
+                return false;
+            }
+
+            string normalizedIncludeCandidate = NormalizeIncludeCandidateTypeName(referencedClass);
+            if (string.IsNullOrWhiteSpace(normalizedIncludeCandidate)) {
+                return false;
+            }
+
+            VariableType referencedType = VariableUtil.GetVarType(normalizedIncludeCandidate);
+            if (referencedType.GenericArgs == null || referencedType.GenericArgs.Count == 0) {
+                return false;
+            }
+
+            string qualifiedTypeName = GetReferencedTypeName(referencedType);
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return false;
+            }
+
+            string resolvedIncludePath = TryResolveIncludePath(qualifiedTypeName);
+            if (!string.IsNullOrWhiteSpace(resolvedIncludePath)) {
+                headerStem = resolvedIncludePath;
+                return true;
+            }
+
+            if (qualifiedTypeName.StartsWith("System.", StringComparison.Ordinal) ||
+                qualifiedTypeName.StartsWith("Microsoft.", StringComparison.Ordinal) ||
+                program.FindGeneratedClass(referencedType) != null) {
+                return false;
+            }
+
+            string leafTypeName = referencedType.TypeName;
+            if (string.IsNullOrWhiteSpace(leafTypeName)) {
+                return false;
+            }
+
+            string existingAritySuffix = "_" + referencedType.GenericArgs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (leafTypeName.EndsWith(existingAritySuffix, StringComparison.Ordinal) &&
+                leafTypeName.Length > existingAritySuffix.Length) {
+                headerStem = leafTypeName;
+                return true;
+            }
+
+            headerStem = referencedType.GenericArgs != null && referencedType.GenericArgs.Count > 0
+                ? $"{leafTypeName}_{referencedType.GenericArgs.Count}"
+                : leafTypeName;
+            return true;
+        }
+
+        /// <summary>
         /// Adds one type and any nested generic argument types to the concrete source-include set.
         /// </summary>
         /// <param name="variableType">Type metadata to inspect.</param>
@@ -792,7 +928,7 @@ namespace cs2.cpp {
 
             string normalizedReferencedClass = NormalizeReferencedClassName(referencedClass);
             VariableType referencedType = VariableUtil.GetVarType(referencedClass);
-            string referencedTypeName = referencedType.TypeName;
+            string referencedTypeName = NormalizeRuntimeComparisonTypeName(referencedType.TypeName, referencedType.GenericArgs?.Count ?? 0);
 
             if (referencedType.IsNullable) {
                 processor?.RegisterRuntimeRequirement("NativeNullable");
@@ -805,6 +941,28 @@ namespace cs2.cpp {
                 string.Equals(referencedTypeName, "Array", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeArray");
                 return "runtime/array";
+            }
+
+            if (string.Equals(referencedClass, "HashSet", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.HashSet", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "HashSet", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "HashSet", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeHashSet");
+                return "runtime/native_hash_set";
+            }
+
+            if (string.Equals(referencedClass, "List", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.List", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "List", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "List", StringComparison.Ordinal)) {
+                return "runtime/native_list";
+            }
+
+            if (string.Equals(referencedClass, "Dictionary", StringComparison.Ordinal) ||
+                string.Equals(referencedClass, "System.Collections.Generic.Dictionary", StringComparison.Ordinal) ||
+                string.Equals(normalizedReferencedClass, "Dictionary", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "Dictionary", StringComparison.Ordinal)) {
+                return "runtime/native_dictionary";
             }
 
             if (referencedType.Type == VariableDataType.Tuple ||
@@ -1295,6 +1453,7 @@ namespace cs2.cpp {
             }
 
             VariableType variableType = VariableUtil.GetVarType(normalizedIncludeCandidate);
+            string normalizedTypeName = NormalizeReferencedClassName(variableType.TypeName);
 
             if (normalizedIncludeCandidate.Contains("[]", StringComparison.Ordinal) || variableType.Type == VariableDataType.Array) {
                 return "runtime/array";
@@ -1316,36 +1475,39 @@ namespace cs2.cpp {
                 return "runtime/native_dictionary";
             }
 
-            if (string.Equals(variableType.TypeName, "FunctionPointer", StringComparison.Ordinal)) {
+            if (string.Equals(normalizedTypeName, "FunctionPointer", StringComparison.Ordinal) ||
+                normalizedTypeName.StartsWith("FunctionPointer_", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeFunctionPointer");
                 return "runtime/function_pointer";
             }
 
-            if (string.Equals(variableType.TypeName, "Stack", StringComparison.Ordinal)) {
+            if (string.Equals(normalizedTypeName, "Stack", StringComparison.Ordinal)) {
                 return "runtime/native_stack";
             }
 
-            if (string.Equals(variableType.TypeName, "Interlocked", StringComparison.Ordinal) ||
+            if (string.Equals(normalizedTypeName, "Interlocked", StringComparison.Ordinal) ||
                 string.Equals(variableType.TypeName, "System.Threading.Interlocked", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("Interlocked");
                 return "system/threading/interlocked";
             }
 
-            if (string.Equals(variableType.TypeName, "Volatile", StringComparison.Ordinal) ||
+            if (string.Equals(normalizedTypeName, "Volatile", StringComparison.Ordinal) ||
                 string.Equals(variableType.TypeName, "System.Threading.Volatile", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("Volatile");
                 return "system/threading/volatile";
             }
 
-            if (string.Equals(variableType.TypeName, "Vector256", StringComparison.Ordinal) ||
-                string.Equals(variableType.TypeName, "Vector256Runtime", StringComparison.Ordinal) ||
+            if (string.Equals(normalizedTypeName, "Vector256", StringComparison.Ordinal) ||
+                string.Equals(normalizedTypeName, "Vector256Runtime", StringComparison.Ordinal) ||
+                normalizedTypeName.StartsWith("Vector256_", StringComparison.Ordinal) ||
                 string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.Vector256", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeVector256");
                 return "system/runtime/intrinsics/vector256";
             }
 
-            if (string.Equals(variableType.TypeName, "Vector512", StringComparison.Ordinal) ||
-                string.Equals(variableType.TypeName, "Vector512Runtime", StringComparison.Ordinal) ||
+            if (string.Equals(normalizedTypeName, "Vector512", StringComparison.Ordinal) ||
+                string.Equals(normalizedTypeName, "Vector512Runtime", StringComparison.Ordinal) ||
+                normalizedTypeName.StartsWith("Vector512_", StringComparison.Ordinal) ||
                 string.Equals(variableType.TypeName, "System.Runtime.Intrinsics.Vector512", StringComparison.Ordinal)) {
                 processor?.RegisterRuntimeRequirement("NativeVector512");
                 return "system/runtime/intrinsics/vector512";
@@ -1493,6 +1655,24 @@ namespace cs2.cpp {
             }
 
             return referencedClass[(separatorIndex + 1)..];
+        }
+
+        /// <summary>
+        /// Normalizes one parsed type name for shared runtime comparisons by collapsing namespace qualification and removing one generated generic arity suffix when it matches the parsed generic argument count.
+        /// </summary>
+        /// <param name="typeName">Parsed type name to normalize.</param>
+        /// <param name="genericArgumentCount">Parsed generic argument count associated with the type.</param>
+        /// <returns>Normalized runtime comparison name.</returns>
+        static string NormalizeRuntimeComparisonTypeName(string typeName, int genericArgumentCount) {
+            string normalizedTypeName = NormalizeReferencedClassName(typeName);
+            if (string.IsNullOrWhiteSpace(normalizedTypeName) || genericArgumentCount <= 0) {
+                return normalizedTypeName;
+            }
+
+            string aritySuffix = "_" + genericArgumentCount.ToString();
+            return normalizedTypeName.EndsWith(aritySuffix, StringComparison.Ordinal)
+                ? normalizedTypeName[..^aritySuffix.Length]
+                : normalizedTypeName;
         }
 
         /// <summary>
@@ -1672,12 +1852,7 @@ namespace cs2.cpp {
             };
 
             foreach (ConversionVariable parameter in invokeFunction.InParameters) {
-                string parameterType = ConvertType(parameter.VarType, conversionClass, invokeFunction);
-                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
-                    parameterType += "&";
-                }
-
-                signatureParts.Add(parameterType);
+                signatureParts.Add(GetParameterType(parameter, conversionClass, invokeFunction));
             }
 
             return $"Delegate<{string.Join(", ", signatureParts)}>";
@@ -3201,11 +3376,13 @@ namespace cs2.cpp {
             }
 
             sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}(");
-            WriteParameters(conversionClass, function, sourceWriter);
+            WriteParameters(conversionClass, function, sourceWriter, true);
             sourceWriter.Write(")");
             WriteConstructorInitializer(conversionClass, function, sourceWriter);
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
+
+            WriteValueTypeInParameterCopies(conversionClass, function, sourceWriter);
 
             if (function.IsConstructor &&
                 ShouldEmitExplicitLayoutFieldAssignments(conversionClass) &&
@@ -3285,9 +3462,11 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             WriteFunctionTemplateDeclaration(function, sourceWriter, string.Empty);
             sourceWriter.Write($"{GetReturnType(conversionClass, function)} {GetFunctionName(conversionClass, function)}(");
-            WriteParameters(conversionClass, function, sourceWriter);
+            WriteParameters(conversionClass, function, sourceWriter, true);
             sourceWriter.WriteLine(")");
             sourceWriter.WriteLine("{");
+
+            WriteValueTypeInParameterCopies(conversionClass, function, sourceWriter);
 
             if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
@@ -3328,20 +3507,47 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="function">The function whose parameters will be written.</param>
         /// <param name="writer">Writer that receives the parameter list.</param>
-        void WriteParameters(ConversionClass conversionClass, ConversionFunction function, TextWriter writer) {
+        void WriteParameters(ConversionClass conversionClass, ConversionFunction function, TextWriter writer, bool useLoweredValueTypeInParameterNames = false) {
             for (int index = 0; index < function.InParameters.Count; index++) {
                 ConversionVariable parameter = function.InParameters[index];
-                string parameterType = ConvertType(parameter.VarType, conversionClass, function);
-                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
-                    parameterType += "&";
-                }
+                string parameterType = GetParameterType(parameter, conversionClass, function);
+                string parameterName = useLoweredValueTypeInParameterNames && IsValueTypeInParameter(parameter)
+                    ? GetLoweredValueTypeInParameterName(index)
+                    : parameter.Name;
 
-                writer.Write($"{parameterType} {parameter.Name}");
+                writer.Write($"{parameterType} {parameterName}");
 
                 if (index != function.InParameters.Count - 1) {
                     writer.Write(", ");
                 }
             }
+        }
+
+        /// <summary>
+        /// Writes local copies for value-type <c>in</c> parameters so generated method bodies retain C# defensive-copy semantics when invoking non-readonly members.
+        /// </summary>
+        /// <param name="conversionClass">Converted type that owns the function.</param>
+        /// <param name="function">Function that owns the parameters.</param>
+        /// <param name="writer">Writer that receives the local declarations.</param>
+        void WriteValueTypeInParameterCopies(ConversionClass conversionClass, ConversionFunction function, TextWriter writer) {
+            for (int index = 0; index < function.InParameters.Count; index++) {
+                ConversionVariable parameter = function.InParameters[index];
+                if (!IsValueTypeInParameter(parameter)) {
+                    continue;
+                }
+
+                string parameterType = ConvertType(parameter.VarType, conversionClass, function);
+                writer.WriteLine($"{parameterType} {parameter.Name} = {GetLoweredValueTypeInParameterName(index)};");
+            }
+        }
+
+        /// <summary>
+        /// Gets the native-only parameter identifier used to preserve the readonly-reference ABI before the managed-name defensive copy is introduced.
+        /// </summary>
+        /// <param name="parameterIndex">Zero-based parameter position within the function signature.</param>
+        /// <returns>Generated native-only parameter identifier.</returns>
+        static string GetLoweredValueTypeInParameterName(int parameterIndex) {
+            return "__in_parameter_" + parameterIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         /// <summary>
@@ -3380,10 +3586,7 @@ namespace cs2.cpp {
             keyBuilder.Append('|');
             for (int index = 0; index < function.InParameters.Count; index++) {
                 ConversionVariable parameter = function.InParameters[index];
-                string parameterType = ConvertType(parameter.VarType, conversionClass, function);
-                if ((parameter.Modifier & (ParameterModifier.Out | ParameterModifier.Ref)) != 0) {
-                    parameterType += "&";
-                }
+                string parameterType = GetParameterType(parameter, conversionClass, function);
 
                 keyBuilder.Append(parameterType);
                 keyBuilder.Append('|');

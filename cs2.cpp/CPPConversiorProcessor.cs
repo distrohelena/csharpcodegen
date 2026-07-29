@@ -125,6 +125,13 @@ namespace cs2.cpp {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
             }
 
+            if (expression is CheckedExpressionSyntax checkedExpression) {
+                lines.Add("(");
+                ExpressionResult checkedResult = ProcessExpression(semantic, context, checkedExpression.Expression, lines, refTypes);
+                lines.Add(")");
+                return checkedResult;
+            }
+
             if (expression is ElementAccessExpressionSyntax elementAccessExpression) {
                 return ProcessElementAccessExpressionResult(semantic, context, elementAccessExpression, lines);
             }
@@ -1042,6 +1049,34 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Resolves the emitted C++ parameter type token for one Roslyn parameter symbol, preserving readonly references for value-type <c>in</c> parameters.
+        /// </summary>
+        /// <param name="parameterSymbol">Roslyn parameter symbol to convert.</param>
+        /// <param name="program">Current C++ program model used for type remaps.</param>
+        /// <returns>The emitted C++ parameter type token.</returns>
+        string GetCppParameterTypeToken(IParameterSymbol parameterSymbol, ConversionProgram program) {
+            if (parameterSymbol == null) {
+                throw new ArgumentNullException(nameof(parameterSymbol));
+            }
+
+            VariableType parameterType = VariableUtil.GetVarType(parameterSymbol.Type);
+            string parameterTypeName = GetCppTypeToken(parameterType, program);
+            if (parameterSymbol.RefKind == RefKind.Ref || parameterSymbol.RefKind == RefKind.Out) {
+                return parameterTypeName + "&";
+            }
+
+            if (parameterSymbol.RefKind == RefKind.In &&
+                parameterType.IsValueType &&
+                !parameterType.IsPointer &&
+                !parameterType.IsReference &&
+                !parameterType.IsConstReference) {
+                return "const " + parameterTypeName + "&";
+            }
+
+            return parameterTypeName;
+        }
+
+        /// <summary>
         /// Determines whether the current backend has a lowering path for the supplied statement syntax.
         /// </summary>
         /// <param name="statement">Statement syntax being evaluated after the shared processor dispatch runs.</param>
@@ -1463,7 +1498,7 @@ namespace cs2.cpp {
             if (IsActionTypeSymbol(delegateTypeSymbol) && invokeMethod.ReturnsVoid) {
                 List<string> actionArgumentTypes = new List<string>();
                 foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
-                    actionArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                    actionArgumentTypes.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
                 }
 
                 delegateWrapperTypeName = $"Action<{string.Join(", ", actionArgumentTypes)}>";
@@ -1476,7 +1511,7 @@ namespace cs2.cpp {
 
             List<string> funcArgumentTypes = new List<string>();
             foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
-                funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                funcArgumentTypes.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
             }
 
             funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(invokeMethod.ReturnType), context.Program));
@@ -8323,6 +8358,7 @@ namespace cs2.cpp {
             string displayText = namedTypeSymbol.ToDisplayString();
             return string.Equals(name, "List", StringComparison.Ordinal) ||
                 string.Equals(name, "Dictionary", StringComparison.Ordinal) ||
+                string.Equals(name, "HashSet", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyList", StringComparison.Ordinal) ||
                 string.Equals(name, "ICollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyCollection", StringComparison.Ordinal) ||
@@ -8330,6 +8366,7 @@ namespace cs2.cpp {
                 string.Equals(name, "IReadOnlyDictionary", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
+                displayText.StartsWith("System.Collections.Generic.HashSet<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
@@ -10649,12 +10686,7 @@ namespace cs2.cpp {
             string returnTypeName = GetCppTypeToken(VariableUtil.GetVarType(methodSymbol.ReturnType), context.Program);
             List<string> parameterTypeNames = new List<string>();
             foreach (IParameterSymbol parameterSymbol in methodSymbol.Parameters) {
-                string parameterTypeName = GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program);
-                if (parameterSymbol.RefKind == RefKind.Ref || parameterSymbol.RefKind == RefKind.Out) {
-                    parameterTypeName += "&";
-                }
-
-                parameterTypeNames.Add(parameterTypeName);
+                parameterTypeNames.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
             }
 
             string emittedTargetName = $"{containingTypeName}::{ResolveConvertedFunctionName(methodSymbol)}{RenderMethodPointerGenericArguments(methodSymbol, context)}";
@@ -10767,12 +10799,189 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessConditionalAccessExpression(SemanticModel semantic, LayerContext context, ConditionalAccessExpressionSyntax conditionalAccess, List<string> lines) {
-            // Process the expression being accessed conditionally
+            if (TryProcessConditionalAccessValueExpression(semantic, context, conditionalAccess, lines)) {
+                return;
+            }
+
             ProcessExpression(semantic, context, conditionalAccess.Expression, lines);
             lines.Add("?.");
-
-            // Process the member or invocation being accessed conditionally
             ProcessExpression(semantic, context, (ExpressionSyntax)conditionalAccess.WhenNotNull, lines);
+        }
+
+        /// <summary>
+        /// Lowers one conditional-access expression into a single-evaluation lambda so expression contexts never leak raw C# <c>?.</c> syntax into emitted C++.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="conditionalAccess">Conditional-access expression to lower.</param>
+        /// <param name="lines">Output token buffer that receives emitted C++.</param>
+        /// <returns><c>true</c> when the expression was lowered directly; otherwise, <c>false</c>.</returns>
+        bool TryProcessConditionalAccessValueExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ConditionalAccessExpressionSyntax conditionalAccess,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                conditionalAccess == null ||
+                !TryGetExpressionTypeSymbol(semantic, conditionalAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
+                receiverTypeSymbol == null ||
+                !TryGetExpressionTypeSymbol(semantic, conditionalAccess, out ITypeSymbol resultTypeSymbol) ||
+                resultTypeSymbol == null) {
+                return false;
+            }
+
+            List<string> receiverLines = new List<string>();
+            int startReceiver = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, conditionalAccess.Expression, receiverLines);
+            context.PopClass(startReceiver);
+            if (!receiverResult.Processed) {
+                return false;
+            }
+
+            VariableType cppResultType = ConvertToCPPType(VariableUtil.GetVarType(resultTypeSymbol), out CPPTypeData resultTypeData);
+            string resultTypeName = QualifyRenderedCppTypeName(cppResultType.ToCPPString(context.Program), context);
+            if (resultTypeData.IsPointer) {
+                resultTypeName += "*";
+            }
+
+            string receiverTemporaryName = CreateTemporaryName("__conditionalReceiver");
+            string resultTemporaryName = CreateTemporaryName("__conditionalResult");
+
+            List<string> accessedValueLines = new List<string>();
+            ExpressionResult accessedValueResult = BuildConditionalAccessWhenNotNullExpression(
+                semantic,
+                context,
+                conditionalAccess,
+                receiverTemporaryName,
+                accessedValueLines);
+            if (!accessedValueResult.Processed) {
+                return false;
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> {resultTypeName} {{\n");
+            if (receiverResult.BeforeLines != null &&
+                receiverResult.BeforeLines.Count > 0) {
+                lines.AddRange(receiverResult.BeforeLines);
+            }
+
+            lines.Add($"auto {receiverTemporaryName} = ");
+            lines.AddRange(receiverLines);
+            lines.Add(";\n");
+            lines.Add($"{resultTypeName} {resultTemporaryName}{{}};\n");
+            lines.Add($"if ({receiverTemporaryName} != nullptr) {{\n");
+            if (accessedValueResult.BeforeLines != null &&
+                accessedValueResult.BeforeLines.Count > 0) {
+                lines.AddRange(accessedValueResult.BeforeLines);
+            }
+
+            lines.Add($"{resultTemporaryName} = ");
+            lines.AddRange(accessedValueLines);
+            lines.Add(";\n");
+
+            if (accessedValueResult.AfterLines != null &&
+                accessedValueResult.AfterLines.Count > 0) {
+                lines.AddRange(accessedValueResult.AfterLines);
+            }
+
+            lines.Add("}\n");
+            if (receiverResult.AfterLines != null &&
+                receiverResult.AfterLines.Count > 0) {
+                lines.AddRange(receiverResult.AfterLines);
+            }
+
+            lines.Add($"return {resultTemporaryName};\n");
+            lines.Add("})()");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits the non-null branch for one conditional-access expression using the supplied evaluated receiver temporary.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="conditionalAccess">Conditional-access expression being lowered.</param>
+        /// <param name="receiverTemporaryName">Temporary holding the already-evaluated receiver.</param>
+        /// <param name="lines">Output token buffer that receives emitted C++.</param>
+        /// <returns>The emitted expression result metadata when one supported member form was lowered; otherwise, an unprocessed result.</returns>
+        ExpressionResult BuildConditionalAccessWhenNotNullExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            ConditionalAccessExpressionSyntax conditionalAccess,
+            string receiverTemporaryName,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                conditionalAccess == null ||
+                string.IsNullOrWhiteSpace(receiverTemporaryName) ||
+                lines == null) {
+                return new ExpressionResult(false, VariablePath.Unknown, null);
+            }
+
+            if (conditionalAccess.WhenNotNull is MemberBindingExpressionSyntax memberBinding) {
+                ISymbol memberSymbol = semantic.GetSymbolInfo(conditionalAccess.WhenNotNull).Symbol ??
+                    semantic.GetSymbolInfo(conditionalAccess).Symbol ??
+                    semantic.GetSymbolInfo(memberBinding.Name).Symbol;
+                if (memberSymbol is IAliasSymbol memberAliasSymbol) {
+                    memberSymbol = memberAliasSymbol.Target;
+                }
+
+                IPropertySymbol propertySymbol = memberSymbol as IPropertySymbol;
+                if (propertySymbol == null &&
+                    memberBinding.Name is IdentifierNameSyntax propertyIdentifier &&
+                    TryResolveReceiverPropertySymbol(semantic, conditionalAccess.Expression, propertyIdentifier.Identifier.Text, out IPropertySymbol fallbackPropertySymbol)) {
+                    propertySymbol = fallbackPropertySymbol;
+                    memberSymbol = fallbackPropertySymbol;
+                }
+
+                if (propertySymbol != null &&
+                    TryBuildPropertyGetterCall(conditionalAccess, propertySymbol, out string propertyGetterCallName)) {
+                    lines.Add(receiverTemporaryName);
+                    lines.Add("->");
+                    lines.Add(propertyGetterCallName);
+                    return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(propertySymbol.Type));
+                }
+
+                lines.Add(receiverTemporaryName);
+                lines.Add("->");
+                if (memberBinding.Name is IdentifierNameSyntax memberIdentifier) {
+                    lines.Add(memberIdentifier.Identifier.Text);
+                } else {
+                    ProcessExpression(semantic, context, memberBinding.Name, lines);
+                }
+                VariableType memberType = ResolveMemberAccessResultType(memberSymbol);
+                if (memberType == null) {
+                    if (memberSymbol is IFieldSymbol fieldSymbol) {
+                        memberType = VariableUtil.GetVarType(fieldSymbol.Type);
+                    } else if (memberSymbol is IPropertySymbol unresolvedPropertySymbol) {
+                        memberType = VariableUtil.GetVarType(unresolvedPropertySymbol.Type);
+                    } else if (memberSymbol is IMethodSymbol unresolvedMethodSymbol) {
+                        memberType = VariableUtil.GetVarType(unresolvedMethodSymbol.ReturnType);
+                    } else {
+                        memberType = VariableUtil.GetVarType("object");
+                    }
+                }
+
+                return new ExpressionResult(true, VariablePath.Unknown, memberType);
+            }
+
+            if (conditionalAccess.WhenNotNull is InvocationExpressionSyntax invocation &&
+                invocation.Expression is MemberBindingExpressionSyntax) {
+                IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocation);
+                if (invokedMethodSymbol == null) {
+                    return new ExpressionResult(false, VariablePath.Unknown, null);
+                }
+
+                lines.Add(receiverTemporaryName);
+                lines.Add("->");
+                AppendConditionalAccessInvocationTarget(semantic, context, conditionalAccess.Expression, invocation, lines);
+                lines.Add("(");
+                AppendInvocationArguments(semantic, context, invocation.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+            }
+
+            return new ExpressionResult(false, VariablePath.Unknown, null);
         }
 
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
@@ -12911,7 +13120,7 @@ namespace cs2.cpp {
             if (IsActionTypeSymbol(namedTypeSymbol)) {
                 List<string> actionArgumentTypes = new List<string>();
                 foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
-                    actionArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                    actionArgumentTypes.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
                 }
 
                 delegateWrapperTypeName = $"Action<{string.Join(", ", actionArgumentTypes)}>";
@@ -12924,7 +13133,7 @@ namespace cs2.cpp {
 
             List<string> funcArgumentTypes = new List<string>();
             foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
-                funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                funcArgumentTypes.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
             }
 
             funcArgumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(invokeMethod.ReturnType), context.Program));
@@ -12975,7 +13184,7 @@ namespace cs2.cpp {
 
             List<string> argumentTypes = new List<string>();
             foreach (IParameterSymbol parameterSymbol in invokeMethod.Parameters) {
-                argumentTypes.Add(GetCppTypeToken(VariableUtil.GetVarType(parameterSymbol.Type), context.Program));
+                argumentTypes.Add(GetCppParameterTypeToken(parameterSymbol, context.Program));
             }
 
             delegateWrapperTypeName = $"Action<{string.Join(", ", argumentTypes)}>";
@@ -16373,9 +16582,36 @@ namespace cs2.cpp {
             AssignmentExpressionSyntax assignment,
             List<string> lines) {
             string propertyName = string.Empty;
+            IPropertySymbol propertySymbol = null;
 
-            if (TryGetAssignedPropertySymbol(semantic, assignment.Left, out IPropertySymbol propertySymbol) &&
+            if (TryGetAssignedPropertySymbol(semantic, assignment.Left, out propertySymbol) &&
                 propertySymbol.SetMethod != null) {
+                if (propertySymbol.IsIndexer &&
+                    assignment.Left is ElementAccessExpressionSyntax elementAccess) {
+                    return TryAppendObjectInitializerIndexerSetterAssignment(
+                        semantic,
+                        context,
+                        objectName,
+                        memberAccessOperator,
+                        propertySymbol,
+                        elementAccess.ArgumentList,
+                        assignment.Right,
+                        lines);
+                }
+
+                if (propertySymbol.IsIndexer &&
+                    assignment.Left is ImplicitElementAccessSyntax implicitElementAccess) {
+                    return TryAppendObjectInitializerIndexerSetterAssignment(
+                        semantic,
+                        context,
+                        objectName,
+                        memberAccessOperator,
+                        propertySymbol,
+                        implicitElementAccess.ArgumentList,
+                        assignment.Right,
+                        lines);
+                }
+
                 propertyName = propertySymbol.Name;
             } else if (assignment.Left is IdentifierNameSyntax identifierName &&
                 TryResolveGeneratedPropertySetter(semantic, objectCreationTypeSyntax, identifierName.Identifier.Text)) {
@@ -16399,6 +16635,77 @@ namespace cs2.cpp {
             lines.Add($"set_{propertyName}(");
             lines.AddRange(rightLines);
 
+            lines.Add(");\n");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits one object-initializer assignment that targets a managed indexer so collection initializers lower through the generated setter surface.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve indexer arguments.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="objectName">Temporary object variable that owns the initializer assignments.</param>
+        /// <param name="memberAccessOperator">Resolved C++ member access operator for the temporary object.</param>
+        /// <param name="propertySymbol">Resolved Roslyn property symbol for the indexer assignment.</param>
+        /// <param name="elementAccess">Indexer expression on the initializer left-hand side.</param>
+        /// <param name="rightExpression">Initializer value expression.</param>
+        /// <param name="lines">Output token buffer that receives the lowered setter call.</param>
+        /// <returns>True when the indexer setter assignment was emitted; otherwise false.</returns>
+        bool TryAppendObjectInitializerIndexerSetterAssignment(
+            SemanticModel semantic,
+            LayerContext context,
+            string objectName,
+            string memberAccessOperator,
+            IPropertySymbol propertySymbol,
+            BracketedArgumentListSyntax argumentList,
+            ExpressionSyntax rightExpression,
+            List<string> lines) {
+            if (semantic == null ||
+                context == null ||
+                string.IsNullOrWhiteSpace(objectName) ||
+                string.IsNullOrWhiteSpace(memberAccessOperator) ||
+                propertySymbol == null ||
+                argumentList == null ||
+                rightExpression == null ||
+                lines == null) {
+                return false;
+            }
+
+            List<string> argumentLines = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentList.Arguments.Count; argumentIndex++) {
+                ArgumentSyntax argument = argumentList.Arguments[argumentIndex];
+                int startArgument = context.DepthClass;
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentLines);
+                context.PopClass(startArgument);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    lines.AddRange(argumentResult.BeforeLines);
+                }
+
+                if (argumentIndex < argumentList.Arguments.Count - 1) {
+                    argumentLines.Add(", ");
+                }
+            }
+
+            int startRight = context.DepthClass;
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, rightExpression, rightLines);
+            context.PopClass(startRight);
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
+            string indexerPropertyName = string.IsNullOrWhiteSpace(propertySymbol.MetadataName)
+                ? "Item"
+                : propertySymbol.MetadataName;
+
+            lines.Add(objectName);
+            lines.Add(memberAccessOperator);
+            lines.Add($"set_{indexerPropertyName}(");
+            lines.AddRange(argumentLines);
+            if (argumentLines.Count > 0) {
+                lines.Add(", ");
+            }
+            lines.AddRange(rightLines);
             lines.Add(");\n");
             return true;
         }

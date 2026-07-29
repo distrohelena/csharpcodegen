@@ -55,6 +55,7 @@ namespace cs2.cpp {
                 lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE {GetRequiredPlatformOption(options, "native-file-system-type")}");
             }
 
+            AppendAdditionalPreprocessorDefines(lines, options);
             AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());
 
             foreach (CPPRuntimeRequirementDefinition requirement in registrar.RegisteredRequirements.OrderBy(requirement => requirement.Name, StringComparer.Ordinal)) {
@@ -116,6 +117,35 @@ namespace cs2.cpp {
             foreach (CPPFeatureDecision decision in buildUsageReport.FeatureDecisions.OrderBy(item => item.FeatureId, StringComparer.Ordinal)) {
                 string defineSuffix = CPPFeatureIdentifierFormatter.ToConfigDefineSuffix(decision.FeatureId);
                 lines.Add($"#define HE_CPP_FEATURE_{defineSuffix} {ToDefineValue(decision.Enabled)}");
+            }
+        }
+
+        /// <summary>
+        /// Emits caller-owned preprocessor symbols into the generated config so runtime templates can observe the same compile-time guards used during conversion.
+        /// </summary>
+        /// <param name="lines">Mutable generated config line list.</param>
+        /// <param name="options">Active conversion options that may contribute additional symbols.</param>
+        static void AppendAdditionalPreprocessorDefines(List<string> lines, CPPConversionOptions options) {
+            if (lines == null) {
+                throw new ArgumentNullException(nameof(lines));
+            }
+            if (options?.AdditionalPreprocessorSymbols == null) {
+                return;
+            }
+
+            HashSet<string> emittedSymbols = new(StringComparer.Ordinal);
+            for (int index = 0; index < options.AdditionalPreprocessorSymbols.Count; index++) {
+                string rawSymbol = options.AdditionalPreprocessorSymbols[index];
+                if (string.IsNullOrWhiteSpace(rawSymbol)) {
+                    continue;
+                }
+
+                string symbol = rawSymbol.Trim();
+                if (!emittedSymbols.Add(symbol)) {
+                    continue;
+                }
+
+                lines.Add($"#define {symbol} 1");
             }
         }
     }

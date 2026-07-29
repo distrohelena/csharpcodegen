@@ -50,7 +50,7 @@ public:
             return *this;
         }
 
-        Subscribers.push_back(Subscriber {
+        Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
                 InvokeFunctionPointer(handler, arguments, std::index_sequence_for<TArgs...> {});
@@ -60,7 +60,7 @@ public:
                     *static_cast<void (*const*)(TArgs...)>(candidateHandler) == handler;
             },
             nullptr
-        });
+        }));
         return *this;
     }
 
@@ -77,7 +77,7 @@ public:
             return *this;
         }
 
-        Subscribers.push_back(Subscriber {
+        Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
                 InvokeBoundMethod(handler.Instance, handler.Method, arguments, std::index_sequence_for<TArgs...> {});
@@ -91,7 +91,7 @@ public:
                 return static_cast<TInstance*>(const_cast<void*>(candidateInstance)) == handler.Instance &&
                     *static_cast<void (TInstance::*const*)(TArgs...)>(candidateMethod) == handler.Method;
             }
-        });
+        }));
         return *this;
     }
 
@@ -135,12 +135,12 @@ public:
             std::remove_if(
                 Subscribers.begin(),
                 Subscribers.end(),
-                [handler](const Subscriber& subscriber) {
-                    if (subscriber.ArgumentCount != sizeof...(TArgs) || subscriber.MatchesFunction == nullptr) {
+                [handler](const std::unique_ptr<Subscriber>& subscriber) {
+                    if (subscriber->ArgumentCount != sizeof...(TArgs) || subscriber->MatchesFunction == nullptr) {
                         return false;
                     }
 
-                    return subscriber.MatchesFunction(&handler);
+                    return subscriber->MatchesFunction(&handler);
                 }),
             Subscribers.end());
         return *this;
@@ -163,12 +163,12 @@ public:
             std::remove_if(
                 Subscribers.begin(),
                 Subscribers.end(),
-                [handler](const Subscriber& subscriber) {
-                    if (subscriber.ArgumentCount != sizeof...(TArgs) || subscriber.MatchesBound == nullptr) {
+                [handler](const std::unique_ptr<Subscriber>& subscriber) {
+                    if (subscriber->ArgumentCount != sizeof...(TArgs) || subscriber->MatchesBound == nullptr) {
                         return false;
                     }
 
-                    return subscriber.MatchesBound(handler.Instance, &handler.Method);
+                    return subscriber->MatchesBound(handler.Instance, &handler.Method);
                 }),
             Subscribers.end());
         return *this;
@@ -182,9 +182,9 @@ public:
     template <typename... TArgs>
     void Invoke(TArgs... args) {
         std::array<void*, sizeof...(TArgs)> argumentPointers { const_cast<void*>(static_cast<const void*>(std::addressof(args)))... };
-        for (Subscriber& subscriber : Subscribers) {
-            if (subscriber.ArgumentCount == sizeof...(TArgs)) {
-                subscriber.Invoke(argumentPointers.data());
+        for (std::unique_ptr<Subscriber>& subscriber : Subscribers) {
+            if (subscriber->ArgumentCount == sizeof...(TArgs)) {
+                subscriber->Invoke(argumentPointers.data());
             }
         }
     }
@@ -244,5 +244,5 @@ private:
     /// <summary>
     /// Subscribers currently attached to this event.
     /// </summary>
-    std::vector<Subscriber> Subscribers;
+    std::vector<std::unique_ptr<Subscriber>> Subscribers;
 };

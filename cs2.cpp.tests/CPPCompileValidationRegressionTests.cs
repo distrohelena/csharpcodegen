@@ -171,6 +171,42 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures generated headers include concrete generic runtime type definitions when one field stores a generated generic class pointer.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGeneratedGenericField_EmitsConcreteHeaderInclude() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public sealed class FiniteStateDefinition<TState> where TState : struct {
+                }
+
+                public sealed class FiniteStateMachine<TState> where TState : struct {
+                    readonly Dictionary<TState, FiniteStateDefinition<TState>> states = new Dictionary<TState, FiniteStateDefinition<TState>>();
+                }
+
+                public enum TestState {
+                    Waiting,
+                    Playing
+                }
+
+                public sealed class TestConsumer {
+                    readonly FiniteStateMachine<TestState> machine;
+
+                    public TestConsumer() {
+                        machine = new FiniteStateMachine<TestState>();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string consumerHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TestConsumer.hpp"));
+
+            Assert.Contains("#include \"FiniteStateMachine_1.hpp\"", consumerHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures concrete generated classes remain polymorphic so runtime downcasts can use RTTI safely.
         /// </summary>
         [Fact]
@@ -783,6 +819,64 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures value-type <c>in</c> parameters preserve readonly native references and create managed defensive copies for method bodies.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeInParameter_EmitsReferenceSignature() {
+            string source = """
+                public struct Payload {
+                    public int Value;
+                }
+
+                public class Reader {
+                    public static int Read(in Payload payload) {
+                        return payload.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
+
+            Assert.Contains("static int32_t Read(const ::Payload& payload);", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t Reader::Read(const ::Payload& __in_parameter_0)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("::Payload payload = __in_parameter_0;", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures custom delegate wrappers use readonly native references when binding static methods with value-type <c>in</c> parameters.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithValueTypeInParameterDelegateBinding_UsesReferenceMethodPointer() {
+            string source = """
+                public struct Payload {
+                    public int Value;
+                }
+
+                public delegate void PayloadReader(in Payload payload);
+
+                public class ReaderHost {
+                    public PayloadReader Reader;
+
+                    public ReaderHost() {
+                        Reader = Read;
+                    }
+
+                    public static void Read(in Payload payload) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string delegateHeader = File.ReadAllText(Path.Combine(output.OutputPath, "PayloadReader.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ReaderHost.cpp"));
+
+            Assert.Contains("using PayloadReader = Delegate<void, const ::Payload&>;", delegateHeader, StringComparison.Ordinal);
+            Assert.Contains("static_cast<void (*)(const Payload&)>(&ReaderHost::Read)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures abstract and virtual members stay polymorphic in generated C++ so native hosts can provide backend subclasses.
         /// </summary>
         [Fact]
@@ -865,6 +959,38 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("class Entity;", drawableHeader);
             Assert.DoesNotContain("#include \"Entity.hpp\"", drawableHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generated generic types used only through ref signatures stay forward declared so cyclic BEPU-style headers do not pull each other in by include.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithRefOnlyGenericGeneratedSignature_DoesNotIncludeConcreteGeneratedHeader() {
+            string source = """
+                public interface ICollisionCallbacks {
+                }
+
+                public struct PairContinuation {
+                }
+
+                public struct ConvexContactManifold {
+                }
+
+                public struct CollisionBatcher<TCallbacks> where TCallbacks : struct, ICollisionCallbacks {
+                }
+
+                public struct BatcherContinuations<T> {
+                    public void ContributeChildToContinuation<TCallbacks>(ref PairContinuation continuation, ref ConvexContactManifold manifold, ref CollisionBatcher<TCallbacks> batcher)
+                        where TCallbacks : struct, ICollisionCallbacks {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string continuationsHeader = File.ReadAllText(Path.Combine(output.OutputPath, "BatcherContinuations_1.hpp"));
+
+            Assert.Contains("template <typename TCallbacks> class CollisionBatcher_1;", continuationsHeader);
+            Assert.DoesNotContain("#include \"CollisionBatcher_1.hpp\"", continuationsHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2609,6 +2735,27 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures generic enum-state guards lower through the lightweight native type token instead of assuming unsupported reflection metadata.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericTypeIsEnumCheck_UsesNativeTypeTokenEnumFlag() {
+            string source = """
+                using System;
+
+                public class TypeGate<TState> {
+                    public bool Check() {
+                        return typeof(TState).IsEnum;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "TypeGate_1.cpp"));
+
+            Assert.Contains("he_cpp_type_of<TState>(\"TState\")->get_IsEnum()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures target-typed collection expressions passed to IReadOnlyList parameters lower to a native list allocation instead of raw bracket syntax.
         /// </summary>
         [Fact]
@@ -3782,14 +3929,14 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugInfoRegistry.cpp"));
 
-            Assert.Contains("new List<ValueTuple<std::string, std::string, std::string>*>();", sourceOutput);
-            Assert.Contains("new List<ValueTuple<std::string, std::string>*>();", sourceOutput);
+            Assert.Contains("new List<ValueTuple<std::string, std::string, std::string>>();", sourceOutput);
+            Assert.Contains("new List<ValueTuple<std::string, std::string>>();", sourceOutput);
             Assert.Contains("catch (...)", sourceOutput);
-            Assert.Contains("::IDebugInfoProvider *p = (*providers)[i];", sourceOutput);
-            Assert.Contains("ValueTuple<std::string, std::string> *it = (*items)[j];", sourceOutput);
+            Assert.Contains("::IDebugInfoProvider *p = (*providers).get_Item(static_cast<int32_t>(i));", sourceOutput);
+            Assert.Contains("ValueTuple<std::string, std::string> it = (*items).get_Item(static_cast<int32_t>(j));", sourceOutput);
             Assert.Contains("result->Add(", sourceOutput);
             Assert.Contains("ValueTuple<std::string, std::string, std::string>", sourceOutput);
-            Assert.Contains("new ValueTuple<std::string, std::string, std::string>(p->get_Category(), it->Item1, it->Item2)", sourceOutput);
+            Assert.Contains("ValueTuple<std::string, std::string, std::string>(p->get_Category(), it.Item1, it.Item2)", sourceOutput);
         }
 
         /// <summary>
@@ -4189,6 +4336,35 @@ namespace cs2.cpp.tests {
             Assert.Contains("auto __ctor_arg_", sourceOutput);
             Assert.Contains("return ::Vec4(", sourceOutput);
             Assert.DoesNotContain("::Vec4(reader->ReadSingle(), reader->ReadSingle(), reader->ReadSingle(), reader->ReadSingle())", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures checked conversions from unsigned values remain present when constructor arguments are hoisted for evaluation order.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedUnsignedConstructorArguments_EmitsConvertedValues() {
+            string source = """
+                public struct Triangle {
+                    public Triangle(int a, int b, int c) {
+                    }
+                }
+
+                public class TriangleFactory {
+                    static uint GetValue() {
+                        return 1u;
+                    }
+
+                    public Triangle Create() {
+                        return new Triangle(checked((int)GetValue()), checked((int)GetValue()), checked((int)GetValue()));
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+
+            AssertNoDiagnostic(output.Report, "CheckedExpression");
+            Assert.DoesNotContain("static_cast<int32_t>()", output.GeneratedText, StringComparison.Ordinal);
+            Assert.Contains("static_cast<int32_t>(TriangleFactory::GetValue())", output.GeneratedText, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -9569,6 +9745,62 @@ namespace cs2.cpp.tests {
             Assert.Contains("if (value != nullptr)", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("value->Ping();", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("?.Ping()", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures null-conditional property reads used as values lower through one single-evaluation lambda instead of leaking raw conditional-access syntax into emitted C++.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConditionalAccessPropertyValueExpression_EmitsSingleEvaluationLambda() {
+            string source = """
+                public class Child {
+                    public Child Next { get; set; }
+                }
+
+                public class Fixture {
+                    public Child Run(Child value) {
+                        return value?.Next;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("auto __conditionalReceiver_", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__conditionalResult_", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("?.Next", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures null-conditional property reads feeding one pattern cast lower before the surrounding expression is emitted.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithConditionalAccessPropertyInsideIsPattern_DoesNotLeakConditionalAccessSyntax() {
+            string source = """
+                public interface IWorker {
+                }
+
+                public sealed class Worker : IWorker {
+                }
+
+                public sealed class Holder {
+                    public IWorker Worker { get; set; }
+                }
+
+                public sealed class Fixture {
+                    public bool Run(Holder holder) {
+                        return holder?.Worker is Worker worker;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("auto __conditionalReceiver_", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__conditionalResult_", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("?.Worker", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

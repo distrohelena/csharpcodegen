@@ -39,6 +39,32 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures collection initializers that target dictionary indexers lower through the managed indexer setter instead of emitting invalid synthetic member names.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDictionaryIndexerCollectionInitializer_UsesRuntimeIndexerSetter() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Gate {
+                    public Dictionary<string, int> Make() {
+                        return new Dictionary<string, int> {
+                            ["master"] = 1,
+                            ["music"] = 2
+                        };
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            AssertNoDiagnostic(report, "ObjectCreationExpression");
+            Assert.Contains("->set_Item(\"master\", 1);", output, StringComparison.Ordinal);
+            Assert.Contains("->set_Item(\"music\", 2);", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("set_this[]", output, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns all generated textual output.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

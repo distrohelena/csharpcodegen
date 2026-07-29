@@ -160,4 +160,28 @@ public class CPPGeneratedConfigWriterTests {
         Assert.Contains("#define HE_CPP_FEATURE_SHADERS 0", output);
         Assert.Contains("#define HE_CPP_FEATURE_SPRITES 1", output);
     }
+
+    /// <summary>
+    /// Ensures the generated config writer emits caller-owned additional preprocessor symbols so native runtime `#if` guards can observe them.
+    /// </summary>
+    [Fact]
+    public void Write_WithAdditionalPreprocessorSymbols_WritesCallerOwnedDefines() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.AdditionalPreprocessorSymbols = [
+            "HELENGINE_PHYSICS3D_STRIP_BY_SCENE_FEATURES",
+            "HELENGINE_PHYSICS3D_FEATURE_BOX_BOX_CONTACT",
+            "HELENGINE_PHYSICS3D_FEATURE_SPHERE_STATIC_MESH_CONTACT"
+        ];
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
+        registrar.RegisterDefaults(options);
+
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar);
+        string output = File.ReadAllText(filePath);
+
+        Assert.Contains("#define HELENGINE_PHYSICS3D_STRIP_BY_SCENE_FEATURES 1", output);
+        Assert.Contains("#define HELENGINE_PHYSICS3D_FEATURE_BOX_BOX_CONTACT 1", output);
+        Assert.Contains("#define HELENGINE_PHYSICS3D_FEATURE_SPHERE_STATIC_MESH_CONTACT 1", output);
+    }
 }

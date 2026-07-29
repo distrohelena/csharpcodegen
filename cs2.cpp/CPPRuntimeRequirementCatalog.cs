@@ -32,6 +32,7 @@ namespace cs2.cpp {
         static IEnumerable<CPPRuntimeRequirementDefinition> CreateDefinitions() {
             return new[] {
                 Make("NativeArray", "runtime/array.hpp", "HE_CPP_REQ_NATIVE_ARRAY", "Managed-style array abstraction support."),
+                Make("NativeHashSet", "runtime/native_hash_set.hpp", "HE_CPP_REQ_NATIVE_HASH_SET", "Managed-style hash-set abstraction support."),
                 Make("NativeSpan", "runtime/native_span.hpp", "HE_CPP_REQ_NATIVE_SPAN", "Managed-style non-owning span view support for transient buffer access."),
                 Make("NativeFunctionPointer", "runtime/function_pointer.hpp", "HE_CPP_REQ_NATIVE_FUNCTION_POINTER", "Portable unmanaged function-pointer wrapper support for transpiled C# delegate* signatures."),
                 Make("Delegate", "system/delegate.hpp", "HE_CPP_REQ_DELEGATE", "Portable callable delegate wrapper support for emitted custom delegate declarations."),

@@ -1,6 +1,12 @@
 #pragma once
 
+#include <cstdint>
+
+#if defined(__gamecube__)
+#include <ogc/lwp_watchdog.h>
+#else
 #include <chrono>
+#endif
 
 #include "runtime/native_timespan.hpp"
 
@@ -12,7 +18,12 @@ namespace Diagnostics {
 /// </summary>
 class Stopwatch {
 public:
+#if defined(__gamecube__)
+    using TickTimestamp = std::uint64_t;
+#else
     using TickClock = std::chrono::steady_clock;
+    using TickTimestamp = TickClock::time_point;
+#endif
 
     class LiveMilliseconds {
     public:
@@ -82,7 +93,7 @@ public:
     /// </summary>
     void Start() {
         if (!IsRunningValue) {
-            StartTimestamp = TickClock::now();
+            StartTimestamp = CaptureCurrentTimestamp();
             IsRunningValue = true;
         }
     }
@@ -92,7 +103,7 @@ public:
     /// </summary>
     void Restart() {
         TotalElapsedMilliseconds = 0.0;
-        StartTimestamp = TickClock::now();
+        StartTimestamp = CaptureCurrentTimestamp();
         IsRunningValue = true;
     }
 
@@ -128,7 +139,7 @@ private:
     /// <summary>
     /// Captures the instant at which the current running interval started.
     /// </summary>
-    TickClock::time_point StartTimestamp;
+    TickTimestamp StartTimestamp;
 
     /// <summary>
     /// Accumulates elapsed time across stopped and running intervals.
@@ -136,12 +147,29 @@ private:
     double TotalElapsedMilliseconds;
 
     /// <summary>
-    /// Converts one native monotonic duration into managed-style milliseconds.
+    /// Captures the current monotonic timestamp from the platform's preferred high-resolution timer.
     /// </summary>
-    /// <param name="duration">Native monotonic duration to convert.</param>
-    /// <returns>Elapsed milliseconds represented by the supplied duration.</returns>
-    static double ConvertDurationToMilliseconds(TickClock::duration duration) {
+    /// <returns>Opaque timestamp that can be compared only by <see cref="ComputeElapsedMilliseconds"/>.</returns>
+    static TickTimestamp CaptureCurrentTimestamp() {
+#if defined(__gamecube__)
+        return static_cast<TickTimestamp>(gettime());
+#else
+        return TickClock::now();
+#endif
+    }
+
+    /// <summary>
+    /// Computes the elapsed milliseconds between one prior monotonic timestamp and the current platform timer value.
+    /// </summary>
+    /// <param name="startTimestamp">Timestamp captured at the beginning of the interval.</param>
+    /// <returns>Elapsed milliseconds since <paramref name="startTimestamp"/>.</returns>
+    static double ComputeElapsedMilliseconds(TickTimestamp startTimestamp) {
+#if defined(__gamecube__)
+        return ticks_to_millisecs(gettime() - startTimestamp);
+#else
+        const TickClock::duration duration = TickClock::now() - startTimestamp;
         return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(duration).count();
+#endif
     }
 
     /// <summary>
@@ -149,9 +177,13 @@ private:
     /// </summary>
     /// <returns>Elapsed milliseconds since the current start timestamp.</returns>
     double ComputeRunningElapsedMilliseconds() const {
-        return ConvertDurationToMilliseconds(TickClock::now() - StartTimestamp);
+        return ComputeElapsedMilliseconds(StartTimestamp);
     }
 
+    /// <summary>
+    /// Computes the accumulated elapsed milliseconds, including any currently running interval.
+    /// </summary>
+    /// <returns>Accumulated elapsed milliseconds.</returns>
     double ComputeElapsedMilliseconds() const {
         if (IsRunningValue) {
             return TotalElapsedMilliseconds + ComputeRunningElapsedMilliseconds();
@@ -160,6 +192,10 @@ private:
         return TotalElapsedMilliseconds;
     }
 
+    /// <summary>
+    /// Converts the accumulated stopwatch duration into the generated TimeSpan runtime type.
+    /// </summary>
+    /// <returns>Accumulated elapsed duration.</returns>
     TimeSpan ComputeElapsed() const {
         return TimeSpan(ComputeElapsedMilliseconds());
     }

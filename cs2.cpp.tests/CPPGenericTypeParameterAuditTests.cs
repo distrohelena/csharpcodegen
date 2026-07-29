@@ -141,6 +141,27 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures readonly value-type parameters have matching declarations and definitions without platform-specific generated-source rewrites.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadonlyGenericBufferParameter_EmitsMatchingHeaderAndSourceSignatures() {
+            string source = """
+                public struct Buffer<T> where T : unmanaged {
+                    public void CopyTo(int sourceStart, in Buffer<T> target, int targetStart, int count) {
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string bufferHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Buffer_1.hpp"));
+            string bufferSource = File.ReadAllText(Path.Combine(output.OutputPath, "Buffer_1.cpp"));
+
+            Assert.Contains("void CopyTo(int32_t sourceStart, const ::Buffer_1<T>& target, int32_t targetStart, int32_t count);", bufferHeader, StringComparison.Ordinal);
+            Assert.Contains("void Buffer_1<T>::CopyTo(int32_t sourceStart, const ::Buffer_1<T>& __in_parameter_1, int32_t targetStart, int32_t count)", bufferSource, StringComparison.Ordinal);
+            Assert.DoesNotContain("CopyTo(int32_t sourceStart, const ::Buffer_1<T>& __in_parameter_1, int32_t targetStart, int32_t count) const", bufferSource, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures generic interface methods are lowered through the sole concrete implementation instead of emitting illegal virtual member templates.
         /// </summary>
         [Fact]

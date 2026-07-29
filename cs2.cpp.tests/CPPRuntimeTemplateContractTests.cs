@@ -114,6 +114,10 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.DoesNotContain("runtime/native_datetime.hpp", source, StringComparison.Ordinal);
         Assert.Contains("runtime/native_timespan.hpp", source, StringComparison.Ordinal);
         Assert.Contains("std::chrono::steady_clock", source, StringComparison.Ordinal);
+        Assert.Contains("#if defined(__gamecube__)", source, StringComparison.Ordinal);
+        Assert.Contains("#include <ogc/lwp_watchdog.h>", source, StringComparison.Ordinal);
+        Assert.Contains("gettime()", source, StringComparison.Ordinal);
+        Assert.Contains("ticks_to_millisecs", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -354,10 +358,11 @@ public sealed class CPPRuntimeTemplateContractTests {
 
         string source = File.ReadAllText(templatePath);
 
-        Assert.Contains("std::vector<Subscriber> Subscribers", source, StringComparison.Ordinal);
+        Assert.Contains("std::vector<std::unique_ptr<Subscriber>> Subscribers", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("std::vector<Subscriber> Subscribers", source, StringComparison.Ordinal);
         Assert.Contains("Event& operator+=(void (*handler)(TArgs...))", source, StringComparison.Ordinal);
         Assert.Contains("std::array<void*, sizeof...(TArgs)> argumentPointers", source, StringComparison.Ordinal);
-        Assert.Contains("subscriber.Invoke(argumentPointers.data());", source, StringComparison.Ordinal);
+        Assert.Contains("subscriber->Invoke(argumentPointers.data());", source, StringComparison.Ordinal);
     }
 
     /// <summary>

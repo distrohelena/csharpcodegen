@@ -1043,10 +1043,7 @@ namespace cs2.cpp.tests {
                 """;
 
             ConversionOutput output = RunConversion(source);
-            string header = File.ReadAllText(Path.Combine(output.OutputPath, "StackGate.hpp"));
-
-            Assert.Contains("#include \"runtime/native_stack.hpp\"", header);
-            Assert.DoesNotContain("#include \"Stack.hpp\"", header, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"Stack.hpp\"", output.GeneratedText, StringComparison.Ordinal);
             Assert.Contains("new Stack<", output.GeneratedText);
             Assert.Contains("frames->Push(", output.GeneratedText);
             Assert.Contains("frames->Peek()", output.GeneratedText);
@@ -1192,6 +1189,33 @@ namespace cs2.cpp.tests {
             Assert.Contains("he_cpp_type_of<ContentManager>(\"ContentManager\")", output.GeneratedText);
             AssertRuntimeRequirement(output.Report, "NativeType");
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_type.hpp")));
+            string nativeTypeRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_type.hpp"));
+            Assert.Contains("bool get_IsEnum() const", nativeTypeRuntime, StringComparison.Ordinal);
+            Assert.Contains("std::is_enum_v<T>", nativeTypeRuntime, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic equality comparer hashing resolves to the bundled runtime comparer contract instead of assuming a missing generated implementation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEqualityComparerHashing_UsesRuntimeComparerHashContract() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ContentManager {
+                    public int Hash<T>(T value) {
+                        return EqualityComparer<T>.Default.GetHashCode(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
+            string equalityComparerRuntime = File.ReadAllText(Path.Combine(output.OutputPath, "system", "collections", "generic", "equality_comparer.hpp"));
+
+            Assert.Contains("system/collections/generic/equality_comparer.hpp", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("EqualityComparer<T>::get_Default()->GetHashCode(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t GetHashCode(T& value)", equalityComparerRuntime, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -2002,6 +2026,65 @@ namespace cs2.cpp.tests {
             Assert.Contains("return he_cpp_get_hash_code(value);", sourceOutput, StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_hash.hpp")));
             AssertRuntimeRequirement(output.Report, "NativeHashCode");
+        }
+
+        /// <summary>
+        /// Ensures HashSet references resolve to the shared runtime helper surface instead of a nonexistent generated header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithHashSetField_UsesRuntimeHashSetHeader() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class HashSetGate {
+                    readonly HashSet<int> values = new HashSet<int>();
+
+                    public bool Add(int value) {
+                        return values.Add(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "HashSetGate.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "HashSetGate.cpp"));
+
+            Assert.Contains("#include \"runtime/native_hash_set.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"HashSet_1.hpp\"", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("HashSet<int32_t>*", headerOutput, StringComparison.Ordinal);
+            Assert.Contains("new HashSet<int32_t>()", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_hash_set.hpp")));
+            AssertRuntimeRequirement(output.Report, "NativeHashSet");
+        }
+
+        /// <summary>
+        /// Ensures HashSet iteration dereferences the native pointer-backed runtime helper before emitting the C++ range-for expression.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithHashSetForEach_UsesDereferencedNativeHashSetRangeLoop() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class HashSetGate {
+                    readonly HashSet<int> values = new HashSet<int>();
+
+                    public int Sum() {
+                        int total = 0;
+                        foreach (int value in values) {
+                            total += value;
+                        }
+
+                        return total;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "HashSetGate.cpp"));
+
+            Assert.Contains("for (const auto& value : *this->values)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("for (const auto& value : this->values)", sourceOutput, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeHashSet");
         }
 
         /// <summary>
