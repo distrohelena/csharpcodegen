@@ -43,6 +43,7 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_STD_VECTOR {ToDefineValue(options.RuntimeProfile.UseStdVector)}",
                 $"#define HE_CPP_USE_STD_UNORDERED_MAP {ToDefineValue(options.RuntimeProfile.UseStdUnorderedMap)}",
                 $"#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES {ToDefineValue(UsesCompactNativeExceptionMessages(options))}",
+                $"#define HE_CPP_GENERATED_FUNCTION_PROFILING {ToDefineValue(CPPGeneratedFunctionProfilingOptionResolver.Resolve(options))}",
                 $"#define HE_CPP_USE_EXCEPTIONS {ToDefineValue(options.RuntimeProfile.UseExceptions)}",
                 $"#define HE_CPP_USE_RTTI {ToDefineValue(options.RuntimeProfile.UseRtti)}",
                 $"#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN {ToDefineValue(options.PlatformProfile.IsLittleEndian)}",

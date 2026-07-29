@@ -308,6 +308,8 @@ namespace cs2.core {
             func.AccessType = accessType;
             func.IsConstructor = true;
             func.Name = context.CurrentClass.Name;
+            func.SourceMethodKey = BuildSourceMethodKey(constructorSymbol);
+            func.SourceLocation = CreateSourceLocation(semantic, constructorSymbol, constructor);
 
             List<ConversionVariable> inParams = new List<ConversionVariable>();
 
@@ -381,6 +383,7 @@ namespace cs2.core {
             func.AccessType = access;
             func.Name = name;
             func.SourceMethodKey = BuildSourceMethodKey(methodSymbol);
+            func.SourceLocation = CreateSourceLocation(semantic, methodSymbol, method);
             func.Remap = mappedName;
             func.DeclarationType = type;
             func.IsAsync = MemberUtil.IsAsync(method.Modifiers);
@@ -472,6 +475,7 @@ namespace cs2.core {
             func.Name = $"operator{operatorDeclaration.OperatorToken.Text}";
             IMethodSymbol operatorMethodSymbol = semantic.GetDeclaredSymbol(operatorDeclaration) as IMethodSymbol;
             func.SourceMethodKey = BuildSourceMethodKey(operatorMethodSymbol);
+            func.SourceLocation = CreateSourceLocation(semantic, operatorMethodSymbol, operatorDeclaration);
             func.DeclarationType = type;
             ApplyFunctionReturnType(operatorDeclaration.ReturnType, semantic, func);
 
@@ -514,6 +518,7 @@ namespace cs2.core {
                 conversionOperatorDeclaration.ImplicitOrExplicitKeyword.Kind(),
                 methodSymbol?.ReturnType ?? semantic.GetTypeInfo(conversionOperatorDeclaration.Type).Type);
             func.SourceMethodKey = BuildSourceMethodKey(methodSymbol);
+            func.SourceLocation = CreateSourceLocation(semantic, methodSymbol, conversionOperatorDeclaration);
             func.DeclarationType = type;
             ApplyFunctionReturnType(conversionOperatorDeclaration.Type, semantic, func);
 
@@ -555,6 +560,19 @@ namespace cs2.core {
                 return string.Empty;
             }
 
+            return BuildSourceSymbolDisplay(methodSymbol);
+        }
+
+        /// <summary>
+        /// Builds one stable Roslyn-derived symbol display for maintained declaration identity and legacy method-key compatibility.
+        /// </summary>
+        /// <param name="symbol">Resolved source declaration symbol.</param>
+        /// <returns>Stable declaration identity string.</returns>
+        static string BuildSourceSymbolDisplay(ISymbol symbol) {
+            if (symbol == null) {
+                throw new ArgumentNullException(nameof(symbol));
+            }
+
             SymbolDisplayFormat displayFormat = new SymbolDisplayFormat(
                 globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
                 typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
@@ -562,7 +580,40 @@ namespace cs2.core {
                 memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
                 parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeParamsRefOut,
                 miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
-            return methodSymbol.OriginalDefinition.ToDisplayString(displayFormat);
+            return symbol.OriginalDefinition.ToDisplayString(displayFormat);
+        }
+
+        /// <summary>
+        /// Creates complete maintained C# source identity from a Roslyn declaration and rejects incomplete source metadata before it can reach a backend emitter.
+        /// </summary>
+        /// <param name="semantic">Semantic model that owns the source declaration.</param>
+        /// <param name="symbol">Resolved maintained declaration symbol.</param>
+        /// <param name="declaration">Syntax declaration that supplies the source file and line.</param>
+        /// <returns>A complete maintained source identity.</returns>
+        static ConversionSourceLocation CreateSourceLocation(SemanticModel semantic, ISymbol symbol, SyntaxNode declaration) {
+            if (semantic == null) {
+                throw new ArgumentNullException(nameof(semantic));
+            }
+
+            if (declaration == null) {
+                throw new ArgumentNullException(nameof(declaration));
+            }
+
+            if (symbol == null) {
+                throw new InvalidOperationException($"Unable to resolve maintained source symbol for '{declaration.Kind()}'.");
+            }
+
+            FileLinePositionSpan lineSpan = declaration.GetLocation().GetLineSpan();
+            if (string.IsNullOrWhiteSpace(lineSpan.Path)) {
+                throw new InvalidOperationException($"Maintained declaration '{BuildSourceSymbolDisplay(symbol)}' does not have a source file path.");
+            }
+
+            string assemblyName = semantic.Compilation.AssemblyName;
+            return new ConversionSourceLocation(
+                assemblyName,
+                BuildSourceSymbolDisplay(symbol),
+                lineSpan.Path,
+                lineSpan.StartLinePosition.Line + 1);
         }
 
         private static void ProcessDelegateDeclaration(SemanticModel semantic, DelegateDeclarationSyntax delegateDecl, ConversionContext context) {
@@ -744,6 +795,7 @@ namespace cs2.core {
             variable.Semantic = semantic;
             variable.Name = pMember.Identifier.ToString();
             variable.IsStatic = isStatic;
+            variable.SourceLocation = CreateSourceLocation(semantic, propertySymbol, pMember);
 
             variable.AccessType = accessType;
             if (propertySymbol?.ExplicitInterfaceImplementations.Length > 0) {
@@ -1165,6 +1217,8 @@ namespace cs2.core {
                     getter.DeclarationType = declarationType;
                     getter.Name = "get_Item";
                     getter.ReturnType = new VariableType(indexerType);
+                    getter.SourceMethodKey = BuildSourceSymbolDisplay(propertySymbol);
+                    getter.SourceLocation = CreateSourceLocation(semantic, propertySymbol, indexerDeclaration);
 
                     if (propertySymbol != null) {
                         if (propertySymbol.RefKind == RefKind.Ref) {
@@ -1192,6 +1246,8 @@ namespace cs2.core {
                     getter.DeclarationType = declarationType;
                     getter.Name = "get_Item";
                     getter.ReturnType = new VariableType(indexerType);
+                    getter.SourceMethodKey = BuildSourceSymbolDisplay(propertySymbol);
+                    getter.SourceLocation = CreateSourceLocation(semantic, propertySymbol, indexerDeclaration);
 
                     if (propertySymbol != null) {
                         if (propertySymbol.RefKind == RefKind.Ref) {
@@ -1219,6 +1275,8 @@ namespace cs2.core {
                     setter.DeclarationType = declarationType;
                     setter.Name = "set_Item";
                     setter.ReturnType = new VariableType(VariableDataType.Void, "void");
+                    setter.SourceMethodKey = BuildSourceSymbolDisplay(propertySymbol);
+                    setter.SourceLocation = CreateSourceLocation(semantic, propertySymbol, indexerDeclaration);
 
                     AddParameterList(semantic, indexerDeclaration.ParameterList.Parameters, setter.InParameters);
                     setter.InParameters.Add(new ConversionVariable {

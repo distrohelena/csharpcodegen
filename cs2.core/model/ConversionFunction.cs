@@ -11,6 +11,11 @@ namespace cs2.core {
         /// </summary>
         public string SourceMethodKey { get; set; }
 
+        /// <summary>
+        /// Gets or sets the maintained C# declaration identity for this function, or <c>null</c> when the function was explicitly synthesized without a source declaration.
+        /// </summary>
+        public ConversionSourceLocation SourceLocation { get; set; }
+
         public List<string>? GenericParameters { get; set; }
 
         public MemberAccessType AccessType { get; set; }

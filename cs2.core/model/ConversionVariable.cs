@@ -11,6 +11,11 @@ namespace cs2.core {
         /// </summary>
         public string RemapClass { get; set; }
 
+        /// <summary>
+        /// Gets or sets the maintained C# declaration identity for this variable, or <c>null</c> when the variable was explicitly synthesized without a source declaration.
+        /// </summary>
+        public ConversionSourceLocation SourceLocation { get; set; }
+
         public VariableType VarType {
             get { return varType; }
             set {
