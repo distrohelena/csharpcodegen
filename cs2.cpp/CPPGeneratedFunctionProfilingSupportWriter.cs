@@ -64,7 +64,7 @@ namespace cs2.cpp {
 
 #define HE_CPP_GENERATED_PROFILE_ALLOCATE(pointer, byteCount, name) TracyAllocN(pointer, byteCount, name)
 #define HE_CPP_GENERATED_PROFILE_FREE(pointer, name) TracyFreeN(pointer, name)
-#define HE_CPP_GENERATED_PROFILE_LOCKABLE(type, lock, name) TracyLockableN(type, lock, name)
+#define HE_CPP_GENERATED_PROFILE_LOCKABLE(type, lock, name) tracy::LockableCtx lock { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData sourceLocation { nullptr, name, TracyFile, TracyLine, 0 }; return &sourceLocation; }() }
 #define HE_CPP_GENERATED_PROFILE_BEFORE_LOCK(lock, queued) const bool queued = lock.BeforeLock()
 #define HE_CPP_GENERATED_PROFILE_AFTER_LOCK(lock, queued) if (queued) { lock.AfterLock(); }
 #define HE_CPP_GENERATED_PROFILE_AFTER_UNLOCK(lock) lock.AfterUnlock()
