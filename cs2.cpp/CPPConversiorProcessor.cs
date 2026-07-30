@@ -1005,7 +1005,12 @@ namespace cs2.cpp {
                  binaryExpression.IsKind(SyntaxKind.MultiplyExpression) ||
                  binaryExpression.IsKind(SyntaxKind.DivideExpression))) {
                 ITypeSymbol binaryTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
-                return IsCheckedIntegralTypeSymbol(binaryTypeSymbol);
+                if (!IsCheckedIntegralTypeSymbol(binaryTypeSymbol)) {
+                    return false;
+                }
+
+                return !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                    !IsSupportedCheckedAdditionExpression(semantic, binaryExpression);
             }
 
             if (node is AssignmentExpressionSyntax assignmentExpression &&
@@ -1032,7 +1037,9 @@ namespace cs2.cpp {
             if (node is CastExpressionSyntax castExpression) {
                 ITypeSymbol castTypeSymbol = semantic.GetTypeInfo(castExpression).Type;
                 ITypeSymbol operandTypeSymbol = semantic.GetTypeInfo(castExpression.Expression).Type;
-                return IsCheckedIntegralTypeSymbol(castTypeSymbol) && IsCheckedIntegralTypeSymbol(operandTypeSymbol);
+                return IsCheckedIntegralTypeSymbol(castTypeSymbol) &&
+                    IsCheckedIntegralTypeSymbol(operandTypeSymbol) &&
+                    !IsSupportedCheckedIntegralCastExpression(semantic, castExpression);
             }
 
             if (node is PrefixUnaryExpressionSyntax prefixUnaryExpression &&
@@ -1098,6 +1105,36 @@ namespace cs2.cpp {
                 SpecialType.System_UInt64 or
                 SpecialType.System_IntPtr or
                 SpecialType.System_UIntPtr;
+        }
+
+        /// <summary>
+        /// Determines whether checked binary addition uses one exact fixed-width integral type for both operands and the result.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve converted operand types.</param>
+        /// <param name="binaryExpression">Addition expression to classify.</param>
+        /// <returns><c>true</c> when the expression can use the native checked-add helper; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedAdditionExpression(SemanticModel semantic, BinaryExpressionSyntax binaryExpression) {
+            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).ConvertedType ?? semantic.GetTypeInfo(binaryExpression.Left).Type;
+            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).ConvertedType ?? semantic.GetTypeInfo(binaryExpression.Right).Type;
+            return IsSupportedCheckedMutationType(resultTypeSymbol) &&
+                leftTypeSymbol != null &&
+                rightTypeSymbol != null &&
+                leftTypeSymbol.SpecialType == resultTypeSymbol.SpecialType &&
+                rightTypeSymbol.SpecialType == resultTypeSymbol.SpecialType;
+        }
+
+        /// <summary>
+        /// Determines whether a checked cast converts directly between fixed-width integral primitive types supported by the native range helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve source and destination types.</param>
+        /// <param name="castExpression">Cast expression to classify.</param>
+        /// <returns><c>true</c> when the native checked-cast helper can preserve managed overflow behavior; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedIntegralCastExpression(SemanticModel semantic, CastExpressionSyntax castExpression) {
+            ITypeSymbol targetTypeSymbol = semantic.GetTypeInfo(castExpression).Type;
+            ITypeSymbol sourceTypeSymbol = semantic.GetTypeInfo(castExpression.Expression).Type ??
+                semantic.GetTypeInfo(castExpression.Expression).ConvertedType;
+            return IsSupportedCheckedMutationType(targetTypeSymbol) && IsSupportedCheckedMutationType(sourceTypeSymbol);
         }
 
         /// <summary>
@@ -8885,6 +8922,10 @@ namespace cs2.cpp {
                 return ProcessAsTypeExpression(semantic, context, binary, lines);
             }
 
+            if (TryProcessCheckedAdditionExpression(semantic, context, binary, lines, out ExpressionResult checkedAdditionResult)) {
+                return checkedAdditionResult;
+            }
+
             if (binary.IsKind(SyntaxKind.CoalesceExpression) &&
                 TryProcessStringCoalesceExpression(semantic, context, binary, lines, out ExpressionResult stringCoalesceResult)) {
                 return stringCoalesceResult;
@@ -11040,6 +11081,40 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Lowers supported checked integral addition through the native overflow-preserving helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the addition.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="binaryExpression">Candidate binary addition.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <param name="result">Receives the processed expression result when supported.</param>
+        /// <returns><c>true</c> when a checked helper call was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedAdditionExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binaryExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                !IsSupportedCheckedAdditionExpression(semantic, binaryExpression)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add("Number::CheckedAdd(");
+            ProcessExpression(semantic, context, binaryExpression.Left, lines);
+            lines.Add(", ");
+            ProcessExpression(semantic, context, binaryExpression.Right, lines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type));
+            return true;
+        }
+
+        /// <summary>
         /// Lowers one checked integral increment or decrement through a native helper that validates the boundary before mutation.
         /// </summary>
         /// <param name="semantic">Semantic model used to resolve the managed operand type.</param>
@@ -11472,6 +11547,19 @@ namespace cs2.cpp {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
             string castTargetTypeName = cppType.ToCPPString(context.Program) + (typeData.IsPointer ? "*" : string.Empty);
+            if (context is CPPLayerContext cppContext &&
+                cppContext.IsCheckedArithmetic &&
+                IsSupportedCheckedIntegralCastExpression(semantic, castExpr)) {
+                RegisterRuntimeRequirement("Number");
+                RegisterRuntimeRequirement("NativeExceptions");
+                lines.Add("Number::CheckedCast<");
+                lines.Add(castTargetTypeName);
+                lines.Add(">(");
+                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                lines.Add(")");
+                return new ExpressionResult(true, VariablePath.Unknown, varType);
+            }
+
             ITypeSymbol sourceExpressionTypeSymbol = semantic.GetTypeInfo(castExpr.Expression).Type ?? semantic.GetTypeInfo(castExpr.Expression).ConvertedType;
             bool sourceExpressionTypeKnown = sourceExpressionTypeSymbol != null;
             VariableType sourceType = sourceExpressionTypeKnown

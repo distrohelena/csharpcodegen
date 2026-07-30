@@ -9,6 +9,7 @@
 #include <limits>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 /// <summary>
 /// Provides lightweight managed numeric helpers used by transpiled static primitive calls.
@@ -198,14 +199,14 @@ public:
     }
 
     /// <summary>
-    /// Applies managed checked same-type integral addition and writes the result only after proving it is representable.
+    /// Applies managed checked same-type integral addition without mutating either operand.
     /// </summary>
-    /// <typeparam name="T">Integral type shared by the target and value.</typeparam>
-    /// <param name="left">Assignable target value.</param>
-    /// <param name="right">Value to add to the target.</param>
-    /// <returns>The validated sum written to the target.</returns>
+    /// <typeparam name="T">Integral type shared by both operands and the result.</typeparam>
+    /// <param name="left">Left value to add.</param>
+    /// <param name="right">Right value to add.</param>
+    /// <returns>The representable sum.</returns>
     template <typename T>
-    static T CheckedAddAssign(T& left, const T& right) {
+    static T CheckedAdd(const T& left, const T& right) {
         if constexpr (std::is_unsigned_v<T>) {
             if (right > std::numeric_limits<T>::max() - left) {
                 throw OverflowException();
@@ -217,7 +218,36 @@ public:
             }
         }
 
-        left = static_cast<T>(left + right);
+        return static_cast<T>(left + right);
+    }
+
+    /// <summary>
+    /// Applies a managed checked conversion between fixed-width integral types.
+    /// </summary>
+    /// <typeparam name="TTarget">Integral destination type.</typeparam>
+    /// <typeparam name="TSource">Integral source type.</typeparam>
+    /// <param name="value">Source value whose representability must be validated.</param>
+    /// <returns>The value converted to the destination type.</returns>
+    template <typename TTarget, typename TSource>
+    static TTarget CheckedCast(const TSource& value) {
+        static_assert(std::is_integral_v<TTarget> && std::is_integral_v<TSource>);
+        if (!std::in_range<TTarget>(value)) {
+            throw OverflowException();
+        }
+
+        return static_cast<TTarget>(value);
+    }
+
+    /// <summary>
+    /// Applies managed checked same-type integral addition and writes the result only after proving it is representable.
+    /// </summary>
+    /// <typeparam name="T">Integral type shared by the target and value.</typeparam>
+    /// <param name="left">Assignable target value.</param>
+    /// <param name="right">Value to add to the target.</param>
+    /// <returns>The validated sum written to the target.</returns>
+    template <typename T>
+    static T CheckedAddAssign(T& left, const T& right) {
+        left = CheckedAdd(left, right);
         return left;
     }
 

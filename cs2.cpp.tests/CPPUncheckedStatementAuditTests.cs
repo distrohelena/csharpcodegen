@@ -67,12 +67,12 @@ namespace cs2.cpp.tests {
         /// Ensures unsupported checked arithmetic remains an explicit conversion error instead of silently using ordinary C++ overflow behavior.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithUnsupportedCheckedAddition_ReportsCheckedArithmeticDiagnostic() {
+        public void WriteOutput_WithUnsupportedCheckedSubtraction_ReportsCheckedArithmeticDiagnostic() {
             string source = """
                 public class Counter {
                     public int Add(int value, int increment) {
                         checked {
-                            return value + increment;
+                            return value - increment;
                         }
                     }
                 }
@@ -81,7 +81,7 @@ namespace cs2.cpp.tests {
             RunConversion(source, out JsonDocument report);
 
             Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            AssertDiagnostic(report, "AddExpression");
+            AssertDiagnostic(report, "SubtractExpression");
         }
 
         /// <summary>
@@ -109,10 +109,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures checked arithmetic expressions receive the same unsupported-operation audit as checked statement blocks.
+        /// Ensures checked addition expressions lower through an overflow-preserving native helper.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithUnsupportedCheckedExpressionAddition_ReportsCheckedArithmeticDiagnostic() {
+        public void WriteOutput_WithCheckedExpressionAddition_UsesCheckedAddHelper() {
             string source = """
                 public class Counter {
                     public int Add(int value, int increment) {
@@ -121,10 +121,31 @@ namespace cs2.cpp.tests {
                 }
                 """;
 
-            RunConversion(source, out JsonDocument report);
+            string output = RunConversion(source, out JsonDocument report);
 
-            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            AssertDiagnostic(report, "AddExpression");
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("Number::CheckedAdd(value, increment)", output);
+            Assert.Contains("static T CheckedAdd(const T& left, const T& right)", output);
+        }
+
+        /// <summary>
+        /// Ensures checked integral casts validate representability before applying the native conversion.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedIntegralCast_UsesCheckedCastHelper() {
+            string source = """
+                public class IndexReader {
+                    public int Read(uint value, int index) {
+                        return checked((int)(value + (uint)index));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("Number::CheckedCast<int32_t>", output);
+            Assert.Contains("static TTarget CheckedCast(const TSource& value)", output);
         }
 
         /// <summary>
