@@ -126,9 +126,9 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            Assert.Contains("const auto __checked_left_00000000 = value;", output);
-            Assert.Contains("const auto __checked_right_00000001 = increment;", output);
-            Assert.Contains("Number::CheckedAdd(__checked_left_00000000, __checked_right_00000001)", output);
+            Assert.Contains("Number::CheckedAdd(value, increment)", output);
+            Assert.DoesNotContain("__checked_left_", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("__checked_right_", output, StringComparison.Ordinal);
             Assert.Contains("static T CheckedAdd(const T& left, const T& right)", output);
         }
 
@@ -150,6 +150,31 @@ namespace cs2.cpp.tests {
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
             Assert.Contains("Number::CheckedCast<int32_t>", output);
             Assert.Contains("static TTarget CheckedCast(const TSource& value)", output);
+        }
+
+        /// <summary>
+        /// Ensures a side-effect-free checked addition nested inside an invocation remains self-contained when its parent cannot host statement temporaries.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNestedPureCheckedAddition_EmitsInlineCheckedHelper() {
+            string source = """
+                public class IndexReader {
+                    static uint ReadSource(int index) {
+                        return (uint)index;
+                    }
+
+                    public int Read(int index) {
+                        return checked((int)ReadSource(index + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("Number::CheckedAdd(index, 1)", output);
+            Assert.DoesNotContain("__checked_left_", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("__checked_right_", output, StringComparison.Ordinal);
         }
 
         /// <summary>

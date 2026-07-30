@@ -1125,6 +1125,33 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Determines whether one checked-add operand can remain inline without changing C# evaluation order or exception ordering.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish storage reads from property dispatch.</param>
+        /// <param name="expression">Operand expression to classify.</param>
+        /// <returns><c>true</c> for literals and direct non-volatile storage reads; otherwise <c>false</c>.</returns>
+        static bool CanInlineCheckedAdditionOperand(SemanticModel semantic, ExpressionSyntax expression) {
+            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                expression = parenthesizedExpression.Expression;
+            }
+
+            if (expression is LiteralExpressionSyntax) {
+                return true;
+            }
+
+            if (expression is not IdentifierNameSyntax) {
+                return false;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is ILocalSymbol or IParameterSymbol) {
+                return true;
+            }
+
+            return symbol is IFieldSymbol fieldSymbol && !fieldSymbol.IsVolatile;
+        }
+
+        /// <summary>
         /// Determines whether a checked cast converts directly between fixed-width integral primitive types supported by the native range helper.
         /// </summary>
         /// <param name="semantic">Semantic model used to resolve source and destination types.</param>
@@ -11131,6 +11158,25 @@ namespace cs2.cpp {
             startDepth = context.DepthClass;
             ExpressionResult rightResult = ProcessExpression(semantic, context, binaryExpression.Right, rightLines);
             context.PopClass(startDepth);
+
+            bool canInlineOperands = CanInlineCheckedAdditionOperand(semantic, binaryExpression.Left) &&
+                CanInlineCheckedAdditionOperand(semantic, binaryExpression.Right) &&
+                (leftResult.BeforeLines == null || leftResult.BeforeLines.Count == 0) &&
+                (rightResult.BeforeLines == null || rightResult.BeforeLines.Count == 0) &&
+                (leftResult.AfterLines == null || leftResult.AfterLines.Count == 0) &&
+                (rightResult.AfterLines == null || rightResult.AfterLines.Count == 0);
+            if (canInlineOperands) {
+                lines.Add("Number::CheckedAdd(");
+                lines.AddRange(leftLines);
+                lines.Add(", ");
+                lines.AddRange(rightLines);
+                lines.Add(")");
+                result = new ExpressionResult(
+                    true,
+                    VariablePath.Unknown,
+                    VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type));
+                return true;
+            }
 
             List<string> beforeLines = new List<string>();
             if (leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0) {
