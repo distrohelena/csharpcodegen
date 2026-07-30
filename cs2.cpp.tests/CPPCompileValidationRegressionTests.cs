@@ -1369,6 +1369,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a free C++ operator qualifies an unqualified static property getter with the generated value type that owns it.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStaticPropertyInsideValueOperator_QualifiesOwningTypeGetter() {
+            string source = """
+                public readonly struct Scalar {
+                    readonly float value;
+
+                    public Scalar(float value) {
+                        this.value = value;
+                    }
+
+                    public static Scalar Zero => new Scalar(0f);
+
+                    public static Scalar operator /(Scalar left, Scalar right) {
+                        if (right.value == Zero.value) {
+                            return Zero;
+                        }
+
+                        return new Scalar(left.value / right.value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Scalar.cpp"));
+
+            Assert.Contains("Scalar::get_Zero()", sourceOutput);
+            Assert.DoesNotContain("== get_Zero()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return get_Zero();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures expression-bodied instance properties lower to getter calls instead of uninitialized backing fields.
         /// </summary>
         [Fact]

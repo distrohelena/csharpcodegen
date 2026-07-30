@@ -12696,10 +12696,15 @@ namespace cs2.cpp {
             ConversionVariable functionInVar,
             int matchingVariableCount,
             bool isQualifiedMemberName) {
+            ConversionFunction currentFunction = context?.GetCurrentFunction()?.Function;
+            bool isFreeOperatorContext = currentFunction != null &&
+                currentFunction.IsStatic &&
+                !currentFunction.IsConstructor &&
+                currentFunction.Name.StartsWith("operator", StringComparison.Ordinal);
             if (context == null ||
                 currentClass == null ||
                 symbol == null ||
-                classVar != null ||
+                (classVar != null && (!classVar.IsStatic || !isFreeOperatorContext)) ||
                 functionInVar != null ||
                 matchingVariableCount != 0 ||
                 isQualifiedMemberName) {
@@ -12723,9 +12728,12 @@ namespace cs2.cpp {
                 isStaticMember = methodSymbol.IsStatic;
             }
 
-            if (!isStaticMember ||
-                containingTypeSymbol == null ||
-                string.Equals(currentClass.Name, containingTypeSymbol.Name, StringComparison.Ordinal)) {
+            if (!isStaticMember || containingTypeSymbol == null) {
+                return string.Empty;
+            }
+
+            if (string.Equals(currentClass.Name, containingTypeSymbol.Name, StringComparison.Ordinal) &&
+                !isFreeOperatorContext) {
                 return string.Empty;
             }
 
