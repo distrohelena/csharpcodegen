@@ -1701,6 +1701,28 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures the native list surface supports the live read-only view call emitted for managed <c>List&lt;T&gt;.AsReadOnly</c> usage.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithListAsReadOnlyUsage_EmitsNativeLiveViewSurface() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Inventory {
+                    public IReadOnlyList<int> Freeze(List<int> values) {
+                        return values.AsReadOnly();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_list.hpp"));
+
+            Assert.Contains("return values->AsReadOnly();", output.GeneratedText);
+            Assert.Contains("List<T>* AsReadOnly()", runtimeHeader);
+        }
+
+        /// <summary>
         /// Ensures System.Collections.Generic.Dictionary&lt;TKey, TValue&gt; runtime output exposes managed indexer helpers required by converted element-access call sites.
         /// </summary>
         [Fact]

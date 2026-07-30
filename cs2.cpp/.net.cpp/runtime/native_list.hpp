@@ -64,6 +64,10 @@ public:
         this->clear();
     }
 
+    List<T>* AsReadOnly() {
+        return this;
+    }
+
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
         return std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); }) != this->end();
