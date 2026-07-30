@@ -8,6 +8,41 @@ namespace cs2.cpp.tests;
 /// </summary>
 public class CPPFeatureOwnedRuntimeRequirementTests {
     /// <summary>
+    /// Ensures an emitted general-purpose type keeps the native helper that its generated body actually uses even when every catalog owner feature is disabled.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenEmittedGeneralTypeUsesFeatureOwnedHelper_KeepsRequiredRuntimeFile() {
+        string source = """
+using System.Text;
+
+namespace ExampleEngine.Core {
+    public class GeneralPathBuilder {
+        public string Build(string value) {
+            StringBuilder builder = new StringBuilder();
+            builder.Append(value);
+            return builder.ToString();
+        }
+    }
+}
+""";
+
+        CPPBuildFeatureProfile featureProfile = CPPBuildFeatureProfile.CreateDefault()
+            .WithMode("debug_overlay", CPPFeatureMode.Disabled)
+            .WithMode("shaders", CPPFeatureMode.Disabled)
+            .WithMode("text_processing", CPPFeatureMode.Disabled);
+        string outputPath = RunConversion(source, featureProfile);
+
+        string stringBuilderPath = Path.Combine(outputPath, "system", "text", "string-builder.hpp");
+        string reportPath = Path.Combine(outputPath, "cpp-conversion-report.json");
+        using JsonDocument report = JsonDocument.Parse(File.ReadAllText(reportPath));
+
+        Assert.True(File.Exists(stringBuilderPath));
+        Assert.Contains(
+            report.RootElement.GetProperty("registeredRuntimeRequirements").EnumerateArray(),
+            requirement => requirement.GetString() == "StringBuilder");
+    }
+
+    /// <summary>
     /// Ensures shader-only text helpers are removed from generated output when shaders are force-disabled.
     /// </summary>
     [Fact]
@@ -15,8 +50,8 @@ public class CPPFeatureOwnedRuntimeRequirementTests {
         string source = """
 using System.IO;
 
-namespace ExampleEngine.Core.Shaders.Compilation {
-    public class ShaderConditionalPreprocessor {
+namespace ExampleEngine {
+    public class ShaderAsset {
         public string Filter(string source) {
             using StringReader reader = new StringReader(source);
             return source;

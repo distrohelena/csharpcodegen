@@ -134,6 +134,10 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (currentTypeScope != null) {
+                return true;
+            }
+
             if (definition.OwningFeatureIds.Count == 0) {
                 return true;
             }
