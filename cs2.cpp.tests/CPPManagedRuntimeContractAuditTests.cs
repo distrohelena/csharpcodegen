@@ -1783,6 +1783,18 @@ namespace cs2.cpp.tests {
                     public ReadOnlyCollection<int> FreezeConcrete(List<int> values) {
                         return values.AsReadOnly();
                     }
+
+                    public bool Contains(List<int> values, int value) {
+                        return values.AsReadOnly().Contains(value);
+                    }
+
+                    public int IndexOf(List<int> values, int value) {
+                        return values.AsReadOnly().IndexOf(value);
+                    }
+
+                    public void CopyTo(List<int> values, int[] destination) {
+                        values.AsReadOnly().CopyTo(destination, 0);
+                    }
                 }
                 """;
 
@@ -1797,6 +1809,11 @@ namespace cs2.cpp.tests {
             Assert.Contains("ReadOnlyCollection<T>* AsReadOnly();", runtimeHeader);
             Assert.Contains("ReadOnlyCollection<T>* List<T>::AsReadOnly()", runtimeHeader);
             Assert.Contains("return new ReadOnlyCollection<T>(this);", runtimeHeader);
+            Assert.DoesNotContain("ReadOnlyCollection_1.hpp", output.GeneratedText, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "ReadOnlyCollection_1.hpp")));
+            Assert.Contains("bool Contains(const T& value) const", runtimeHeader);
+            Assert.Contains("int32_t IndexOf(const T& value) const", runtimeHeader);
+            Assert.Contains("void CopyTo(Array<T>* array, int32_t arrayIndex) const", runtimeHeader);
             Assert.Contains("throw NotSupportedException();", runtimeHeader);
             Assert.DoesNotContain("\n    List<T>* AsReadOnly()", runtimeHeader, StringComparison.Ordinal);
             Assert.DoesNotContain("return this;", runtimeHeader, StringComparison.Ordinal);

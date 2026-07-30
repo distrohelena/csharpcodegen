@@ -230,9 +230,11 @@ namespace cs2.cpp {
                 return;
             }
 
-            string referencedTypeName = variableType.GenericArgs.Count > 0
+            string qualifiedTypeName = GetReferencedTypeName(variableType);
+            string referencedTypeName = variableType.GenericArgs.Count > 0 &&
+                !qualifiedTypeName.Contains('<', StringComparison.Ordinal)
                 ? variableType.ToString()
-                : GetReferencedTypeName(variableType);
+                : qualifiedTypeName;
 
             if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(referencedTypeName) &&

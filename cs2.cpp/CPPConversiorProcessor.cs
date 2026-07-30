@@ -1115,8 +1115,8 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when the expression can use the native checked-add helper; otherwise <c>false</c>.</returns>
         static bool IsSupportedCheckedAdditionExpression(SemanticModel semantic, BinaryExpressionSyntax binaryExpression) {
             ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
-            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).ConvertedType ?? semantic.GetTypeInfo(binaryExpression.Left).Type;
-            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).ConvertedType ?? semantic.GetTypeInfo(binaryExpression.Right).Type;
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).Type;
+            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).Type;
             return IsSupportedCheckedMutationType(resultTypeSymbol) &&
                 leftTypeSymbol != null &&
                 rightTypeSymbol != null &&
@@ -1170,6 +1170,10 @@ namespace cs2.cpp {
         /// <returns><c>true</c> when the symbol is an auto-property without authored accessor bodies; otherwise <c>false</c>.</returns>
         static bool IsNativeBackedAutoProperty(ISymbol symbol) {
             if (symbol is not IPropertySymbol propertySymbol) {
+                return false;
+            }
+
+            if (propertySymbol.IsAbstract || propertySymbol.ContainingType?.TypeKind == TypeKind.Interface) {
                 return false;
             }
 
@@ -1502,20 +1506,35 @@ namespace cs2.cpp {
             if (targetResult.BeforeLines != null && targetResult.BeforeLines.Count > 0) {
                 lines.AddRange(targetResult.BeforeLines);
             }
+            string targetTemporaryName = CreateTemporaryName("__checked_target");
+            lines.Add($"auto& {targetTemporaryName} = ");
+            lines.AddRange(targetLines);
+            lines.Add(";\n");
             if (valueResult.BeforeLines != null && valueResult.BeforeLines.Count > 0) {
                 lines.AddRange(valueResult.BeforeLines);
             }
+            string valueTemporaryName = CreateTemporaryName("__checked_value");
+            lines.Add($"const auto {valueTemporaryName} = ");
+            lines.AddRange(valueLines);
+            lines.Add(";\n");
 
             RegisterRuntimeRequirement("Number");
             RegisterRuntimeRequirement("NativeExceptions");
             lines.Add("Number::CheckedAddAssign(");
-            lines.AddRange(targetLines);
+            lines.Add(targetTemporaryName);
             lines.Add(", ");
-            lines.AddRange(valueLines);
+            lines.Add(valueTemporaryName);
             lines.Add(")");
-            if (valueResult.AfterLines != null && valueResult.AfterLines.Count > 0) {
+            bool hasTargetAfterLines = targetResult.AfterLines != null && targetResult.AfterLines.Count > 0;
+            bool hasValueAfterLines = valueResult.AfterLines != null && valueResult.AfterLines.Count > 0;
+            if (hasTargetAfterLines || hasValueAfterLines) {
                 lines.Add(";\n");
-                lines.AddRange(valueResult.AfterLines);
+                if (hasTargetAfterLines) {
+                    lines.AddRange(targetResult.AfterLines);
+                }
+                if (hasValueAfterLines) {
+                    lines.AddRange(valueResult.AfterLines);
+                }
             }
             return true;
         }
@@ -8813,7 +8832,6 @@ namespace cs2.cpp {
             string name = namedTypeSymbol.Name;
             string displayText = namedTypeSymbol.ToDisplayString();
             return string.Equals(name, "List", StringComparison.Ordinal) ||
-                string.Equals(name, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "Dictionary", StringComparison.Ordinal) ||
                 string.Equals(name, "HashSet", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyList", StringComparison.Ordinal) ||
@@ -8840,7 +8858,6 @@ namespace cs2.cpp {
             string name = namedTypeSymbol.Name;
             string displayText = namedTypeSymbol.ToDisplayString();
             return string.Equals(name, "List", StringComparison.Ordinal) ||
-                string.Equals(name, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyList", StringComparison.Ordinal) ||
                 string.Equals(name, "ICollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyCollection", StringComparison.Ordinal) ||
@@ -9460,7 +9477,6 @@ namespace cs2.cpp {
             string receiverName = namedTypeSymbol.Name;
             string receiverDisplayName = namedTypeSymbol.ToDisplayString();
             return string.Equals(receiverName, "List", StringComparison.Ordinal) ||
-                string.Equals(receiverName, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
@@ -11105,12 +11121,51 @@ namespace cs2.cpp {
 
             RegisterRuntimeRequirement("Number");
             RegisterRuntimeRequirement("NativeExceptions");
+
+            List<string> leftLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binaryExpression.Left, leftLines);
+            context.PopClass(startDepth);
+
+            List<string> rightLines = new List<string>();
+            startDepth = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binaryExpression.Right, rightLines);
+            context.PopClass(startDepth);
+
+            List<string> beforeLines = new List<string>();
+            if (leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(leftResult.BeforeLines);
+            }
+            string leftTemporaryName = CreateTemporaryName("__checked_left");
+            beforeLines.Add($"const auto {leftTemporaryName} = ");
+            beforeLines.AddRange(leftLines);
+            beforeLines.Add(";\n");
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(rightResult.BeforeLines);
+            }
+            string rightTemporaryName = CreateTemporaryName("__checked_right");
+            beforeLines.Add($"const auto {rightTemporaryName} = ");
+            beforeLines.AddRange(rightLines);
+            beforeLines.Add(";\n");
+
             lines.Add("Number::CheckedAdd(");
-            ProcessExpression(semantic, context, binaryExpression.Left, lines);
+            lines.Add(leftTemporaryName);
             lines.Add(", ");
-            ProcessExpression(semantic, context, binaryExpression.Right, lines);
+            lines.Add(rightTemporaryName);
             lines.Add(")");
-            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type));
+            List<string> afterLines = new List<string>();
+            if (leftResult.AfterLines != null && leftResult.AfterLines.Count > 0) {
+                afterLines.AddRange(leftResult.AfterLines);
+            }
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                afterLines.AddRange(rightResult.AfterLines);
+            }
+            result = new ExpressionResult(
+                true,
+                VariablePath.Unknown,
+                VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type),
+                beforeLines,
+                afterLines);
             return true;
         }
 
@@ -12562,7 +12617,7 @@ namespace cs2.cpp {
                             parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
                             parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal);
                         bool isReadOnlyCollection =
-                            string.Equals(parsedType.TypeName, "ReadOnlyCollection", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.QualifiedTypeName, "System.Collections.ObjectModel.ReadOnlyCollection", StringComparison.Ordinal) ||
                             parsedType.QualifiedTypeName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal);
                         if (isReadOnlyCollection) {
                             return CreateConvertedGenericType(parsedType, "ReadOnlyCollection");
@@ -14811,7 +14866,6 @@ namespace cs2.cpp {
             string receiverName = namedTypeSymbol.Name;
             string receiverDisplayName = namedTypeSymbol.ToDisplayString();
             if (string.Equals(receiverName, "List", StringComparison.Ordinal) ||
-                string.Equals(receiverName, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
@@ -14845,7 +14899,9 @@ namespace cs2.cpp {
                 convertedGenericArguments.Add(convertedGenericArgument);
             }
 
-            return new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+            VariableType convertedType = new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+            convertedType.QualifiedTypeName = parsedType.QualifiedTypeName;
+            return convertedType;
         }
 
         string RenderConvertedGenericArgumentType(SemanticModel semantic, LayerContext context, TypeSyntax typeSyntax) {

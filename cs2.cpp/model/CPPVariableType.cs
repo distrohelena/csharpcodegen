@@ -239,7 +239,7 @@ namespace cs2.cpp {
             }
 
             if (varType.Type == VariableDataType.List) {
-                if (string.Equals(varType.TypeName, "ReadOnlyCollection", StringComparison.Ordinal) ||
+                if (string.Equals(varType.QualifiedTypeName, "System.Collections.ObjectModel.ReadOnlyCollection", StringComparison.Ordinal) ||
                     varType.QualifiedTypeName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal)) {
                     return "ReadOnlyCollection";
                 }

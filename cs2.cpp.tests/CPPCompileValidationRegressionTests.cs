@@ -6472,6 +6472,34 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures user-defined generic types named ReadOnlyCollection remain generated types instead of mapping to the native list wrapper.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUserReadOnlyCollectionType_PreservesResolvedTypeIdentity() {
+            string source = """
+                namespace Game {
+                    public class ReadOnlyCollection<T> {
+                    }
+
+                    public class Fixture {
+                        public ReadOnlyCollection<int> Create() {
+                            return new ReadOnlyCollection<int>();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "ReadOnlyCollection_1.hpp")));
+            Assert.Contains("#include \"ReadOnlyCollection_1.hpp\"", sourceOutput);
+            Assert.DoesNotContain("runtime/native_list.hpp", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("runtime/native_list.hpp", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
         /// </summary>
         [Fact]

@@ -54,7 +54,9 @@ namespace cs2.cpp.tests {
             AssertNoDiagnostic(report, "CheckedStatement");
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
             Assert.Contains("Number::CheckedPostIncrement(this->Value);", output);
-            Assert.Contains("Number::CheckedAddAssign(this->Total, amount);", output);
+            Assert.Contains("auto& __checked_target_00000000 = this->Total;", output);
+            Assert.Contains("const auto __checked_value_00000001 = amount;", output);
+            Assert.Contains("Number::CheckedAddAssign(__checked_target_00000000, __checked_value_00000001);", output);
             Assert.Contains("static T CheckedPostIncrement(T& value)", output);
             Assert.Contains("static T CheckedAddAssign(T& left, const T& right)", output);
             Assert.Contains("if (value == std::numeric_limits<T>::max())", output);
@@ -124,7 +126,9 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            Assert.Contains("Number::CheckedAdd(value, increment)", output);
+            Assert.Contains("const auto __checked_left_00000000 = value;", output);
+            Assert.Contains("const auto __checked_right_00000001 = increment;", output);
+            Assert.Contains("Number::CheckedAdd(__checked_left_00000000, __checked_right_00000001)", output);
             Assert.Contains("static T CheckedAdd(const T& left, const T& right)", output);
         }
 
@@ -146,6 +150,115 @@ namespace cs2.cpp.tests {
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
             Assert.Contains("Number::CheckedCast<int32_t>", output);
             Assert.Contains("static TTarget CheckedCast(const TSource& value)", output);
+        }
+
+        /// <summary>
+        /// Ensures mixed-width checked addition remains an explicit diagnostic until operand promotion is emitted deliberately.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMixedWidthCheckedAddition_ReportsCheckedArithmeticDiagnostic() {
+            string source = """
+                public class Counter {
+                    public long Add(long left, int right) {
+                        return checked(left + right);
+                    }
+                }
+                """;
+
+            RunConversion(source, out JsonDocument report);
+
+            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            AssertDiagnostic(report, "AddExpression");
+        }
+
+        /// <summary>
+        /// Ensures checked addition evaluates the left operand before the right operand and invokes the helper only after both values are captured.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSideEffectingCheckedAddition_CapturesOperandsLeftToRight() {
+            string source = """
+                public class Counter {
+                    int ReadLeft() {
+                        return 1;
+                    }
+
+                    int ReadRight() {
+                        return 2;
+                    }
+
+                    public int Add() {
+                        return checked(ReadLeft() + ReadRight());
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int leftIndex = output.IndexOf("this->ReadLeft()", StringComparison.Ordinal);
+            int rightIndex = output.IndexOf("this->ReadRight()", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
+            Assert.True(leftIndex >= 0 && leftIndex < rightIndex);
+            Assert.True(rightIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures checked compound assignment captures an indexed target before evaluating its right-hand value.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSideEffectingCheckedAddAssignment_CapturesTargetBeforeValue() {
+            string source = """
+                public class Counter {
+                    int[] Values = new int[1];
+
+                    int ReadIndex() {
+                        return 0;
+                    }
+
+                    int ReadValue() {
+                        return 1;
+                    }
+
+                    public void Add() {
+                        checked {
+                            Values[ReadIndex()] += ReadValue();
+                        }
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int targetIndex = output.IndexOf("this->ReadIndex()", StringComparison.Ordinal);
+            int valueIndex = output.IndexOf("this->ReadValue()", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAddAssign(__checked_target_", StringComparison.Ordinal);
+            Assert.Contains("auto& __checked_target_", output);
+            Assert.True(targetIndex >= 0 && targetIndex < valueIndex);
+            Assert.True(valueIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures abstract properties are dispatched members rather than native storage accepted by checked by-reference helpers.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedAbstractPropertyMutation_ReportsCheckedMutationDiagnostic() {
+            string source = """
+                public abstract class Counter {
+                    protected abstract int Value { get; set; }
+
+                    public void Increment() {
+                        checked {
+                            Value++;
+                        }
+                    }
+                }
+                """;
+
+            RunConversion(source, out JsonDocument report);
+
+            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            AssertDiagnostic(report, "PostIncrementExpression");
         }
 
         /// <summary>

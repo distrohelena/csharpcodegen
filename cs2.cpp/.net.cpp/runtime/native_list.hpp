@@ -266,6 +266,51 @@ public:
     }
 
     /// <summary>
+    /// Determines whether the current source list contains one value.
+    /// </summary>
+    bool Contains(const T& value) const {
+        NativeListEqual<T> equal;
+        return std::find_if(Source->begin(), Source->end(), [&](const T& candidate) { return equal(candidate, value); }) != Source->end();
+    }
+
+    /// <summary>
+    /// Returns the first index containing one value, or negative one when no element matches.
+    /// </summary>
+    int32_t IndexOf(const T& value) const {
+        NativeListEqual<T> equal;
+        typename IReadOnlyList<T>::ConstIterator iterator = std::find_if(
+            Source->begin(),
+            Source->end(),
+            [&](const T& candidate) { return equal(candidate, value); });
+        if (iterator == Source->end()) {
+            return -1;
+        }
+
+        return static_cast<int32_t>(std::distance(Source->begin(), iterator));
+    }
+
+    /// <summary>
+    /// Copies the current live sequence into a destination managed array beginning at the requested index.
+    /// </summary>
+    void CopyTo(Array<T>* array, int32_t arrayIndex) const {
+        if (array == nullptr) {
+            throw ArgumentNullException("array");
+        }
+        if (arrayIndex < 0) {
+            throw ArgumentOutOfRangeException("arrayIndex");
+        }
+
+        int32_t count = get_Count();
+        if (arrayIndex > array->Length - count) {
+            throw ArgumentException("The destination array does not have enough available elements.");
+        }
+
+        for (int32_t index = 0; index < count; index++) {
+            (*array)[arrayIndex + index] = get_Item(index);
+        }
+    }
+
+    /// <summary>
     /// Returns the beginning of the source list's current sequence.
     /// </summary>
     typename IReadOnlyList<T>::ConstIterator begin() const override {
