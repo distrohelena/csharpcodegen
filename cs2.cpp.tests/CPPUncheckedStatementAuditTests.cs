@@ -31,7 +31,7 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures a checked counter block emits its enclosed mutation instead of dropping the block behind an unsupported diagnostic.
+        /// Ensures a checked counter block routes its mutation through an overflow-checking native helper.
         /// </summary>
         [Fact]
         public void WriteOutput_WithCheckedBlock_DoesNotReportCheckedStatement() {
@@ -50,7 +50,33 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             AssertNoDiagnostic(report, "CheckedStatement");
-            Assert.Contains("this->value++;", output);
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("Number::CheckedPostIncrement(this->value);", output);
+            Assert.Contains("static T CheckedPostIncrement(T& value)", output);
+            Assert.Contains("if (value == std::numeric_limits<T>::max())", output);
+            Assert.Contains("throw OverflowException();", output);
+            Assert.DoesNotContain("this->value++;", output, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures unsupported checked arithmetic remains an explicit conversion error instead of silently using ordinary C++ overflow behavior.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUnsupportedCheckedAddition_ReportsCheckedArithmeticDiagnostic() {
+            string source = """
+                public class Counter {
+                    public int Add(int value, int increment) {
+                        checked {
+                            return value + increment;
+                        }
+                    }
+                }
+                """;
+
+            RunConversion(source, out JsonDocument report);
+
+            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            AssertDiagnostic(report, "AddExpression");
         }
 
         /// <summary>
@@ -125,6 +151,23 @@ namespace cs2.cpp.tests {
                 string actualSyntaxKind = diagnostic.GetProperty("syntaxKind").GetString() ?? string.Empty;
                 Assert.NotEqual(syntaxKind, actualSyntaxKind);
             }
+        }
+
+        /// <summary>
+        /// Asserts that the conversion report contains at least one error for the supplied checked arithmetic syntax.
+        /// </summary>
+        /// <param name="report">Parsed conversion report to inspect.</param>
+        /// <param name="syntaxKind">Roslyn syntax kind that must be reported.</param>
+        static void AssertDiagnostic(JsonDocument report, string syntaxKind) {
+            foreach (JsonElement diagnostic in report.RootElement.GetProperty("diagnostics").EnumerateArray()) {
+                string actualSyntaxKind = diagnostic.GetProperty("syntaxKind").GetString() ?? string.Empty;
+                if (string.Equals(actualSyntaxKind, syntaxKind, StringComparison.Ordinal)) {
+                    Assert.Equal("Error", diagnostic.GetProperty("severity").GetString());
+                    return;
+                }
+            }
+
+            Assert.Fail($"Expected a conversion diagnostic for checked arithmetic syntax '{syntaxKind}'.");
         }
     }
 }

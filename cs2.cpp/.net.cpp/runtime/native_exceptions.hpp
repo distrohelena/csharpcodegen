@@ -185,6 +185,36 @@ public:
     }
 };
 
+/// <summary>
+/// Represents a managed checked-arithmetic result that exceeds its destination type range.
+/// </summary>
+class OverflowException : public Exception {
+public:
+    /// <summary>
+    /// Creates a compact overflow exception with the canonical runtime message.
+    /// </summary>
+    OverflowException() noexcept
+        : Exception() {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+
+    /// <summary>
+    /// Creates a compact overflow exception while discarding the supplied message payload.
+    /// </summary>
+    explicit OverflowException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+
+    /// <summary>
+    /// Creates a compact overflow exception while discarding the supplied managed string payload.
+    /// </summary>
+    explicit OverflowException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+};
+
 class EndOfStreamException : public Exception {
 public:
     EndOfStreamException() noexcept
@@ -412,6 +442,33 @@ public:
     }
 
     explicit DivideByZeroException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+/// <summary>
+/// Represents a managed checked-arithmetic result that exceeds its destination type range.
+/// </summary>
+class OverflowException : public Exception {
+public:
+    /// <summary>
+    /// Creates an overflow exception with the canonical runtime message.
+    /// </summary>
+    OverflowException()
+        : Exception("Arithmetic operation resulted in an overflow.") {
+    }
+
+    /// <summary>
+    /// Creates an overflow exception with an optional caller-provided message.
+    /// </summary>
+    explicit OverflowException(const char* message)
+        : Exception(message == nullptr ? "Arithmetic operation resulted in an overflow." : message) {
+    }
+
+    /// <summary>
+    /// Creates an overflow exception with a caller-provided managed string message.
+    /// </summary>
+    explicit OverflowException(const std::string& message)
         : Exception(message) {
     }
 };

@@ -883,7 +883,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Lowers a C# checked-context statement by preserving its lexical scope and emitting the enclosed operations through the native arithmetic backend.
+        /// Lowers a C# checked-context statement while carrying its overflow policy into supported native arithmetic operations.
         /// </summary>
         /// <param name="semantic">Semantic model associated with the unchecked statement.</param>
         /// <param name="context">Current lowering context.</param>
@@ -897,10 +897,149 @@ namespace cs2.cpp {
             CheckedStatementSyntax checkedContextStatement,
             List<string> lines,
             int depth) {
+            if (context is not CPPLayerContext cppContext) {
+                throw new InvalidOperationException("Checked arithmetic lowering requires a C++ layer context.");
+            }
+
+            bool isChecked = checkedContextStatement.IsKind(SyntaxKind.CheckedStatement);
+            if (isChecked) {
+                ReportUnsupportedCheckedArithmetic(semantic, context, checkedContextStatement.Block);
+            }
+
             lines.Add("{\n");
-            ExpressionResult result = ProcessBlock(semantic, context, checkedContextStatement.Block, lines, depth);
-            lines.Add("}\n");
-            return result;
+            cppContext.PushCheckedArithmeticContext(isChecked);
+            try {
+                ExpressionResult result = ProcessBlock(semantic, context, checkedContextStatement.Block, lines, depth);
+                lines.Add("}\n");
+                return result;
+            } finally {
+                cppContext.PopCheckedArithmeticContext();
+            }
+        }
+
+        /// <summary>
+        /// Reports overflow-sensitive checked operations that do not yet have a semantics-preserving native helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish integral arithmetic from unaffected operators.</param>
+        /// <param name="context">Current lowering context used to associate diagnostics with the active member.</param>
+        /// <param name="block">Checked block whose direct lexical operations should be audited.</param>
+        void ReportUnsupportedCheckedArithmetic(SemanticModel semantic, LayerContext context, BlockSyntax block) {
+            foreach (SyntaxNode node in block.DescendantNodes(descendIntoChildren: candidate => candidate is not CheckedStatementSyntax)) {
+                if (IsUnsupportedCheckedArithmeticNode(semantic, node)) {
+                    ReportUnsupportedNode(
+                        context,
+                        node,
+                        $"The C++ backend does not yet preserve managed overflow behavior for checked arithmetic syntax '{node.Kind()}'.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Determines whether one syntax node performs checked integral arithmetic without a native overflow-preserving lowering.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve operand and result types.</param>
+        /// <param name="node">Candidate syntax node inside a checked block.</param>
+        /// <returns><c>true</c> when the operation must remain an explicit conversion error; otherwise <c>false</c>.</returns>
+        static bool IsUnsupportedCheckedArithmeticNode(SemanticModel semantic, SyntaxNode node) {
+            if (node is BinaryExpressionSyntax binaryExpression &&
+                (binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.SubtractExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.MultiplyExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.DivideExpression))) {
+                ITypeSymbol binaryTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
+                return IsCheckedIntegralTypeSymbol(binaryTypeSymbol);
+            }
+
+            if (node is AssignmentExpressionSyntax assignmentExpression &&
+                (assignmentExpression.IsKind(SyntaxKind.AddAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.SubtractAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.MultiplyAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.DivideAssignmentExpression))) {
+                ITypeSymbol assignmentTypeSymbol = semantic.GetTypeInfo(assignmentExpression.Left).Type;
+                return IsCheckedIntegralTypeSymbol(assignmentTypeSymbol);
+            }
+
+            if (node is CastExpressionSyntax castExpression) {
+                ITypeSymbol castTypeSymbol = semantic.GetTypeInfo(castExpression).Type;
+                ITypeSymbol operandTypeSymbol = semantic.GetTypeInfo(castExpression.Expression).Type;
+                return IsCheckedIntegralTypeSymbol(castTypeSymbol) && IsCheckedIntegralTypeSymbol(operandTypeSymbol);
+            }
+
+            if (node is PrefixUnaryExpressionSyntax prefixUnaryExpression &&
+                prefixUnaryExpression.IsKind(SyntaxKind.UnaryMinusExpression)) {
+                ITypeSymbol prefixTypeSymbol = semantic.GetTypeInfo(prefixUnaryExpression).Type;
+                return IsCheckedIntegralTypeSymbol(prefixTypeSymbol);
+            }
+
+            if (node is PrefixUnaryExpressionSyntax checkedPrefixMutation &&
+                (checkedPrefixMutation.IsKind(SyntaxKind.PreIncrementExpression) ||
+                 checkedPrefixMutation.IsKind(SyntaxKind.PreDecrementExpression))) {
+                ITypeSymbol mutationTypeSymbol = semantic.GetTypeInfo(checkedPrefixMutation.Operand).Type;
+                return IsCheckedIntegralTypeSymbol(mutationTypeSymbol) &&
+                    (!IsSupportedCheckedMutationType(mutationTypeSymbol) ||
+                     !IsSupportedCheckedMutationOperand(semantic, checkedPrefixMutation.Operand));
+            }
+
+            if (node is PostfixUnaryExpressionSyntax checkedPostfixMutation &&
+                (checkedPostfixMutation.IsKind(SyntaxKind.PostIncrementExpression) ||
+                 checkedPostfixMutation.IsKind(SyntaxKind.PostDecrementExpression))) {
+                ITypeSymbol mutationTypeSymbol = semantic.GetTypeInfo(checkedPostfixMutation.Operand).Type;
+                return IsCheckedIntegralTypeSymbol(mutationTypeSymbol) &&
+                    (!IsSupportedCheckedMutationType(mutationTypeSymbol) ||
+                     !IsSupportedCheckedMutationOperand(semantic, checkedPostfixMutation.Operand));
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether a managed type participates in checked integral arithmetic, including native-sized integers and enum conversions.
+        /// </summary>
+        /// <param name="typeSymbol">Managed arithmetic type to classify.</param>
+        /// <returns><c>true</c> when checked overflow rules apply to the type; otherwise <c>false</c>.</returns>
+        static bool IsCheckedIntegralTypeSymbol(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            return IsIntegralLikeTypeSymbol(typeSymbol) ||
+                typeSymbol.SpecialType == SpecialType.System_IntPtr ||
+                typeSymbol.SpecialType == SpecialType.System_UIntPtr;
+        }
+
+        /// <summary>
+        /// Determines whether an integral mutation maps to an exact-width native type supported by the checked increment helpers.
+        /// </summary>
+        /// <param name="typeSymbol">Managed mutation operand type.</param>
+        /// <returns><c>true</c> for fixed-width signed and unsigned integer primitives; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedMutationType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            return typeSymbol.SpecialType is
+                SpecialType.System_Byte or
+                SpecialType.System_SByte or
+                SpecialType.System_Int16 or
+                SpecialType.System_UInt16 or
+                SpecialType.System_Int32 or
+                SpecialType.System_UInt32 or
+                SpecialType.System_Int64 or
+                SpecialType.System_UInt64 or
+                SpecialType.System_IntPtr or
+                SpecialType.System_UIntPtr;
+        }
+
+        /// <summary>
+        /// Determines whether one checked mutation operand lowers to a stable native lvalue that can be passed by reference.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the operand symbol.</param>
+        /// <param name="operandExpression">Assignable mutation operand to inspect.</param>
+        /// <returns><c>true</c> for locals, parameters, fields, and indexed storage; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedMutationOperand(SemanticModel semantic, ExpressionSyntax operandExpression) {
+            ISymbol operandSymbol = semantic.GetSymbolInfo(operandExpression).Symbol;
+            return operandSymbol is ILocalSymbol or IParameterSymbol or IFieldSymbol ||
+                operandExpression is ElementAccessExpressionSyntax;
         }
 
         /// <summary>
@@ -10676,6 +10815,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessPostfixUnaryExpression(SemanticModel semantic, LayerContext context, PostfixUnaryExpressionSyntax postfixUnary, List<string> lines) {
+            if (TryProcessCheckedUnaryMutation(semantic, context, postfixUnary, postfixUnary.Operand, lines, out _)) {
+                return;
+            }
+
             // Process the operand first
             int start = context.DepthClass;
             ProcessExpression(semantic, context, postfixUnary.Operand, lines);
@@ -10686,6 +10829,10 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessPrefixUnaryExpression(SemanticModel semantic, LayerContext context, PrefixUnaryExpressionSyntax prefixUnary, List<string> lines) {
+            if (TryProcessCheckedUnaryMutation(semantic, context, prefixUnary, prefixUnary.Operand, lines, out ExpressionResult checkedMutationResult)) {
+                return checkedMutationResult;
+            }
+
             if (prefixUnary.IsKind(SyntaxKind.AddressOfExpression) &&
                 TryProcessFunctionPointerAddressOfExpression(semantic, context, prefixUnary, lines, out ExpressionResult addressOfResult)) {
                 return addressOfResult;
@@ -10708,6 +10855,56 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Lowers one checked integral increment or decrement through a native helper that validates the boundary before mutation.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the managed operand type.</param>
+        /// <param name="context">Current C++ lowering context and checked-policy stack.</param>
+        /// <param name="unaryExpression">Prefix or postfix mutation expression being lowered.</param>
+        /// <param name="operandExpression">Assignable operand mutated by the expression.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <param name="result">Receives the expression result when checked lowering succeeds.</param>
+        /// <returns><c>true</c> when a supported checked mutation was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedUnaryMutation(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax unaryExpression,
+            ExpressionSyntax operandExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !TryGetExpressionTypeSymbol(semantic, operandExpression, out ITypeSymbol operandTypeSymbol) ||
+                !IsSupportedCheckedMutationType(operandTypeSymbol) ||
+                !IsSupportedCheckedMutationOperand(semantic, operandExpression)) {
+                return false;
+            }
+
+            string helperName;
+            if (unaryExpression.IsKind(SyntaxKind.PreIncrementExpression)) {
+                helperName = "CheckedPreIncrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PreDecrementExpression)) {
+                helperName = "CheckedPreDecrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PostIncrementExpression)) {
+                helperName = "CheckedPostIncrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PostDecrementExpression)) {
+                helperName = "CheckedPostDecrement";
+            } else {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add($"Number::{helperName}(");
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, operandExpression, lines);
+            context.PopClass(startDepth);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(operandTypeSymbol));
+            return true;
         }
 
         static VariableType ResolvePointerIndirectionExpressionType(
@@ -13847,6 +14044,9 @@ namespace cs2.cpp {
                 string.Equals(typeName, "DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "global::System.DivideByZeroException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "OverflowException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.OverflowException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "global::System.IO.EndOfStreamException", StringComparison.Ordinal) ||
@@ -13877,6 +14077,7 @@ namespace cs2.cpp {
                 "System.InvalidOperationException" => "InvalidOperationException",
                 "System.Collections.Generic.KeyNotFoundException" => "KeyNotFoundException",
                 "System.DivideByZeroException" => "DivideByZeroException",
+                "System.OverflowException" => "OverflowException",
                 "System.IO.EndOfStreamException" => "EndOfStreamException",
                 "System.IO.FileNotFoundException" => "FileNotFoundException",
                 "System.IO.DirectoryNotFoundException" => "DirectoryNotFoundException",

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../runtime/native_exceptions.hpp"
+
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -126,6 +128,72 @@ public:
         (void)left;
         (void)right;
         return false;
+    }
+
+    /// <summary>
+    /// Applies managed checked prefix increment semantics to one fixed-width integral value.
+    /// </summary>
+    /// <typeparam name="T">Integral operand type.</typeparam>
+    /// <param name="value">Assignable value to validate and increment.</param>
+    /// <returns>The incremented value.</returns>
+    template <typename T>
+    static T CheckedPreIncrement(T& value) {
+        if (value == std::numeric_limits<T>::max()) {
+            throw OverflowException();
+        }
+
+        value = static_cast<T>(value + static_cast<T>(1));
+        return value;
+    }
+
+    /// <summary>
+    /// Applies managed checked postfix increment semantics to one fixed-width integral value.
+    /// </summary>
+    /// <typeparam name="T">Integral operand type.</typeparam>
+    /// <param name="value">Assignable value to validate and increment.</param>
+    /// <returns>The value captured before incrementing.</returns>
+    template <typename T>
+    static T CheckedPostIncrement(T& value) {
+        if (value == std::numeric_limits<T>::max()) {
+            throw OverflowException();
+        }
+
+        T originalValue = value;
+        value = static_cast<T>(value + static_cast<T>(1));
+        return originalValue;
+    }
+
+    /// <summary>
+    /// Applies managed checked prefix decrement semantics to one fixed-width integral value.
+    /// </summary>
+    /// <typeparam name="T">Integral operand type.</typeparam>
+    /// <param name="value">Assignable value to validate and decrement.</param>
+    /// <returns>The decremented value.</returns>
+    template <typename T>
+    static T CheckedPreDecrement(T& value) {
+        if (value == std::numeric_limits<T>::lowest()) {
+            throw OverflowException();
+        }
+
+        value = static_cast<T>(value - static_cast<T>(1));
+        return value;
+    }
+
+    /// <summary>
+    /// Applies managed checked postfix decrement semantics to one fixed-width integral value.
+    /// </summary>
+    /// <typeparam name="T">Integral operand type.</typeparam>
+    /// <param name="value">Assignable value to validate and decrement.</param>
+    /// <returns>The value captured before decrementing.</returns>
+    template <typename T>
+    static T CheckedPostDecrement(T& value) {
+        if (value == std::numeric_limits<T>::lowest()) {
+            throw OverflowException();
+        }
+
+        T originalValue = value;
+        value = static_cast<T>(value - static_cast<T>(1));
+        return originalValue;
     }
 
     /// <summary>
