@@ -6407,6 +6407,43 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures user-defined types that share framework exception leaf names remain generated project types instead of activating the native exception runtime.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUserTypesNamedLikeNativeExceptions_PreservesResolvedTypeIdentity() {
+            string source = """
+                namespace UserGame {
+                    public class KeyNotFoundException {
+                    }
+
+                    public class DivideByZeroException {
+                    }
+
+                    public class Fixture {
+                        public object CreateMissingKey() {
+                            return new KeyNotFoundException();
+                        }
+
+                        public object CreateZeroDivision() {
+                            return new DivideByZeroException();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "KeyNotFoundException.hpp")));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+            Assert.Contains("return new ::KeyNotFoundException();", sourceOutput);
+            Assert.Contains("return new ::DivideByZeroException();", sourceOutput);
+            Assert.DoesNotContain(
+                output.Report.RootElement.GetProperty("registeredRuntimeRequirements").EnumerateArray(),
+                requirement => string.Equals(requirement.GetString(), "NativeExceptions", StringComparison.Ordinal));
+        }
+
+        /// <summary>
         /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
         /// </summary>
         [Fact]

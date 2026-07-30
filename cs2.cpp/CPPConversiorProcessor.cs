@@ -2760,12 +2760,13 @@ namespace cs2.cpp {
                 objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
                 out string runtimeObjectTypeName,
                 out string runtimeRequirementName);
-            bool compactNativeExceptionMessages = IsNativeExceptionTypeName(objectCreationTypeName)
+            bool isNativeException = TryGetNativeExceptionTypeName(objectCreationTypeSymbol, out string nativeExceptionTypeName);
+            bool compactNativeExceptionMessages = isNativeException
                 && UsesCompactNativeExceptionMessages();
             ArgumentListSyntax effectiveArgumentList = compactNativeExceptionMessages ? null : argumentList;
 
-            if (IsNativeExceptionTypeName(objectCreationTypeName)) {
-                sourceType = VariableUtil.GetVarType(NormalizeNativeExceptionTypeName(objectCreationTypeName));
+            if (isNativeException) {
+                sourceType = VariableUtil.GetVarType(nativeExceptionTypeName);
             } else if (hasRuntimeObjectTypeMapping) {
                 if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
                     codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
@@ -12398,11 +12399,11 @@ namespace cs2.cpp {
                             return new VariableType(parsedType);
                         }
 
-                        if (IsNativeExceptionTypeName(parsedType.TypeName)) {
+                        ConversionClass generatedClass = ResolveGeneratedClass(parsedType);
+                        if (generatedClass == null && IsNativeExceptionTypeName(parsedType.TypeName)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeExceptions");
                         }
 
-                        ConversionClass generatedClass = ResolveGeneratedClass(parsedType);
                         if (generatedClass?.TypeSymbol?.IsValueType == true) {
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
@@ -13855,18 +13856,29 @@ namespace cs2.cpp {
                 string.Equals(typeName, "global::System.NotSupportedException", StringComparison.Ordinal);
         }
 
-        static string NormalizeNativeExceptionTypeName(string typeName) {
-            int globalSeparatorIndex = typeName.LastIndexOf("::", StringComparison.Ordinal);
-            if (globalSeparatorIndex >= 0) {
-                return typeName[(globalSeparatorIndex + 2)..];
-            }
-
-            int namespaceSeparatorIndex = typeName.LastIndexOf('.');
-            if (namespaceSeparatorIndex >= 0) {
-                return typeName[(namespaceSeparatorIndex + 1)..];
-            }
-
-            return typeName;
+        /// <summary>
+        /// Resolves framework exception identity from the semantic type symbol so user-defined same-leaf types remain generated project classes.
+        /// </summary>
+        /// <param name="typeSymbol">Resolved object-creation type to classify.</param>
+        /// <param name="nativeTypeName">Receives the unqualified native runtime exception class name.</param>
+        /// <returns><c>true</c> when the symbol is one of the framework exceptions supplied by the native runtime.</returns>
+        static bool TryGetNativeExceptionTypeName(ITypeSymbol typeSymbol, out string nativeTypeName) {
+            string qualifiedTypeName = typeSymbol == null ? string.Empty : typeSymbol.ToDisplayString();
+            nativeTypeName = qualifiedTypeName switch {
+                "System.Exception" => "Exception",
+                "System.ArgumentException" => "ArgumentException",
+                "System.ArgumentNullException" => "ArgumentNullException",
+                "System.ArgumentOutOfRangeException" => "ArgumentOutOfRangeException",
+                "System.InvalidOperationException" => "InvalidOperationException",
+                "System.Collections.Generic.KeyNotFoundException" => "KeyNotFoundException",
+                "System.DivideByZeroException" => "DivideByZeroException",
+                "System.IO.EndOfStreamException" => "EndOfStreamException",
+                "System.IO.FileNotFoundException" => "FileNotFoundException",
+                "System.IO.DirectoryNotFoundException" => "DirectoryNotFoundException",
+                "System.NotSupportedException" => "NotSupportedException",
+                _ => string.Empty
+            };
+            return nativeTypeName.Length > 0;
         }
 
         /// <summary>

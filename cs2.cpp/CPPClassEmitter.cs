@@ -1429,7 +1429,8 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
-            if (IsNativeExceptionTypeName(normalizedReferencedClass)) {
+            if (IsNativeExceptionTypeName(normalizedReferencedClass) &&
+                !TryResolveGeneratedClass(referencedClass, out ConversionClass generatedExceptionClass)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
             }
@@ -1597,7 +1598,10 @@ namespace cs2.cpp {
                 return "system/bit_operations";
             }
 
-            if (IsNativeExceptionTypeName(variableType.TypeName)) {
+            ConversionClass nativeExceptionCandidateClass = program.FindGeneratedClass(variableType);
+            if (nativeExceptionCandidateClass == null &&
+                IsNativeExceptionTypeName(variableType.TypeName) &&
+                !TryResolveGeneratedClass(normalizedIncludeCandidate, out nativeExceptionCandidateClass)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
             }
