@@ -5030,6 +5030,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, directoryInvocationType);
             }
 
+            if (TryProcessPrimitiveEqualsInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveEqualsType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, primitiveEqualsType);
+            }
+
             if (TryProcessPrimitiveGetHashCodeInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveGetHashCodeType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, primitiveGetHashCodeType);
             }
@@ -7609,6 +7613,46 @@ namespace cs2.cpp {
             lines.Add("Number::GetHashCode(");
             lines.Add(receiverText);
             lines.Add(")");
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers primitive instance equality to the numeric runtime so built-in C++ scalar types retain managed equality behavior.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the invocation receiver type.</param>
+        /// <param name="context">Active conversion context used to lower receiver and argument expressions.</param>
+        /// <param name="invocationExpression">Invocation that may represent primitive equality.</param>
+        /// <param name="lines">Generated output fragments that receive the numeric equality call.</param>
+        /// <param name="resultType">Receives the managed Boolean result type when the invocation is handled.</param>
+        /// <returns><c>true</c> when a primitive equality invocation was emitted; otherwise, <c>false</c>.</returns>
+        bool TryProcessPrimitiveEqualsInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("bool");
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax identifierName ||
+                !string.Equals(identifierName.Identifier.Text, "Equals", StringComparison.Ordinal) ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            if (!TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
+                receiverTypeSymbol == null) {
+                IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+                receiverTypeSymbol = invokedMethodSymbol?.ReceiverType;
+            }
+
+            if (receiverTypeSymbol == null || !IsPrimitiveGetHashCodeReceiverType(receiverTypeSymbol)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            string argumentText = RenderExpressionText(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression);
+            lines.Add($"Number::Equals({receiverText}, {argumentText})");
             return true;
         }
 

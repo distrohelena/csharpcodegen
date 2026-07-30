@@ -1701,6 +1701,27 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures primitive instance equality calls use the numeric runtime so generated C++ does not invoke members on scalar built-ins.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveFloatEquals_UsesManagedNumericEqualitySurface() {
+            string source = """
+                public class ScalarComparer {
+                    public bool Equals(float left, float right) {
+                        return left.Equals(right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "number.hpp"));
+
+            Assert.Contains("return Number::Equals(left, right);", output.GeneratedText);
+            Assert.Contains("static bool Equals(float left, float right)", runtimeHeader);
+            Assert.Contains("std::isnan(left) && std::isnan(right)", runtimeHeader);
+        }
+
+        /// <summary>
         /// Ensures the native list surface supports the live read-only view call emitted for managed <c>List&lt;T&gt;.AsReadOnly</c> usage.
         /// </summary>
         [Fact]

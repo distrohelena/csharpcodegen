@@ -82,6 +82,38 @@ public:
     }
 
     /// <summary>
+    /// Compares two integral or Boolean primitive values using managed value equality semantics.
+    /// </summary>
+    /// <typeparam name="T">Primitive type shared by both operands.</typeparam>
+    /// <param name="left">Left primitive operand.</param>
+    /// <param name="right">Right primitive operand.</param>
+    /// <returns>True when both operands represent the same value; otherwise false.</returns>
+    template <typename T>
+    static bool Equals(const T& left, const T& right) {
+        return left == right;
+    }
+
+    /// <summary>
+    /// Compares two single-precision values while preserving managed equality for not-a-number values.
+    /// </summary>
+    /// <param name="left">Left single-precision operand.</param>
+    /// <param name="right">Right single-precision operand.</param>
+    /// <returns>True when both values are equal or both are not-a-number; otherwise false.</returns>
+    static bool Equals(float left, float right) {
+        return left == right || (std::isnan(left) && std::isnan(right));
+    }
+
+    /// <summary>
+    /// Compares two double-precision values while preserving managed equality for not-a-number values.
+    /// </summary>
+    /// <param name="left">Left double-precision operand.</param>
+    /// <param name="right">Right double-precision operand.</param>
+    /// <returns>True when both values are equal or both are not-a-number; otherwise false.</returns>
+    static bool Equals(double left, double right) {
+        return left == right || (std::isnan(left) && std::isnan(right));
+    }
+
+    /// <summary>
     /// Returns a positive-infinity value for the requested floating-point type.
     /// </summary>
     /// <typeparam name="T">Floating-point type whose positive infinity should be returned.</typeparam>
