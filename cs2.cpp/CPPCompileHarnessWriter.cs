@@ -108,7 +108,7 @@ namespace cs2.cpp {
                 "set SCRIPT_DIR=%~dp0",
                 "set BUILD_DIR=%SCRIPT_DIR%build\\msvc",
                 "if not exist \"%BUILD_DIR%\" mkdir \"%BUILD_DIR%\"",
-                $"cl /nologo /std:{ResolveMsvcLanguageStandard(options)} /EHsc /I\"%SCRIPT_DIR%\" /I\"%SCRIPT_DIR%runtime\" /c \"%SCRIPT_DIR%{UnityFileName}\" /Fo\"%BUILD_DIR%\\generated_unity.obj\"",
+                $"cl /nologo /std:{ResolveMsvcLanguageStandard(options)} /EHsc /I\"%SCRIPT_DIR%.\" /I\"%SCRIPT_DIR%runtime\" /c \"%SCRIPT_DIR%{UnityFileName}\" /Fo\"%BUILD_DIR%\\generated_unity.obj\"",
                 string.Empty
             });
         }
