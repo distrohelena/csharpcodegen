@@ -111,7 +111,7 @@ public:
     /// <summary>
     /// Allocates a distinct live wrapper that exposes this list through the non-mutating contract.
     /// </summary>
-    IReadOnlyList<T>* AsReadOnly();
+    ReadOnlyCollection<T>* AsReadOnly();
 
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
@@ -333,6 +333,6 @@ template<typename T>
 /// <summary>
 /// Creates the managed live read-only wrapper for this list.
 /// </summary>
-IReadOnlyList<T>* List<T>::AsReadOnly() {
+ReadOnlyCollection<T>* List<T>::AsReadOnly() {
     return new ReadOnlyCollection<T>(this);
 }

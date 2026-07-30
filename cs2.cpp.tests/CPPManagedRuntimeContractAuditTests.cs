@@ -1772,9 +1772,14 @@ namespace cs2.cpp.tests {
         public void WriteOutput_WithListAsReadOnlyUsage_EmitsNativeLiveViewSurface() {
             string source = """
                 using System.Collections.Generic;
+                using System.Collections.ObjectModel;
 
                 public class Inventory {
                     public IReadOnlyList<int> Freeze(List<int> values) {
+                        return values.AsReadOnly();
+                    }
+
+                    public ReadOnlyCollection<int> FreezeConcrete(List<int> values) {
                         return values.AsReadOnly();
                     }
                 }
@@ -1784,10 +1789,12 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_list.hpp"));
 
             Assert.Contains("IReadOnlyList<int32_t>* Inventory::Freeze", output.GeneratedText);
+            Assert.Contains("ReadOnlyCollection<int32_t>* Inventory::FreezeConcrete", output.GeneratedText);
             Assert.Contains("return values->AsReadOnly();", output.GeneratedText);
             Assert.Contains("class List : public std::vector<T>, public IReadOnlyList<T>", runtimeHeader);
             Assert.Contains("class ReadOnlyCollection : public IReadOnlyList<T>", runtimeHeader);
-            Assert.Contains("IReadOnlyList<T>* List<T>::AsReadOnly()", runtimeHeader);
+            Assert.Contains("ReadOnlyCollection<T>* AsReadOnly();", runtimeHeader);
+            Assert.Contains("ReadOnlyCollection<T>* List<T>::AsReadOnly()", runtimeHeader);
             Assert.Contains("return new ReadOnlyCollection<T>(this);", runtimeHeader);
             Assert.Contains("throw NotSupportedException();", runtimeHeader);
             Assert.DoesNotContain("\n    List<T>* AsReadOnly()", runtimeHeader, StringComparison.Ordinal);

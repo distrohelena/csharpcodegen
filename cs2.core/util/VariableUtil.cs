@@ -866,6 +866,7 @@ namespace cs2.core {
                     return VariableDataType.Object;
 
                 case "List":
+                case "ReadOnlyCollection":
                 case "IReadOnlyList":
                 case "ICollection":
                 case "IReadOnlyCollection":

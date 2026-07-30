@@ -8775,6 +8775,7 @@ namespace cs2.cpp {
             string name = namedTypeSymbol.Name;
             string displayText = namedTypeSymbol.ToDisplayString();
             return string.Equals(name, "List", StringComparison.Ordinal) ||
+                string.Equals(name, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "Dictionary", StringComparison.Ordinal) ||
                 string.Equals(name, "HashSet", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyList", StringComparison.Ordinal) ||
@@ -8783,6 +8784,7 @@ namespace cs2.cpp {
                 string.Equals(name, "IDictionary", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyDictionary", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                displayText.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.HashSet<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
@@ -8800,11 +8802,13 @@ namespace cs2.cpp {
             string name = namedTypeSymbol.Name;
             string displayText = namedTypeSymbol.ToDisplayString();
             return string.Equals(name, "List", StringComparison.Ordinal) ||
+                string.Equals(name, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyList", StringComparison.Ordinal) ||
                 string.Equals(name, "ICollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IEnumerable", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                displayText.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
@@ -9414,8 +9418,10 @@ namespace cs2.cpp {
             string receiverName = namedTypeSymbol.Name;
             string receiverDisplayName = namedTypeSymbol.ToDisplayString();
             return string.Equals(receiverName, "List", StringComparison.Ordinal) ||
+                string.Equals(receiverName, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal);
         }
 
@@ -12466,6 +12472,13 @@ namespace cs2.cpp {
                             string.Equals(parsedType.TypeName, "IReadOnlyCollection", StringComparison.Ordinal) ||
                             parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
                             parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal);
+                        bool isReadOnlyCollection =
+                            string.Equals(parsedType.TypeName, "ReadOnlyCollection", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal);
+                        if (isReadOnlyCollection) {
+                            return CreateConvertedGenericType(parsedType, "ReadOnlyCollection");
+                        }
+
                         return CreateConvertedGenericType(parsedType, isReadOnlyListContract ? "IReadOnlyList" : "List");
                 }
                 case VariableDataType.Dictionary: {
@@ -14699,8 +14712,10 @@ namespace cs2.cpp {
             string receiverName = namedTypeSymbol.Name;
             string receiverDisplayName = namedTypeSymbol.ToDisplayString();
             if (string.Equals(receiverName, "List", StringComparison.Ordinal) ||
+                string.Equals(receiverName, "ReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal)) {
                 typeSymbol = namedTypeSymbol.TypeArguments[0];
                 return typeSymbol != null;
