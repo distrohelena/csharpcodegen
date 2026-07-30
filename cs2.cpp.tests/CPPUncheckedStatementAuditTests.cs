@@ -3,7 +3,7 @@ using cs2.cpp;
 
 namespace cs2.cpp.tests {
     /// <summary>
-    /// Verifies that the C++ converter lowers unchecked blocks without leaving unsupported diagnostics behind.
+    /// Verifies that the C++ converter preserves checked-context block bodies without leaving unsupported diagnostics behind.
     /// </summary>
     public class CPPUncheckedStatementAuditTests {
         /// <summary>
@@ -28,6 +28,29 @@ namespace cs2.cpp.tests {
             AssertNoDiagnostic(report, "UncheckedStatement");
             Assert.Contains("hashCode = (hashCode * 397) ^ other;", output);
             Assert.Contains("return hashCode;", output);
+        }
+
+        /// <summary>
+        /// Ensures a checked counter block emits its enclosed mutation instead of dropping the block behind an unsupported diagnostic.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedBlock_DoesNotReportCheckedStatement() {
+            string source = """
+                public class Counter {
+                    int value;
+
+                    public void Increment() {
+                        checked {
+                            value++;
+                        }
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            AssertNoDiagnostic(report, "CheckedStatement");
+            Assert.Contains("this->value++;", output);
         }
 
         /// <summary>

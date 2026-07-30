@@ -437,10 +437,9 @@ namespace cs2.cpp {
                 return ProcessLocalFunctionStatement(semantic, context, localFunctionStatement, lines, depth);
             }
 
-        if (statement is CheckedStatementSyntax uncheckedStatement &&
-            uncheckedStatement.Kind() == SyntaxKind.UncheckedStatement) {
-            return ProcessUncheckedStatement(semantic, context, uncheckedStatement, lines, depth);
-        }
+            if (statement is CheckedStatementSyntax checkedContextStatement) {
+                return ProcessCheckedContextStatement(semantic, context, checkedContextStatement, lines, depth);
+            }
 
             int diagnosticCount = GetDiagnosticCount();
             ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
@@ -884,22 +883,22 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Lowers a C# unchecked statement by preserving its lexical scope and emitting only the enclosed block statements.
+        /// Lowers a C# checked-context statement by preserving its lexical scope and emitting the enclosed operations through the native arithmetic backend.
         /// </summary>
         /// <param name="semantic">Semantic model associated with the unchecked statement.</param>
         /// <param name="context">Current lowering context.</param>
-        /// <param name="uncheckedStatement">Unchecked statement to lower.</param>
+        /// <param name="checkedContextStatement">Checked or unchecked statement to lower.</param>
         /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
         /// <param name="depth">Current indentation depth used by the lowerer.</param>
         /// <returns>The result of lowering the enclosed block.</returns>
-    ExpressionResult ProcessUncheckedStatement(
-        SemanticModel semantic,
-        LayerContext context,
-        CheckedStatementSyntax uncheckedStatement,
-        List<string> lines,
-        int depth) {
+        ExpressionResult ProcessCheckedContextStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            CheckedStatementSyntax checkedContextStatement,
+            List<string> lines,
+            int depth) {
             lines.Add("{\n");
-            ExpressionResult result = ProcessBlock(semantic, context, uncheckedStatement.Block, lines, depth);
+            ExpressionResult result = ProcessBlock(semantic, context, checkedContextStatement.Block, lines, depth);
             lines.Add("}\n");
             return result;
         }
