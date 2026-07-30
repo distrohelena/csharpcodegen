@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <type_traits>
 
 /// <summary>
 /// Provides lightweight managed numeric helpers used by transpiled static primitive calls.
@@ -111,6 +112,25 @@ public:
     /// <returns>True when both values are equal or both are not-a-number; otherwise false.</returns>
     static bool Equals(double left, double right) {
         return left == right || (std::isnan(left) && std::isnan(right));
+    }
+
+    /// <summary>
+    /// Compares primitive operands passed through a managed <c>Equals(object)</c> overload while preserving boxed type identity.
+    /// </summary>
+    /// <typeparam name="TLeft">Primitive receiver type.</typeparam>
+    /// <typeparam name="TRight">Primitive argument type.</typeparam>
+    /// <param name="left">Primitive receiver value.</param>
+    /// <param name="right">Primitive argument value evaluated before comparison.</param>
+    /// <returns>True when both boxed primitive types and values are equal; otherwise false.</returns>
+    template <typename TLeft, typename TRight>
+    static bool EqualsObject(const TLeft& left, const TRight& right) {
+        if constexpr (std::is_same_v<TLeft, TRight>) {
+            return Equals(left, right);
+        }
+
+        (void)left;
+        (void)right;
+        return false;
     }
 
     /// <summary>

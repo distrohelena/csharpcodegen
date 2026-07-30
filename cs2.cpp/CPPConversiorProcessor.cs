@@ -7638,9 +7638,9 @@ namespace cs2.cpp {
                 return false;
             }
 
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
             if (!TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
                 receiverTypeSymbol == null) {
-                IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
                 receiverTypeSymbol = invokedMethodSymbol?.ReceiverType;
             }
 
@@ -7648,10 +7648,29 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (invokedMethodSymbol == null || invokedMethodSymbol.Parameters.Length != 1) {
+                return false;
+            }
+
+            ITypeSymbol parameterTypeSymbol = invokedMethodSymbol.Parameters[0].Type;
+            bool usesSamePrimitiveOverload = parameterTypeSymbol.SpecialType == receiverTypeSymbol.SpecialType;
+            bool usesObjectOverload = parameterTypeSymbol.SpecialType == SpecialType.System_Object;
+            if (!usesSamePrimitiveOverload && !usesObjectOverload) {
+                return false;
+            }
+
+            ExpressionSyntax argumentExpression = invocationExpression.ArgumentList.Arguments[0].Expression;
+            if (usesObjectOverload &&
+                (!TryGetExpressionTypeSymbol(semantic, argumentExpression, out ITypeSymbol argumentTypeSymbol) ||
+                 !IsPrimitiveGetHashCodeReceiverType(argumentTypeSymbol))) {
+                return false;
+            }
+
             RegisterRuntimeRequirement("Number");
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
-            string argumentText = RenderExpressionText(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression);
-            lines.Add($"Number::Equals({receiverText}, {argumentText})");
+            string argumentText = RenderExpressionText(semantic, context, argumentExpression);
+            string equalityFunctionName = usesSamePrimitiveOverload ? "Equals" : "EqualsObject";
+            lines.Add($"Number::{equalityFunctionName}({receiverText}, {argumentText})");
             return true;
         }
 
