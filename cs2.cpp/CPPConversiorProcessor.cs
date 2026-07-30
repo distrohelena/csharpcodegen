@@ -3074,13 +3074,14 @@ namespace cs2.cpp {
                 objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
                 out string runtimeObjectTypeName,
                 out string runtimeRequirementName);
-            bool isNativeException = TryGetNativeExceptionTypeName(objectCreationTypeSymbol, out string nativeExceptionTypeName);
+            bool isNativeException = TryGetNativeExceptionTypeName(semantic.Compilation, objectCreationTypeSymbol, out string nativeExceptionTypeName);
             bool compactNativeExceptionMessages = isNativeException
                 && UsesCompactNativeExceptionMessages();
             ArgumentListSyntax effectiveArgumentList = compactNativeExceptionMessages ? null : argumentList;
 
             if (isNativeException) {
                 sourceType = VariableUtil.GetVarType(nativeExceptionTypeName);
+                sourceType.QualifiedTypeName = objectCreationTypeSymbol.ToDisplayString();
             } else if (hasRuntimeObjectTypeMapping) {
                 if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
                     codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
@@ -12790,7 +12791,7 @@ namespace cs2.cpp {
                         }
 
                         ConversionClass generatedClass = ResolveGeneratedClass(parsedType);
-                        if (generatedClass == null && IsNativeExceptionTypeName(parsedType.TypeName)) {
+                        if (generatedClass == null && IsNativeExceptionQualifiedTypeName(parsedType.QualifiedTypeName)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeExceptions");
                         }
 
@@ -14210,69 +14211,79 @@ namespace cs2.cpp {
                 arrayTypeSymbol.ElementType.SpecialType == SpecialType.System_Byte;
         }
 
-        static bool IsNativeExceptionTypeName(string typeName) {
-            return string.Equals(typeName, "Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentException", StringComparison.Ordinal) ||
+        /// <summary>
+        /// Determines whether a fully qualified managed type name identifies one exception supplied by the native runtime.
+        /// </summary>
+        /// <param name="typeName">Fully qualified managed type name to inspect.</param>
+        /// <returns><c>true</c> for an exact supported framework exception name; otherwise <c>false</c>.</returns>
+        static bool IsNativeExceptionQualifiedTypeName(string typeName) {
+            return string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentNullException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentNullException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentNullException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.InvalidOperationException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.InvalidOperationException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "KeyNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.DivideByZeroException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "OverflowException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.OverflowException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.EndOfStreamException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "FileNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.FileNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.FileNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "DirectoryNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "NotSupportedException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.NotSupportedException", StringComparison.Ordinal);
+                string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal);
         }
 
         /// <summary>
         /// Resolves framework exception identity from the semantic type symbol so user-defined same-leaf types remain generated project classes.
         /// </summary>
+        /// <param name="compilation">Compilation that owns the framework reference identities.</param>
         /// <param name="typeSymbol">Resolved object-creation type to classify.</param>
         /// <param name="nativeTypeName">Receives the unqualified native runtime exception class name.</param>
         /// <returns><c>true</c> when the symbol is one of the framework exceptions supplied by the native runtime.</returns>
-        static bool TryGetNativeExceptionTypeName(ITypeSymbol typeSymbol, out string nativeTypeName) {
-            string qualifiedTypeName = typeSymbol == null ? string.Empty : typeSymbol.ToDisplayString();
-            nativeTypeName = qualifiedTypeName switch {
-                "System.Exception" => "Exception",
-                "System.ArgumentException" => "ArgumentException",
-                "System.ArgumentNullException" => "ArgumentNullException",
-                "System.ArgumentOutOfRangeException" => "ArgumentOutOfRangeException",
-                "System.InvalidOperationException" => "InvalidOperationException",
-                "System.Collections.Generic.KeyNotFoundException" => "KeyNotFoundException",
-                "System.DivideByZeroException" => "DivideByZeroException",
-                "System.OverflowException" => "OverflowException",
-                "System.IO.EndOfStreamException" => "EndOfStreamException",
-                "System.IO.FileNotFoundException" => "FileNotFoundException",
-                "System.IO.DirectoryNotFoundException" => "DirectoryNotFoundException",
-                "System.NotSupportedException" => "NotSupportedException",
-                _ => string.Empty
-            };
+        static bool TryGetNativeExceptionTypeName(Compilation compilation, ITypeSymbol typeSymbol, out string nativeTypeName) {
+            nativeTypeName = string.Empty;
+            if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.Exception")) {
+                nativeTypeName = "Exception";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentException")) {
+                nativeTypeName = "ArgumentException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentNullException")) {
+                nativeTypeName = "ArgumentNullException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentOutOfRangeException")) {
+                nativeTypeName = "ArgumentOutOfRangeException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.InvalidOperationException")) {
+                nativeTypeName = "InvalidOperationException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.Collections.Generic.KeyNotFoundException")) {
+                nativeTypeName = "KeyNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.DivideByZeroException")) {
+                nativeTypeName = "DivideByZeroException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.OverflowException")) {
+                nativeTypeName = "OverflowException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.EndOfStreamException")) {
+                nativeTypeName = "EndOfStreamException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.FileNotFoundException")) {
+                nativeTypeName = "FileNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.DirectoryNotFoundException")) {
+                nativeTypeName = "DirectoryNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.NotSupportedException")) {
+                nativeTypeName = "NotSupportedException";
+            }
+
             return nativeTypeName.Length > 0;
+        }
+
+        /// <summary>
+        /// Compares a resolved type against one framework metadata symbol while rejecting every source-declared shadow type.
+        /// </summary>
+        /// <param name="compilation">Compilation used to resolve the authoritative framework metadata symbol.</param>
+        /// <param name="typeSymbol">Resolved candidate type.</param>
+        /// <param name="metadataName">Fully qualified metadata name of the required framework type.</param>
+        /// <returns><c>true</c> only when the candidate is the exact referenced framework symbol.</returns>
+        static bool IsFrameworkTypeSymbol(Compilation compilation, ITypeSymbol typeSymbol, string metadataName) {
+            if (compilation == null || typeSymbol == null || typeSymbol.Locations.Any(location => location.IsInSource)) {
+                return false;
+            }
+
+            INamedTypeSymbol frameworkTypeSymbol = compilation.GetTypeByMetadataName(metadataName);
+            return frameworkTypeSymbol != null &&
+                SymbolEqualityComparer.Default.Equals(typeSymbol.OriginalDefinition, frameworkTypeSymbol.OriginalDefinition);
         }
 
         /// <summary>

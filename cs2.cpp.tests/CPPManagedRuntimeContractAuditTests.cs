@@ -781,7 +781,8 @@ namespace cs2.cpp.tests {
             string header = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.cpp"));
 
-            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", header);
+            Assert.DoesNotContain("#include \"runtime/native_exceptions.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", sourceOutput);
             Assert.Contains("throw new ArgumentNullException(\"value\");", sourceOutput);
             Assert.Contains("throw new InvalidOperationException(\"bad\");", sourceOutput);
             AssertRuntimeRequirement(output.Report, "NativeExceptions");

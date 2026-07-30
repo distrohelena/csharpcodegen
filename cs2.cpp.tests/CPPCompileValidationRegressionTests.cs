@@ -6444,6 +6444,34 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a source-defined type inside the System namespace cannot impersonate the framework exception selected for native runtime lowering.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSourceDefinedSystemExceptionShadow_PreservesSourceTypeIdentity() {
+            string source = """
+                namespace System {
+                    public class DivideByZeroException {
+                        public DivideByZeroException(string message) {
+                        }
+                    }
+                }
+
+                public class Fixture {
+                    public object Create() {
+                        return new System.DivideByZeroException("source marker");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, compactNativeExceptionMessages: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+            Assert.Contains("#include \"DivideByZeroException.hpp\"", sourceOutput);
+            Assert.Contains("return new ::DivideByZeroException(\"source marker\");", sourceOutput);
+        }
+
+        /// <summary>
         /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
         /// </summary>
         [Fact]
@@ -11369,11 +11397,20 @@ namespace cs2.cpp.tests {
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>
+        /// <param name="allowUnsafe">Whether the temporary fixture enables unsafe managed syntax.</param>
+        /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
+        /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
+        /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(string source, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
+        static ConversionOutput RunConversion(
+            string source,
+            bool allowUnsafe = false,
+            bool loadNativeRuntimeMetadata = false,
+            bool includeAttributesProjectReference = false,
+            bool compactNativeExceptionMessages = false) {
             return RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
                 ["Fixture.cs"] = source
-            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference);
+            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference, compactNativeExceptionMessages);
         }
 
         /// <summary>
@@ -11395,8 +11432,17 @@ namespace cs2.cpp.tests {
         /// Runs the C++ converter against a temporary multi-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="sources">Source file content keyed by relative file name.</param>
+        /// <param name="allowUnsafe">Whether the temporary fixture enables unsafe managed syntax.</param>
+        /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
+        /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
+        /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(IReadOnlyDictionary<string, string> sources, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
+        static ConversionOutput RunConversion(
+            IReadOnlyDictionary<string, string> sources,
+            bool allowUnsafe = false,
+            bool loadNativeRuntimeMetadata = false,
+            bool includeAttributesProjectReference = false,
+            bool compactNativeExceptionMessages = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string outputPath = Path.Combine(rootPath, "out");
@@ -11410,6 +11456,11 @@ namespace cs2.cpp.tests {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = loadNativeRuntimeMetadata;
             options.WriteConversionReport = true;
+            if (compactNativeExceptionMessages) {
+                options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.CompactNativeExceptionMessages] = "true"
+                };
+            }
 
             CPPConversionRules rules = new CPPConversionRules();
             CPPCodeConverter converter = new CPPCodeConverter(rules, options);
