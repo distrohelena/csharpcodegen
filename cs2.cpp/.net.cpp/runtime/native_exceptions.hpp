@@ -149,6 +149,42 @@ public:
     }
 };
 
+class KeyNotFoundException : public Exception {
+public:
+    KeyNotFoundException() noexcept
+        : Exception() {
+        Message = "The specified key was not found.";
+    }
+
+    explicit KeyNotFoundException(const char* message) noexcept
+        : Exception(message) {
+        Message = "The specified key was not found.";
+    }
+
+    explicit KeyNotFoundException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "The specified key was not found.";
+    }
+};
+
+class DivideByZeroException : public Exception {
+public:
+    DivideByZeroException() noexcept
+        : Exception() {
+        Message = "Attempted to divide by zero.";
+    }
+
+    explicit DivideByZeroException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Attempted to divide by zero.";
+    }
+
+    explicit DivideByZeroException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Attempted to divide by zero.";
+    }
+};
+
 class EndOfStreamException : public Exception {
 public:
     EndOfStreamException() noexcept
@@ -346,6 +382,36 @@ public:
     }
 
     explicit InvalidOperationException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+class KeyNotFoundException : public Exception {
+public:
+    KeyNotFoundException()
+        : Exception("The specified key was not found.") {
+    }
+
+    explicit KeyNotFoundException(const char* message)
+        : Exception(message == nullptr ? "The specified key was not found." : message) {
+    }
+
+    explicit KeyNotFoundException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+class DivideByZeroException : public Exception {
+public:
+    DivideByZeroException()
+        : Exception("Attempted to divide by zero.") {
+    }
+
+    explicit DivideByZeroException(const char* message)
+        : Exception(message == nullptr ? "Attempted to divide by zero." : message) {
+    }
+
+    explicit DivideByZeroException(const std::string& message)
         : Exception(message) {
     }
 };

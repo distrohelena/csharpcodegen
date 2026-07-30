@@ -6361,6 +6361,52 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithKeyNotFoundException_UsesNativeExceptionRuntime() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Fixture {
+                    public void Fail() {
+                        throw new KeyNotFoundException("Missing key.");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new KeyNotFoundException(\"Missing key.\")", sourceOutput);
+            Assert.Contains("class KeyNotFoundException : public Exception", runtimeHeader);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "KeyNotFoundException.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures managed division failures map to the shared native exception runtime instead of an unavailable generated managed type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDivideByZeroException_UsesNativeExceptionRuntime() {
+            string source = """
+                public class Fixture {
+                    public void Fail() {
+                        throw new DivideByZeroException("Zero divisor.");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new DivideByZeroException(\"Zero divisor.\")", sourceOutput);
+            Assert.Contains("class DivideByZeroException : public Exception", runtimeHeader);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+        }
+
+        /// <summary>
         /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
         /// </summary>
         [Fact]

@@ -13773,6 +13773,12 @@ namespace cs2.cpp {
                 string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.InvalidOperationException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "global::System.InvalidOperationException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "DivideByZeroException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "global::System.DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "global::System.IO.EndOfStreamException", StringComparison.Ordinal) ||

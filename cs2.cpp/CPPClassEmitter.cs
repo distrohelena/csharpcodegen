@@ -4061,6 +4061,8 @@ namespace cs2.cpp {
                 string.Equals(typeName, "ArgumentNullException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "FileNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "DirectoryNotFoundException", StringComparison.Ordinal) ||
