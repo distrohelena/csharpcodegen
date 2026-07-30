@@ -8928,6 +8928,32 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a discard assignment preserves the right-side call without emitting an undeclared underscore target.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDiscardAssignment_EmitsRightSideExpressionOnly() {
+            string source = """
+                public static class Helper {
+                    public static int Read() {
+                        return 1;
+                    }
+                }
+
+                public class Fixture {
+                    public void Run() {
+                        _ = Helper.Read();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Helper::Read();", sourceOutput);
+            Assert.DoesNotContain("_ =", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures rebindable ref locals lower to pointer-backed aliases so later <c>ref</c> reassignments stay valid in C++.
         /// </summary>
         [Fact]

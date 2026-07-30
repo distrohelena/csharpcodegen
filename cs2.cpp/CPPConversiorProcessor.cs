@@ -1100,6 +1100,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (TryProcessDiscardAssignmentExpression(semantic, context, assignment, lines)) {
+                return;
+            }
+
             if (TryProcessNativeListCapacityAssignment(semantic, context, assignment, lines)) {
                 return;
             }
@@ -1164,6 +1168,43 @@ namespace cs2.cpp {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
+        }
+
+        /// <summary>
+        /// Lowers a discard assignment to its right-side expression so the generated C++ preserves evaluation without declaring an underscore target.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish a discard from a source variable named underscore.</param>
+        /// <param name="context">Active conversion context used to lower the right-side expression.</param>
+        /// <param name="assignment">Assignment expression that may target a discard.</param>
+        /// <param name="lines">Generated output fragments that receive the lowered expression.</param>
+        /// <returns><c>true</c> when the assignment was a discard and was fully emitted; otherwise, <c>false</c>.</returns>
+        bool TryProcessDiscardAssignmentExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                assignment.Left is not IdentifierNameSyntax discardIdentifier ||
+                !string.Equals(discardIdentifier.Identifier.Text, "_", StringComparison.Ordinal) ||
+                semantic.GetSymbolInfo(discardIdentifier).Symbol is not IDiscardSymbol) {
+                return false;
+            }
+
+            int startDepth = context.Class.Count;
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+            context.PopClass(startDepth);
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
+            lines.AddRange(rightLines);
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                lines.Add(";\n");
+                lines.AddRange(rightResult.AfterLines);
+            }
+
+            return true;
         }
 
         bool TryProcessTupleAssignmentExpression(
