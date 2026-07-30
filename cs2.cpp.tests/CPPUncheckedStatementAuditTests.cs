@@ -85,6 +85,81 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a nested unchecked expression overrides an enclosing checked block instead of inheriting its overflow policy.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUncheckedExpressionInsideCheckedBlock_UsesOrdinaryMutation() {
+            string source = """
+                public class Counter {
+                    int Value;
+
+                    public int Increment() {
+                        checked {
+                            return unchecked(Value++);
+                        }
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("this->Value++", output);
+            Assert.DoesNotContain("CheckedPostIncrement(this->Value)", output, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures checked arithmetic expressions receive the same unsupported-operation audit as checked statement blocks.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUnsupportedCheckedExpressionAddition_ReportsCheckedArithmeticDiagnostic() {
+            string source = """
+                public class Counter {
+                    public int Add(int value, int increment) {
+                        return checked(value + increment);
+                    }
+                }
+                """;
+
+            RunConversion(source, out JsonDocument report);
+
+            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            AssertDiagnostic(report, "AddExpression");
+        }
+
+        /// <summary>
+        /// Ensures user-defined indexers remain unsupported checked mutation targets instead of being passed as temporary getter values by reference.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedUserIndexerMutation_ReportsCheckedMutationDiagnostic() {
+            string source = """
+                public class IndexedCounter {
+                    int Value;
+
+                    public int this[int index] {
+                        get {
+                            return Value;
+                        }
+                        set {
+                            Value = value;
+                        }
+                    }
+
+                    public void Increment(int index) {
+                        checked {
+                            this[index]++;
+                        }
+                    }
+                }
+                """;
+
+            RunConversion(source, out JsonDocument report);
+
+            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            AssertDiagnostic(report, "PostIncrementExpression");
+        }
+
+        /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns all generated textual output.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>

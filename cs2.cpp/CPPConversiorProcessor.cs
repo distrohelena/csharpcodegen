@@ -126,10 +126,7 @@ namespace cs2.cpp {
             }
 
             if (expression is CheckedExpressionSyntax checkedExpression) {
-                lines.Add("(");
-                ExpressionResult checkedResult = ProcessExpression(semantic, context, checkedExpression.Expression, lines, refTypes);
-                lines.Add(")");
-                return checkedResult;
+                return ProcessCheckedContextExpression(semantic, context, checkedExpression, lines, refTypes);
             }
 
             if (expression is ElementAccessExpressionSyntax elementAccessExpression) {
@@ -918,13 +915,48 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Lowers a C# checked-context expression while carrying its lexical overflow policy into the enclosed expression.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the checked or unchecked expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="checkedContextExpression">Checked or unchecked expression to lower.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="refTypes">Optional referenced-type collector used by the expression lowerer.</param>
+        /// <returns>The result of lowering the enclosed expression.</returns>
+        ExpressionResult ProcessCheckedContextExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            CheckedExpressionSyntax checkedContextExpression,
+            List<string> lines,
+            List<ExpressionResult> refTypes) {
+            if (context is not CPPLayerContext cppContext) {
+                throw new InvalidOperationException("Checked arithmetic lowering requires a C++ layer context.");
+            }
+
+            bool isChecked = checkedContextExpression.IsKind(SyntaxKind.CheckedExpression);
+            if (isChecked) {
+                ReportUnsupportedCheckedArithmetic(semantic, context, checkedContextExpression.Expression);
+            }
+
+            lines.Add("(");
+            cppContext.PushCheckedArithmeticContext(isChecked);
+            try {
+                ExpressionResult result = ProcessExpression(semantic, context, checkedContextExpression.Expression, lines, refTypes);
+                lines.Add(")");
+                return result;
+            } finally {
+                cppContext.PopCheckedArithmeticContext();
+            }
+        }
+
+        /// <summary>
         /// Reports overflow-sensitive checked operations that do not yet have a semantics-preserving native helper.
         /// </summary>
         /// <param name="semantic">Semantic model used to distinguish integral arithmetic from unaffected operators.</param>
         /// <param name="context">Current lowering context used to associate diagnostics with the active member.</param>
         /// <param name="block">Checked block whose direct lexical operations should be audited.</param>
         void ReportUnsupportedCheckedArithmetic(SemanticModel semantic, LayerContext context, BlockSyntax block) {
-            foreach (SyntaxNode node in block.DescendantNodes(descendIntoChildren: candidate => candidate is not CheckedStatementSyntax)) {
+            foreach (SyntaxNode node in block.DescendantNodes(descendIntoChildren: ShouldDescendIntoCheckedArithmeticNode)) {
                 if (IsUnsupportedCheckedArithmeticNode(semantic, node)) {
                     ReportUnsupportedNode(
                         context,
@@ -932,6 +964,32 @@ namespace cs2.cpp {
                         $"The C++ backend does not yet preserve managed overflow behavior for checked arithmetic syntax '{node.Kind()}'.");
                 }
             }
+        }
+
+        /// <summary>
+        /// Reports overflow-sensitive operations inside a checked expression while leaving nested checked contexts to their own lexical policy.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish integral arithmetic from unaffected operators.</param>
+        /// <param name="context">Current lowering context used to associate diagnostics with the active member.</param>
+        /// <param name="expression">Checked expression body whose operations should be audited.</param>
+        void ReportUnsupportedCheckedArithmetic(SemanticModel semantic, LayerContext context, ExpressionSyntax expression) {
+            foreach (SyntaxNode node in expression.DescendantNodesAndSelf(descendIntoChildren: ShouldDescendIntoCheckedArithmeticNode)) {
+                if (IsUnsupportedCheckedArithmeticNode(semantic, node)) {
+                    ReportUnsupportedNode(
+                        context,
+                        node,
+                        $"The C++ backend does not yet preserve managed overflow behavior for checked arithmetic syntax '{node.Kind()}'.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Prevents an enclosing checked audit from traversing into nested checked or unchecked contexts that define their own overflow policy.
+        /// </summary>
+        /// <param name="candidate">Syntax node whose children are candidates for the current lexical audit.</param>
+        /// <returns><c>true</c> when traversal should continue through the node; otherwise <c>false</c>.</returns>
+        static bool ShouldDescendIntoCheckedArithmeticNode(SyntaxNode candidate) {
+            return candidate is not CheckedStatementSyntax && candidate is not CheckedExpressionSyntax;
         }
 
         /// <summary>
@@ -1050,9 +1108,22 @@ namespace cs2.cpp {
         /// <returns><c>true</c> for locals, parameters, fields, and indexed storage; otherwise <c>false</c>.</returns>
         static bool IsSupportedCheckedMutationOperand(SemanticModel semantic, ExpressionSyntax operandExpression) {
             ISymbol operandSymbol = semantic.GetSymbolInfo(operandExpression).Symbol;
-            return operandSymbol is ILocalSymbol or IParameterSymbol or IFieldSymbol ||
-                IsNativeBackedAutoProperty(operandSymbol) ||
-                operandExpression is ElementAccessExpressionSyntax;
+            if (operandSymbol is ILocalSymbol or IParameterSymbol or IFieldSymbol) {
+                return true;
+            }
+
+            if (IsNativeBackedAutoProperty(operandSymbol)) {
+                return operandExpression is IdentifierNameSyntax ||
+                    operandExpression is MemberAccessExpressionSyntax memberAccessExpression &&
+                    memberAccessExpression.Expression is ThisExpressionSyntax;
+            }
+
+            if (operandExpression is ElementAccessExpressionSyntax elementAccessExpression) {
+                ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(elementAccessExpression.Expression).Type;
+                return receiverTypeSymbol is IArrayTypeSymbol;
+            }
+
+            return false;
         }
 
         /// <summary>
