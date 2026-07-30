@@ -239,6 +239,13 @@ namespace cs2.cpp {
             }
 
             if (varType.Type == VariableDataType.List) {
+                if (string.Equals(varType.TypeName, "IReadOnlyList", StringComparison.Ordinal) ||
+                    string.Equals(varType.TypeName, "IReadOnlyCollection", StringComparison.Ordinal) ||
+                    string.Equals(varType.QualifiedTypeName, "System.Collections.Generic.IReadOnlyList", StringComparison.Ordinal) ||
+                    string.Equals(varType.QualifiedTypeName, "System.Collections.Generic.IReadOnlyCollection", StringComparison.Ordinal)) {
+                    return "IReadOnlyList";
+                }
+
                 return "List";
             }
 

@@ -102,6 +102,9 @@ namespace cs2.cpp {
 
             registeredRequirements.TryAdd(definition.Name, definition);
             currentTypeScope?.Register(definition.Name);
+            if (string.Equals(definition.Name, "NativeList", StringComparison.Ordinal)) {
+                Register("NativeExceptions");
+            }
             return true;
         }
 

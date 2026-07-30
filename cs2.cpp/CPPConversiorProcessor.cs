@@ -12089,7 +12089,12 @@ namespace cs2.cpp {
                         typeData.IsArray = false;
                         typeData.IsNativeType = false;
                         typeData.IsPointer = true;
-                        return CreateConvertedGenericType(parsedType, "List");
+                        bool isReadOnlyListContract =
+                            string.Equals(parsedType.TypeName, "IReadOnlyList", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "IReadOnlyCollection", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal);
+                        return CreateConvertedGenericType(parsedType, isReadOnlyListContract ? "IReadOnlyList" : "List");
                 }
                 case VariableDataType.Dictionary: {
                         codeConverter?.RegisterRuntimeRequirement("NativeDictionary");

@@ -7,7 +7,51 @@
 #include <vector>
 
 #include "array.hpp"
+#include "native_exceptions.hpp"
 #include "native_string.hpp"
+
+template<typename T>
+class List;
+
+template<typename T>
+class ReadOnlyCollection;
+
+/// <summary>
+/// Defines the non-mutating list contract used for managed read-only list and collection references.
+/// </summary>
+template<typename T>
+class IReadOnlyList {
+public:
+    /// <summary>
+    /// Names the stable constant iterator used by read-only range traversal.
+    /// </summary>
+    using ConstIterator = typename std::vector<T>::const_iterator;
+
+    /// <summary>
+    /// Releases one read-only contract through its interface pointer.
+    /// </summary>
+    virtual ~IReadOnlyList() = default;
+
+    /// <summary>
+    /// Returns the current number of elements exposed by the live view.
+    /// </summary>
+    virtual int32_t get_Count() const = 0;
+
+    /// <summary>
+    /// Returns one element without granting mutation access.
+    /// </summary>
+    virtual const T& get_Item(int32_t index) const = 0;
+
+    /// <summary>
+    /// Returns the beginning of the current live sequence.
+    /// </summary>
+    virtual ConstIterator begin() const = 0;
+
+    /// <summary>
+    /// Returns the end of the current live sequence.
+    /// </summary>
+    virtual ConstIterator end() const = 0;
+};
 
 template<typename T>
 class NativeListEqual {
@@ -24,7 +68,7 @@ public:
 };
 
 template<typename T>
-class List : public std::vector<T> {
+class List : public std::vector<T>, public IReadOnlyList<T> {
 public:
     List()
         : std::vector<T>() {
@@ -64,9 +108,10 @@ public:
         this->clear();
     }
 
-    List<T>* AsReadOnly() {
-        return this;
-    }
+    /// <summary>
+    /// Allocates a distinct live wrapper that exposes this list through the non-mutating contract.
+    /// </summary>
+    IReadOnlyList<T>* AsReadOnly();
 
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
@@ -92,7 +137,7 @@ public:
         return (*this)[static_cast<size_t>(index)];
     }
 
-    const T& get_Item(int32_t index) const {
+    const T& get_Item(int32_t index) const override {
         return (*this)[static_cast<size_t>(index)];
     }
 
@@ -100,8 +145,36 @@ public:
         (*this)[static_cast<size_t>(index)] = value;
     }
 
-    int32_t get_Count() const {
+    int32_t get_Count() const override {
         return Count();
+    }
+
+    /// <summary>
+    /// Returns a constant iterator for read-only traversal of this list.
+    /// </summary>
+    typename IReadOnlyList<T>::ConstIterator begin() const override {
+        return std::vector<T>::begin();
+    }
+
+    /// <summary>
+    /// Returns a mutable iterator for internal list operations.
+    /// </summary>
+    typename std::vector<T>::iterator begin() {
+        return std::vector<T>::begin();
+    }
+
+    /// <summary>
+    /// Returns the constant end iterator for read-only traversal of this list.
+    /// </summary>
+    typename IReadOnlyList<T>::ConstIterator end() const override {
+        return std::vector<T>::end();
+    }
+
+    /// <summary>
+    /// Returns the mutable end iterator for internal list operations.
+    /// </summary>
+    typename std::vector<T>::iterator end() {
+        return std::vector<T>::end();
     }
 
     int32_t Capacity() const {
@@ -156,3 +229,110 @@ public:
         return values;
     }
 };
+
+/// <summary>
+/// Provides a live read-only view over one managed-style list while rejecting every mutating collection operation.
+/// </summary>
+template<typename T>
+class ReadOnlyCollection : public IReadOnlyList<T> {
+    /// <summary>
+    /// References the mutable source whose current contents remain visible through this wrapper.
+    /// </summary>
+    const List<T>* Source;
+
+public:
+    /// <summary>
+    /// Creates a live read-only wrapper over one required source list.
+    /// </summary>
+    explicit ReadOnlyCollection(const List<T>* source)
+        : Source(source) {
+        if (Source == nullptr) {
+            throw ArgumentNullException("source");
+        }
+    }
+
+    /// <summary>
+    /// Returns the source list's current element count.
+    /// </summary>
+    int32_t get_Count() const override {
+        return Source->get_Count();
+    }
+
+    /// <summary>
+    /// Returns one current source element without exposing a mutable reference.
+    /// </summary>
+    const T& get_Item(int32_t index) const override {
+        return Source->get_Item(index);
+    }
+
+    /// <summary>
+    /// Returns the beginning of the source list's current sequence.
+    /// </summary>
+    typename IReadOnlyList<T>::ConstIterator begin() const override {
+        return Source->begin();
+    }
+
+    /// <summary>
+    /// Returns the end of the source list's current sequence.
+    /// </summary>
+    typename IReadOnlyList<T>::ConstIterator end() const override {
+        return Source->end();
+    }
+
+    /// <summary>
+    /// Rejects attempts to append through the managed read-only collection surface.
+    /// </summary>
+    void Add(const T& value) {
+        (void)value;
+        throw NotSupportedException();
+    }
+
+    /// <summary>
+    /// Rejects attempts to clear through the managed read-only collection surface.
+    /// </summary>
+    void Clear() {
+        throw NotSupportedException();
+    }
+
+    /// <summary>
+    /// Rejects attempts to remove a value through the managed read-only collection surface.
+    /// </summary>
+    bool Remove(const T& value) {
+        (void)value;
+        throw NotSupportedException();
+    }
+
+    /// <summary>
+    /// Rejects attempts to replace an indexed value through the managed read-only list surface.
+    /// </summary>
+    void set_Item(int32_t index, const T& value) {
+        (void)index;
+        (void)value;
+        throw NotSupportedException();
+    }
+
+    /// <summary>
+    /// Rejects attempts to insert through the managed read-only list surface.
+    /// </summary>
+    void Insert(int32_t index, const T& value) {
+        (void)index;
+        (void)value;
+        throw NotSupportedException();
+    }
+
+    /// <summary>
+    /// Rejects attempts to remove an indexed value through the managed read-only list surface.
+    /// </summary>
+    void RemoveAt(int32_t index) {
+        (void)index;
+        throw NotSupportedException();
+    }
+};
+
+template<typename T>
+/// <summary>
+/// Creates the managed live read-only wrapper for this list.
+/// </summary>
+IReadOnlyList<T>* List<T>::AsReadOnly() {
+    return new ReadOnlyCollection<T>(this);
+}

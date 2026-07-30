@@ -1766,7 +1766,7 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures the native list surface supports the live read-only view call emitted for managed <c>List&lt;T&gt;.AsReadOnly</c> usage.
+        /// Ensures managed <c>List&lt;T&gt;.AsReadOnly</c> lowers to a distinct live wrapper whose static and runtime surfaces reject mutation.
         /// </summary>
         [Fact]
         public void WriteOutput_WithListAsReadOnlyUsage_EmitsNativeLiveViewSurface() {
@@ -1783,8 +1783,17 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_list.hpp"));
 
+            Assert.Contains("IReadOnlyList<int32_t>* Inventory::Freeze", output.GeneratedText);
             Assert.Contains("return values->AsReadOnly();", output.GeneratedText);
-            Assert.Contains("List<T>* AsReadOnly()", runtimeHeader);
+            Assert.Contains("class List : public std::vector<T>, public IReadOnlyList<T>", runtimeHeader);
+            Assert.Contains("class ReadOnlyCollection : public IReadOnlyList<T>", runtimeHeader);
+            Assert.Contains("IReadOnlyList<T>* List<T>::AsReadOnly()", runtimeHeader);
+            Assert.Contains("return new ReadOnlyCollection<T>(this);", runtimeHeader);
+            Assert.Contains("throw NotSupportedException();", runtimeHeader);
+            Assert.DoesNotContain("\n    List<T>* AsReadOnly()", runtimeHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("return this;", runtimeHeader, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeList");
+            AssertRuntimeRequirement(output.Report, "NativeExceptions");
         }
 
         /// <summary>
