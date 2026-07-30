@@ -13,6 +13,7 @@ namespace cs2.cpp {
             "NativeFreeFunctionAttribute",
             "NativeMigrationRequiredAttribute",
             "NativeNoEscapeAttribute",
+            "ScenePersistenceAppendAttribute",
             "ScenePersistenceIgnoreAttribute"
         ];
 

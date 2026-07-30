@@ -24,4 +24,25 @@ public class CPPGeneratedSourcePrunerTests {
         Assert.False(File.Exists(sourcePath));
         Assert.False(File.Exists(templatePath));
     }
+
+    /// <summary>
+    /// Ensures the scene persistence append marker is removed because it is consumed only by managed authoring and reflection pipelines.
+    /// </summary>
+    [Fact]
+    public void RemoveEditorOnlyGeneratedSourceFiles_WithScenePersistenceAppendMarker_RemovesEveryGeneratedSourceExtension() {
+        string outputPath = Path.Combine(Path.GetTempPath(), "cs2cpp-generated-source-pruner-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputPath);
+        string headerPath = Path.Combine(outputPath, "ScenePersistenceAppendAttribute.hpp");
+        string sourcePath = Path.Combine(outputPath, "ScenePersistenceAppendAttribute.cpp");
+        string templatePath = Path.Combine(outputPath, "ScenePersistenceAppendAttribute.tpp");
+        File.WriteAllText(headerPath, "// header");
+        File.WriteAllText(sourcePath, "// source");
+        File.WriteAllText(templatePath, "// template");
+
+        CPPGeneratedSourcePruner.RemoveEditorOnlyGeneratedSourceFiles(outputPath);
+
+        Assert.False(File.Exists(headerPath));
+        Assert.False(File.Exists(sourcePath));
+        Assert.False(File.Exists(templatePath));
+    }
 }
