@@ -1743,6 +1743,29 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures boxed equality remains false when distinct managed primitive types collapse to aliases of the same native integer type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeAliasPrimitiveEquals_DoesNotUseCppTypeIdentity() {
+            string source = """
+                public class NativeAliasScalarComparer {
+                    public bool Equals(nint left, long right) {
+                        return left.Equals(right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "number.hpp"));
+
+            Assert.Contains("return Number::EqualsObject(left, right);", output.GeneratedText);
+            Assert.DoesNotContain("std::is_same", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("(void)left;", runtimeHeader);
+            Assert.Contains("(void)right;", runtimeHeader);
+            Assert.Contains("return false;", runtimeHeader);
+        }
+
+        /// <summary>
         /// Ensures the native list surface supports the live read-only view call emitted for managed <c>List&lt;T&gt;.AsReadOnly</c> usage.
         /// </summary>
         [Fact]
