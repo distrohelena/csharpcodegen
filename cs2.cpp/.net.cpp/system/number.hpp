@@ -8,6 +8,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <type_traits>
 
 /// <summary>
 /// Provides lightweight managed numeric helpers used by transpiled static primitive calls.
@@ -194,6 +195,30 @@ public:
         T originalValue = value;
         value = static_cast<T>(value - static_cast<T>(1));
         return originalValue;
+    }
+
+    /// <summary>
+    /// Applies managed checked same-type integral addition and writes the result only after proving it is representable.
+    /// </summary>
+    /// <typeparam name="T">Integral type shared by the target and value.</typeparam>
+    /// <param name="left">Assignable target value.</param>
+    /// <param name="right">Value to add to the target.</param>
+    /// <returns>The validated sum written to the target.</returns>
+    template <typename T>
+    static T CheckedAddAssign(T& left, const T& right) {
+        if constexpr (std::is_unsigned_v<T>) {
+            if (right > std::numeric_limits<T>::max() - left) {
+                throw OverflowException();
+            }
+        } else {
+            if ((right > static_cast<T>(0) && left > std::numeric_limits<T>::max() - right) ||
+                (right < static_cast<T>(0) && left < std::numeric_limits<T>::lowest() - right)) {
+                throw OverflowException();
+            }
+        }
+
+        left = static_cast<T>(left + right);
+        return left;
     }
 
     /// <summary>

@@ -37,11 +37,13 @@ namespace cs2.cpp.tests {
         public void WriteOutput_WithCheckedBlock_DoesNotReportCheckedStatement() {
             string source = """
                 public class Counter {
-                    int value;
+                    long Value { get; set; }
+                    int Total { get; set; }
 
-                    public void Increment() {
+                    public void Increment(int amount) {
                         checked {
-                            value++;
+                            Value++;
+                            Total += amount;
                         }
                     }
                 }
@@ -51,11 +53,14 @@ namespace cs2.cpp.tests {
 
             AssertNoDiagnostic(report, "CheckedStatement");
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            Assert.Contains("Number::CheckedPostIncrement(this->value);", output);
+            Assert.Contains("Number::CheckedPostIncrement(this->Value);", output);
+            Assert.Contains("Number::CheckedAddAssign(this->Total, amount);", output);
             Assert.Contains("static T CheckedPostIncrement(T& value)", output);
+            Assert.Contains("static T CheckedAddAssign(T& left, const T& right)", output);
             Assert.Contains("if (value == std::numeric_limits<T>::max())", output);
             Assert.Contains("throw OverflowException();", output);
-            Assert.DoesNotContain("this->value++;", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->Value++;", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("this->Total += amount;", output, StringComparison.Ordinal);
         }
 
         /// <summary>

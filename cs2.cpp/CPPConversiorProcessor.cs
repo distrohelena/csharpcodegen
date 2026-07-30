@@ -956,7 +956,19 @@ namespace cs2.cpp {
                  assignmentExpression.IsKind(SyntaxKind.MultiplyAssignmentExpression) ||
                  assignmentExpression.IsKind(SyntaxKind.DivideAssignmentExpression))) {
                 ITypeSymbol assignmentTypeSymbol = semantic.GetTypeInfo(assignmentExpression.Left).Type;
-                return IsCheckedIntegralTypeSymbol(assignmentTypeSymbol);
+                if (!IsCheckedIntegralTypeSymbol(assignmentTypeSymbol)) {
+                    return false;
+                }
+
+                ITypeSymbol valueTypeSymbol = semantic.GetTypeInfo(assignmentExpression.Right).ConvertedType ??
+                    semantic.GetTypeInfo(assignmentExpression.Right).Type;
+                bool isSupportedAddAssignment =
+                    assignmentExpression.IsKind(SyntaxKind.AddAssignmentExpression) &&
+                    IsSupportedCheckedMutationType(assignmentTypeSymbol) &&
+                    IsSupportedCheckedMutationOperand(semantic, assignmentExpression.Left) &&
+                    valueTypeSymbol != null &&
+                    valueTypeSymbol.SpecialType == assignmentTypeSymbol.SpecialType;
+                return !isSupportedAddAssignment;
             }
 
             if (node is CastExpressionSyntax castExpression) {
@@ -1039,7 +1051,40 @@ namespace cs2.cpp {
         static bool IsSupportedCheckedMutationOperand(SemanticModel semantic, ExpressionSyntax operandExpression) {
             ISymbol operandSymbol = semantic.GetSymbolInfo(operandExpression).Symbol;
             return operandSymbol is ILocalSymbol or IParameterSymbol or IFieldSymbol ||
+                IsNativeBackedAutoProperty(operandSymbol) ||
                 operandExpression is ElementAccessExpressionSyntax;
+        }
+
+        /// <summary>
+        /// Determines whether a property is emitted with direct native backing storage and can therefore participate in by-reference checked helpers.
+        /// </summary>
+        /// <param name="symbol">Resolved operand symbol to inspect.</param>
+        /// <returns><c>true</c> when the symbol is an auto-property without authored accessor bodies; otherwise <c>false</c>.</returns>
+        static bool IsNativeBackedAutoProperty(ISymbol symbol) {
+            if (symbol is not IPropertySymbol propertySymbol) {
+                return false;
+            }
+
+            foreach (SyntaxReference syntaxReference in propertySymbol.DeclaringSyntaxReferences) {
+                if (syntaxReference.GetSyntax() is not PropertyDeclarationSyntax propertyDeclaration ||
+                    propertyDeclaration.AccessorList == null) {
+                    continue;
+                }
+
+                bool hasAuthoredAccessorBody = false;
+                foreach (AccessorDeclarationSyntax accessorDeclaration in propertyDeclaration.AccessorList.Accessors) {
+                    if (accessorDeclaration.Body != null || accessorDeclaration.ExpressionBody != null) {
+                        hasAuthoredAccessorBody = true;
+                        break;
+                    }
+                }
+
+                if (!hasAuthoredAccessorBody) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1238,6 +1283,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (TryProcessCheckedAddAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             if (TryProcessDiscardAssignmentExpression(semantic, context, assignment, lines)) {
                 return;
             }
@@ -1306,6 +1355,61 @@ namespace cs2.cpp {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
+        }
+
+        /// <summary>
+        /// Lowers one same-type checked integral add-assignment through a native helper that validates the result before writing the target.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve operand types.</param>
+        /// <param name="context">Current C++ lowering context and checked-policy stack.</param>
+        /// <param name="assignment">Assignment expression that may require checked addition.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <returns><c>true</c> when a supported checked add-assignment was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedAddAssignment(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !assignment.IsKind(SyntaxKind.AddAssignmentExpression) ||
+                !TryGetExpressionTypeSymbol(semantic, assignment.Left, out ITypeSymbol targetTypeSymbol) ||
+                !TryGetExpressionTypeSymbol(semantic, assignment.Right, out ITypeSymbol valueTypeSymbol) ||
+                !IsSupportedCheckedMutationType(targetTypeSymbol) ||
+                valueTypeSymbol.SpecialType != targetTypeSymbol.SpecialType ||
+                !IsSupportedCheckedMutationOperand(semantic, assignment.Left)) {
+                return false;
+            }
+
+            List<string> targetLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult targetResult = ProcessExpression(semantic, context, assignment.Left, targetLines);
+            context.PopClass(startDepth);
+
+            List<string> valueLines = new List<string>();
+            startDepth = context.DepthClass;
+            ExpressionResult valueResult = ProcessExpression(semantic, context, assignment.Right, valueLines);
+            context.PopClass(startDepth);
+
+            if (targetResult.BeforeLines != null && targetResult.BeforeLines.Count > 0) {
+                lines.AddRange(targetResult.BeforeLines);
+            }
+            if (valueResult.BeforeLines != null && valueResult.BeforeLines.Count > 0) {
+                lines.AddRange(valueResult.BeforeLines);
+            }
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add("Number::CheckedAddAssign(");
+            lines.AddRange(targetLines);
+            lines.Add(", ");
+            lines.AddRange(valueLines);
+            lines.Add(")");
+            if (valueResult.AfterLines != null && valueResult.AfterLines.Count > 0) {
+                lines.Add(";\n");
+                lines.AddRange(valueResult.AfterLines);
+            }
+            return true;
         }
 
         /// <summary>
