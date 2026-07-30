@@ -6433,14 +6433,14 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
 
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "KeyNotFoundException.hpp")));
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
             Assert.Contains("return new ::KeyNotFoundException();", sourceOutput);
             Assert.Contains("return new ::DivideByZeroException();", sourceOutput);
-            Assert.DoesNotContain(
-                output.Report.RootElement.GetProperty("registeredRuntimeRequirements").EnumerateArray(),
-                requirement => string.Equals(requirement.GetString(), "NativeExceptions", StringComparison.Ordinal));
+            Assert.Contains("#include \"KeyNotFoundException.hpp\"", sourceOutput);
+            Assert.Contains("#include \"DivideByZeroException.hpp\"", sourceOutput);
         }
 
         /// <summary>
