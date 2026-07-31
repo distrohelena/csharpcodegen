@@ -9,6 +9,7 @@ namespace cs2.cpp {
         /// Stores exact managed symbol identities that the native runtime consumes only as conversion-time metadata.
         /// </summary>
         static readonly HashSet<string> ExcludedTypeNames = new HashSet<string>(StringComparer.Ordinal) {
+            "cs2.attributes.CodeGenRenameAttribute",
             "NativeBorrowedReturnAttribute",
             "NativeFreeFunctionAttribute",
             "NativeNoEscapeAttribute",

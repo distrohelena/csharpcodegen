@@ -10,6 +10,53 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPMethodOwnershipSummaryResolverTests {
     /// <summary>
+    /// Ensures anonymous functions and explicit delegate wrappers are classified as fresh owned native delegate storage.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithDelegateFactories_ClassifiesReturnsAsOwned() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            public delegate int Mapper(int value);
+
+            public static class DelegateFactory {
+                public static Mapper CreateLambda() {
+                    return value => value + 1;
+                }
+
+                public static Mapper CreateWrapper() {
+                    return new Mapper(value => value + 1);
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPOwnershipKind.Owned, ResolveSummary(compilation, resolution, "CreateLambda").ReturnOwnership);
+        Assert.Equal(CPPOwnershipKind.Owned, ResolveSummary(compilation, resolution, "CreateWrapper").ReturnOwnership);
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures native runtime type tokens returned by <c>typeof</c> are classified as shared borrowed storage.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithTypeOfReturn_ClassifiesReturnAsBorrowed() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            public static class TypeResolver {
+                public static Type Resolve() {
+                    return typeof(TypeResolver);
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPOwnershipKind.Borrowed, ResolveSummary(compilation, resolution, "Resolve").ReturnOwnership);
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Ensures fresh locals, nested factories, null branches, borrowed parameters, and mixed returns receive distinct contracts.
     /// </summary>
     [Fact]
@@ -182,6 +229,26 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
         Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, ResolveSummary(compilation, resolution, "Destroy").GetParameterOwnership(0));
         Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, ResolveSummary(compilation, resolution, "Forward").GetParameterOwnership(0));
         Assert.Contains(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Invalid");
+    }
+
+    /// <summary>
+    /// Ensures a parameter used as an indexer receiver inside an argument expression is not mistaken for the index argument itself.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithParameterReceiverNestedInsideIndexerArgument_InfersNoEscape() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System.Collections.Generic;
+
+            public static class Reader {
+                public static int Read(IReadOnlyList<int> values) {
+                    return values[values.Count - 1];
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, ResolveSummary(compilation, resolution, "Read").GetParameterOwnership(0));
     }
 
     /// <summary>

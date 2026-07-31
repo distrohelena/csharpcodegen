@@ -18,6 +18,12 @@ public sealed class CPPIntrinsicOwnershipCatalogTests {
     [InlineData("System.Linq.Enumerable.Empty<int>()", CPPOwnershipKind.Borrowed)]
     [InlineData("new int[4].ToArray()", CPPOwnershipKind.Owned)]
     [InlineData("new int[4].Clone()", CPPOwnershipKind.Owned)]
+    [InlineData("new System.Collections.Generic.List<int>().ToArray()", CPPOwnershipKind.Owned)]
+    [InlineData("System.Text.Encoding.UTF8.GetBytes(\"value\")", CPPOwnershipKind.Owned)]
+    [InlineData("new System.IO.MemoryStream().ToArray()", CPPOwnershipKind.Owned)]
+    [InlineData("\"value\".Split(',')", CPPOwnershipKind.Owned)]
+    [InlineData("new System.Collections.Generic.List<int>().AsReadOnly()", CPPOwnershipKind.Owned)]
+    [InlineData("System.IO.File.OpenRead(\"asset.bin\")", CPPOwnershipKind.Owned)]
     public void TryGetReturnOwnership_ClassifiesKnownFrameworkCalls(string expressionText, CPPOwnershipKind expectedOwnership) {
         IMethodSymbol method = OwnershipRoslynTestHelper.ResolveInvocation(expressionText);
         CPPIntrinsicOwnershipCatalog catalog = new CPPIntrinsicOwnershipCatalog();
@@ -90,5 +96,22 @@ public sealed class CPPIntrinsicOwnershipCatalogTests {
         Assert.Equal(CPPParameterOwnershipKind.NoEscape, borrowed);
         Assert.True(catalog.TryGetParameterOwnership(method.Parameters[1], out CPPParameterOwnershipKind owned));
         Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, owned);
+    }
+
+    /// <summary>
+    /// Ensures framework string helpers that only inspect collection or separator storage preserve caller ownership.
+    /// </summary>
+    [Fact]
+    public void TryGetParameterOwnership_ClassifiesReviewedStringHelperInputsAsNoEscape() {
+        IMethodSymbol joinMethod = OwnershipRoslynTestHelper.ResolveInvocation(
+            "string.Join(\", \", new System.Collections.Generic.List<string>())");
+        IMethodSymbol splitMethod = OwnershipRoslynTestHelper.ResolveInvocation(
+            "\"value\".Split(new[] { ' ' }, System.StringSplitOptions.None)");
+        CPPIntrinsicOwnershipCatalog catalog = new CPPIntrinsicOwnershipCatalog();
+
+        Assert.True(catalog.TryGetParameterOwnership(joinMethod.Parameters[1], out CPPParameterOwnershipKind joinValues));
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, joinValues);
+        Assert.True(catalog.TryGetParameterOwnership(splitMethod.Parameters[0], out CPPParameterOwnershipKind splitSeparators));
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, splitSeparators);
     }
 }

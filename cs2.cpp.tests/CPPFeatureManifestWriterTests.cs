@@ -69,6 +69,21 @@ namespace ExampleEngine.Core.Scene {
     }
 
     /// <summary>
+    /// Ensures an empty feature catalog emits a portable null manifest instead of a zero-length native array.
+    /// </summary>
+    [Fact]
+    public void Write_WithNoFeatureDecisions_EmitsPortableEmptyManifest() {
+        string outputPath = Path.Combine(Path.GetTempPath(), "cs2cpp-feature-manifest-empty", Guid.NewGuid().ToString("N"));
+
+        CPPFeatureManifestWriter.Write(outputPath, new CPPBuildUsageReport());
+
+        string sourceText = File.ReadAllText(Path.Combine(outputPath, "runtime", "feature_manifest.cpp"));
+        Assert.DoesNotContain("kFeatureEntries[]", sourceText, StringComparison.Ordinal);
+        Assert.Contains("*count = 0;", sourceText, StringComparison.Ordinal);
+        Assert.Contains("return nullptr;", sourceText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Runs the converter against a temporary single-file project and returns the output folder.
     /// </summary>
     /// <param name="source">C# source file content to convert.</param>

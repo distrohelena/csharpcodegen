@@ -24,6 +24,7 @@ public sealed class CPPGeneratedOwnershipContractEmissionPolicyTests {
         converter.AddCsproj(projectPath);
         converter.WriteOutput(outputPath);
 
+        Assert.False(File.Exists(Path.Combine(outputPath, "CodeGenRenameAttribute.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "NativeOwnedReturnAttribute.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "NativeBorrowedReturnAttribute.hpp")));
         Assert.False(File.Exists(Path.Combine(outputPath, "NativeTakesOwnershipAttribute.hpp")));

@@ -24,7 +24,13 @@ public sealed class CPPIntrinsicOwnershipCatalog {
             return true;
         } else if (IsMethod(method, "System.Linq.Enumerable", "ToArray") ||
                    IsMethod(method, "System.Linq.Enumerable", "ToList") ||
-                   IsMethod(method, "System.Array", "Clone")) {
+                   IsMethod(method, "System.Array", "Clone") ||
+                   IsMethod(method, "System.Collections.Generic.List<T>", "ToArray") ||
+                   IsMethod(method, "System.Collections.Generic.List<T>", "AsReadOnly") ||
+                   IsMethod(method, "System.Text.Encoding", "GetBytes") ||
+                   IsMethod(method, "System.IO.MemoryStream", "ToArray") ||
+                   IsMethod(method, "System.IO.File", "OpenRead") ||
+                   IsMethod(method, "System.String", "Split")) {
             ownership = CPPOwnershipKind.Owned;
             return true;
         }
@@ -56,6 +62,13 @@ public sealed class CPPIntrinsicOwnershipCatalog {
             }
         }
 
+        IMethodSymbol method = parameter.ContainingSymbol as IMethodSymbol;
+        if (IsMethod(method, "System.String", "Join") ||
+            IsMethod(method, "System.String", "Split")) {
+            ownership = CPPParameterOwnershipKind.NoEscape;
+            return true;
+        }
+
         ownership = CPPParameterOwnershipKind.Unknown;
         return false;
     }
@@ -68,8 +81,15 @@ public sealed class CPPIntrinsicOwnershipCatalog {
     /// <param name="methodName">Exact source method name.</param>
     /// <returns><c>true</c> when both identities match.</returns>
     static bool IsMethod(IMethodSymbol method, string containingTypeName, string methodName) {
+        if (method == null) {
+            return false;
+        }
+
+        string resolvedContainingTypeName = method.ContainingType?.SpecialType == SpecialType.System_String
+            ? "System.String"
+            : method.ContainingType?.OriginalDefinition.ToDisplayString();
         return string.Equals(method.Name, methodName, StringComparison.Ordinal) &&
-            string.Equals(method.ContainingType?.ToDisplayString(), containingTypeName, StringComparison.Ordinal);
+            string.Equals(resolvedContainingTypeName, containingTypeName, StringComparison.Ordinal);
     }
 
     /// <summary>

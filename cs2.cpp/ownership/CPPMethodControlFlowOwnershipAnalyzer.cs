@@ -25,6 +25,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     readonly CPPOwnershipStateMerger StateMerger;
 
     /// <summary>
+    /// Provides reviewed parameter contracts for framework methods without source summaries.
+    /// </summary>
+    readonly CPPIntrinsicOwnershipCatalog IntrinsicCatalog;
+
+    /// <summary>
     /// Initializes one method analyzer with explicit semantic collaborators.
     /// </summary>
     /// <param name="expressionClassifier">Classifier used for initializer and replacement expressions.</param>
@@ -32,7 +37,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     public CPPMethodControlFlowOwnershipAnalyzer(
         CPPOwnershipExpressionClassifier expressionClassifier,
         CPPOwnershipDiagnosticFactory diagnosticFactory)
-        : this(expressionClassifier, diagnosticFactory, new CPPOwnershipStateMerger()) {
+        : this(
+            expressionClassifier,
+            diagnosticFactory,
+            new CPPOwnershipStateMerger(),
+            new CPPIntrinsicOwnershipCatalog()) {
     }
 
     /// <summary>
@@ -44,10 +53,30 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     public CPPMethodControlFlowOwnershipAnalyzer(
         CPPOwnershipExpressionClassifier expressionClassifier,
         CPPOwnershipDiagnosticFactory diagnosticFactory,
-        CPPOwnershipStateMerger stateMerger) {
+        CPPOwnershipStateMerger stateMerger)
+        : this(
+            expressionClassifier,
+            diagnosticFactory,
+            stateMerger,
+            new CPPIntrinsicOwnershipCatalog()) {
+    }
+
+    /// <summary>
+    /// Initializes one method analyzer with explicit state and framework ownership collaborators.
+    /// </summary>
+    /// <param name="expressionClassifier">Classifier used for initializer and replacement expressions.</param>
+    /// <param name="diagnosticFactory">Factory used for source-located hard errors.</param>
+    /// <param name="stateMerger">Merger used at control-flow joins.</param>
+    /// <param name="intrinsicCatalog">Reviewed framework parameter ownership contracts.</param>
+    public CPPMethodControlFlowOwnershipAnalyzer(
+        CPPOwnershipExpressionClassifier expressionClassifier,
+        CPPOwnershipDiagnosticFactory diagnosticFactory,
+        CPPOwnershipStateMerger stateMerger,
+        CPPIntrinsicOwnershipCatalog intrinsicCatalog) {
         ExpressionClassifier = expressionClassifier ?? throw new ArgumentNullException(nameof(expressionClassifier));
         DiagnosticFactory = diagnosticFactory ?? throw new ArgumentNullException(nameof(diagnosticFactory));
         StateMerger = stateMerger ?? throw new ArgumentNullException(nameof(stateMerger));
+        IntrinsicCatalog = intrinsicCatalog ?? throw new ArgumentNullException(nameof(intrinsicCatalog));
     }
 
     /// <summary>
@@ -151,6 +180,9 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
 
             ILocalSymbol local = semanticModel.GetDeclaredSymbol(declaration) as ILocalSymbol;
             if (local == null) {
+                continue;
+            }
+            if (!CPPOwnershipTypeClassifier.RequiresClassification(local.Type)) {
                 continue;
             }
 
@@ -367,7 +399,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                     : CPPLocalOwnershipState.CreateUninitialized())
                 .ToArray();
             bool permitsUninitializedOwned = plansByLocal.TryGetValue(local, out CPPLocalOwnershipPlan plan) &&
-                !plan.InitiallyOwnsValue;
+                plan.RequiresScopeGuard;
             result[local] = StateMerger.Merge(incomingStates, permitsUninitializedOwned);
         }
 
@@ -536,7 +568,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                     : CPPLocalOwnershipState.CreateUninitialized())
                 .ToArray();
             bool permitsUninitializedOwned = plansByLocal.TryGetValue(local, out CPPLocalOwnershipPlan plan) &&
-                !plan.InitiallyOwnsValue;
+                plan.RequiresScopeGuard;
             result[local] = StateMerger.Merge(localStates, permitsUninitializedOwned);
         }
 
@@ -1089,6 +1121,14 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         }
 
         CPPOwnershipKind replacementOwnership = ExpressionClassifier.Classify(assignment.Value, summaries.Summaries);
+        if (replacementOwnership == CPPOwnershipKind.Borrowed &&
+            (!currentState.IsInitialized || currentState.Ownership == CPPOwnershipKind.Borrowed)) {
+            state[local] = new CPPLocalOwnershipState(
+                CPPOwnershipKind.Borrowed,
+                CPPOwnershipLifecycle.Live,
+                true);
+            return;
+        }
         if (replacementOwnership != CPPOwnershipKind.Owned) {
             if (emit) {
                 AddDiagnostic(diagnostics, DiagnosticFactory.Create(
@@ -1572,7 +1612,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     /// <param name="parameter">Target parameter.</param>
     /// <param name="summary">Resolved target summary when available.</param>
     /// <returns>The verified parameter ownership behavior.</returns>
-    static CPPParameterOwnershipKind ResolveParameterOwnership(
+    CPPParameterOwnershipKind ResolveParameterOwnership(
         IParameterSymbol parameter,
         CPPMethodOwnershipSummary summary) {
         if (parameter == null) {
@@ -1580,6 +1620,9 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         }
         if (HasAttribute(parameter, "NativeTakesOwnership")) {
             return CPPParameterOwnershipKind.TakesOwnership;
+        }
+        if (IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind intrinsicOwnership)) {
+            return intrinsicOwnership;
         }
         return summary != null
             ? summary.GetParameterOwnership(parameter.Ordinal)

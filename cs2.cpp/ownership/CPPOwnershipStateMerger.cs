@@ -39,6 +39,16 @@ public sealed class CPPOwnershipStateMerger {
                 true);
         }
 
+        bool containsOnlyUninitializedOrBorrowed = states.All(state =>
+            !state.IsInitialized || state.Ownership == CPPOwnershipKind.Borrowed);
+        bool containsBorrowed = states.Any(state => state.IsInitialized && state.Ownership == CPPOwnershipKind.Borrowed);
+        if (containsOnlyUninitializedOrBorrowed && containsBorrowed) {
+            return new CPPLocalOwnershipState(
+                CPPOwnershipKind.Borrowed,
+                CPPOwnershipLifecycle.Live,
+                true);
+        }
+
         return new CPPLocalOwnershipState(
             CPPOwnershipKind.Unknown,
             CPPOwnershipLifecycle.Live,

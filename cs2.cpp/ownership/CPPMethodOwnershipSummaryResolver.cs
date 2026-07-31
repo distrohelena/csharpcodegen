@@ -152,7 +152,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
 
             summaries[sourceMethod.Key] = new CPPMethodOwnershipSummary(
                 sourceMethod.Key,
-                RequiresOwnershipClassification(method.ReturnType),
+                CPPOwnershipTypeClassifier.RequiresClassification(method.ReturnType),
                 returnOwnership,
                 parameterOwnership);
         }
@@ -174,14 +174,14 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         string methodKey = CPPMethodOwnershipKey.Create(method);
         bool hasBody = HasSourceBody(method);
         bool hasDeclaredReturn = ExpressionClassifier.TryGetDeclaredReturnOwnership(method, out CPPOwnershipKind declaredReturn);
-        CPPOwnershipKind inferredReturn = hasBody && RequiresOwnershipClassification(method.ReturnType)
+        CPPOwnershipKind inferredReturn = hasBody && CPPOwnershipTypeClassifier.RequiresClassification(method.ReturnType)
             ? InferReturnOwnership(method, summaries, sourceMethods, out _, out _, out _)
             : CPPOwnershipKind.Unknown;
         CPPOwnershipKind returnOwnership = hasDeclaredReturn ? declaredReturn : inferredReturn;
 
         Dictionary<int, CPPParameterOwnershipKind> parameterOwnership = new Dictionary<int, CPPParameterOwnershipKind>();
         foreach (IParameterSymbol parameter in method.Parameters) {
-            if (!RequiresOwnershipClassification(parameter.Type)) {
+            if (!CPPOwnershipTypeClassifier.RequiresClassification(parameter.Type)) {
                 parameterOwnership[parameter.Ordinal] = CPPParameterOwnershipKind.Unknown;
                 continue;
             }
@@ -195,7 +195,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
 
         return new CPPMethodOwnershipSummary(
             methodKey,
-            RequiresOwnershipClassification(method.ReturnType),
+            CPPOwnershipTypeClassifier.RequiresClassification(method.ReturnType),
             returnOwnership,
             parameterOwnership);
     }
@@ -401,6 +401,9 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                 argumentOperation.Parameter == null) {
                 return CPPParameterOwnershipKind.Unknown;
             }
+            if (!IsDirectParameterArgument(argumentOperation, parameter)) {
+                continue;
+            }
 
             IMethodSymbol targetMethod = argumentOperation.Parameter.ContainingSymbol as IMethodSymbol;
             if (IsNativeOwnershipRelease(targetMethod)) {
@@ -428,6 +431,26 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         }
 
         return takesOwnership ? CPPParameterOwnershipKind.TakesOwnership : CPPParameterOwnershipKind.NoEscape;
+    }
+
+    /// <summary>
+    /// Determines whether one argument passes the inspected parameter itself instead of merely using it inside a larger argument expression.
+    /// </summary>
+    /// <param name="argument">Semantic argument containing the source reference.</param>
+    /// <param name="sourceParameter">Source parameter whose escape behavior is being inferred.</param>
+    /// <returns><c>true</c> when conversion unwrapping exposes the source parameter as the complete argument value.</returns>
+    static bool IsDirectParameterArgument(IArgumentOperation argument, IParameterSymbol sourceParameter) {
+        IOperation value = argument.Value;
+        while (value is IConversionOperation || value is IParenthesizedOperation) {
+            if (value is IConversionOperation conversion) {
+                value = conversion.Operand;
+            } else {
+                value = ((IParenthesizedOperation)value).Operand;
+            }
+        }
+
+        return value is IParameterReferenceOperation parameterReference &&
+            SymbolEqualityComparer.Default.Equals(parameterReference.Parameter, sourceParameter);
     }
 
     /// <summary>
@@ -469,7 +492,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             }
 
             SyntaxNode declaration = GetMethodDeclaration(method);
-            bool requiresReturnOwnership = RequiresOwnershipClassification(method.ReturnType);
+            bool requiresReturnOwnership = CPPOwnershipTypeClassifier.RequiresClassification(method.ReturnType);
             bool hasDeclaredReturn = ExpressionClassifier.TryGetDeclaredReturnOwnership(method, out CPPOwnershipKind declaredReturn);
             bool isMixed = false;
             bool hasUnknownBoundary = false;
@@ -502,7 +525,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                 }
             }
 
-            foreach (IParameterSymbol parameter in method.Parameters.Where(parameter => RequiresOwnershipClassification(parameter.Type))) {
+            foreach (IParameterSymbol parameter in method.Parameters.Where(parameter => CPPOwnershipTypeClassifier.RequiresClassification(parameter.Type))) {
                 if (!IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind declaredParameter)) {
                     continue;
                 }
@@ -545,25 +568,6 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Determines whether a managed type lowers to a native pointer that requires ownership classification.
-    /// </summary>
-    /// <param name="type">Managed type to inspect.</param>
-    /// <returns><c>true</c> for ownership-bearing reference and array types other than strings.</returns>
-    static bool RequiresOwnershipClassification(ITypeSymbol type) {
-        if (type == null || type.SpecialType == SpecialType.System_Void || type.SpecialType == SpecialType.System_String) {
-            return false;
-        }
-        if (type is IArrayTypeSymbol) {
-            return true;
-        }
-        if (type is ITypeParameterSymbol typeParameter) {
-            return typeParameter.HasReferenceTypeConstraint;
-        }
-
-        return type.IsReferenceType;
     }
 
     /// <summary>

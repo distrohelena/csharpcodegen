@@ -30,6 +30,11 @@ namespace cs2.cpp {
             return new[] { headerPath, sourcePath };
         }
 
+        /// <summary>
+        /// Builds the generated feature-manifest declarations and stable feature enumeration.
+        /// </summary>
+        /// <param name="buildUsageReport">Resolved feature decisions for the active build.</param>
+        /// <returns>Complete generated header text.</returns>
         static string BuildHeaderText(CPPBuildUsageReport buildUsageReport) {
             List<string> lines = new List<string> {
                 """
@@ -72,14 +77,42 @@ const HEFeatureEntry* he_get_feature_entries(std::size_t* count);
             return string.Join(Environment.NewLine, lines);
         }
 
+        /// <summary>
+        /// Builds the feature-manifest implementation without relying on non-standard zero-length arrays.
+        /// </summary>
+        /// <param name="buildUsageReport">Resolved feature decisions for the active build.</param>
+        /// <returns>Complete generated implementation text.</returns>
         static string BuildSourceText(CPPBuildUsageReport buildUsageReport) {
+            CPPFeatureDecision[] decisions = buildUsageReport.FeatureDecisions
+                .OrderBy(item => item.FeatureId, StringComparer.Ordinal)
+                .ToArray();
+            if (decisions.Length == 0) {
+                return string.Join(Environment.NewLine, new[] {
+                    "#include \"feature_manifest.hpp\"",
+                    string.Empty,
+                    "bool he_feature_enabled(HEFeature feature) {",
+                    "    (void)feature;",
+                    "    return false;",
+                    "}",
+                    string.Empty,
+                    "const HEFeatureEntry* he_get_feature_entries(std::size_t* count) {",
+                    "    if (count != nullptr) {",
+                    "        *count = 0;",
+                    "    }",
+                    string.Empty,
+                    "    return nullptr;",
+                    "}",
+                    string.Empty
+                });
+            }
+
             List<string> lines = new List<string> {
                 "#include \"feature_manifest.hpp\"",
                 string.Empty,
                 "static const HEFeatureEntry kFeatureEntries[] = {"
             };
 
-            foreach (CPPFeatureDecision decision in buildUsageReport.FeatureDecisions.OrderBy(item => item.FeatureId, StringComparer.Ordinal)) {
+            foreach (CPPFeatureDecision decision in decisions) {
                 string enabledLiteral = decision.Enabled ? "true" : "false";
                 lines.Add($"    {{ HEFeature::{CPPFeatureIdentifierFormatter.ToEnumMemberName(decision.FeatureId)}, {enabledLiteral}, HEFeatureDecisionOrigin::{decision.Origin}, \"{decision.FeatureId}\" }},");
             }

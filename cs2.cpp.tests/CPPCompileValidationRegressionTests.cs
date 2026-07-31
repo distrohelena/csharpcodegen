@@ -66,6 +66,7 @@ namespace cs2.cpp.tests {
                 public class ByteArrayCloneGate {
                     byte[] dataValue;
 
+                    [NativeBorrowedReturn]
                     public byte[] Data {
                         get {
                             return dataValue ?? throw new InvalidOperationException();
@@ -3932,7 +3933,7 @@ namespace cs2.cpp.tests {
 
                 public interface IDebugInfoProvider {
                     string Category { get; }
-                    void AppendInfo(List<(string Key, string Value)> items);
+                    void AppendInfo([NativeNoEscape] List<(string Key, string Value)> items);
                 }
 
                 public static class DebugInfoRegistry {
@@ -4861,7 +4862,7 @@ namespace cs2.cpp.tests {
                         return members.ToArray();
                     }
 
-                    static int ComputeSize(IReadOnlyList<Member> members) {
+                    static int ComputeSize([NativeNoEscape] IReadOnlyList<Member> members) {
                         if (members.Count == 0) {
                             return 0;
                         }
@@ -6682,7 +6683,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("delete value;", nativeOwnershipSource);
             Assert.Contains("void NativeOwnership::DisposeAndDelete(T value)", nativeOwnershipSource);
             Assert.Contains("value->Dispose();", nativeOwnershipSource);
-            Assert.Contains("void NativeOwnership::Release(T& value)", nativeOwnershipSource);
+            Assert.Contains("void NativeOwnership::Release__ref0(T& value)", nativeOwnershipSource);
             Assert.Contains("value = nullptr;", nativeOwnershipSource);
         }
 
@@ -7010,11 +7011,9 @@ namespace cs2.cpp.tests {
 
                     Dictionary<string, ContentManager> managers;
 
+                    [NativeOwnedReturn]
                     public ContentManager Get(string root) {
-                        if (managers.TryGetValue(root, out ContentManager contentManager)) {
-                            return contentManager;
-                        }
-
+                        managers.TryGetValue(root, out ContentManager contentManager);
                         contentManager = new ContentManager();
                         return contentManager;
                     }
@@ -7852,6 +7851,7 @@ namespace cs2.cpp.tests {
                 }
 
                 public class Gate {
+                    [NativeBorrowedReturn]
                     public byte[] Read(SceneRecord record) {
                         return record.Payload ?? Array.Empty<byte>();
                     }
@@ -10005,6 +10005,7 @@ namespace cs2.cpp.tests {
                 }
 
                 public class Fixture {
+                    [NativeBorrowedReturn]
                     public Child Run(Child value) {
                         return value?.Next;
                     }

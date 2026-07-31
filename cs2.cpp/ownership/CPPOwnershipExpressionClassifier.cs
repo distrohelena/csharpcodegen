@@ -49,8 +49,12 @@ public sealed class CPPOwnershipExpressionClassifier {
             return Classify(parenthesizedOperation.Operand, summaries);
         } else if (operation is IObjectCreationOperation ||
                    operation is IArrayCreationOperation ||
+                   operation is IDelegateCreationOperation ||
+                   operation is IAnonymousFunctionOperation ||
                    operation is ICollectionExpressionOperation) {
             return CPPOwnershipKind.Owned;
+        } else if (operation is ITypeOfOperation) {
+            return CPPOwnershipKind.Borrowed;
         } else if (IsNullOperation(operation)) {
             return CPPOwnershipKind.Unknown;
         } else if (operation is IConditionalOperation conditionalOperation) {

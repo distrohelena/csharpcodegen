@@ -8,6 +8,96 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPOwnershipControlFlowTests {
     /// <summary>
+    /// Ensures value-type locals produced by borrowed property access never enter native ownership flow.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithLoopCarriedValueTypePropertyResult_DoesNotReportOwnershipDiagnostics() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(string text) {
+                for (int i = 0; i < text.Length; i++) {
+                    char character = text[i];
+                    Use(character);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.EmissionPlan.Transitions, transition => transition.LocalName == "character");
+    }
+
+    /// <summary>
+    /// Ensures a loop-local borrowed reference may be absent on the entry edge and borrowed on the back edge.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithLoopCarriedBorrowedReference_DoesNotReportAmbiguousJoin() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<Sink> values) {
+                for (int i = 0; i < values.Count; i++) {
+                    Sink value = values[i];
+                    Use(i);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN009");
+    }
+
+    /// <summary>
+    /// Ensures replacing a borrowed local with another borrowed member value preserves borrowed lifecycle state.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithBorrowedLocalReassignment_PreservesBorrowedState() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            sealed class Node {
+                public Node Parent;
+            }
+
+            public static void Run(Node candidate) {
+                Node current = candidate;
+                while (current != null) {
+                    current = current.Parent;
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures an owned local declared inside a loop is represented by its lexical guard rather than merged with the pre-loop edge.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLocalDeclaredInsideLoop_DoesNotReportAmbiguousJoin() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<Sink> values) {
+                for (int i = 0; i < values.Count; i++) {
+                    List<int> items = new List<int>();
+                    Use(items.Count);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN009");
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.ScopeCleanup && transition.LocalName == "items");
+    }
+
+    /// <summary>
+    /// Ensures reviewed metadata-only no-escape parameters preserve ownership of caller-created storage.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithFrameworkNoEscapeParameter_KeepsCallerOwnership() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static string Run() {
+                List<string> values = new List<string>();
+                return string.Join(", ", values);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.ScopeCleanup && transition.LocalName == "values");
+    }
+
+    /// <summary>
     /// Ensures identical live-owned branch outputs join without ambiguity.
     /// </summary>
     [Fact]
