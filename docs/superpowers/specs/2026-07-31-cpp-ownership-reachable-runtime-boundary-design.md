@@ -31,6 +31,8 @@ Four types currently stored under that directory are runtime contracts rather th
 
 Projects that compile shaders will reference the compilation project directly. Projects that only consume runtime shader assets retain only the runtime project reference.
 
+This direct-consumer rule also applies to out-of-tree platform builders. The current PS Vita and Wii U builders implement shader compiler backends and must reference `helengine.shader.compilation`; platform builders that only stage already-generated runtime sources do not gain that dependency.
+
 ## Native build inventory
 
 The existing generated-core regeneration service will continue invoking codegen per declared runtime project. Its project list must include `helengine.shader` and must not include `helengine.shader.compilation`.
@@ -80,6 +82,7 @@ Focused tests will prove:
 - `helengine.shader.compilation` compiles and exposes the compiler APIs to managed editor consumers;
 - runtime projects do not reference the compilation project;
 - editor/compiler consumers have the required explicit project reference;
+- PS Vita and Wii U shader builder projects and their focused tests compile against the explicit compilation project;
 - generated native shader output contains runtime shader types but no compiler/parser/cache types;
 - ownership diagnostics from compiler-only methods cannot occur during runtime shader conversion.
 
