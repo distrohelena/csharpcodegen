@@ -178,6 +178,78 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a checked cast propagates the sequencing required by a side-effecting nested checked addition.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCheckedCastAroundSideEffectingAddition_PropagatesOperandCaptures() {
+            string source = """
+                public class Counter {
+                    int Next() {
+                        return 1;
+                    }
+
+                    public long Read() {
+                        return checked((long)(Next() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int leftCaptureIndex = output.IndexOf("const auto __checked_left_", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
+            int castIndex = output.IndexOf("Number::CheckedCast<int64_t>", StringComparison.Ordinal);
+            Assert.True(leftCaptureIndex >= 0 && leftCaptureIndex < castIndex);
+            Assert.True(castIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures invocation sequencing evaluates a side-effecting receiver and preceding argument before a later checked argument capture.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLaterCheckedInvocationArgument_PreservesReceiverAndArgumentOrder() {
+            string source = """
+                public class Receiver {
+                    public int Mix(int first, int second) {
+                        return first + second;
+                    }
+                }
+
+                public class Counter {
+                    Receiver Current = new Receiver();
+
+                    Receiver GetReceiver() {
+                        return Current;
+                    }
+
+                    int First() {
+                        return 1;
+                    }
+
+                    int Second() {
+                        return 2;
+                    }
+
+                    public int Read() {
+                        return GetReceiver().Mix(First(), checked(Second() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int receiverIndex = output.IndexOf("this->GetReceiver()", StringComparison.Ordinal);
+            int firstIndex = output.IndexOf("this->First()", StringComparison.Ordinal);
+            int secondIndex = output.IndexOf("this->Second()", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
+            Assert.True(receiverIndex >= 0 && receiverIndex < firstIndex);
+            Assert.True(firstIndex < secondIndex);
+            Assert.True(secondIndex < helperIndex);
+        }
+
+        /// <summary>
         /// Ensures mixed-width checked addition remains an explicit diagnostic until operand promotion is emitted deliberately.
         /// </summary>
         [Fact]
