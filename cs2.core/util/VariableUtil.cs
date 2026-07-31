@@ -207,7 +207,13 @@ namespace cs2.core {
                 }
 
                 string leafTypeName = NormalizeLeafTypeName(genericBaseName);
-                VariableType genericType = new VariableType(GetVarDataType(leafTypeName), leafTypeName);
+                VariableDataType genericDataType = string.Equals(
+                    genericBaseName,
+                    "System.Collections.ObjectModel.ReadOnlyCollection",
+                    StringComparison.Ordinal)
+                    ? VariableDataType.List
+                    : GetVarDataType(leafTypeName);
+                VariableType genericType = new VariableType(genericDataType, leafTypeName);
 
                 foreach (string genericArgument in SplitGenericArgumentList(genericArgumentText)) {
                     genericType.GenericArgs.Add(GetVarType(genericArgument));
@@ -705,6 +711,10 @@ namespace cs2.core {
 
                 string typeName = namedTypeSymbol.Name;
                 VariableDataType dataType = GetVarDataType(typeName);
+                if (string.Equals(typeName, "ReadOnlyCollection", StringComparison.Ordinal) &&
+                    string.Equals(namedTypeSymbol.ContainingNamespace?.ToDisplayString(), "System.Collections.ObjectModel", StringComparison.Ordinal)) {
+                    dataType = VariableDataType.List;
+                }
 
                 if (namedTypeSymbol.SpecialType != SpecialType.None) {
                     switch (namedTypeSymbol.SpecialType) {

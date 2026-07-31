@@ -149,6 +149,72 @@ public:
     }
 };
 
+class KeyNotFoundException : public Exception {
+public:
+    KeyNotFoundException() noexcept
+        : Exception() {
+        Message = "The specified key was not found.";
+    }
+
+    explicit KeyNotFoundException(const char* message) noexcept
+        : Exception(message) {
+        Message = "The specified key was not found.";
+    }
+
+    explicit KeyNotFoundException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "The specified key was not found.";
+    }
+};
+
+class DivideByZeroException : public Exception {
+public:
+    DivideByZeroException() noexcept
+        : Exception() {
+        Message = "Attempted to divide by zero.";
+    }
+
+    explicit DivideByZeroException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Attempted to divide by zero.";
+    }
+
+    explicit DivideByZeroException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Attempted to divide by zero.";
+    }
+};
+
+/// <summary>
+/// Represents a managed checked-arithmetic result that exceeds its destination type range.
+/// </summary>
+class OverflowException : public Exception {
+public:
+    /// <summary>
+    /// Creates a compact overflow exception with the canonical runtime message.
+    /// </summary>
+    OverflowException() noexcept
+        : Exception() {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+
+    /// <summary>
+    /// Creates a compact overflow exception while discarding the supplied message payload.
+    /// </summary>
+    explicit OverflowException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+
+    /// <summary>
+    /// Creates a compact overflow exception while discarding the supplied managed string payload.
+    /// </summary>
+    explicit OverflowException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an overflow.";
+    }
+};
+
 class EndOfStreamException : public Exception {
 public:
     EndOfStreamException() noexcept
@@ -346,6 +412,63 @@ public:
     }
 
     explicit InvalidOperationException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+class KeyNotFoundException : public Exception {
+public:
+    KeyNotFoundException()
+        : Exception("The specified key was not found.") {
+    }
+
+    explicit KeyNotFoundException(const char* message)
+        : Exception(message == nullptr ? "The specified key was not found." : message) {
+    }
+
+    explicit KeyNotFoundException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+class DivideByZeroException : public Exception {
+public:
+    DivideByZeroException()
+        : Exception("Attempted to divide by zero.") {
+    }
+
+    explicit DivideByZeroException(const char* message)
+        : Exception(message == nullptr ? "Attempted to divide by zero." : message) {
+    }
+
+    explicit DivideByZeroException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+/// <summary>
+/// Represents a managed checked-arithmetic result that exceeds its destination type range.
+/// </summary>
+class OverflowException : public Exception {
+public:
+    /// <summary>
+    /// Creates an overflow exception with the canonical runtime message.
+    /// </summary>
+    OverflowException()
+        : Exception("Arithmetic operation resulted in an overflow.") {
+    }
+
+    /// <summary>
+    /// Creates an overflow exception with an optional caller-provided message.
+    /// </summary>
+    explicit OverflowException(const char* message)
+        : Exception(message == nullptr ? "Arithmetic operation resulted in an overflow." : message) {
+    }
+
+    /// <summary>
+    /// Creates an overflow exception with a caller-provided managed string message.
+    /// </summary>
+    explicit OverflowException(const std::string& message)
         : Exception(message) {
     }
 };

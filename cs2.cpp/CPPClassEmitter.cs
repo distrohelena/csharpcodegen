@@ -230,9 +230,13 @@ namespace cs2.cpp {
                 return;
             }
 
-            string referencedTypeName = variableType.GenericArgs.Count > 0
+            string qualifiedTypeName = GetReferencedTypeName(variableType);
+            bool hasQualifiedGenericName = !string.IsNullOrWhiteSpace(qualifiedTypeName) &&
+                qualifiedTypeName.Contains('<', StringComparison.Ordinal);
+            string referencedTypeName = variableType.GenericArgs.Count > 0 &&
+                !hasQualifiedGenericName
                 ? variableType.ToString()
-                : GetReferencedTypeName(variableType);
+                : qualifiedTypeName;
 
             if (!string.IsNullOrWhiteSpace(referencedTypeName) &&
                 !excludedTypeNameSet.Contains(referencedTypeName) &&
@@ -1429,7 +1433,8 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
-            if (IsNativeExceptionTypeName(normalizedReferencedClass)) {
+            if (IsNativeExceptionQualifiedTypeName(referencedClass) &&
+                !TryResolveGeneratedClass(referencedClass, out ConversionClass generatedExceptionClass)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
             }
@@ -1597,7 +1602,10 @@ namespace cs2.cpp {
                 return "system/bit_operations";
             }
 
-            if (IsNativeExceptionTypeName(variableType.TypeName)) {
+            ConversionClass nativeExceptionCandidateClass = program.FindGeneratedClass(variableType);
+            if (nativeExceptionCandidateClass == null &&
+                IsNativeExceptionQualifiedTypeName(variableType.QualifiedTypeName) &&
+                !TryResolveGeneratedClass(normalizedIncludeCandidate, out nativeExceptionCandidateClass)) {
                 processor?.RegisterRuntimeRequirement("NativeExceptions");
                 return "runtime/native_exceptions";
             }
@@ -4051,20 +4059,31 @@ namespace cs2.cpp {
                 string.Equals(typeName, "Span", StringComparison.Ordinal) ||
                 string.Equals(typeName, "ReadOnlySpan", StringComparison.Ordinal) ||
                 string.Equals(typeName, "Event", StringComparison.Ordinal) ||
-                string.Equals(typeName, "MathF", StringComparison.Ordinal) ||
-                IsNativeExceptionTypeName(typeName);
+                string.Equals(typeName, "MathF", StringComparison.Ordinal);
         }
 
-        static bool IsNativeExceptionTypeName(string typeName) {
-            return string.Equals(typeName, "Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentNullException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "FileNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "DirectoryNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "NotSupportedException", StringComparison.Ordinal);
+        /// <summary>
+        /// Determines whether an include candidate carries the full managed identity of one native runtime exception.
+        /// </summary>
+        /// <param name="typeName">Fully qualified managed type name, optionally prefixed by the Roslyn global alias.</param>
+        /// <returns><c>true</c> only for exact supported framework exception names; otherwise <c>false</c>.</returns>
+        static bool IsNativeExceptionQualifiedTypeName(string typeName) {
+            if (typeName != null && typeName.StartsWith("global::", StringComparison.Ordinal)) {
+                typeName = typeName[8..];
+            }
+
+            return string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.ArgumentException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.ArgumentNullException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.InvalidOperationException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.FileNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal);
         }
     }
 }

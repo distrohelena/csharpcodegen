@@ -1369,6 +1369,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a free C++ operator qualifies an unqualified static property getter with the generated value type that owns it.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStaticPropertyInsideValueOperator_QualifiesOwningTypeGetter() {
+            string source = """
+                public readonly struct Scalar {
+                    readonly float value;
+
+                    public Scalar(float value) {
+                        this.value = value;
+                    }
+
+                    public static Scalar Zero => new Scalar(0f);
+
+                    public static Scalar operator /(Scalar left, Scalar right) {
+                        if (right.value == Zero.value) {
+                            return Zero;
+                        }
+
+                        return new Scalar(left.value / right.value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Scalar.cpp"));
+
+            Assert.Contains("Scalar::get_Zero()", sourceOutput);
+            Assert.DoesNotContain("== get_Zero()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("return get_Zero();", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures expression-bodied instance properties lower to getter calls instead of uninitialized backing fields.
         /// </summary>
         [Fact]
@@ -6328,6 +6361,145 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithKeyNotFoundException_UsesNativeExceptionRuntime() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class Fixture {
+                    public void Fail() {
+                        throw new KeyNotFoundException("Missing key.");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new KeyNotFoundException(\"Missing key.\")", sourceOutput);
+            Assert.Contains("class KeyNotFoundException : public Exception", runtimeHeader);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "KeyNotFoundException.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures managed division failures map to the shared native exception runtime instead of an unavailable generated managed type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDivideByZeroException_UsesNativeExceptionRuntime() {
+            string source = """
+                public class Fixture {
+                    public void Fail() {
+                        throw new DivideByZeroException("Zero divisor.");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("throw new DivideByZeroException(\"Zero divisor.\")", sourceOutput);
+            Assert.Contains("class DivideByZeroException : public Exception", runtimeHeader);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+        }
+
+        /// <summary>
+        /// Ensures user-defined types that share framework exception leaf names remain generated project types instead of activating the native exception runtime.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUserTypesNamedLikeNativeExceptions_PreservesResolvedTypeIdentity() {
+            string source = """
+                namespace UserGame {
+                    public class KeyNotFoundException {
+                    }
+
+                    public class DivideByZeroException {
+                    }
+
+                    public class Fixture {
+                        public object CreateMissingKey() {
+                            return new KeyNotFoundException();
+                        }
+
+                        public object CreateZeroDivision() {
+                            return new DivideByZeroException();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "KeyNotFoundException.hpp")));
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+            Assert.Contains("return new ::KeyNotFoundException();", sourceOutput);
+            Assert.Contains("return new ::DivideByZeroException();", sourceOutput);
+            Assert.Contains("#include \"KeyNotFoundException.hpp\"", sourceOutput);
+            Assert.Contains("#include \"DivideByZeroException.hpp\"", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures a source-defined type inside the System namespace cannot impersonate the framework exception selected for native runtime lowering.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSourceDefinedSystemExceptionShadow_PreservesSourceTypeIdentity() {
+            string source = """
+                namespace System {
+                    public class DivideByZeroException {
+                        public DivideByZeroException(string message) {
+                        }
+                    }
+                }
+
+                public class Fixture {
+                    public object Create() {
+                        return new System.DivideByZeroException("source marker");
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, compactNativeExceptionMessages: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "DivideByZeroException.hpp")));
+            Assert.Contains("#include \"DivideByZeroException.hpp\"", sourceOutput);
+            Assert.Contains("return new ::DivideByZeroException(\"source marker\");", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures user-defined generic types named ReadOnlyCollection remain generated types instead of mapping to the native list wrapper.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithUserReadOnlyCollectionType_PreservesResolvedTypeIdentity() {
+            string source = """
+                namespace Game {
+                    public class ReadOnlyCollection<T> {
+                    }
+
+                    public class Fixture {
+                        public ReadOnlyCollection<int> Create() {
+                            return new ReadOnlyCollection<int>();
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.hpp"));
+
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "ReadOnlyCollection_1.hpp")));
+            Assert.Contains("#include \"ReadOnlyCollection_1.hpp\"", sourceOutput);
+            Assert.DoesNotContain("runtime/native_list.hpp", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("runtime/native_list.hpp", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures ArgumentException exposes the managed message and parameter-name overload required by generated throws.
         /// </summary>
         [Fact]
@@ -8895,6 +9067,32 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures a discard assignment preserves the right-side call without emitting an undeclared underscore target.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDiscardAssignment_EmitsRightSideExpressionOnly() {
+            string source = """
+                public static class Helper {
+                    public static int Read() {
+                        return 1;
+                    }
+                }
+
+                public class Fixture {
+                    public void Run() {
+                        _ = Helper.Read();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Helper::Read();", sourceOutput);
+            Assert.DoesNotContain("_ =", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures rebindable ref locals lower to pointer-backed aliases so later <c>ref</c> reassignments stay valid in C++.
         /// </summary>
         [Fact]
@@ -9690,7 +9888,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Helpers.cpp"));
 
-            Assert.Contains("Helpers::Validate(value, laneCount);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Helpers::Validate(static_cast<int32_t>(value), static_cast<int32_t>(laneCount));", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("value.Validate(laneCount, -1)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -11227,11 +11425,20 @@ namespace cs2.cpp.tests {
         /// Runs the C++ converter against a temporary single-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="source">C# source file content to convert.</param>
+        /// <param name="allowUnsafe">Whether the temporary fixture enables unsafe managed syntax.</param>
+        /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
+        /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
+        /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(string source, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
+        static ConversionOutput RunConversion(
+            string source,
+            bool allowUnsafe = false,
+            bool loadNativeRuntimeMetadata = false,
+            bool includeAttributesProjectReference = false,
+            bool compactNativeExceptionMessages = false) {
             return RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
                 ["Fixture.cs"] = source
-            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference);
+            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference, compactNativeExceptionMessages);
         }
 
         /// <summary>
@@ -11253,8 +11460,17 @@ namespace cs2.cpp.tests {
         /// Runs the C++ converter against a temporary multi-file project and returns the generated output bundle.
         /// </summary>
         /// <param name="sources">Source file content keyed by relative file name.</param>
+        /// <param name="allowUnsafe">Whether the temporary fixture enables unsafe managed syntax.</param>
+        /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
+        /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
+        /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(IReadOnlyDictionary<string, string> sources, bool allowUnsafe = false, bool loadNativeRuntimeMetadata = false, bool includeAttributesProjectReference = false) {
+        static ConversionOutput RunConversion(
+            IReadOnlyDictionary<string, string> sources,
+            bool allowUnsafe = false,
+            bool loadNativeRuntimeMetadata = false,
+            bool includeAttributesProjectReference = false,
+            bool compactNativeExceptionMessages = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string outputPath = Path.Combine(rootPath, "out");
@@ -11268,6 +11484,11 @@ namespace cs2.cpp.tests {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = loadNativeRuntimeMetadata;
             options.WriteConversionReport = true;
+            if (compactNativeExceptionMessages) {
+                options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.CompactNativeExceptionMessages] = "true"
+                };
+            }
 
             CPPConversionRules rules = new CPPConversionRules();
             CPPCodeConverter converter = new CPPCodeConverter(rules, options);

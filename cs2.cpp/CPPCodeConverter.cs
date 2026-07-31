@@ -209,7 +209,6 @@ namespace cs2.cpp {
             CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
 
             writeClasses(outputFolder, BuildUsageReport);
-            new CPPGeneratedOutputAdapter().Apply(outputFolder, Options);
             PruneDisabledFeatureRuntimeFiles(outputFolder);
             foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(outputFolder)) {
                 TrackEmittedFile(supportFile);
@@ -652,12 +651,7 @@ namespace cs2.cpp {
         /// <param name="conversionClass">Converted type to inspect.</param>
         /// <returns>True when the type should emit generated C++ source files; otherwise false.</returns>
         static bool ShouldEmitGeneratedSourceClass(ConversionClass conversionClass) {
-            if (conversionClass == null) {
-                return false;
-            }
-
-            return !string.Equals(conversionClass.Name, "NativeFreeFunctionAttribute", StringComparison.Ordinal) &&
-                !string.Equals(conversionClass.Name, "NativeNoEscapeAttribute", StringComparison.Ordinal);
+            return CPPGeneratedTypeEmissionPolicy.ShouldEmit(conversionClass);
         }
 
         /// <summary>

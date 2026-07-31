@@ -126,10 +126,7 @@ namespace cs2.cpp {
             }
 
             if (expression is CheckedExpressionSyntax checkedExpression) {
-                lines.Add("(");
-                ExpressionResult checkedResult = ProcessExpression(semantic, context, checkedExpression.Expression, lines, refTypes);
-                lines.Add(")");
-                return checkedResult;
+                return ProcessCheckedContextExpression(semantic, context, checkedExpression, lines, refTypes);
             }
 
             if (expression is ElementAccessExpressionSyntax elementAccessExpression) {
@@ -437,10 +434,9 @@ namespace cs2.cpp {
                 return ProcessLocalFunctionStatement(semantic, context, localFunctionStatement, lines, depth);
             }
 
-        if (statement is CheckedStatementSyntax uncheckedStatement &&
-            uncheckedStatement.Kind() == SyntaxKind.UncheckedStatement) {
-            return ProcessUncheckedStatement(semantic, context, uncheckedStatement, lines, depth);
-        }
+            if (statement is CheckedStatementSyntax checkedContextStatement) {
+                return ProcessCheckedContextStatement(semantic, context, checkedContextStatement, lines, depth);
+            }
 
             int diagnosticCount = GetDiagnosticCount();
             ExpressionResult result = base.ProcessStatement(semantic, context, statement, lines, depth);
@@ -884,24 +880,350 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Lowers a C# unchecked statement by preserving its lexical scope and emitting only the enclosed block statements.
+        /// Lowers a C# checked-context statement while carrying its overflow policy into supported native arithmetic operations.
         /// </summary>
         /// <param name="semantic">Semantic model associated with the unchecked statement.</param>
         /// <param name="context">Current lowering context.</param>
-        /// <param name="uncheckedStatement">Unchecked statement to lower.</param>
+        /// <param name="checkedContextStatement">Checked or unchecked statement to lower.</param>
         /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
         /// <param name="depth">Current indentation depth used by the lowerer.</param>
         /// <returns>The result of lowering the enclosed block.</returns>
-    ExpressionResult ProcessUncheckedStatement(
-        SemanticModel semantic,
-        LayerContext context,
-        CheckedStatementSyntax uncheckedStatement,
-        List<string> lines,
-        int depth) {
+        ExpressionResult ProcessCheckedContextStatement(
+            SemanticModel semantic,
+            LayerContext context,
+            CheckedStatementSyntax checkedContextStatement,
+            List<string> lines,
+            int depth) {
+            if (context is not CPPLayerContext cppContext) {
+                throw new InvalidOperationException("Checked arithmetic lowering requires a C++ layer context.");
+            }
+
+            bool isChecked = checkedContextStatement.IsKind(SyntaxKind.CheckedStatement);
+            if (isChecked) {
+                ReportUnsupportedCheckedArithmetic(semantic, context, checkedContextStatement.Block);
+            }
+
             lines.Add("{\n");
-            ExpressionResult result = ProcessBlock(semantic, context, uncheckedStatement.Block, lines, depth);
-            lines.Add("}\n");
-            return result;
+            cppContext.PushCheckedArithmeticContext(isChecked);
+            try {
+                ExpressionResult result = ProcessBlock(semantic, context, checkedContextStatement.Block, lines, depth);
+                lines.Add("}\n");
+                return result;
+            } finally {
+                cppContext.PopCheckedArithmeticContext();
+            }
+        }
+
+        /// <summary>
+        /// Lowers a C# checked-context expression while carrying its lexical overflow policy into the enclosed expression.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the checked or unchecked expression.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="checkedContextExpression">Checked or unchecked expression to lower.</param>
+        /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="refTypes">Optional referenced-type collector used by the expression lowerer.</param>
+        /// <returns>The result of lowering the enclosed expression.</returns>
+        ExpressionResult ProcessCheckedContextExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            CheckedExpressionSyntax checkedContextExpression,
+            List<string> lines,
+            List<ExpressionResult> refTypes) {
+            if (context is not CPPLayerContext cppContext) {
+                throw new InvalidOperationException("Checked arithmetic lowering requires a C++ layer context.");
+            }
+
+            bool isChecked = checkedContextExpression.IsKind(SyntaxKind.CheckedExpression);
+            if (isChecked) {
+                ReportUnsupportedCheckedArithmetic(semantic, context, checkedContextExpression.Expression);
+            }
+
+            lines.Add("(");
+            cppContext.PushCheckedArithmeticContext(isChecked);
+            try {
+                ExpressionResult result = ProcessExpression(semantic, context, checkedContextExpression.Expression, lines, refTypes);
+                lines.Add(")");
+                return result;
+            } finally {
+                cppContext.PopCheckedArithmeticContext();
+            }
+        }
+
+        /// <summary>
+        /// Reports overflow-sensitive checked operations that do not yet have a semantics-preserving native helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish integral arithmetic from unaffected operators.</param>
+        /// <param name="context">Current lowering context used to associate diagnostics with the active member.</param>
+        /// <param name="block">Checked block whose direct lexical operations should be audited.</param>
+        void ReportUnsupportedCheckedArithmetic(SemanticModel semantic, LayerContext context, BlockSyntax block) {
+            foreach (SyntaxNode node in block.DescendantNodes(descendIntoChildren: ShouldDescendIntoCheckedArithmeticNode)) {
+                if (IsUnsupportedCheckedArithmeticNode(semantic, node)) {
+                    ReportUnsupportedNode(
+                        context,
+                        node,
+                        $"The C++ backend does not yet preserve managed overflow behavior for checked arithmetic syntax '{node.Kind()}'.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reports overflow-sensitive operations inside a checked expression while leaving nested checked contexts to their own lexical policy.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish integral arithmetic from unaffected operators.</param>
+        /// <param name="context">Current lowering context used to associate diagnostics with the active member.</param>
+        /// <param name="expression">Checked expression body whose operations should be audited.</param>
+        void ReportUnsupportedCheckedArithmetic(SemanticModel semantic, LayerContext context, ExpressionSyntax expression) {
+            foreach (SyntaxNode node in expression.DescendantNodesAndSelf(descendIntoChildren: ShouldDescendIntoCheckedArithmeticNode)) {
+                if (IsUnsupportedCheckedArithmeticNode(semantic, node)) {
+                    ReportUnsupportedNode(
+                        context,
+                        node,
+                        $"The C++ backend does not yet preserve managed overflow behavior for checked arithmetic syntax '{node.Kind()}'.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Prevents an enclosing checked audit from traversing into nested checked or unchecked contexts that define their own overflow policy.
+        /// </summary>
+        /// <param name="candidate">Syntax node whose children are candidates for the current lexical audit.</param>
+        /// <returns><c>true</c> when traversal should continue through the node; otherwise <c>false</c>.</returns>
+        static bool ShouldDescendIntoCheckedArithmeticNode(SyntaxNode candidate) {
+            return candidate is not CheckedStatementSyntax && candidate is not CheckedExpressionSyntax;
+        }
+
+        /// <summary>
+        /// Determines whether one syntax node performs checked integral arithmetic without a native overflow-preserving lowering.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve operand and result types.</param>
+        /// <param name="node">Candidate syntax node inside a checked block.</param>
+        /// <returns><c>true</c> when the operation must remain an explicit conversion error; otherwise <c>false</c>.</returns>
+        static bool IsUnsupportedCheckedArithmeticNode(SemanticModel semantic, SyntaxNode node) {
+            if (node is BinaryExpressionSyntax binaryExpression &&
+                (binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.SubtractExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.MultiplyExpression) ||
+                 binaryExpression.IsKind(SyntaxKind.DivideExpression))) {
+                ITypeSymbol binaryTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
+                if (!IsCheckedIntegralTypeSymbol(binaryTypeSymbol)) {
+                    return false;
+                }
+
+                return !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                    !IsSupportedCheckedAdditionExpression(semantic, binaryExpression);
+            }
+
+            if (node is AssignmentExpressionSyntax assignmentExpression &&
+                (assignmentExpression.IsKind(SyntaxKind.AddAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.SubtractAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.MultiplyAssignmentExpression) ||
+                 assignmentExpression.IsKind(SyntaxKind.DivideAssignmentExpression))) {
+                ITypeSymbol assignmentTypeSymbol = semantic.GetTypeInfo(assignmentExpression.Left).Type;
+                if (!IsCheckedIntegralTypeSymbol(assignmentTypeSymbol)) {
+                    return false;
+                }
+
+                ITypeSymbol valueTypeSymbol = semantic.GetTypeInfo(assignmentExpression.Right).ConvertedType ??
+                    semantic.GetTypeInfo(assignmentExpression.Right).Type;
+                bool isSupportedAddAssignment =
+                    assignmentExpression.IsKind(SyntaxKind.AddAssignmentExpression) &&
+                    IsSupportedCheckedMutationType(assignmentTypeSymbol) &&
+                    IsSupportedCheckedMutationOperand(semantic, assignmentExpression.Left) &&
+                    valueTypeSymbol != null &&
+                    valueTypeSymbol.SpecialType == assignmentTypeSymbol.SpecialType;
+                return !isSupportedAddAssignment;
+            }
+
+            if (node is CastExpressionSyntax castExpression) {
+                ITypeSymbol castTypeSymbol = semantic.GetTypeInfo(castExpression).Type;
+                ITypeSymbol operandTypeSymbol = semantic.GetTypeInfo(castExpression.Expression).Type;
+                return IsCheckedIntegralTypeSymbol(castTypeSymbol) &&
+                    IsCheckedIntegralTypeSymbol(operandTypeSymbol) &&
+                    !IsSupportedCheckedIntegralCastExpression(semantic, castExpression);
+            }
+
+            if (node is PrefixUnaryExpressionSyntax prefixUnaryExpression &&
+                prefixUnaryExpression.IsKind(SyntaxKind.UnaryMinusExpression)) {
+                ITypeSymbol prefixTypeSymbol = semantic.GetTypeInfo(prefixUnaryExpression).Type;
+                return IsCheckedIntegralTypeSymbol(prefixTypeSymbol);
+            }
+
+            if (node is PrefixUnaryExpressionSyntax checkedPrefixMutation &&
+                (checkedPrefixMutation.IsKind(SyntaxKind.PreIncrementExpression) ||
+                 checkedPrefixMutation.IsKind(SyntaxKind.PreDecrementExpression))) {
+                ITypeSymbol mutationTypeSymbol = semantic.GetTypeInfo(checkedPrefixMutation.Operand).Type;
+                return IsCheckedIntegralTypeSymbol(mutationTypeSymbol) &&
+                    (!IsSupportedCheckedMutationType(mutationTypeSymbol) ||
+                     !IsSupportedCheckedMutationOperand(semantic, checkedPrefixMutation.Operand));
+            }
+
+            if (node is PostfixUnaryExpressionSyntax checkedPostfixMutation &&
+                (checkedPostfixMutation.IsKind(SyntaxKind.PostIncrementExpression) ||
+                 checkedPostfixMutation.IsKind(SyntaxKind.PostDecrementExpression))) {
+                ITypeSymbol mutationTypeSymbol = semantic.GetTypeInfo(checkedPostfixMutation.Operand).Type;
+                return IsCheckedIntegralTypeSymbol(mutationTypeSymbol) &&
+                    (!IsSupportedCheckedMutationType(mutationTypeSymbol) ||
+                     !IsSupportedCheckedMutationOperand(semantic, checkedPostfixMutation.Operand));
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether a managed type participates in checked integral arithmetic, including native-sized integers and enum conversions.
+        /// </summary>
+        /// <param name="typeSymbol">Managed arithmetic type to classify.</param>
+        /// <returns><c>true</c> when checked overflow rules apply to the type; otherwise <c>false</c>.</returns>
+        static bool IsCheckedIntegralTypeSymbol(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            return IsIntegralLikeTypeSymbol(typeSymbol) ||
+                typeSymbol.SpecialType == SpecialType.System_IntPtr ||
+                typeSymbol.SpecialType == SpecialType.System_UIntPtr;
+        }
+
+        /// <summary>
+        /// Determines whether an integral mutation maps to an exact-width native type supported by the checked increment helpers.
+        /// </summary>
+        /// <param name="typeSymbol">Managed mutation operand type.</param>
+        /// <returns><c>true</c> for fixed-width signed and unsigned integer primitives; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedMutationType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            return typeSymbol.SpecialType is
+                SpecialType.System_Byte or
+                SpecialType.System_SByte or
+                SpecialType.System_Int16 or
+                SpecialType.System_UInt16 or
+                SpecialType.System_Int32 or
+                SpecialType.System_UInt32 or
+                SpecialType.System_Int64 or
+                SpecialType.System_UInt64 or
+                SpecialType.System_IntPtr or
+                SpecialType.System_UIntPtr;
+        }
+
+        /// <summary>
+        /// Determines whether checked binary addition uses one exact fixed-width integral type for both operands and the result.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve converted operand types.</param>
+        /// <param name="binaryExpression">Addition expression to classify.</param>
+        /// <returns><c>true</c> when the expression can use the native checked-add helper; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedAdditionExpression(SemanticModel semantic, BinaryExpressionSyntax binaryExpression) {
+            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).Type;
+            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).Type;
+            return IsSupportedCheckedMutationType(resultTypeSymbol) &&
+                leftTypeSymbol != null &&
+                rightTypeSymbol != null &&
+                leftTypeSymbol.SpecialType == resultTypeSymbol.SpecialType &&
+                rightTypeSymbol.SpecialType == resultTypeSymbol.SpecialType;
+        }
+
+        /// <summary>
+        /// Determines whether one checked-add operand can remain inline without changing C# evaluation order or exception ordering.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish storage reads from property dispatch.</param>
+        /// <param name="expression">Operand expression to classify.</param>
+        /// <returns><c>true</c> for literals and direct non-volatile storage reads; otherwise <c>false</c>.</returns>
+        static bool CanInlineCheckedAdditionOperand(SemanticModel semantic, ExpressionSyntax expression) {
+            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
+                expression = parenthesizedExpression.Expression;
+            }
+
+            if (expression is LiteralExpressionSyntax) {
+                return true;
+            }
+
+            if (expression is not IdentifierNameSyntax) {
+                return false;
+            }
+
+            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
+            if (symbol is ILocalSymbol or IParameterSymbol) {
+                return true;
+            }
+
+            return symbol is IFieldSymbol fieldSymbol && !fieldSymbol.IsVolatile;
+        }
+
+        /// <summary>
+        /// Determines whether a checked cast converts directly between fixed-width integral primitive types supported by the native range helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve source and destination types.</param>
+        /// <param name="castExpression">Cast expression to classify.</param>
+        /// <returns><c>true</c> when the native checked-cast helper can preserve managed overflow behavior; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedIntegralCastExpression(SemanticModel semantic, CastExpressionSyntax castExpression) {
+            ITypeSymbol targetTypeSymbol = semantic.GetTypeInfo(castExpression).Type;
+            ITypeSymbol sourceTypeSymbol = semantic.GetTypeInfo(castExpression.Expression).Type ??
+                semantic.GetTypeInfo(castExpression.Expression).ConvertedType;
+            return IsSupportedCheckedMutationType(targetTypeSymbol) && IsSupportedCheckedMutationType(sourceTypeSymbol);
+        }
+
+        /// <summary>
+        /// Determines whether one checked mutation operand lowers to a stable native lvalue that can be passed by reference.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the operand symbol.</param>
+        /// <param name="operandExpression">Assignable mutation operand to inspect.</param>
+        /// <returns><c>true</c> for locals, parameters, fields, and indexed storage; otherwise <c>false</c>.</returns>
+        static bool IsSupportedCheckedMutationOperand(SemanticModel semantic, ExpressionSyntax operandExpression) {
+            ISymbol operandSymbol = semantic.GetSymbolInfo(operandExpression).Symbol;
+            if (operandSymbol is ILocalSymbol or IParameterSymbol or IFieldSymbol) {
+                return true;
+            }
+
+            if (IsNativeBackedAutoProperty(operandSymbol)) {
+                return operandExpression is IdentifierNameSyntax ||
+                    operandExpression is MemberAccessExpressionSyntax memberAccessExpression &&
+                    memberAccessExpression.Expression is ThisExpressionSyntax;
+            }
+
+            if (operandExpression is ElementAccessExpressionSyntax elementAccessExpression) {
+                ITypeSymbol receiverTypeSymbol = semantic.GetTypeInfo(elementAccessExpression.Expression).Type;
+                return receiverTypeSymbol is IArrayTypeSymbol;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines whether a property is emitted with direct native backing storage and can therefore participate in by-reference checked helpers.
+        /// </summary>
+        /// <param name="symbol">Resolved operand symbol to inspect.</param>
+        /// <returns><c>true</c> when the symbol is an auto-property without authored accessor bodies; otherwise <c>false</c>.</returns>
+        static bool IsNativeBackedAutoProperty(ISymbol symbol) {
+            if (symbol is not IPropertySymbol propertySymbol) {
+                return false;
+            }
+
+            if (propertySymbol.IsAbstract || propertySymbol.ContainingType?.TypeKind == TypeKind.Interface) {
+                return false;
+            }
+
+            foreach (SyntaxReference syntaxReference in propertySymbol.DeclaringSyntaxReferences) {
+                if (syntaxReference.GetSyntax() is not PropertyDeclarationSyntax propertyDeclaration ||
+                    propertyDeclaration.AccessorList == null) {
+                    continue;
+                }
+
+                bool hasAuthoredAccessorBody = false;
+                foreach (AccessorDeclarationSyntax accessorDeclaration in propertyDeclaration.AccessorList.Accessors) {
+                    if (accessorDeclaration.Body != null || accessorDeclaration.ExpressionBody != null) {
+                        hasAuthoredAccessorBody = true;
+                        break;
+                    }
+                }
+
+                if (!hasAuthoredAccessorBody) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1100,6 +1422,14 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (TryProcessCheckedAddAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
+            if (TryProcessDiscardAssignmentExpression(semantic, context, assignment, lines)) {
+                return;
+            }
+
             if (TryProcessNativeListCapacityAssignment(semantic, context, assignment, lines)) {
                 return;
             }
@@ -1164,6 +1494,113 @@ namespace cs2.cpp {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
+        }
+
+        /// <summary>
+        /// Lowers one same-type checked integral add-assignment through a native helper that validates the result before writing the target.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve operand types.</param>
+        /// <param name="context">Current C++ lowering context and checked-policy stack.</param>
+        /// <param name="assignment">Assignment expression that may require checked addition.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <returns><c>true</c> when a supported checked add-assignment was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedAddAssignment(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !assignment.IsKind(SyntaxKind.AddAssignmentExpression) ||
+                !TryGetExpressionTypeSymbol(semantic, assignment.Left, out ITypeSymbol targetTypeSymbol) ||
+                !TryGetExpressionTypeSymbol(semantic, assignment.Right, out ITypeSymbol valueTypeSymbol) ||
+                !IsSupportedCheckedMutationType(targetTypeSymbol) ||
+                valueTypeSymbol.SpecialType != targetTypeSymbol.SpecialType ||
+                !IsSupportedCheckedMutationOperand(semantic, assignment.Left)) {
+                return false;
+            }
+
+            List<string> targetLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult targetResult = ProcessExpression(semantic, context, assignment.Left, targetLines);
+            context.PopClass(startDepth);
+
+            List<string> valueLines = new List<string>();
+            startDepth = context.DepthClass;
+            ExpressionResult valueResult = ProcessExpression(semantic, context, assignment.Right, valueLines);
+            context.PopClass(startDepth);
+
+            if (targetResult.BeforeLines != null && targetResult.BeforeLines.Count > 0) {
+                lines.AddRange(targetResult.BeforeLines);
+            }
+            string targetTemporaryName = CreateTemporaryName("__checked_target");
+            lines.Add($"auto& {targetTemporaryName} = ");
+            lines.AddRange(targetLines);
+            lines.Add(";\n");
+            if (valueResult.BeforeLines != null && valueResult.BeforeLines.Count > 0) {
+                lines.AddRange(valueResult.BeforeLines);
+            }
+            string valueTemporaryName = CreateTemporaryName("__checked_value");
+            lines.Add($"const auto {valueTemporaryName} = ");
+            lines.AddRange(valueLines);
+            lines.Add(";\n");
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add("Number::CheckedAddAssign(");
+            lines.Add(targetTemporaryName);
+            lines.Add(", ");
+            lines.Add(valueTemporaryName);
+            lines.Add(")");
+            bool hasTargetAfterLines = targetResult.AfterLines != null && targetResult.AfterLines.Count > 0;
+            bool hasValueAfterLines = valueResult.AfterLines != null && valueResult.AfterLines.Count > 0;
+            if (hasTargetAfterLines || hasValueAfterLines) {
+                lines.Add(";\n");
+                if (hasTargetAfterLines) {
+                    lines.AddRange(targetResult.AfterLines);
+                }
+                if (hasValueAfterLines) {
+                    lines.AddRange(valueResult.AfterLines);
+                }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers a discard assignment to its right-side expression so the generated C++ preserves evaluation without declaring an underscore target.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish a discard from a source variable named underscore.</param>
+        /// <param name="context">Active conversion context used to lower the right-side expression.</param>
+        /// <param name="assignment">Assignment expression that may target a discard.</param>
+        /// <param name="lines">Generated output fragments that receive the lowered expression.</param>
+        /// <returns><c>true</c> when the assignment was a discard and was fully emitted; otherwise, <c>false</c>.</returns>
+        bool TryProcessDiscardAssignmentExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            AssignmentExpressionSyntax assignment,
+            List<string> lines) {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
+                assignment.Left is not IdentifierNameSyntax discardIdentifier ||
+                !string.Equals(discardIdentifier.Identifier.Text, "_", StringComparison.Ordinal) ||
+                semantic.GetSymbolInfo(discardIdentifier).Symbol is not IDiscardSymbol) {
+                return false;
+            }
+
+            int startDepth = context.Class.Count;
+            List<string> rightLines = new List<string>();
+            ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
+            context.PopClass(startDepth);
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                lines.AddRange(rightResult.BeforeLines);
+            }
+
+            lines.AddRange(rightLines);
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                lines.Add(";\n");
+                lines.AddRange(rightResult.AfterLines);
+            }
+
+            return true;
         }
 
         bool TryProcessTupleAssignmentExpression(
@@ -2720,12 +3157,14 @@ namespace cs2.cpp {
                 objectCreationTypeSymbol?.ToDisplayString() ?? string.Empty,
                 out string runtimeObjectTypeName,
                 out string runtimeRequirementName);
-            bool compactNativeExceptionMessages = IsNativeExceptionTypeName(objectCreationTypeName)
+            bool isNativeException = TryGetNativeExceptionTypeName(semantic.Compilation, objectCreationTypeSymbol, out string nativeExceptionTypeName);
+            bool compactNativeExceptionMessages = isNativeException
                 && UsesCompactNativeExceptionMessages();
             ArgumentListSyntax effectiveArgumentList = compactNativeExceptionMessages ? null : argumentList;
 
-            if (IsNativeExceptionTypeName(objectCreationTypeName)) {
-                sourceType = VariableUtil.GetVarType(NormalizeNativeExceptionTypeName(objectCreationTypeName));
+            if (isNativeException) {
+                sourceType = VariableUtil.GetVarType(nativeExceptionTypeName);
+                sourceType.QualifiedTypeName = objectCreationTypeSymbol.ToDisplayString();
             } else if (hasRuntimeObjectTypeMapping) {
                 if (!string.IsNullOrWhiteSpace(runtimeRequirementName)) {
                     codeConverter?.RegisterRuntimeRequirement(runtimeRequirementName);
@@ -4989,6 +5428,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, directoryInvocationType);
             }
 
+            if (TryProcessPrimitiveEqualsInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveEqualsType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, primitiveEqualsType);
+            }
+
             if (TryProcessPrimitiveGetHashCodeInvocation(semantic, context, invocationExpression, lines, out VariableType primitiveGetHashCodeType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, primitiveGetHashCodeType);
             }
@@ -5021,15 +5464,19 @@ namespace cs2.cpp {
             List<string> argLines = ["("];
             int count = 0;
             List<ExpressionResult> types = new List<ExpressionResult>();
+            List<List<string>> positionalArgumentLines = new List<List<string>>();
+            List<List<string>> positionalArgumentBeforeLines = new List<List<string>>();
+            List<ExpressionResult> positionalArgumentResults = new List<ExpressionResult>();
 
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokedMethodSymbol != null
                 ? invokedMethodSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
 
             List<string> beforeLines = new List<string>();
+            bool hasNamedInvocationArguments = parameterSymbols.Length > 0 &&
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null);
 
-            if (parameterSymbols.Length > 0 &&
-                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+            if (hasNamedInvocationArguments) {
                 ArgumentSyntax[] alignedArguments = AlignInvocationArguments(invocationExpression.ArgumentList.Arguments, parameterSymbols);
                 bool wroteAnyArgument = false;
                 for (int parameterIndex = 0; parameterIndex < parameterSymbols.Length; ++parameterIndex) {
@@ -5091,11 +5538,13 @@ namespace cs2.cpp {
                     ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
                     context.PopClass(startArg);
                     types.Add(argumentResult);
+                    List<string> argumentBeforeLines = new List<string>();
                     if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                        beforeLines.AddRange(argumentResult.BeforeLines);
+                        argumentBeforeLines.AddRange(argumentResult.BeforeLines);
                     }
 
                     IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
+                    List<string> loweredArgumentLines = new List<string>();
                     AppendInvocationArgument(
                         semantic,
                         context,
@@ -5103,12 +5552,18 @@ namespace cs2.cpp {
                         argumentExpressionLines,
                         parameterSymbol,
                         invokedMethodSymbol,
-                        beforeLines,
-                        argLines);
+                        argumentBeforeLines,
+                        loweredArgumentLines);
+                    argLines.AddRange(loweredArgumentLines);
+                    positionalArgumentLines.Add(loweredArgumentLines);
+                    positionalArgumentResults.Add(argumentResult);
 
                     if (isRef) {
-                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, beforeLines);
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, argumentBeforeLines);
                     }
+
+                    beforeLines.AddRange(argumentBeforeLines);
+                    positionalArgumentBeforeLines.Add(argumentBeforeLines);
 
                     count++;
                     if (count != invocationExpression.ArgumentList.Arguments.Count ||
@@ -5143,6 +5598,30 @@ namespace cs2.cpp {
                 AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
             }
 
+            bool requiresArgumentSequencing = types.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
+            if (requiresArgumentSequencing && TryAppendSequencedInvocation(
+                    semantic,
+                    context,
+                    invocationExpression,
+                    invokedMethodSymbol,
+                    invocationTargetLines,
+                    positionalArgumentLines,
+                    positionalArgumentBeforeLines,
+                    positionalArgumentResults,
+                    parameterSymbols,
+                    lines)) {
+                result.BeforeLines = null;
+                result.AfterLines = null;
+                return result;
+            }
+            if (requiresArgumentSequencing) {
+                ReportUnsupportedNode(
+                    context,
+                    invocationExpression,
+                    "The C++ backend cannot preserve receiver-first, left-to-right evaluation for this invocation argument shape.");
+            }
+
             invocationTargetLines.AddRange(argLines);
 
             if (beforeLines.Count > 0) {
@@ -5153,6 +5632,196 @@ namespace cs2.cpp {
 
             lines.AddRange(invocationTargetLines);
             return result;
+        }
+
+        /// <summary>
+        /// Emits one positional invocation through a local sequencing lambda when a nested argument requires statement-level preparation.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to re-evaluate the instance receiver independently from its member target.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Invocation whose receiver and arguments must retain C# evaluation order.</param>
+        /// <param name="invokedMethodSymbol">Resolved invoked method.</param>
+        /// <param name="invocationTargetLines">Already lowered invocation target without its argument list.</param>
+        /// <param name="argumentLines">Individually lowered positional arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparations required by each lowered positional argument.</param>
+        /// <param name="argumentResults">Expression results corresponding to the lowered positional arguments.</param>
+        /// <param name="parameterSymbols">Resolved method parameters used to append optional defaults.</param>
+        /// <param name="lines">Output token buffer receiving the self-contained sequencing expression.</param>
+        /// <returns><c>true</c> when a sequencing lambda was emitted; otherwise <c>false</c>.</returns>
+        bool TryAppendSequencedInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            IReadOnlyList<string> invocationTargetLines,
+            IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
+            IReadOnlyList<ExpressionResult> argumentResults,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
+            List<string> lines) {
+            if (invokedMethodSymbol == null ||
+                invocationExpression.ArgumentList.Arguments.Count == 0 ||
+                argumentLines.Count != invocationExpression.ArgumentList.Arguments.Count ||
+                argumentBeforeLines.Count != argumentLines.Count ||
+                argumentResults.Count != argumentLines.Count ||
+                invocationExpression.ArgumentList.Arguments.Any(argument =>
+                    argument.NameColon != null ||
+                    !argument.RefOrOutKeyword.IsKind(SyntaxKind.None))) {
+                return false;
+            }
+
+            bool requiresSequencing = argumentBeforeLines.Any(beforeLines => beforeLines.Count > 0);
+            if (!requiresSequencing ||
+                argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
+                return false;
+            }
+
+            for (int parameterIndex = 0; parameterIndex < argumentLines.Count && parameterIndex < parameterSymbols.Length; parameterIndex++) {
+                if (parameterSymbols[parameterIndex].RefKind != RefKind.None) {
+                    return false;
+                }
+            }
+
+            string targetText = string.Concat(invocationTargetLines);
+            string sequencedTargetText = targetText;
+            List<string> receiverLines = null;
+            ExpressionResult receiverResult = default;
+            string receiverTemporaryName = string.Empty;
+            if (!invokedMethodSymbol.IsStatic && invocationExpression.Expression is MemberAccessExpressionSyntax memberAccessExpression) {
+                receiverLines = new List<string>();
+                int receiverStartDepth = context.DepthClass;
+                receiverResult = ProcessExpression(semantic, context, memberAccessExpression.Expression, receiverLines);
+                context.PopClass(receiverStartDepth);
+                if (!receiverResult.Processed ||
+                    receiverResult.AfterLines != null && receiverResult.AfterLines.Count > 0) {
+                    return false;
+                }
+
+                string receiverText = string.Concat(receiverLines);
+                if (string.IsNullOrWhiteSpace(receiverText) ||
+                    !targetText.StartsWith(receiverText, StringComparison.Ordinal)) {
+                    return false;
+                }
+
+                receiverTemporaryName = CreateTemporaryName("__invoke_receiver");
+                sequencedTargetText = receiverTemporaryName + targetText[receiverText.Length..];
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            if (receiverLines != null) {
+                if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                    lines.AddRange(receiverResult.BeforeLines);
+                }
+
+                lines.Add($"auto&& {receiverTemporaryName} = ");
+                lines.AddRange(receiverLines);
+                lines.Add(";\n");
+            }
+
+            List<string> argumentTemporaryNames = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
+                }
+
+                string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
+                lines.Add($"auto {argumentTemporaryName} = ");
+                lines.AddRange(argumentLines[argumentIndex]);
+                lines.Add(";\n");
+                argumentTemporaryNames.Add(argumentTemporaryName);
+            }
+
+            lines.Add("return ");
+            lines.Add(sequencedTargetText);
+            lines.Add("(");
+            for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.Add(argumentTemporaryNames[argumentIndex]);
+            }
+
+            bool hasOptionalArguments = parameterSymbols.Length > argumentTemporaryNames.Count &&
+                parameterSymbols.Skip(argumentTemporaryNames.Count).Any(parameter => parameter.HasExplicitDefaultValue);
+            if (hasOptionalArguments && argumentTemporaryNames.Count > 0) {
+                lines.Add(", ");
+            }
+            AppendOptionalInvocationArguments(parameterSymbols, argumentTemporaryNames.Count, lines);
+            lines.Add(");\n})()");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits a static call through a local lambda so a reduced extension receiver and its arguments are prepared in C# source order.
+        /// </summary>
+        /// <param name="context">Current lowering context used to select the lambda capture form.</param>
+        /// <param name="invocationExpression">Reduced extension invocation whose explicit argument syntax is validated.</param>
+        /// <param name="invocationTargetLines">Lowered static extension helper target without an argument list.</param>
+        /// <param name="argumentLines">Lowered receiver followed by explicit arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparation for each lowered argument.</param>
+        /// <param name="argumentResults">Expression results used to reject unsupported post-expression cleanup.</param>
+        /// <param name="parameterSymbols">Extension parameters corresponding to the receiver and arguments.</param>
+        /// <param name="lines">Output token buffer receiving the sequencing expression.</param>
+        /// <returns><c>true</c> when the invocation was emitted with preserved ordering; otherwise <c>false</c>.</returns>
+        bool TryAppendSequencedStaticInvocation(
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IReadOnlyList<string> invocationTargetLines,
+            IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
+            IReadOnlyList<ExpressionResult> argumentResults,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
+            List<string> lines) {
+            if (argumentLines.Count == 0 ||
+                argumentBeforeLines.Count != argumentLines.Count ||
+                argumentResults.Count != argumentLines.Count ||
+                invocationExpression.ArgumentList.Arguments.Any(argument =>
+                    argument.NameColon != null ||
+                    !argument.RefOrOutKeyword.IsKind(SyntaxKind.None)) ||
+                argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
+                return false;
+            }
+
+            for (int parameterIndex = 0; parameterIndex < argumentLines.Count && parameterIndex < parameterSymbols.Length; parameterIndex++) {
+                if (parameterSymbols[parameterIndex].RefKind != RefKind.None) {
+                    return false;
+                }
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            List<string> argumentTemporaryNames = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
+                }
+
+                string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
+                lines.Add($"auto {argumentTemporaryName} = ");
+                lines.AddRange(argumentLines[argumentIndex]);
+                lines.Add(";\n");
+                argumentTemporaryNames.Add(argumentTemporaryName);
+            }
+
+            lines.Add("return ");
+            lines.AddRange(invocationTargetLines);
+            lines.Add("(");
+            for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.Add(argumentTemporaryNames[argumentIndex]);
+            }
+
+            bool hasOptionalArguments = parameterSymbols.Length > argumentTemporaryNames.Count &&
+                parameterSymbols.Skip(argumentTemporaryNames.Count).Any(parameter => parameter.HasExplicitDefaultValue);
+            if (hasOptionalArguments && argumentTemporaryNames.Count > 0) {
+                lines.Add(", ");
+            }
+            AppendOptionalInvocationArguments(parameterSymbols, argumentTemporaryNames.Count, lines);
+            lines.Add(");\n})()");
+            return true;
         }
 
         bool TryProcessSystemArrayInvocation(
@@ -5251,25 +5920,24 @@ namespace cs2.cpp {
             }
 
             List<string> beforeLines = new List<string>();
-            List<string> invocationLines = new List<string>();
+            List<string> invocationTargetLines = new List<string>();
+            List<List<string>> argumentLines = new List<List<string>>();
+            List<List<string>> argumentBeforeLines = new List<List<string>>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
             List<string> receiverLines = new List<string>();
             RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(extensionMethodSymbol.ContainingType));
 
             int receiverStart = context.DepthClass;
             ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
             context.PopClass(receiverStart);
-            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
-                beforeLines.AddRange(receiverResult.BeforeLines);
-            }
-
-            invocationLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
-            invocationLines.Add("::");
-            invocationLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
-            AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationLines);
-            invocationLines.Add("(");
-
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> extensionParameters = extensionMethodSymbol.Parameters;
             IParameterSymbol receiverParameterSymbol = extensionParameters.Length > 0 ? extensionParameters[0] : null;
+            List<string> receiverBeforeLines = new List<string>();
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                receiverBeforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            List<string> loweredReceiverLines = new List<string>();
             AppendInvocationArgument(
                 semantic,
                 context,
@@ -5277,12 +5945,12 @@ namespace cs2.cpp {
                 receiverLines,
                 receiverParameterSymbol,
                 extensionMethodSymbol,
-                beforeLines,
-                invocationLines);
-
-            if (invocationExpression.ArgumentList.Arguments.Count > 0) {
-                invocationLines.Add(", ");
-            }
+                receiverBeforeLines,
+                loweredReceiverLines);
+            beforeLines.AddRange(receiverBeforeLines);
+            argumentLines.Add(loweredReceiverLines);
+            argumentBeforeLines.Add(receiverBeforeLines);
+            argumentResults.Add(receiverResult);
 
             for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
                 ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
@@ -5290,13 +5958,15 @@ namespace cs2.cpp {
                 int argumentStart = context.DepthClass;
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(argumentStart);
+                List<string> currentArgumentBeforeLines = new List<string>();
                 if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    beforeLines.AddRange(argumentResult.BeforeLines);
+                    currentArgumentBeforeLines.AddRange(argumentResult.BeforeLines);
                 }
 
                 IParameterSymbol parameterSymbol = argumentIndex + 1 < extensionParameters.Length
                     ? extensionParameters[argumentIndex + 1]
                     : null;
+                List<string> loweredArgumentLines = new List<string>();
                 AppendInvocationArgument(
                     semantic,
                     context,
@@ -5304,24 +5974,59 @@ namespace cs2.cpp {
                     argumentExpressionLines,
                     parameterSymbol,
                     extensionMethodSymbol,
-                    beforeLines,
-                    invocationLines);
+                    currentArgumentBeforeLines,
+                    loweredArgumentLines);
 
                 if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
-                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, currentArgumentBeforeLines);
                 }
 
-                if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
-                    invocationLines.Add(", ");
-                }
+                beforeLines.AddRange(currentArgumentBeforeLines);
+                argumentLines.Add(loweredArgumentLines);
+                argumentBeforeLines.Add(currentArgumentBeforeLines);
+                argumentResults.Add(argumentResult);
             }
 
-            invocationLines.Add(")");
+            invocationTargetLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
+            invocationTargetLines.Add("::");
+            invocationTargetLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
+            AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
+
+            bool requiresSequencing = argumentResults.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
+            if (requiresSequencing && TryAppendSequencedStaticInvocation(
+                    context,
+                    invocationExpression,
+                    invocationTargetLines,
+                    argumentLines,
+                    argumentBeforeLines,
+                    argumentResults,
+                    extensionParameters,
+                    lines)) {
+                result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+                return true;
+            }
+            if (requiresSequencing) {
+                ReportUnsupportedNode(
+                    context,
+                    invocationExpression,
+                    "The C++ backend cannot preserve receiver-first, left-to-right evaluation for this reduced extension invocation shape.");
+            }
+
             if (beforeLines.Count > 0) {
                 lines.AddRange(beforeLines);
             }
 
-            lines.AddRange(invocationLines);
+            lines.AddRange(invocationTargetLines);
+            lines.Add("(");
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.AddRange(argumentLines[argumentIndex]);
+            }
+            lines.Add(")");
             result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
             return true;
         }
@@ -7404,22 +8109,31 @@ namespace cs2.cpp {
             }
 
             List<string> beforeLines = new List<string>();
-            string delegateText = RenderExpressionText(semantic, context, invocationExpression.Expression);
+            List<string> delegateLines = new List<string> {
+                RenderExpressionText(semantic, context, invocationExpression.Expression)
+            };
+            ExpressionResult delegateResult = new ExpressionResult(true, VariablePath.Unknown, resultType);
+
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokeMethodSymbol != null
                 ? invokeMethodSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
             List<string> argumentLines = new List<string>();
+            List<List<string>> individualArgumentLines = new List<List<string>>();
+            List<List<string>> argumentBeforeLines = new List<List<string>>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
             for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; ++argumentIndex) {
                 ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
                 List<string> argumentExpressionLines = new List<string>();
                 int argumentStart = context.DepthClass;
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(argumentStart);
+                List<string> currentArgumentBeforeLines = new List<string>();
                 if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    beforeLines.AddRange(argumentResult.BeforeLines);
+                    currentArgumentBeforeLines.AddRange(argumentResult.BeforeLines);
                 }
 
                 IParameterSymbol parameterSymbol = argumentIndex < parameterSymbols.Length ? parameterSymbols[argumentIndex] : null;
+                List<string> loweredArgumentLines = new List<string>();
                 AppendInvocationArgument(
                     semantic,
                     context,
@@ -7427,16 +8141,42 @@ namespace cs2.cpp {
                     argumentExpressionLines,
                     parameterSymbol,
                     invokeMethodSymbol,
-                    beforeLines,
-                    argumentLines);
+                    currentArgumentBeforeLines,
+                    loweredArgumentLines);
 
                 if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
-                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, currentArgumentBeforeLines);
                 }
 
+                beforeLines.AddRange(currentArgumentBeforeLines);
+                individualArgumentLines.Add(loweredArgumentLines);
+                argumentBeforeLines.Add(currentArgumentBeforeLines);
+                argumentResults.Add(argumentResult);
+                argumentLines.AddRange(loweredArgumentLines);
                 if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
                     argumentLines.Add(", ");
                 }
+            }
+
+            bool requiresSequencing = argumentResults.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
+            if (requiresSequencing && TryAppendSequencedDelegateInvocation(
+                    context,
+                    invocationExpression,
+                    delegateLines,
+                    delegateResult,
+                    individualArgumentLines,
+                    argumentBeforeLines,
+                    argumentResults,
+                    parameterSymbols,
+                    lines)) {
+                return true;
+            }
+            if (requiresSequencing) {
+                ReportUnsupportedNode(
+                    context,
+                    invocationExpression,
+                    "The C++ backend cannot preserve delegate-target-first, left-to-right evaluation for this invocation shape.");
             }
 
             if (beforeLines.Count > 0) {
@@ -7444,10 +8184,84 @@ namespace cs2.cpp {
             }
 
             lines.Add("(*");
-            lines.Add(delegateText);
+            lines.AddRange(delegateLines);
             lines.Add(")(");
             lines.AddRange(argumentLines);
             lines.Add(")");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits a delegate call through a local lambda so the delegate target and prepared arguments retain C# evaluation order.
+        /// </summary>
+        /// <param name="context">Current lowering context used to select the lambda capture form.</param>
+        /// <param name="invocationExpression">Delegate invocation whose explicit argument syntax is validated.</param>
+        /// <param name="delegateLines">Lowered delegate target expression.</param>
+        /// <param name="delegateResult">Delegate target result used to reject unsupported post-expression cleanup.</param>
+        /// <param name="argumentLines">Individually lowered delegate arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparation for each delegate argument.</param>
+        /// <param name="argumentResults">Argument results used to reject unsupported post-expression cleanup.</param>
+        /// <param name="parameterSymbols">Delegate invocation parameters corresponding to supplied arguments.</param>
+        /// <param name="lines">Output token buffer receiving the sequencing expression.</param>
+        /// <returns><c>true</c> when the delegate call was emitted with preserved ordering; otherwise <c>false</c>.</returns>
+        bool TryAppendSequencedDelegateInvocation(
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IReadOnlyList<string> delegateLines,
+            ExpressionResult delegateResult,
+            IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
+            IReadOnlyList<ExpressionResult> argumentResults,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
+            List<string> lines) {
+            if (argumentBeforeLines.Count != argumentLines.Count ||
+                argumentResults.Count != argumentLines.Count ||
+                invocationExpression.ArgumentList.Arguments.Any(argument =>
+                    argument.NameColon != null ||
+                    !argument.RefOrOutKeyword.IsKind(SyntaxKind.None)) ||
+                delegateResult.AfterLines != null && delegateResult.AfterLines.Count > 0 ||
+                argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
+                return false;
+            }
+
+            for (int parameterIndex = 0; parameterIndex < argumentLines.Count && parameterIndex < parameterSymbols.Length; parameterIndex++) {
+                if (parameterSymbols[parameterIndex].RefKind != RefKind.None) {
+                    return false;
+                }
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            if (delegateResult.BeforeLines != null && delegateResult.BeforeLines.Count > 0) {
+                lines.AddRange(delegateResult.BeforeLines);
+            }
+
+            string delegateTemporaryName = CreateTemporaryName("__invoke_delegate");
+            lines.Add($"auto {delegateTemporaryName} = ");
+            lines.AddRange(delegateLines);
+            lines.Add(";\n");
+
+            List<string> argumentTemporaryNames = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
+                }
+
+                string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
+                lines.Add($"auto {argumentTemporaryName} = ");
+                lines.AddRange(argumentLines[argumentIndex]);
+                lines.Add(";\n");
+                argumentTemporaryNames.Add(argumentTemporaryName);
+            }
+
+            lines.Add($"return (*{delegateTemporaryName})(");
+            for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.Add(argumentTemporaryNames[argumentIndex]);
+            }
+            lines.Add(");\n})()");
             return true;
         }
 
@@ -7568,6 +8382,65 @@ namespace cs2.cpp {
             lines.Add("Number::GetHashCode(");
             lines.Add(receiverText);
             lines.Add(")");
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers primitive instance equality to the numeric runtime so built-in C++ scalar types retain managed equality behavior.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the invocation receiver type.</param>
+        /// <param name="context">Active conversion context used to lower receiver and argument expressions.</param>
+        /// <param name="invocationExpression">Invocation that may represent primitive equality.</param>
+        /// <param name="lines">Generated output fragments that receive the numeric equality call.</param>
+        /// <param name="resultType">Receives the managed Boolean result type when the invocation is handled.</param>
+        /// <returns><c>true</c> when a primitive equality invocation was emitted; otherwise, <c>false</c>.</returns>
+        bool TryProcessPrimitiveEqualsInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out VariableType resultType) {
+            resultType = VariableUtil.GetVarType("bool");
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax identifierName ||
+                !string.Equals(identifierName.Identifier.Text, "Equals", StringComparison.Ordinal) ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            IMethodSymbol invokedMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (!TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
+                receiverTypeSymbol == null) {
+                receiverTypeSymbol = invokedMethodSymbol?.ReceiverType;
+            }
+
+            if (receiverTypeSymbol == null || !IsPrimitiveGetHashCodeReceiverType(receiverTypeSymbol)) {
+                return false;
+            }
+
+            if (invokedMethodSymbol == null || invokedMethodSymbol.Parameters.Length != 1) {
+                return false;
+            }
+
+            ITypeSymbol parameterTypeSymbol = invokedMethodSymbol.Parameters[0].Type;
+            bool usesSamePrimitiveOverload = parameterTypeSymbol.SpecialType == receiverTypeSymbol.SpecialType;
+            bool usesObjectOverload = parameterTypeSymbol.SpecialType == SpecialType.System_Object;
+            if (!usesSamePrimitiveOverload && !usesObjectOverload) {
+                return false;
+            }
+
+            ExpressionSyntax argumentExpression = invocationExpression.ArgumentList.Arguments[0].Expression;
+            if (usesObjectOverload &&
+                (!TryGetExpressionTypeSymbol(semantic, argumentExpression, out ITypeSymbol argumentTypeSymbol) ||
+                 !IsPrimitiveGetHashCodeReceiverType(argumentTypeSymbol))) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            string argumentText = RenderExpressionText(semantic, context, argumentExpression);
+            string equalityFunctionName = usesSamePrimitiveOverload ? "Equals" : "EqualsObject";
+            lines.Add($"Number::{equalityFunctionName}({receiverText}, {argumentText})");
             return true;
         }
 
@@ -8365,6 +9238,7 @@ namespace cs2.cpp {
                 string.Equals(name, "IDictionary", StringComparison.Ordinal) ||
                 string.Equals(name, "IReadOnlyDictionary", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                displayText.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.HashSet<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
@@ -8387,6 +9261,7 @@ namespace cs2.cpp {
                 string.Equals(name, "IReadOnlyCollection", StringComparison.Ordinal) ||
                 string.Equals(name, "IEnumerable", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                displayText.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
                 displayText.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
@@ -8460,6 +9335,10 @@ namespace cs2.cpp {
 
             if (binary.IsKind(SyntaxKind.AsExpression)) {
                 return ProcessAsTypeExpression(semantic, context, binary, lines);
+            }
+
+            if (TryProcessCheckedAdditionExpression(semantic, context, binary, lines, out ExpressionResult checkedAdditionResult)) {
+                return checkedAdditionResult;
             }
 
             if (binary.IsKind(SyntaxKind.CoalesceExpression) &&
@@ -8998,6 +9877,7 @@ namespace cs2.cpp {
             return string.Equals(receiverName, "List", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal);
         }
 
@@ -10572,6 +11452,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessPostfixUnaryExpression(SemanticModel semantic, LayerContext context, PostfixUnaryExpressionSyntax postfixUnary, List<string> lines) {
+            if (TryProcessCheckedUnaryMutation(semantic, context, postfixUnary, postfixUnary.Operand, lines, out _)) {
+                return;
+            }
+
             // Process the operand first
             int start = context.DepthClass;
             ProcessExpression(semantic, context, postfixUnary.Operand, lines);
@@ -10582,6 +11466,10 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessPrefixUnaryExpression(SemanticModel semantic, LayerContext context, PrefixUnaryExpressionSyntax prefixUnary, List<string> lines) {
+            if (TryProcessCheckedUnaryMutation(semantic, context, prefixUnary, prefixUnary.Operand, lines, out ExpressionResult checkedMutationResult)) {
+                return checkedMutationResult;
+            }
+
             if (prefixUnary.IsKind(SyntaxKind.AddressOfExpression) &&
                 TryProcessFunctionPointerAddressOfExpression(semantic, context, prefixUnary, lines, out ExpressionResult addressOfResult)) {
                 return addressOfResult;
@@ -10604,6 +11492,148 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Lowers supported checked integral addition through the native overflow-preserving helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model associated with the addition.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="binaryExpression">Candidate binary addition.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <param name="result">Receives the processed expression result when supported.</param>
+        /// <returns><c>true</c> when a checked helper call was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedAdditionExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            BinaryExpressionSyntax binaryExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                !IsSupportedCheckedAdditionExpression(semantic, binaryExpression)) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+
+            List<string> leftLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binaryExpression.Left, leftLines);
+            context.PopClass(startDepth);
+
+            List<string> rightLines = new List<string>();
+            startDepth = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binaryExpression.Right, rightLines);
+            context.PopClass(startDepth);
+
+            bool canInlineOperands = CanInlineCheckedAdditionOperand(semantic, binaryExpression.Left) &&
+                CanInlineCheckedAdditionOperand(semantic, binaryExpression.Right) &&
+                (leftResult.BeforeLines == null || leftResult.BeforeLines.Count == 0) &&
+                (rightResult.BeforeLines == null || rightResult.BeforeLines.Count == 0) &&
+                (leftResult.AfterLines == null || leftResult.AfterLines.Count == 0) &&
+                (rightResult.AfterLines == null || rightResult.AfterLines.Count == 0);
+            if (canInlineOperands) {
+                lines.Add("Number::CheckedAdd(");
+                lines.AddRange(leftLines);
+                lines.Add(", ");
+                lines.AddRange(rightLines);
+                lines.Add(")");
+                result = new ExpressionResult(
+                    true,
+                    VariablePath.Unknown,
+                    VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type));
+                return true;
+            }
+
+            List<string> beforeLines = new List<string>();
+            if (leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(leftResult.BeforeLines);
+            }
+            string leftTemporaryName = CreateTemporaryName("__checked_left");
+            beforeLines.Add($"const auto {leftTemporaryName} = ");
+            beforeLines.AddRange(leftLines);
+            beforeLines.Add(";\n");
+            if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(rightResult.BeforeLines);
+            }
+            string rightTemporaryName = CreateTemporaryName("__checked_right");
+            beforeLines.Add($"const auto {rightTemporaryName} = ");
+            beforeLines.AddRange(rightLines);
+            beforeLines.Add(";\n");
+
+            lines.Add("Number::CheckedAdd(");
+            lines.Add(leftTemporaryName);
+            lines.Add(", ");
+            lines.Add(rightTemporaryName);
+            lines.Add(")");
+            List<string> afterLines = new List<string>();
+            if (leftResult.AfterLines != null && leftResult.AfterLines.Count > 0) {
+                afterLines.AddRange(leftResult.AfterLines);
+            }
+            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                afterLines.AddRange(rightResult.AfterLines);
+            }
+            result = new ExpressionResult(
+                true,
+                VariablePath.Unknown,
+                VariableUtil.GetVarType(semantic.GetTypeInfo(binaryExpression).Type),
+                beforeLines,
+                afterLines);
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers one checked integral increment or decrement through a native helper that validates the boundary before mutation.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the managed operand type.</param>
+        /// <param name="context">Current C++ lowering context and checked-policy stack.</param>
+        /// <param name="unaryExpression">Prefix or postfix mutation expression being lowered.</param>
+        /// <param name="operandExpression">Assignable operand mutated by the expression.</param>
+        /// <param name="lines">Output token buffer receiving the helper call.</param>
+        /// <param name="result">Receives the expression result when checked lowering succeeds.</param>
+        /// <returns><c>true</c> when a supported checked mutation was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessCheckedUnaryMutation(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax unaryExpression,
+            ExpressionSyntax operandExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+            if (context is not CPPLayerContext cppContext ||
+                !cppContext.IsCheckedArithmetic ||
+                !TryGetExpressionTypeSymbol(semantic, operandExpression, out ITypeSymbol operandTypeSymbol) ||
+                !IsSupportedCheckedMutationType(operandTypeSymbol) ||
+                !IsSupportedCheckedMutationOperand(semantic, operandExpression)) {
+                return false;
+            }
+
+            string helperName;
+            if (unaryExpression.IsKind(SyntaxKind.PreIncrementExpression)) {
+                helperName = "CheckedPreIncrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PreDecrementExpression)) {
+                helperName = "CheckedPreDecrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PostIncrementExpression)) {
+                helperName = "CheckedPostIncrement";
+            } else if (unaryExpression.IsKind(SyntaxKind.PostDecrementExpression)) {
+                helperName = "CheckedPostDecrement";
+            } else {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("Number");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add($"Number::{helperName}(");
+            int startDepth = context.DepthClass;
+            ProcessExpression(semantic, context, operandExpression, lines);
+            context.PopClass(startDepth);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(operandTypeSymbol));
+            return true;
         }
 
         static VariableType ResolvePointerIndirectionExpressionType(
@@ -10989,6 +12019,26 @@ namespace cs2.cpp {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(varType, out typeData);
             string castTargetTypeName = cppType.ToCPPString(context.Program) + (typeData.IsPointer ? "*" : string.Empty);
+            if (context is CPPLayerContext cppContext &&
+                cppContext.IsCheckedArithmetic &&
+                IsSupportedCheckedIntegralCastExpression(semantic, castExpr)) {
+                RegisterRuntimeRequirement("Number");
+                RegisterRuntimeRequirement("NativeExceptions");
+                lines.Add("Number::CheckedCast<");
+                lines.Add(castTargetTypeName);
+                lines.Add(">(");
+                List<string> sourceLines = new List<string>();
+                ExpressionResult sourceResult = ProcessExpression(semantic, context, castExpr.Expression, sourceLines);
+                lines.AddRange(sourceLines);
+                lines.Add(")");
+                return new ExpressionResult(
+                    sourceResult.Processed,
+                    VariablePath.Unknown,
+                    varType,
+                    sourceResult.BeforeLines,
+                    sourceResult.AfterLines);
+            }
+
             ITypeSymbol sourceExpressionTypeSymbol = semantic.GetTypeInfo(castExpr.Expression).Type ?? semantic.GetTypeInfo(castExpr.Expression).ConvertedType;
             bool sourceExpressionTypeKnown = sourceExpressionTypeSymbol != null;
             VariableType sourceType = sourceExpressionTypeKnown
@@ -11985,7 +13035,19 @@ namespace cs2.cpp {
                         typeData.IsArray = false;
                         typeData.IsNativeType = false;
                         typeData.IsPointer = true;
-                        return CreateConvertedGenericType(parsedType, "List");
+                        bool isReadOnlyListContract =
+                            string.Equals(parsedType.TypeName, "IReadOnlyList", StringComparison.Ordinal) ||
+                            string.Equals(parsedType.TypeName, "IReadOnlyCollection", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal);
+                        bool isReadOnlyCollection =
+                            string.Equals(parsedType.QualifiedTypeName, "System.Collections.ObjectModel.ReadOnlyCollection", StringComparison.Ordinal) ||
+                            parsedType.QualifiedTypeName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal);
+                        if (isReadOnlyCollection) {
+                            return CreateConvertedGenericType(parsedType, "ReadOnlyCollection");
+                        }
+
+                        return CreateConvertedGenericType(parsedType, isReadOnlyListContract ? "IReadOnlyList" : "List");
                 }
                 case VariableDataType.Dictionary: {
                         codeConverter?.RegisterRuntimeRequirement("NativeDictionary");
@@ -12295,11 +13357,11 @@ namespace cs2.cpp {
                             return new VariableType(parsedType);
                         }
 
-                        if (IsNativeExceptionTypeName(parsedType.TypeName)) {
+                        ConversionClass generatedClass = ResolveGeneratedClass(parsedType);
+                        if (generatedClass == null && IsNativeExceptionQualifiedTypeName(parsedType.QualifiedTypeName)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeExceptions");
                         }
 
-                        ConversionClass generatedClass = ResolveGeneratedClass(parsedType);
                         if (generatedClass?.TypeSymbol?.IsValueType == true) {
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
@@ -12696,10 +13758,15 @@ namespace cs2.cpp {
             ConversionVariable functionInVar,
             int matchingVariableCount,
             bool isQualifiedMemberName) {
+            ConversionFunction currentFunction = context?.GetCurrentFunction()?.Function;
+            bool isFreeOperatorContext = currentFunction != null &&
+                currentFunction.IsStatic &&
+                !currentFunction.IsConstructor &&
+                currentFunction.Name.StartsWith("operator", StringComparison.Ordinal);
             if (context == null ||
                 currentClass == null ||
                 symbol == null ||
-                classVar != null ||
+                (classVar != null && (!classVar.IsStatic || !isFreeOperatorContext)) ||
                 functionInVar != null ||
                 matchingVariableCount != 0 ||
                 isQualifiedMemberName) {
@@ -12723,9 +13790,12 @@ namespace cs2.cpp {
                 isStaticMember = methodSymbol.IsStatic;
             }
 
-            if (!isStaticMember ||
-                containingTypeSymbol == null ||
-                string.Equals(currentClass.Name, containingTypeSymbol.Name, StringComparison.Ordinal)) {
+            if (!isStaticMember || containingTypeSymbol == null) {
+                return string.Empty;
+            }
+
+            if (string.Equals(currentClass.Name, containingTypeSymbol.Name, StringComparison.Ordinal) &&
+                !isFreeOperatorContext) {
                 return string.Empty;
             }
 
@@ -13708,48 +14778,79 @@ namespace cs2.cpp {
                 arrayTypeSymbol.ElementType.SpecialType == SpecialType.System_Byte;
         }
 
-        static bool IsNativeExceptionTypeName(string typeName) {
-            return string.Equals(typeName, "Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.Exception", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentException", StringComparison.Ordinal) ||
+        /// <summary>
+        /// Determines whether a fully qualified managed type name identifies one exception supplied by the native runtime.
+        /// </summary>
+        /// <param name="typeName">Fully qualified managed type name to inspect.</param>
+        /// <returns><c>true</c> for an exact supported framework exception name; otherwise <c>false</c>.</returns>
+        static bool IsNativeExceptionQualifiedTypeName(string typeName) {
+            return string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentNullException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentNullException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentNullException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "ArgumentOutOfRangeException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "InvalidOperationException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.InvalidOperationException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.InvalidOperationException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.Collections.Generic.KeyNotFoundException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.EndOfStreamException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "FileNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.FileNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.FileNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "DirectoryNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "NotSupportedException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal) ||
-                string.Equals(typeName, "global::System.NotSupportedException", StringComparison.Ordinal);
+                string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal);
         }
 
-        static string NormalizeNativeExceptionTypeName(string typeName) {
-            int globalSeparatorIndex = typeName.LastIndexOf("::", StringComparison.Ordinal);
-            if (globalSeparatorIndex >= 0) {
-                return typeName[(globalSeparatorIndex + 2)..];
+        /// <summary>
+        /// Resolves framework exception identity from the semantic type symbol so user-defined same-leaf types remain generated project classes.
+        /// </summary>
+        /// <param name="compilation">Compilation that owns the framework reference identities.</param>
+        /// <param name="typeSymbol">Resolved object-creation type to classify.</param>
+        /// <param name="nativeTypeName">Receives the unqualified native runtime exception class name.</param>
+        /// <returns><c>true</c> when the symbol is one of the framework exceptions supplied by the native runtime.</returns>
+        static bool TryGetNativeExceptionTypeName(Compilation compilation, ITypeSymbol typeSymbol, out string nativeTypeName) {
+            nativeTypeName = string.Empty;
+            if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.Exception")) {
+                nativeTypeName = "Exception";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentException")) {
+                nativeTypeName = "ArgumentException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentNullException")) {
+                nativeTypeName = "ArgumentNullException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentOutOfRangeException")) {
+                nativeTypeName = "ArgumentOutOfRangeException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.InvalidOperationException")) {
+                nativeTypeName = "InvalidOperationException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.Collections.Generic.KeyNotFoundException")) {
+                nativeTypeName = "KeyNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.DivideByZeroException")) {
+                nativeTypeName = "DivideByZeroException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.OverflowException")) {
+                nativeTypeName = "OverflowException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.EndOfStreamException")) {
+                nativeTypeName = "EndOfStreamException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.FileNotFoundException")) {
+                nativeTypeName = "FileNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.DirectoryNotFoundException")) {
+                nativeTypeName = "DirectoryNotFoundException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.NotSupportedException")) {
+                nativeTypeName = "NotSupportedException";
             }
 
-            int namespaceSeparatorIndex = typeName.LastIndexOf('.');
-            if (namespaceSeparatorIndex >= 0) {
-                return typeName[(namespaceSeparatorIndex + 1)..];
+            return nativeTypeName.Length > 0;
+        }
+
+        /// <summary>
+        /// Compares a resolved type against one framework metadata symbol while rejecting every source-declared shadow type.
+        /// </summary>
+        /// <param name="compilation">Compilation used to resolve the authoritative framework metadata symbol.</param>
+        /// <param name="typeSymbol">Resolved candidate type.</param>
+        /// <param name="metadataName">Fully qualified metadata name of the required framework type.</param>
+        /// <returns><c>true</c> only when the candidate is the exact referenced framework symbol.</returns>
+        static bool IsFrameworkTypeSymbol(Compilation compilation, ITypeSymbol typeSymbol, string metadataName) {
+            if (compilation == null || typeSymbol == null || typeSymbol.Locations.Any(location => location.IsInSource)) {
+                return false;
             }
 
-            return typeName;
+            INamedTypeSymbol frameworkTypeSymbol = compilation.GetTypeByMetadataName(metadataName);
+            return frameworkTypeSymbol != null &&
+                SymbolEqualityComparer.Default.Equals(typeSymbol.OriginalDefinition, frameworkTypeSymbol.OriginalDefinition);
         }
 
         /// <summary>
@@ -14191,6 +15292,7 @@ namespace cs2.cpp {
             if (string.Equals(receiverName, "List", StringComparison.Ordinal) ||
                 string.Equals(receiverName, "IReadOnlyList", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+                receiverDisplayName.StartsWith("System.Collections.ObjectModel.ReadOnlyCollection<", StringComparison.Ordinal) ||
                 receiverDisplayName.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal)) {
                 typeSymbol = namedTypeSymbol.TypeArguments[0];
                 return typeSymbol != null;
@@ -14221,7 +15323,9 @@ namespace cs2.cpp {
                 convertedGenericArguments.Add(convertedGenericArgument);
             }
 
-            return new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+            VariableType convertedType = new VariableType(parsedType.Type, cppTypeName, parsedType.Args.ToList(), convertedGenericArguments);
+            convertedType.QualifiedTypeName = parsedType.QualifiedTypeName;
+            return convertedType;
         }
 
         string RenderConvertedGenericArgumentType(SemanticModel semantic, LayerContext context, TypeSyntax typeSyntax) {

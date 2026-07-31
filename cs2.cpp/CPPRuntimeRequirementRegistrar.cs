@@ -102,6 +102,9 @@ namespace cs2.cpp {
 
             registeredRequirements.TryAdd(definition.Name, definition);
             currentTypeScope?.Register(definition.Name);
+            if (string.Equals(definition.Name, "NativeList", StringComparison.Ordinal)) {
+                Register("NativeExceptions");
+            }
             return true;
         }
 
@@ -132,6 +135,10 @@ namespace cs2.cpp {
         bool CanRegisterForResolvedFeatures(CPPRuntimeRequirementDefinition definition) {
             if (definition == null) {
                 return false;
+            }
+
+            if (currentTypeScope != null) {
+                return true;
             }
 
             if (definition.OwningFeatureIds.Count == 0) {

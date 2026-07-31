@@ -202,4 +202,36 @@ public class CPPClassEmitterIncludeFilteringTests {
         Assert.DoesNotContain("#include \"int.hpp\"", header, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Ensures incomplete nested generic metadata cannot crash dependency discovery before the converter reports or lowers the owning declaration.
+    /// </summary>
+    [Fact]
+    public void Emit_WithUnnamedNestedGenericMetadata_DoesNotCrashDependencyDiscovery() {
+        CPPClassEmitter emitter = new CPPClassEmitter(CppProcessorTestHarness.CreateProcessor(), new CPPProgram(new CPPConversionRules()));
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "UnnamedGenericCarrier",
+            DeclarationType = MemberDeclarationType.Class
+        };
+        VariableType unnamedGenericType = new VariableType(
+            VariableDataType.Unknown,
+            genericArgs: new List<VariableType> {
+                new VariableType(VariableDataType.Int32, "Int32")
+            });
+
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "Items",
+            VarType = new VariableType(
+                VariableDataType.List,
+                "List",
+                genericArgs: new List<VariableType> { unnamedGenericType })
+        });
+
+        using StringWriter headerWriter = new StringWriter();
+        using StringWriter sourceWriter = new StringWriter();
+
+        emitter.Emit(conversionClass, headerWriter, sourceWriter);
+
+        Assert.DoesNotContain("#include \".hpp\"", headerWriter.ToString(), StringComparison.Ordinal);
+    }
+
 }

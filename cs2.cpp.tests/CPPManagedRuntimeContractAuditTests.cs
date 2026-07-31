@@ -781,7 +781,8 @@ namespace cs2.cpp.tests {
             string header = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.hpp"));
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.cpp"));
 
-            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", header);
+            Assert.DoesNotContain("#include \"runtime/native_exceptions.hpp\"", header, StringComparison.Ordinal);
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", sourceOutput);
             Assert.Contains("throw new ArgumentNullException(\"value\");", sourceOutput);
             Assert.Contains("throw new InvalidOperationException(\"bad\");", sourceOutput);
             AssertRuntimeRequirement(output.Report, "NativeExceptions");
@@ -1333,8 +1334,8 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("int32_t rootRefinementSize;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("bool usePriorityQueue;", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("(*BroadPhase::get_ActiveRefinementSchedule())(1, rootRefinementSize, usePriorityQueue);", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("BroadPhase::set_ActiveRefinementSchedule(new RefinementScheduler(&BroadPhase::Default__out1_out2));", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("(*ActiveRefinementSchedule)(static_cast<int32_t>(1), rootRefinementSize, usePriorityQueue);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("BroadPhase::set_ActiveRefinementSchedule(new RefinementScheduler(static_cast<void (*)(int32_t, int32_t&, bool&)>(&BroadPhase::Default__out1_out2)));", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1698,6 +1699,126 @@ namespace cs2.cpp.tests {
             Assert.Contains("T& get_Item(int32_t index)", runtimeHeader);
             Assert.Contains("const T& get_Item(int32_t index) const", runtimeHeader);
             Assert.Contains("void set_Item(int32_t index, const T& value)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures primitive instance equality calls use the numeric runtime so generated C++ does not invoke members on scalar built-ins.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithPrimitiveFloatEquals_UsesManagedNumericEqualitySurface() {
+            string source = """
+                public class ScalarComparer {
+                    public bool Equals(float left, float right) {
+                        return left.Equals(right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "number.hpp"));
+
+            Assert.Contains("return Number::Equals(left, right);", output.GeneratedText);
+            Assert.Contains("static bool Equals(float left, float right)", runtimeHeader);
+            Assert.Contains("std::isnan(left) && std::isnan(right)", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures a primitive <c>Equals(object)</c> overload evaluates a differently typed primitive argument without routing it through same-type numeric equality.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCrossTypePrimitiveEquals_UsesBoxedValueEqualitySurface() {
+            string source = """
+                public class ScalarComparer {
+                    public bool Equals(int left, long right) {
+                        return left.Equals(right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "number.hpp"));
+
+            Assert.Contains("return Number::EqualsObject(left, right);", output.GeneratedText);
+            Assert.Contains("static bool EqualsObject(const TLeft& left, const TRight& right)", runtimeHeader);
+            Assert.DoesNotContain("Number::Equals(left, right)", output.GeneratedText, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures boxed equality remains false when distinct managed primitive types collapse to aliases of the same native integer type.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNativeAliasPrimitiveEquals_DoesNotUseCppTypeIdentity() {
+            string source = """
+                public class NativeAliasScalarComparer {
+                    public bool Equals(nint left, long right) {
+                        return left.Equals(right);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "system", "number.hpp"));
+
+            Assert.Contains("return Number::EqualsObject(left, right);", output.GeneratedText);
+            Assert.DoesNotContain("std::is_same", runtimeHeader, StringComparison.Ordinal);
+            Assert.Contains("(void)left;", runtimeHeader);
+            Assert.Contains("(void)right;", runtimeHeader);
+            Assert.Contains("return false;", runtimeHeader);
+        }
+
+        /// <summary>
+        /// Ensures managed <c>List&lt;T&gt;.AsReadOnly</c> lowers to a distinct live wrapper whose static and runtime surfaces reject mutation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithListAsReadOnlyUsage_EmitsNativeLiveViewSurface() {
+            string source = """
+                using System.Collections.Generic;
+                using System.Collections.ObjectModel;
+
+                public class Inventory {
+                    public IReadOnlyList<int> Freeze(List<int> values) {
+                        return values.AsReadOnly();
+                    }
+
+                    public ReadOnlyCollection<int> FreezeConcrete(List<int> values) {
+                        return values.AsReadOnly();
+                    }
+
+                    public bool Contains(List<int> values, int value) {
+                        return values.AsReadOnly().Contains(value);
+                    }
+
+                    public int IndexOf(List<int> values, int value) {
+                        return values.AsReadOnly().IndexOf(value);
+                    }
+
+                    public void CopyTo(List<int> values, int[] destination) {
+                        values.AsReadOnly().CopyTo(destination, 0);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_list.hpp"));
+
+            Assert.Contains("IReadOnlyList<int32_t>* Inventory::Freeze", output.GeneratedText);
+            Assert.Contains("ReadOnlyCollection<int32_t>* Inventory::FreezeConcrete", output.GeneratedText);
+            Assert.Contains("return values->AsReadOnly();", output.GeneratedText);
+            Assert.Contains("class List : public std::vector<T>, public IReadOnlyList<T>", runtimeHeader);
+            Assert.Contains("class ReadOnlyCollection : public IReadOnlyList<T>", runtimeHeader);
+            Assert.Contains("ReadOnlyCollection<T>* AsReadOnly();", runtimeHeader);
+            Assert.Contains("ReadOnlyCollection<T>* List<T>::AsReadOnly()", runtimeHeader);
+            Assert.Contains("return new ReadOnlyCollection<T>(this);", runtimeHeader);
+            Assert.DoesNotContain("ReadOnlyCollection_1.hpp", output.GeneratedText, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "ReadOnlyCollection_1.hpp")));
+            Assert.Contains("bool Contains(const T& value) const", runtimeHeader);
+            Assert.Contains("int32_t IndexOf(const T& value) const", runtimeHeader);
+            Assert.Contains("void CopyTo(Array<T>* array, int32_t arrayIndex) const", runtimeHeader);
+            Assert.Contains("throw NotSupportedException();", runtimeHeader);
+            Assert.DoesNotContain("\n    List<T>* AsReadOnly()", runtimeHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("return this;", runtimeHeader, StringComparison.Ordinal);
+            AssertRuntimeRequirement(output.Report, "NativeList");
+            AssertRuntimeRequirement(output.Report, "NativeExceptions");
         }
 
         /// <summary>

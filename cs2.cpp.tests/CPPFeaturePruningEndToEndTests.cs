@@ -515,7 +515,7 @@ namespace ExampleEngine {
         string source = """
 using System;
 
-namespace ExampleEngine {
+namespace helengine {
     [AttributeUsage(AttributeTargets.Property)]
     public sealed class EditorPropertyDisplayNameAttribute : Attribute {
         public string DisplayName { get; }
@@ -539,6 +539,28 @@ namespace ExampleEngine {
         Assert.False(File.Exists(Path.Combine(outputPath, "EditorPropertyDisplayNameAttribute.cpp")));
         string unitySource = File.ReadAllText(Path.Combine(outputPath, "generated_unity.cpp"));
         Assert.DoesNotContain("EditorPropertyDisplayNameAttribute.cpp", unitySource);
+    }
+
+    /// <summary>
+    /// Verifies symbol-aware native exclusions preserve an unrelated user type that happens to share an excluded marker's leaf name.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenUserTypeSharesExcludedMarkerLeafName_PreservesUserTypeSources() {
+        string source = """
+using System;
+
+namespace UserGame {
+    public sealed class NativeMigrationRequiredAttribute : Attribute {
+    }
+}
+""";
+
+        string outputPath = RunConversionWithPreset(source, "native-core-boot");
+
+        Assert.True(File.Exists(Path.Combine(outputPath, "NativeMigrationRequiredAttribute.hpp")));
+        Assert.True(File.Exists(Path.Combine(outputPath, "NativeMigrationRequiredAttribute.cpp")));
+        string unitySource = File.ReadAllText(Path.Combine(outputPath, "generated_unity.cpp"));
+        Assert.Contains("NativeMigrationRequiredAttribute.cpp", unitySource);
     }
 
     /// <summary>
