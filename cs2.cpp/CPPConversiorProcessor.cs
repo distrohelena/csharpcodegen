@@ -8236,7 +8236,7 @@ namespace cs2.cpp {
             }
 
             string delegateTemporaryName = CreateTemporaryName("__invoke_delegate");
-            lines.Add($"auto&& {delegateTemporaryName} = ");
+            lines.Add($"auto {delegateTemporaryName} = ");
             lines.AddRange(delegateLines);
             lines.Add(";\n");
 

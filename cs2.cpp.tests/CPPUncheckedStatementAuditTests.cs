@@ -277,13 +277,50 @@ namespace cs2.cpp.tests {
             string output = RunConversion(source, out JsonDocument report);
 
             Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            int targetIndex = output.IndexOf("auto&& __invoke_delegate_", StringComparison.Ordinal);
+            int targetIndex = output.IndexOf("auto __invoke_delegate_", StringComparison.Ordinal);
             int firstIndex = output.IndexOf("this->First()", StringComparison.Ordinal);
             int secondIndex = output.IndexOf("this->Second()", StringComparison.Ordinal);
             int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
             Assert.True(targetIndex >= 0 && targetIndex < firstIndex);
             Assert.True(firstIndex < secondIndex);
             Assert.True(secondIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures a delegate target is snapshotted before an argument replaces the source delegate variable.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMutatingDelegateArgument_CapturesOriginalDelegateValue() {
+            string source = """
+                public delegate int Mixer(int first, int second);
+
+                public class Counter {
+                    Mixer Current;
+
+                    static int Replacement(int first, int second) {
+                        return first - second;
+                    }
+
+                    int ReplaceCurrent() {
+                        Current = Replacement;
+                        return 1;
+                    }
+
+                    int Second() {
+                        return 2;
+                    }
+
+                    public int Read() {
+                        return Current(ReplaceCurrent(), checked(Second() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("auto __invoke_delegate_", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("auto&& __invoke_delegate_", output, StringComparison.Ordinal);
         }
 
         /// <summary>
