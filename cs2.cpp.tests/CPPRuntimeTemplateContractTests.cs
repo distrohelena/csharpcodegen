@@ -158,6 +158,29 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies both native exception-message profiles accept the managed aggregate shape used to preserve primary and rollback failures.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_exceptions_support_three_argument_aggregate_construction() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_exceptions.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(source, "class AggregateException : public Exception").Count);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
+            source,
+            @"AggregateException\(const char\* message, Exception\* firstException, Exception\* secondException\)").Count);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
+            source,
+            @"AggregateException\(const std::string& message, Exception\* firstException, Exception\* secondException\)").Count);
+    }
+
+    /// <summary>
     /// Verifies the shared exception runtime template honors the generic compact-message config switch instead of always constructing heavyweight standard-library exception payloads.
     /// </summary>
     [Fact]

@@ -12485,9 +12485,7 @@ namespace cs2.cpp {
                     lines.Add("}\n");
 
                     foreach (var catchClause in tryStatement.Catches) {
-                        lines.Add("catch (...) {\n");
-                        ProcessStatement(semantic, context, catchClause.Block, lines);
-                        lines.Add("}\n");
+                        ProcessCatchClause(semantic, context, catchClause, lines);
                     }
                 } else {
                     ProcessStatement(semantic, context, tryStatement.Block, lines);
@@ -12502,10 +12500,54 @@ namespace cs2.cpp {
             lines.Add("}\n");
 
             foreach (var catchClause in tryStatement.Catches) {
-                lines.Add("catch (...) {\n");
-                ProcessStatement(semantic, context, catchClause.Block, lines);
-                lines.Add("}\n");
+                ProcessCatchClause(semantic, context, catchClause, lines);
             }
+        }
+
+        /// <summary>
+        /// Emits one native catch handler while preserving the managed exception type and optional local variable used by the handler body.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish framework exceptions from source-defined types with matching names.</param>
+        /// <param name="context">Current conversion context used to render generated project type names and lower the handler body.</param>
+        /// <param name="catchClause">Managed catch clause whose declaration and body are converted.</param>
+        /// <param name="lines">Destination fragments receiving the complete native catch handler.</param>
+        void ProcessCatchClause(
+            SemanticModel semantic,
+            LayerContext context,
+            CatchClauseSyntax catchClause,
+            List<string> lines) {
+            lines.Add("catch (");
+            if (catchClause.Declaration == null) {
+                lines.Add("...");
+            } else {
+                ITypeSymbol catchTypeSymbol = semantic.GetTypeInfo(catchClause.Declaration.Type).Type;
+                if (TryGetNativeExceptionTypeName(semantic.Compilation, catchTypeSymbol, out string nativeExceptionTypeName)) {
+                    RegisterRuntimeRequirement("NativeExceptions");
+                    lines.Add(nativeExceptionTypeName);
+                    lines.Add("*");
+                } else {
+                    VariableType catchType = VariableUtil.GetVarType(catchClause.Declaration.Type, semantic);
+                    VariableType cppCatchType = ConvertToCPPType(catchType, out CPPTypeData catchTypeData);
+                    if (cppCatchType == null) {
+                        throw new InvalidOperationException($"Unable to convert catch type '{catchClause.Declaration.Type}'.");
+                    }
+
+                    lines.Add(cppCatchType.ToCPPString(context.Program));
+                    if (catchTypeData.IsPointer) {
+                        lines.Add("*");
+                    }
+                }
+
+                if (!catchClause.Declaration.Identifier.IsMissing &&
+                    !string.IsNullOrWhiteSpace(catchClause.Declaration.Identifier.Text)) {
+                    lines.Add(" ");
+                    lines.Add(catchClause.Declaration.Identifier.Text);
+                }
+            }
+
+            lines.Add(") {\n");
+            ProcessStatement(semantic, context, catchClause.Block, lines);
+            lines.Add("}\n");
         }
 
         protected override void ProcessForEachStatement(SemanticModel semantic, LayerContext context, ForEachStatementSyntax forEachStatement, List<string> lines) {
@@ -14785,6 +14827,7 @@ namespace cs2.cpp {
         /// <returns><c>true</c> for an exact supported framework exception name; otherwise <c>false</c>.</returns>
         static bool IsNativeExceptionQualifiedTypeName(string typeName) {
             return string.Equals(typeName, "System.Exception", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.AggregateException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentNullException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.ArgumentOutOfRangeException", StringComparison.Ordinal) ||
@@ -14809,6 +14852,8 @@ namespace cs2.cpp {
             nativeTypeName = string.Empty;
             if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.Exception")) {
                 nativeTypeName = "Exception";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.AggregateException")) {
+                nativeTypeName = "AggregateException";
             } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentException")) {
                 nativeTypeName = "ArgumentException";
             } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.ArgumentNullException")) {

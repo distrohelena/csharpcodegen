@@ -31,6 +31,56 @@ public:
     }
 };
 
+/// <summary>
+/// Represents multiple managed failures using the compact native exception message profile.
+/// </summary>
+class AggregateException : public Exception {
+public:
+    /// <summary>
+    /// Initializes an aggregate failure with the standard managed aggregate message.
+    /// </summary>
+    AggregateException() noexcept
+        : Exception() {
+        Message = "One or more errors occurred.";
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a literal message while retaining the compact profile's fixed payload.
+    /// </summary>
+    explicit AggregateException(const char* message) noexcept
+        : Exception(message) {
+        Message = "One or more errors occurred.";
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a managed string message while retaining the compact profile's fixed payload.
+    /// </summary>
+    explicit AggregateException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "One or more errors occurred.";
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from two native exception pointers and a literal message without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const char* message, Exception* firstException, Exception* secondException) noexcept
+        : Exception(message) {
+        (void)firstException;
+        (void)secondException;
+        Message = "One or more errors occurred.";
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from two native exception pointers and a managed string without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const std::string& message, Exception* firstException, Exception* secondException) noexcept
+        : Exception(message) {
+        (void)firstException;
+        (void)secondException;
+        Message = "One or more errors occurred.";
+    }
+};
+
 class ArgumentException : public Exception {
 public:
     ArgumentException() noexcept
@@ -317,6 +367,51 @@ public:
 
     explicit Exception(const std::string& message)
         : std::runtime_error(message) {
+    }
+};
+
+/// <summary>
+/// Represents multiple managed failures using the descriptive native exception message profile.
+/// </summary>
+class AggregateException : public Exception {
+public:
+    /// <summary>
+    /// Initializes an aggregate failure with the standard managed aggregate message.
+    /// </summary>
+    AggregateException()
+        : Exception("One or more errors occurred.") {
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a literal message.
+    /// </summary>
+    explicit AggregateException(const char* message)
+        : Exception(message == nullptr ? "One or more errors occurred." : message) {
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a managed string message.
+    /// </summary>
+    explicit AggregateException(const std::string& message)
+        : Exception(message) {
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from two native exception pointers and a literal message without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const char* message, Exception* firstException, Exception* secondException)
+        : Exception(message == nullptr ? "One or more errors occurred." : message) {
+        (void)firstException;
+        (void)secondException;
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from two native exception pointers and a managed string without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const std::string& message, Exception* firstException, Exception* secondException)
+        : Exception(message) {
+        (void)firstException;
+        (void)secondException;
     }
 };
 

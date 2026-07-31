@@ -6361,6 +6361,54 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures named managed exception catches remain available to nested rollback aggregation in both ordinary and finally-protected native control flow.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNamedExceptionCatches_PreservesVariablesAndAggregateRuntime() {
+            string source = """
+                using System;
+
+                public class Fixture {
+                    public bool WasCleaned;
+
+                    public void Bind() {
+                        try {
+                            throw new InvalidOperationException("Binding failed.");
+                        } catch (Exception bindingException) {
+                            try {
+                                throw new InvalidOperationException("Rollback failed.");
+                            } catch (Exception rollbackException) {
+                                throw new AggregateException("Binding and rollback both failed.", bindingException, rollbackException);
+                            }
+                        }
+                    }
+
+                    public void BindWithCleanup() {
+                        try {
+                            throw new InvalidOperationException("Binding failed.");
+                        } catch (Exception cleanupException) {
+                            throw cleanupException;
+                        } finally {
+                            WasCleaned = true;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("catch (Exception* bindingException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("catch (Exception* rollbackException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("catch (Exception* cleanupException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("throw new AggregateException(\"Binding and rollback both failed.\", bindingException, rollbackException)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("class AggregateException : public Exception", runtimeHeader, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "AggregateException.hpp")));
+        }
+
+        /// <summary>
         /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
         /// </summary>
         [Fact]
