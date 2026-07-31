@@ -203,6 +203,37 @@ public class CPPClassEmitterIncludeFilteringTests {
     }
 
     /// <summary>
+    /// Ensures raw Roslyn function-pointer dependency names resolve to the shared runtime wrapper instead of impossible wildcard header names.
+    /// </summary>
+    [Fact]
+    public void Emit_WithRawFunctionPointerReference_UsesRuntimeFunctionPointerInclude() {
+        CPPClassEmitter emitter = new CPPClassEmitter(CppProcessorTestHarness.CreateProcessor(), new CPPProgram(new CPPConversionRules()));
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "FunctionPointerCarrier",
+            DeclarationType = MemberDeclarationType.Class
+        };
+        conversionClass.Variables.Add(new ConversionVariable {
+            Name = "Thunk",
+            VarType = new VariableType(
+                VariableDataType.Callback,
+                "delegate*_7",
+                genericArgs: new List<VariableType> {
+                    new VariableType(VariableDataType.Void, "void"),
+                    new VariableType(VariableDataType.Int32, "Int32")
+                })
+        });
+
+        using StringWriter headerWriter = new StringWriter();
+        using StringWriter sourceWriter = new StringWriter();
+
+        emitter.Emit(conversionClass, headerWriter, sourceWriter);
+
+        string header = headerWriter.ToString();
+        Assert.Contains("#include \"runtime/function_pointer.hpp\"", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("delegate*_7.hpp", header, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Ensures incomplete nested generic metadata cannot crash dependency discovery before the converter reports or lowers the owning declaration.
     /// </summary>
     [Fact]
