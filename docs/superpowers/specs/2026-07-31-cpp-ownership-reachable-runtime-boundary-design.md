@@ -25,7 +25,9 @@ Ownership validation remains a hard gate for every project actually supplied to 
 
 `engine/helengine.shader/helengine.shader.csproj` will remove `shaders/compilation/**/*.cs` from its compile items.
 
-`engine/helengine.shader.compilation/helengine.shader.compilation.csproj` will explicitly link `../helengine.shader/shaders/compilation/**/*.cs` and reference `helengine.shader`. The source files remain in their existing conceptual folder so the change does not combine a project-boundary correction with an unrelated physical move.
+Four types currently stored under that directory are runtime contracts rather than compiler implementation: `ShaderCompileTarget`, `ShaderTargetNames`, `ShaderBindingPolicy`, and `ShaderBindingPolicies`. They will move to `engine/helengine.shader/shaders/runtime` before the compilation glob is excluded. Runtime package loading and renderer binding-slot lookup therefore remain owned by `helengine.shader` without creating a dependency from runtime shader code back to the compiler project.
+
+`engine/helengine.shader.compilation/helengine.shader.compilation.csproj` will explicitly link the remaining `../helengine.shader/shaders/compilation/**/*.cs` files and reference `helengine.shader`. Compiler implementation source remains in its existing conceptual folder; only the four misplaced runtime contracts move.
 
 Projects that compile shaders will reference the compilation project directly. Projects that only consume runtime shader assets retain only the runtime project reference.
 
@@ -74,6 +76,7 @@ Runtime material, runtime shader definition, and serialized shader asset changes
 Focused tests will prove:
 
 - `helengine.shader` compiles without any `shaders/compilation` source;
+- runtime target-name and binding-policy contracts remain available from `helengine.shader`;
 - `helengine.shader.compilation` compiles and exposes the compiler APIs to managed editor consumers;
 - runtime projects do not reference the compilation project;
 - editor/compiler consumers have the required explicit project reference;
