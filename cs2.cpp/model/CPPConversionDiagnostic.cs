@@ -39,6 +39,16 @@ namespace cs2.cpp {
         public string FilePath { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets or sets the one-based source line containing the issue, or zero when no source location exists.
+        /// </summary>
+        public int LineNumber { get; set; }
+
+        /// <summary>
+        /// Gets or sets the one-based source column containing the issue, or zero when no source location exists.
+        /// </summary>
+        public int ColumnNumber { get; set; }
+
+        /// <summary>
         /// Gets or sets the recommended action or mapping that should resolve the reported issue.
         /// </summary>
         public string Recommendation { get; set; } = string.Empty;

@@ -45,7 +45,9 @@ public class CPPConversionDiagnosticsTests {
             SourceMemberName = "Create",
             SyntaxKind = "StackAllocArrayCreationExpression",
             Recommendation = "Replace stackalloc with an explicit native buffer abstraction.",
-            FilePath = "BufferBuilder.cs"
+            FilePath = "BufferBuilder.cs",
+            LineNumber = 12,
+            ColumnNumber = 9
         });
 
         string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
@@ -53,6 +55,10 @@ public class CPPConversionDiagnosticsTests {
         string json = File.ReadAllText(reportPath);
 
         Assert.Contains("\"recommendation\": \"Replace stackalloc with an explicit native buffer abstraction.\"", json);
+        Assert.Contains("\"lineNumber\": 12", json);
+        Assert.Contains("\"columnNumber\": 9", json);
+        Assert.Contains("\"diagnosticsVersion\": 2", json);
+        Assert.Contains("\"diagnosticsSchema\": \"cpp-conversion-report.v2\"", json);
     }
 
     /// <summary>

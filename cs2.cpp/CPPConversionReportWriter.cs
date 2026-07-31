@@ -40,6 +40,8 @@ namespace cs2.cpp {
                 .ThenBy(diagnostic => diagnostic.Code, StringComparer.Ordinal)
                 .ThenBy(diagnostic => diagnostic.Message, StringComparer.Ordinal)
                 .ThenBy(diagnostic => diagnostic.FilePath, StringComparer.Ordinal)
+                .ThenBy(diagnostic => diagnostic.LineNumber)
+                .ThenBy(diagnostic => diagnostic.ColumnNumber)
                 .ToArray();
 
             CPPFeatureDecision[] orderedFeatureDecisions = report.BuildUsageReport.FeatureDecisions
@@ -103,6 +105,8 @@ namespace cs2.cpp {
                     sourceMemberName = diagnostic.SourceMemberName,
                     syntaxKind = diagnostic.SyntaxKind,
                     filePath = diagnostic.FilePath,
+                    lineNumber = diagnostic.LineNumber,
+                    columnNumber = diagnostic.ColumnNumber,
                     recommendation = diagnostic.Recommendation
                 }).ToArray(),
                 diagnosticsByTypeMember = orderedDiagnostics
@@ -123,6 +127,8 @@ namespace cs2.cpp {
                             message = diagnostic.Message,
                             syntaxKind = diagnostic.SyntaxKind,
                             filePath = diagnostic.FilePath,
+                            lineNumber = diagnostic.LineNumber,
+                            columnNumber = diagnostic.ColumnNumber,
                             recommendation = diagnostic.Recommendation
                         }).ToArray()
                     }).ToArray(),
@@ -146,8 +152,8 @@ namespace cs2.cpp {
                     .Distinct(StringComparer.Ordinal)
                     .Count(),
                 generatedAtUtc = "0001-01-01T00:00:00.0000000Z",
-                diagnosticsVersion = 1,
-                diagnosticsSchema = "cpp-conversion-report.v1"
+                diagnosticsVersion = 2,
+                diagnosticsSchema = "cpp-conversion-report.v2"
             };
 
             string json = JsonSerializer.Serialize(model, serializerOptions);

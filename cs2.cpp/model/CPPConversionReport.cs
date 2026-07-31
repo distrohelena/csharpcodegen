@@ -63,7 +63,18 @@ namespace cs2.cpp {
         /// <param name="sourceMemberName">The source member name when available.</param>
         /// <param name="syntaxKind">The associated syntax kind when available.</param>
         /// <param name="filePath">The source file path when available.</param>
-        public void AddDiagnostic(CPPDiagnosticSeverity severity, string code, string message, string sourceTypeName = "", string sourceMemberName = "", string syntaxKind = "", string filePath = "") {
+        /// <param name="lineNumber">The one-based source line, or zero when unavailable.</param>
+        /// <param name="columnNumber">The one-based source column, or zero when unavailable.</param>
+        public void AddDiagnostic(
+            CPPDiagnosticSeverity severity,
+            string code,
+            string message,
+            string sourceTypeName = "",
+            string sourceMemberName = "",
+            string syntaxKind = "",
+            string filePath = "",
+            int lineNumber = 0,
+            int columnNumber = 0) {
             Diagnostics.Add(new CPPConversionDiagnostic {
                 Severity = severity,
                 Code = code,
@@ -71,7 +82,9 @@ namespace cs2.cpp {
                 SourceTypeName = sourceTypeName,
                 SourceMemberName = sourceMemberName,
                 SyntaxKind = syntaxKind,
-                FilePath = filePath
+                FilePath = filePath,
+                LineNumber = lineNumber,
+                ColumnNumber = columnNumber
             });
         }
 
