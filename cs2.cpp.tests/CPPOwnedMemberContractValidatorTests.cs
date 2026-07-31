@@ -111,6 +111,33 @@ public sealed class CPPOwnedMemberContractValidatorTests {
     }
 
     /// <summary>
+    /// Ensures a takes-ownership parameter can initialize a native-owned member without being misclassified as borrowed.
+    /// </summary>
+    [Fact]
+    public void Validate_WithTakesOwnershipParameterAssignedToOwnedMember_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object Stored;
+
+                public Consumer([NativeTakesOwnership] object stored) {
+                    Stored = stored;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006");
+    }
+
+    /// <summary>
     /// Ensures assigning an owned local into an owned member transfers and disarms local cleanup.
     /// </summary>
     [Fact]

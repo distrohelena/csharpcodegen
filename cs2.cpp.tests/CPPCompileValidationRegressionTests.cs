@@ -6700,8 +6700,7 @@ namespace cs2.cpp.tests {
                         public FontInfo FontInfo { get; set; }
 
                         public void Dispose() {
-                            FontInfo fontInfo = FontInfo;
-                            FontInfo = null;
+                            FontInfo fontInfo = new FontInfo();
                             NativeOwnership.Delete(fontInfo);
                         }
                     }

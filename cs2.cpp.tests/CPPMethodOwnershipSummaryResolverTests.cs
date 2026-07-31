@@ -185,6 +185,38 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
     }
 
     /// <summary>
+    /// Ensures assigning a contracted parameter into a native-owned member is recognized as an ownership transfer.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithTakesOwnershipParameterAssignedToOwnedMember_InfersTransfer() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+            public sealed class NativeOwnedMemberAttribute : Attribute {
+            }
+
+            public sealed class Owner {
+                [NativeOwnedMember]
+                object Value;
+
+                public void Take([NativeTakesOwnership] object value) {
+                    Value = value;
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, ResolveSummary(compilation, resolution, "Take").GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Take");
+    }
+
+    /// <summary>
     /// Ensures array-backed list-family getters are owned because the C++ lowerer materializes a new native list at the boundary.
     /// </summary>
     [Fact]

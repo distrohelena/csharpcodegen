@@ -16,6 +16,11 @@ public sealed class CPPOwnedMemberContractValidator {
     readonly CPPOwnershipExpressionClassifier ExpressionClassifier;
 
     /// <summary>
+    /// Resolves explicit parameter contracts that can establish assignment provenance without circular inference.
+    /// </summary>
+    readonly CPPIntrinsicOwnershipCatalog IntrinsicCatalog;
+
+    /// <summary>
     /// Creates source-located member-contract diagnostics.
     /// </summary>
     readonly CPPOwnershipDiagnosticFactory DiagnosticFactory;
@@ -24,11 +29,14 @@ public sealed class CPPOwnedMemberContractValidator {
     /// Initializes a validator with explicit semantic collaborators.
     /// </summary>
     /// <param name="expressionClassifier">Classifier used for assigned values.</param>
+    /// <param name="intrinsicCatalog">Catalog used to resolve explicit takes-ownership parameter boundaries.</param>
     /// <param name="diagnosticFactory">Factory used for source-located hard errors.</param>
     public CPPOwnedMemberContractValidator(
         CPPOwnershipExpressionClassifier expressionClassifier,
+        CPPIntrinsicOwnershipCatalog intrinsicCatalog,
         CPPOwnershipDiagnosticFactory diagnosticFactory) {
         ExpressionClassifier = expressionClassifier ?? throw new ArgumentNullException(nameof(expressionClassifier));
+        IntrinsicCatalog = intrinsicCatalog ?? throw new ArgumentNullException(nameof(intrinsicCatalog));
         DiagnosticFactory = diagnosticFactory ?? throw new ArgumentNullException(nameof(diagnosticFactory));
     }
 
@@ -731,7 +739,12 @@ public sealed class CPPOwnedMemberContractValidator {
         CPPOwnershipKind ownership = ExpressionClassifier.Classify(
             assignment.Value,
             analysis.MethodSummaries.Summaries);
-        if (UnwrapConversion(assignment.Value) is ILocalReferenceOperation &&
+        IOperation assignedValue = UnwrapConversion(assignment.Value);
+        if (assignedValue is IParameterReferenceOperation parameterReference &&
+            IntrinsicCatalog.TryGetParameterOwnership(parameterReference.Parameter, out CPPParameterOwnershipKind parameterOwnership) &&
+            parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+            ownership = CPPOwnershipKind.Owned;
+        } else if (assignedValue is ILocalReferenceOperation &&
             analysis.EmissionPlan.TryGetTransition(assignmentSyntax, out CPPOwnershipTransition transition) &&
             transition.Kind == CPPOwnershipTransitionKind.Transfer) {
             ownership = CPPOwnershipKind.Owned;

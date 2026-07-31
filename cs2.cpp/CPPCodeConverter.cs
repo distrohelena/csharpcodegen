@@ -25,6 +25,10 @@ namespace cs2.cpp {
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
         internal ConversionProgram Program => program;
+        /// <summary>
+        /// Gets the validated semantic ownership plan for the active conversion run.
+        /// </summary>
+        internal CPPOwnershipAnalysisResult OwnershipAnalysisResult { get; private set; }
         Compilation instantiatedGeneratedTypeCompilation;
         IReadOnlyList<INamedTypeSymbol> instantiatedGeneratedTypes;
 
@@ -177,6 +181,7 @@ namespace cs2.cpp {
                    .AddStage(new CPPPreprocessorFilterStage(this))
                    .AddStage(new CPPAssemblyMetadataStage(this))
                    .AddStage(new DocumentPreprocessingStage())
+                   .AddStage(new CPPOwnershipAnalysisStage(this))
                    .AddStage(new ClassProcessingStage())
                    .AddStage(new ProgramSortingStage());
         }
@@ -429,6 +434,7 @@ namespace cs2.cpp {
             targetFramework = string.Empty;
             instantiatedGeneratedTypeCompilation = null;
             instantiatedGeneratedTypes = null;
+            OwnershipAnalysisResult = null;
 
             Report.Reset();
             BuildUsageReport = new CPPBuildUsageReport();
@@ -437,6 +443,21 @@ namespace cs2.cpp {
             RuntimeRequirementRegistrar.ApplyBuildUsageReport(BuildUsageReport);
             RuntimeRequirementRegistrar.RegisterDefaults(Options);
             SynchronizeRunState();
+        }
+
+        /// <summary>
+        /// Stores a complete error-free semantic ownership result for downstream C++ lowering.
+        /// </summary>
+        /// <param name="result">Validated ownership summaries and emission plan for the active project closure.</param>
+        internal void SetOwnershipAnalysisResult(CPPOwnershipAnalysisResult result) {
+            if (result == null) {
+                throw new ArgumentNullException(nameof(result));
+            }
+            if (result.HasErrors) {
+                throw new InvalidOperationException("C++ lowering cannot consume an ownership analysis result that contains errors.");
+            }
+
+            OwnershipAnalysisResult = result;
         }
 
         /// <summary>

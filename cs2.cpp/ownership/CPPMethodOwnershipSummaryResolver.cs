@@ -382,6 +382,13 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             if (reference.Parent is AssignmentExpressionSyntax directAssignment && directAssignment.Right.Span.Contains(reference.Span)) {
                 ISymbol destination = semanticModel.GetSymbolInfo(directAssignment.Left).Symbol;
                 if (destination is IFieldSymbol || destination is IPropertySymbol) {
+                    if (HasAttribute(destination, "NativeOwnedMember") &&
+                        IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind memberDestinationOwnership) &&
+                        memberDestinationOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+                        takesOwnership = true;
+                        continue;
+                    }
+
                     return CPPParameterOwnershipKind.Unknown;
                 }
             }
@@ -421,6 +428,28 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         }
 
         return takesOwnership ? CPPParameterOwnershipKind.TakesOwnership : CPPParameterOwnershipKind.NoEscape;
+    }
+
+    /// <summary>
+    /// Determines whether one symbol carries an ownership contract name with or without the conventional attribute suffix.
+    /// </summary>
+    /// <param name="symbol">Symbol whose source-visible attributes should be inspected.</param>
+    /// <param name="contractName">Ownership contract name without the optional attribute suffix.</param>
+    /// <returns><c>true</c> when the requested ownership contract is present; otherwise <c>false</c>.</returns>
+    static bool HasAttribute(ISymbol symbol, string contractName) {
+        if (symbol == null) {
+            return false;
+        }
+
+        foreach (AttributeData attribute in symbol.GetAttributes()) {
+            string attributeName = attribute.AttributeClass?.Name ?? string.Empty;
+            if (string.Equals(attributeName, contractName, StringComparison.Ordinal) ||
+                string.Equals(attributeName, contractName + "Attribute", StringComparison.Ordinal)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

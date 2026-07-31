@@ -57,9 +57,18 @@ public sealed class CPPGeneratedOwnershipContractEmissionPolicyTests {
         return """
             using cs2.attributes;
 
+            public static class NativeOwnership {
+                public static void Delete<T>(T value) where T : class {
+                }
+            }
+
             public sealed class OwnershipContractFixture {
                 [NativeOwnedMember]
                 public object OwnedValue;
+
+                public OwnershipContractFixture([NativeTakesOwnership] object value) {
+                    OwnedValue = value;
+                }
 
                 [NativeOwnedReturn]
                 public object Create() {
@@ -71,8 +80,8 @@ public sealed class CPPGeneratedOwnershipContractEmissionPolicyTests {
                     return value;
                 }
 
-                public void Take([NativeTakesOwnership] object value) {
-                    OwnedValue = value;
+                public void Dispose() {
+                    NativeOwnership.Delete(OwnedValue);
                 }
             }
             """;

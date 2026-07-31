@@ -23,6 +23,7 @@ public class CPPCodeConverterPipelineTests {
             "CPPPreprocessorFilterStage",
             "CPPAssemblyMetadataStage",
             "DocumentPreprocessingStage",
+            "CPPOwnershipAnalysisStage",
             "ClassProcessingStage",
             "ProgramSortingStage"
         ], stageNames);

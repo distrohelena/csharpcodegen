@@ -66,6 +66,7 @@ public sealed class CPPLocalOwnershipAnalyzer {
             diagnostics);
         IReadOnlyList<CPPConversionDiagnostic> memberDiagnostics = new CPPOwnedMemberContractValidator(
             ExpressionClassifier,
+            new CPPIntrinsicOwnershipCatalog(),
             DiagnosticFactory).Validate(compilations, localResult);
         return new CPPOwnershipAnalysisResult(
             summaries,
