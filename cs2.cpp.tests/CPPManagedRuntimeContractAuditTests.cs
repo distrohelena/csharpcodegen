@@ -1334,8 +1334,8 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("int32_t rootRefinementSize;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("bool usePriorityQueue;", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("(*BroadPhase::get_ActiveRefinementSchedule())(1, rootRefinementSize, usePriorityQueue);", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("BroadPhase::set_ActiveRefinementSchedule(new RefinementScheduler(&BroadPhase::Default__out1_out2));", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("(*ActiveRefinementSchedule)(static_cast<int32_t>(1), rootRefinementSize, usePriorityQueue);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("BroadPhase::set_ActiveRefinementSchedule(new RefinementScheduler(static_cast<void (*)(int32_t, int32_t&, bool&)>(&BroadPhase::Default__out1_out2)));", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>

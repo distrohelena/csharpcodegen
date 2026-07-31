@@ -250,6 +250,122 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures delegate invocation evaluates the delegate target and earlier arguments before preparing a later checked argument.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLaterCheckedDelegateArgument_PreservesTargetAndArgumentOrder() {
+            string source = """
+                public delegate int Mixer(int first, int second);
+
+                public class Counter {
+                    Mixer Current;
+
+                    int First() {
+                        return 1;
+                    }
+
+                    int Second() {
+                        return 2;
+                    }
+
+                    public int Read() {
+                        return Current(First(), checked(Second() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int targetIndex = output.IndexOf("auto&& __invoke_delegate_", StringComparison.Ordinal);
+            int firstIndex = output.IndexOf("this->First()", StringComparison.Ordinal);
+            int secondIndex = output.IndexOf("this->Second()", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
+            Assert.True(targetIndex >= 0 && targetIndex < firstIndex);
+            Assert.True(firstIndex < secondIndex);
+            Assert.True(secondIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures reduced extension invocation evaluates its receiver and earlier arguments before preparing a later checked argument.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithLaterCheckedReducedExtensionArgument_PreservesReceiverAndArgumentOrder() {
+            string source = """
+                public static class MixerExtensions {
+                    public static int Mix(this int value, int first, int second) {
+                        return value + first + second;
+                    }
+                }
+
+                public class Counter {
+                    int GetValue() {
+                        return 3;
+                    }
+
+                    int First() {
+                        return 1;
+                    }
+
+                    int Second() {
+                        return 2;
+                    }
+
+                    public int Read() {
+                        return GetValue().Mix(First(), checked(Second() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int receiverIndex = output.IndexOf("this->GetValue()", StringComparison.Ordinal);
+            int firstIndex = output.IndexOf("this->First()", StringComparison.Ordinal);
+            int secondIndex = output.IndexOf("this->Second()", StringComparison.Ordinal);
+            int helperIndex = output.IndexOf("Number::CheckedAdd(__checked_left_", StringComparison.Ordinal);
+            Assert.True(receiverIndex >= 0 && receiverIndex < firstIndex);
+            Assert.True(firstIndex < secondIndex);
+            Assert.True(secondIndex < helperIndex);
+        }
+
+        /// <summary>
+        /// Ensures invocation sequencing retains scoped temporary construction and cleanup injected by argument adaptation.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithScopedTemporaryBeforeCheckedArgument_RetainsScopedSetup() {
+            string source = """
+                using System.Collections.Generic;
+
+                public class ShaderDefine {
+                }
+
+                public static class HlslShaderBindingParser {
+                    static int Second() {
+                        return 2;
+                    }
+
+                    static int ParseBindings(List<ShaderDefine> defines, int limit) {
+                        return limit;
+                    }
+
+                    public static int Read() {
+                        return ParseBindings(new List<ShaderDefine>(), checked(Second() + 1));
+                    }
+                }
+                """;
+
+            string output = RunConversion(source, out JsonDocument report);
+
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            int scopedDeclarationIndex = output.IndexOf("auto __scopedArg", StringComparison.Ordinal);
+            int scopedArgumentIndex = output.IndexOf("auto __invoke_arg", scopedDeclarationIndex + 1, StringComparison.Ordinal);
+            int cleanupIndex = output.IndexOf("delete __scopedArg", StringComparison.Ordinal);
+            Assert.True(scopedDeclarationIndex >= 0 && scopedDeclarationIndex < scopedArgumentIndex);
+            Assert.True(cleanupIndex > scopedDeclarationIndex);
+        }
+
+        /// <summary>
         /// Ensures mixed-width checked addition remains an explicit diagnostic until operand promotion is emitted deliberately.
         /// </summary>
         [Fact]

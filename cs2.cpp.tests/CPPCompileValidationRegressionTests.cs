@@ -9888,7 +9888,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Helpers.cpp"));
 
-            Assert.Contains("Helpers::Validate(value, laneCount);", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Helpers::Validate(static_cast<int32_t>(value), static_cast<int32_t>(laneCount));", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("value.Validate(laneCount, -1)", sourceOutput, StringComparison.Ordinal);
         }
 

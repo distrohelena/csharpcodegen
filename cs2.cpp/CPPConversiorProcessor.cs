@@ -5465,6 +5465,7 @@ namespace cs2.cpp {
             int count = 0;
             List<ExpressionResult> types = new List<ExpressionResult>();
             List<List<string>> positionalArgumentLines = new List<List<string>>();
+            List<List<string>> positionalArgumentBeforeLines = new List<List<string>>();
             List<ExpressionResult> positionalArgumentResults = new List<ExpressionResult>();
 
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokedMethodSymbol != null
@@ -5472,9 +5473,10 @@ namespace cs2.cpp {
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
 
             List<string> beforeLines = new List<string>();
+            bool hasNamedInvocationArguments = parameterSymbols.Length > 0 &&
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null);
 
-            if (parameterSymbols.Length > 0 &&
-                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+            if (hasNamedInvocationArguments) {
                 ArgumentSyntax[] alignedArguments = AlignInvocationArguments(invocationExpression.ArgumentList.Arguments, parameterSymbols);
                 bool wroteAnyArgument = false;
                 for (int parameterIndex = 0; parameterIndex < parameterSymbols.Length; ++parameterIndex) {
@@ -5536,8 +5538,9 @@ namespace cs2.cpp {
                     ExpressionResult argumentResult = ProcessExpression(semantic, context, arg.Expression, argumentExpressionLines);
                     context.PopClass(startArg);
                     types.Add(argumentResult);
+                    List<string> argumentBeforeLines = new List<string>();
                     if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                        beforeLines.AddRange(argumentResult.BeforeLines);
+                        argumentBeforeLines.AddRange(argumentResult.BeforeLines);
                     }
 
                     IParameterSymbol parameterSymbol = count < parameterSymbols.Length ? parameterSymbols[count] : null;
@@ -5549,15 +5552,18 @@ namespace cs2.cpp {
                         argumentExpressionLines,
                         parameterSymbol,
                         invokedMethodSymbol,
-                        beforeLines,
+                        argumentBeforeLines,
                         loweredArgumentLines);
                     argLines.AddRange(loweredArgumentLines);
                     positionalArgumentLines.Add(loweredArgumentLines);
                     positionalArgumentResults.Add(argumentResult);
 
                     if (isRef) {
-                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, beforeLines);
+                        AddRefOrOutDeclarationBeforeLines(semantic, context, arg.Expression, parameterSymbol, argumentBeforeLines);
                     }
+
+                    beforeLines.AddRange(argumentBeforeLines);
+                    positionalArgumentBeforeLines.Add(argumentBeforeLines);
 
                     count++;
                     if (count != invocationExpression.ArgumentList.Arguments.Count ||
@@ -5592,8 +5598,8 @@ namespace cs2.cpp {
                 AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
             }
 
-            bool requiresArgumentSequencing = types.Any(argumentResult =>
-                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
+            bool requiresArgumentSequencing = positionalArgumentBeforeLines.Any(argumentBeforeLines => argumentBeforeLines.Count > 0) ||
+                hasNamedInvocationArguments && beforeLines.Count > 0;
             if (requiresArgumentSequencing && TryAppendSequencedInvocation(
                     semantic,
                     context,
@@ -5601,6 +5607,7 @@ namespace cs2.cpp {
                     invokedMethodSymbol,
                     invocationTargetLines,
                     positionalArgumentLines,
+                    positionalArgumentBeforeLines,
                     positionalArgumentResults,
                     parameterSymbols,
                     lines)) {
@@ -5636,6 +5643,7 @@ namespace cs2.cpp {
         /// <param name="invokedMethodSymbol">Resolved invoked method.</param>
         /// <param name="invocationTargetLines">Already lowered invocation target without its argument list.</param>
         /// <param name="argumentLines">Individually lowered positional arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparations required by each lowered positional argument.</param>
         /// <param name="argumentResults">Expression results corresponding to the lowered positional arguments.</param>
         /// <param name="parameterSymbols">Resolved method parameters used to append optional defaults.</param>
         /// <param name="lines">Output token buffer receiving the self-contained sequencing expression.</param>
@@ -5647,12 +5655,14 @@ namespace cs2.cpp {
             IMethodSymbol invokedMethodSymbol,
             IReadOnlyList<string> invocationTargetLines,
             IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
             IReadOnlyList<ExpressionResult> argumentResults,
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
             List<string> lines) {
             if (invokedMethodSymbol == null ||
                 invocationExpression.ArgumentList.Arguments.Count == 0 ||
                 argumentLines.Count != invocationExpression.ArgumentList.Arguments.Count ||
+                argumentBeforeLines.Count != argumentLines.Count ||
                 argumentResults.Count != argumentLines.Count ||
                 invocationExpression.ArgumentList.Arguments.Any(argument =>
                     argument.NameColon != null ||
@@ -5660,8 +5670,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            bool requiresSequencing = argumentResults.Any(argumentResult =>
-                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
+            bool requiresSequencing = argumentBeforeLines.Any(beforeLines => beforeLines.Count > 0);
             if (!requiresSequencing ||
                 argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
                 return false;
@@ -5711,9 +5720,8 @@ namespace cs2.cpp {
 
             List<string> argumentTemporaryNames = new List<string>();
             for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
-                ExpressionResult argumentResult = argumentResults[argumentIndex];
-                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    lines.AddRange(argumentResult.BeforeLines);
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
                 }
 
                 string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
@@ -5725,6 +5733,78 @@ namespace cs2.cpp {
 
             lines.Add("return ");
             lines.Add(sequencedTargetText);
+            lines.Add("(");
+            for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.Add(argumentTemporaryNames[argumentIndex]);
+            }
+
+            bool hasOptionalArguments = parameterSymbols.Length > argumentTemporaryNames.Count &&
+                parameterSymbols.Skip(argumentTemporaryNames.Count).Any(parameter => parameter.HasExplicitDefaultValue);
+            if (hasOptionalArguments && argumentTemporaryNames.Count > 0) {
+                lines.Add(", ");
+            }
+            AppendOptionalInvocationArguments(parameterSymbols, argumentTemporaryNames.Count, lines);
+            lines.Add(");\n})()");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits a static call through a local lambda so a reduced extension receiver and its arguments are prepared in C# source order.
+        /// </summary>
+        /// <param name="context">Current lowering context used to select the lambda capture form.</param>
+        /// <param name="invocationExpression">Reduced extension invocation whose explicit argument syntax is validated.</param>
+        /// <param name="invocationTargetLines">Lowered static extension helper target without an argument list.</param>
+        /// <param name="argumentLines">Lowered receiver followed by explicit arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparation for each lowered argument.</param>
+        /// <param name="argumentResults">Expression results used to reject unsupported post-expression cleanup.</param>
+        /// <param name="parameterSymbols">Extension parameters corresponding to the receiver and arguments.</param>
+        /// <param name="lines">Output token buffer receiving the sequencing expression.</param>
+        /// <returns><c>true</c> when the invocation was emitted with preserved ordering; otherwise <c>false</c>.</returns>
+        bool TryAppendSequencedStaticInvocation(
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IReadOnlyList<string> invocationTargetLines,
+            IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
+            IReadOnlyList<ExpressionResult> argumentResults,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
+            List<string> lines) {
+            if (argumentLines.Count == 0 ||
+                argumentBeforeLines.Count != argumentLines.Count ||
+                argumentResults.Count != argumentLines.Count ||
+                invocationExpression.ArgumentList.Arguments.Any(argument =>
+                    argument.NameColon != null ||
+                    !argument.RefOrOutKeyword.IsKind(SyntaxKind.None)) ||
+                argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
+                return false;
+            }
+
+            for (int parameterIndex = 0; parameterIndex < argumentLines.Count && parameterIndex < parameterSymbols.Length; parameterIndex++) {
+                if (parameterSymbols[parameterIndex].RefKind != RefKind.None) {
+                    return false;
+                }
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            List<string> argumentTemporaryNames = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
+                }
+
+                string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
+                lines.Add($"auto {argumentTemporaryName} = ");
+                lines.AddRange(argumentLines[argumentIndex]);
+                lines.Add(";\n");
+                argumentTemporaryNames.Add(argumentTemporaryName);
+            }
+
+            lines.Add("return ");
+            lines.AddRange(invocationTargetLines);
             lines.Add("(");
             for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
                 if (argumentIndex > 0) {
@@ -5840,25 +5920,24 @@ namespace cs2.cpp {
             }
 
             List<string> beforeLines = new List<string>();
-            List<string> invocationLines = new List<string>();
+            List<string> invocationTargetLines = new List<string>();
+            List<List<string>> argumentLines = new List<List<string>>();
+            List<List<string>> argumentBeforeLines = new List<List<string>>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
             List<string> receiverLines = new List<string>();
             RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(extensionMethodSymbol.ContainingType));
 
             int receiverStart = context.DepthClass;
             ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
             context.PopClass(receiverStart);
-            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
-                beforeLines.AddRange(receiverResult.BeforeLines);
-            }
-
-            invocationLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
-            invocationLines.Add("::");
-            invocationLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
-            AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationLines);
-            invocationLines.Add("(");
-
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> extensionParameters = extensionMethodSymbol.Parameters;
             IParameterSymbol receiverParameterSymbol = extensionParameters.Length > 0 ? extensionParameters[0] : null;
+            List<string> receiverBeforeLines = new List<string>();
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                receiverBeforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            List<string> loweredReceiverLines = new List<string>();
             AppendInvocationArgument(
                 semantic,
                 context,
@@ -5866,12 +5945,12 @@ namespace cs2.cpp {
                 receiverLines,
                 receiverParameterSymbol,
                 extensionMethodSymbol,
-                beforeLines,
-                invocationLines);
-
-            if (invocationExpression.ArgumentList.Arguments.Count > 0) {
-                invocationLines.Add(", ");
-            }
+                receiverBeforeLines,
+                loweredReceiverLines);
+            beforeLines.AddRange(receiverBeforeLines);
+            argumentLines.Add(loweredReceiverLines);
+            argumentBeforeLines.Add(receiverBeforeLines);
+            argumentResults.Add(receiverResult);
 
             for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
                 ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
@@ -5879,13 +5958,15 @@ namespace cs2.cpp {
                 int argumentStart = context.DepthClass;
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(argumentStart);
+                List<string> currentArgumentBeforeLines = new List<string>();
                 if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    beforeLines.AddRange(argumentResult.BeforeLines);
+                    currentArgumentBeforeLines.AddRange(argumentResult.BeforeLines);
                 }
 
                 IParameterSymbol parameterSymbol = argumentIndex + 1 < extensionParameters.Length
                     ? extensionParameters[argumentIndex + 1]
                     : null;
+                List<string> loweredArgumentLines = new List<string>();
                 AppendInvocationArgument(
                     semantic,
                     context,
@@ -5893,24 +5974,58 @@ namespace cs2.cpp {
                     argumentExpressionLines,
                     parameterSymbol,
                     extensionMethodSymbol,
-                    beforeLines,
-                    invocationLines);
+                    currentArgumentBeforeLines,
+                    loweredArgumentLines);
 
                 if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
-                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, currentArgumentBeforeLines);
                 }
 
-                if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
-                    invocationLines.Add(", ");
-                }
+                beforeLines.AddRange(currentArgumentBeforeLines);
+                argumentLines.Add(loweredArgumentLines);
+                argumentBeforeLines.Add(currentArgumentBeforeLines);
+                argumentResults.Add(argumentResult);
             }
 
-            invocationLines.Add(")");
+            invocationTargetLines.Add(GetContainingTypeAccessName(context, extensionMethodSymbol.ContainingType));
+            invocationTargetLines.Add("::");
+            invocationTargetLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
+            AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
+
+            bool requiresSequencing = argumentBeforeLines.Any(currentBeforeLines => currentBeforeLines.Count > 0);
+            if (requiresSequencing && TryAppendSequencedStaticInvocation(
+                    context,
+                    invocationExpression,
+                    invocationTargetLines,
+                    argumentLines,
+                    argumentBeforeLines,
+                    argumentResults,
+                    extensionParameters,
+                    lines)) {
+                result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+                return true;
+            }
+            if (requiresSequencing) {
+                ReportUnsupportedNode(
+                    context,
+                    invocationExpression,
+                    "The C++ backend cannot preserve receiver-first, left-to-right evaluation for this reduced extension invocation shape.");
+            }
+
             if (beforeLines.Count > 0) {
                 lines.AddRange(beforeLines);
             }
 
-            lines.AddRange(invocationLines);
+            lines.AddRange(invocationTargetLines);
+            lines.Add("(");
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.AddRange(argumentLines[argumentIndex]);
+            }
+            lines.Add(")");
             result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
             return true;
         }
@@ -7993,22 +8108,31 @@ namespace cs2.cpp {
             }
 
             List<string> beforeLines = new List<string>();
-            string delegateText = RenderExpressionText(semantic, context, invocationExpression.Expression);
+            List<string> delegateLines = new List<string> {
+                RenderExpressionText(semantic, context, invocationExpression.Expression)
+            };
+            ExpressionResult delegateResult = new ExpressionResult(true, VariablePath.Unknown, resultType);
+
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols = invokeMethodSymbol != null
                 ? invokeMethodSymbol.Parameters
                 : System.Collections.Immutable.ImmutableArray<IParameterSymbol>.Empty;
             List<string> argumentLines = new List<string>();
+            List<List<string>> individualArgumentLines = new List<List<string>>();
+            List<List<string>> argumentBeforeLines = new List<List<string>>();
+            List<ExpressionResult> argumentResults = new List<ExpressionResult>();
             for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; ++argumentIndex) {
                 ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
                 List<string> argumentExpressionLines = new List<string>();
                 int argumentStart = context.DepthClass;
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(argumentStart);
+                List<string> currentArgumentBeforeLines = new List<string>();
                 if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    beforeLines.AddRange(argumentResult.BeforeLines);
+                    currentArgumentBeforeLines.AddRange(argumentResult.BeforeLines);
                 }
 
                 IParameterSymbol parameterSymbol = argumentIndex < parameterSymbols.Length ? parameterSymbols[argumentIndex] : null;
+                List<string> loweredArgumentLines = new List<string>();
                 AppendInvocationArgument(
                     semantic,
                     context,
@@ -8016,16 +8140,41 @@ namespace cs2.cpp {
                     argumentExpressionLines,
                     parameterSymbol,
                     invokeMethodSymbol,
-                    beforeLines,
-                    argumentLines);
+                    currentArgumentBeforeLines,
+                    loweredArgumentLines);
 
                 if (!string.IsNullOrEmpty(argument.RefOrOutKeyword.ToString())) {
-                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, currentArgumentBeforeLines);
                 }
 
+                beforeLines.AddRange(currentArgumentBeforeLines);
+                individualArgumentLines.Add(loweredArgumentLines);
+                argumentBeforeLines.Add(currentArgumentBeforeLines);
+                argumentResults.Add(argumentResult);
+                argumentLines.AddRange(loweredArgumentLines);
                 if (argumentIndex != invocationExpression.ArgumentList.Arguments.Count - 1) {
                     argumentLines.Add(", ");
                 }
+            }
+
+            bool requiresSequencing = argumentBeforeLines.Any(currentBeforeLines => currentBeforeLines.Count > 0);
+            if (requiresSequencing && TryAppendSequencedDelegateInvocation(
+                    context,
+                    invocationExpression,
+                    delegateLines,
+                    delegateResult,
+                    individualArgumentLines,
+                    argumentBeforeLines,
+                    argumentResults,
+                    parameterSymbols,
+                    lines)) {
+                return true;
+            }
+            if (requiresSequencing) {
+                ReportUnsupportedNode(
+                    context,
+                    invocationExpression,
+                    "The C++ backend cannot preserve delegate-target-first, left-to-right evaluation for this invocation shape.");
             }
 
             if (beforeLines.Count > 0) {
@@ -8033,10 +8182,84 @@ namespace cs2.cpp {
             }
 
             lines.Add("(*");
-            lines.Add(delegateText);
+            lines.AddRange(delegateLines);
             lines.Add(")(");
             lines.AddRange(argumentLines);
             lines.Add(")");
+            return true;
+        }
+
+        /// <summary>
+        /// Emits a delegate call through a local lambda so the delegate target and prepared arguments retain C# evaluation order.
+        /// </summary>
+        /// <param name="context">Current lowering context used to select the lambda capture form.</param>
+        /// <param name="invocationExpression">Delegate invocation whose explicit argument syntax is validated.</param>
+        /// <param name="delegateLines">Lowered delegate target expression.</param>
+        /// <param name="delegateResult">Delegate target result used to reject unsupported post-expression cleanup.</param>
+        /// <param name="argumentLines">Individually lowered delegate arguments in source order.</param>
+        /// <param name="argumentBeforeLines">Complete statement-level preparation for each delegate argument.</param>
+        /// <param name="argumentResults">Argument results used to reject unsupported post-expression cleanup.</param>
+        /// <param name="parameterSymbols">Delegate invocation parameters corresponding to supplied arguments.</param>
+        /// <param name="lines">Output token buffer receiving the sequencing expression.</param>
+        /// <returns><c>true</c> when the delegate call was emitted with preserved ordering; otherwise <c>false</c>.</returns>
+        bool TryAppendSequencedDelegateInvocation(
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IReadOnlyList<string> delegateLines,
+            ExpressionResult delegateResult,
+            IReadOnlyList<List<string>> argumentLines,
+            IReadOnlyList<List<string>> argumentBeforeLines,
+            IReadOnlyList<ExpressionResult> argumentResults,
+            System.Collections.Immutable.ImmutableArray<IParameterSymbol> parameterSymbols,
+            List<string> lines) {
+            if (argumentBeforeLines.Count != argumentLines.Count ||
+                argumentResults.Count != argumentLines.Count ||
+                invocationExpression.ArgumentList.Arguments.Any(argument =>
+                    argument.NameColon != null ||
+                    !argument.RefOrOutKeyword.IsKind(SyntaxKind.None)) ||
+                delegateResult.AfterLines != null && delegateResult.AfterLines.Count > 0 ||
+                argumentResults.Any(argumentResult => argumentResult.AfterLines != null && argumentResult.AfterLines.Count > 0)) {
+                return false;
+            }
+
+            for (int parameterIndex = 0; parameterIndex < argumentLines.Count && parameterIndex < parameterSymbols.Length; parameterIndex++) {
+                if (parameterSymbols[parameterIndex].RefKind != RefKind.None) {
+                    return false;
+                }
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            if (delegateResult.BeforeLines != null && delegateResult.BeforeLines.Count > 0) {
+                lines.AddRange(delegateResult.BeforeLines);
+            }
+
+            string delegateTemporaryName = CreateTemporaryName("__invoke_delegate");
+            lines.Add($"auto&& {delegateTemporaryName} = ");
+            lines.AddRange(delegateLines);
+            lines.Add(";\n");
+
+            List<string> argumentTemporaryNames = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentBeforeLines[argumentIndex].Count > 0) {
+                    lines.AddRange(argumentBeforeLines[argumentIndex]);
+                }
+
+                string argumentTemporaryName = CreateTemporaryName("__invoke_arg");
+                lines.Add($"auto {argumentTemporaryName} = ");
+                lines.AddRange(argumentLines[argumentIndex]);
+                lines.Add(";\n");
+                argumentTemporaryNames.Add(argumentTemporaryName);
+            }
+
+            lines.Add($"return (*{delegateTemporaryName})(");
+            for (int argumentIndex = 0; argumentIndex < argumentTemporaryNames.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.Add(argumentTemporaryNames[argumentIndex]);
+            }
+            lines.Add(");\n})()");
             return true;
         }
 
