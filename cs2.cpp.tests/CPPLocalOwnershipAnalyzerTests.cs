@@ -166,6 +166,75 @@ public sealed class CPPLocalOwnershipAnalyzerTests {
     }
 
     /// <summary>
+    /// Ensures constructor bodies receive the same local escape validation as ordinary methods.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithConstructorLocalFieldEscape_ReportsCPPOWN002() {
+        CSharpCompilation compilation = CreateCompilation("""
+            public sealed class Consumer {
+                List<int> Stored;
+
+                public Consumer() {
+                    List<int> values = new List<int>();
+                    Stored = values;
+                }
+            }
+            """);
+
+        CPPOwnershipAnalysisResult result = Analyze(compilation);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN002" && diagnostic.SourceMemberName == ".ctor");
+    }
+
+    /// <summary>
+    /// Ensures property accessors receive the same local escape validation as methods and constructors.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithAccessorLocalFieldEscape_ReportsCPPOWN002() {
+        CSharpCompilation compilation = CreateCompilation("""
+            public sealed class Consumer {
+                List<int> Stored;
+
+                public int Trigger {
+                    set {
+                        List<int> values = new List<int>();
+                        Stored = values;
+                    }
+                }
+            }
+            """);
+
+        CPPOwnershipAnalysisResult result = Analyze(compilation);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN002" && diagnostic.SourceMemberName == "set_Trigger");
+    }
+
+    /// <summary>
+    /// Ensures local-function bodies receive native ownership analysis through Roslyn's nested control-flow graph.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithLocalFunctionFieldEscape_ReportsCPPOWN002() {
+        CSharpCompilation compilation = CreateCompilation("""
+            public sealed class Consumer {
+                List<int> Stored;
+
+                public void Run() {
+                    void Escape() {
+                        List<int> values = new List<int>();
+                        Stored = values;
+                    }
+
+                    Escape();
+                }
+            }
+            """);
+
+        CPPOwnershipAnalysisResult result = Analyze(compilation);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN002" && diagnostic.SourceMemberName == "Escape");
+    }
+
+    /// <summary>
     /// Creates a complete ownership fixture around one test-specific consumer declaration.
     /// </summary>
     /// <param name="consumerSource">Consumer type under analysis.</param>

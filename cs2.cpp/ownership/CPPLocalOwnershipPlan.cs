@@ -13,11 +13,13 @@ public sealed class CPPLocalOwnershipPlan {
     /// <param name="initialOwnership">Ownership established by the initializer.</param>
     /// <param name="ownershipFlagName">Stable generated C++ ownership-flag identifier.</param>
     /// <param name="requiresScopeGuard">Whether lexical scope exit must conditionally delete the local.</param>
+    /// <param name="initiallyOwnsValue">Whether the generated ownership flag starts true at declaration.</param>
     public CPPLocalOwnershipPlan(
         VariableDeclaratorSyntax declaration,
         CPPOwnershipKind initialOwnership,
         string ownershipFlagName,
-        bool requiresScopeGuard) {
+        bool requiresScopeGuard,
+        bool initiallyOwnsValue = true) {
         Declaration = declaration ?? throw new ArgumentNullException(nameof(declaration));
         if (string.IsNullOrWhiteSpace(ownershipFlagName)) {
             throw new ArgumentException("A local ownership plan requires a generated flag name.", nameof(ownershipFlagName));
@@ -26,6 +28,7 @@ public sealed class CPPLocalOwnershipPlan {
         InitialOwnership = initialOwnership;
         OwnershipFlagName = ownershipFlagName;
         RequiresScopeGuard = requiresScopeGuard;
+        InitiallyOwnsValue = initiallyOwnsValue;
     }
 
     /// <summary>
@@ -52,4 +55,9 @@ public sealed class CPPLocalOwnershipPlan {
     /// Gets whether lexical scope exit must conditionally delete the local.
     /// </summary>
     public bool RequiresScopeGuard { get; }
+
+    /// <summary>
+    /// Gets whether the generated ownership flag starts true when the declaration executes.
+    /// </summary>
+    public bool InitiallyOwnsValue { get; }
 }
