@@ -5598,8 +5598,8 @@ namespace cs2.cpp {
                 AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
             }
 
-            bool requiresArgumentSequencing = positionalArgumentBeforeLines.Any(argumentBeforeLines => argumentBeforeLines.Count > 0) ||
-                hasNamedInvocationArguments && beforeLines.Count > 0;
+            bool requiresArgumentSequencing = types.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
             if (requiresArgumentSequencing && TryAppendSequencedInvocation(
                     semantic,
                     context,
@@ -5992,7 +5992,8 @@ namespace cs2.cpp {
             invocationTargetLines.Add(ResolveConvertedFunctionName(extensionMethodSymbol));
             AppendResolvedInvocationTypeArgumentsIfNeeded(invocationExpression, invokedMethodSymbol, context, invocationTargetLines);
 
-            bool requiresSequencing = argumentBeforeLines.Any(currentBeforeLines => currentBeforeLines.Count > 0);
+            bool requiresSequencing = argumentResults.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
             if (requiresSequencing && TryAppendSequencedStaticInvocation(
                     context,
                     invocationExpression,
@@ -8157,7 +8158,8 @@ namespace cs2.cpp {
                 }
             }
 
-            bool requiresSequencing = argumentBeforeLines.Any(currentBeforeLines => currentBeforeLines.Count > 0);
+            bool requiresSequencing = argumentResults.Any(argumentResult =>
+                argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0);
             if (requiresSequencing && TryAppendSequencedDelegateInvocation(
                     context,
                     invocationExpression,
