@@ -5318,10 +5318,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures managed locals that escape through a return value do not emit a scope-exit delete guard.
+        /// Ensures an owned managed local returned to its caller keeps guarded cleanup and disarms that guard before transfer.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithEscapingManagedLocalAllocation_DoesNotEmitScopeDeleteGuard() {
+        public void WriteOutput_WithEscapingManagedLocalAllocation_EmitsGuardAndDisarmsBeforeReturn() {
             string source = """
                 using System.Collections.Generic;
 
@@ -5337,14 +5337,18 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
-            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("delete values;", sourceOutput, StringComparison.Ordinal);
+            int disarmIndex = sourceOutput.IndexOf(" = false;", StringComparison.Ordinal);
+            int returnIndex = sourceOutput.IndexOf("return values;", StringComparison.Ordinal);
+            Assert.True(disarmIndex >= 0 && returnIndex > disarmIndex, sourceOutput);
         }
 
         /// <summary>
-        /// Ensures local managed arrays that escape through a return value are not deleted before the caller receives them.
+        /// Ensures an owned managed array returned to its caller keeps guarded cleanup and disarms that guard before transfer.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithEscapingManagedArrayLocalAllocation_DoesNotEmitScopeDeleteGuard() {
+        public void WriteOutput_WithEscapingManagedArrayLocalAllocation_EmitsGuardAndDisarmsBeforeReturn() {
             string source = """
                 public class Widget {
                     public int[] Build() {
@@ -5358,22 +5362,45 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("Array<int32_t> *values = new Array<int32_t>(4);", sourceOutput);
-            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("delete values;", sourceOutput, StringComparison.Ordinal);
+            int disarmIndex = sourceOutput.IndexOf(" = false;", StringComparison.Ordinal);
+            int returnIndex = sourceOutput.IndexOf("return values;", StringComparison.Ordinal);
+            Assert.True(disarmIndex >= 0 && returnIndex > disarmIndex, sourceOutput);
         }
 
         /// <summary>
-        /// Ensures managed locals passed into constructors are treated as escaping and do not emit a scope-exit delete guard.
+        /// Ensures an explicit takes-ownership constructor disarms the caller's guarded local before construction.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithManagedLocalPassedToConstructor_DoesNotEmitScopeDeleteGuard() {
+        public void WriteOutput_WithManagedLocalPassedToConstructor_DisarmsGuardBeforeConstruction() {
             string source = """
+                using System;
                 using System.Collections.Generic;
 
-                public class Asset {
+                [AttributeUsage(AttributeTargets.Parameter)]
+                public sealed class NativeTakesOwnershipAttribute : Attribute {
+                }
+
+                [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+                public sealed class NativeOwnedMemberAttribute : Attribute {
+                }
+
+                public static class NativeOwnership {
+                    public static void Delete<T>(T value) where T : class {
+                    }
+                }
+
+                public class Asset : IDisposable {
+                    [NativeOwnedMember]
                     public Dictionary<char, int> Values;
 
-                    public Asset(Dictionary<char, int> values) {
+                    public Asset([NativeTakesOwnership] Dictionary<char, int> values) {
                         Values = values;
+                    }
+
+                    public void Dispose() {
+                        NativeOwnership.Delete(Values);
                     }
                 }
 
@@ -5389,8 +5416,12 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("Dictionary<char, int32_t> *values = new Dictionary<char, int32_t>();", sourceOutput);
-            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("delete values;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("new ::Asset(values)", sourceOutput, StringComparison.Ordinal);
+            int disarmIndex = sourceOutput.IndexOf(" = false;", StringComparison.Ordinal);
+            int constructionIndex = sourceOutput.IndexOf("new ::Asset(values)", StringComparison.Ordinal);
+            Assert.True(disarmIndex >= 0 && constructionIndex > disarmIndex, sourceOutput);
         }
 
         /// <summary>
@@ -5470,10 +5501,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures managed locals passed to unannotated helper methods remain conservatively treated as escaping.
+        /// Ensures source-visible helpers proven not to retain an argument preserve caller-owned scope cleanup without requiring an annotation.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithManagedLocalPassedToUnannotatedHelperMethod_DoesNotEmitScopeDeleteGuard() {
+        public void WriteOutput_WithManagedLocalPassedToUnannotatedHelperMethod_EmitsScopeDeleteGuard() {
             string source = """
                 using System.Collections.Generic;
 
@@ -5492,14 +5523,15 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
-            Assert.DoesNotContain("delete values;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("delete values;", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
-        /// Ensures managed locals with explicit NativeOwnership cleanup do not receive a second generated scope delete guard.
+        /// Ensures explicit NativeOwnership cleanup destroys an owned local and then disarms its generated fallback guard.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithExplicitNativeOwnershipDelete_DoesNotEmitScopeDeleteGuard() {
+        public void WriteOutput_WithExplicitNativeOwnershipDelete_DisarmsScopeDeleteGuard() {
             string source = """
                 using System;
                 using System.Collections.Generic;
@@ -5526,7 +5558,10 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
             Assert.Contains("delete values;", sourceOutput);
-            Assert.DoesNotContain("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("__localDeleteGuard", sourceOutput, StringComparison.Ordinal);
+            int explicitDeleteIndex = sourceOutput.LastIndexOf("delete values;", StringComparison.Ordinal);
+            int disarmIndex = sourceOutput.IndexOf(" = false;", explicitDeleteIndex, StringComparison.Ordinal);
+            Assert.True(disarmIndex > explicitDeleteIndex, sourceOutput);
         }
 
         /// <summary>
@@ -7893,18 +7928,33 @@ namespace cs2.cpp.tests {
         [Fact]
         public void WriteOutput_WithArrayBackedReadOnlyListPropertyAssignment_WrapsNativeList() {
             string source = """
+                using System;
                 using System.Collections.Generic;
+
+                [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+                public sealed class NativeOwnedMemberAttribute : Attribute {
+                }
+
+                public static class NativeOwnership {
+                    public static void Delete<T>(T value) where T : class {
+                    }
+                }
 
                 public class Binding {
                 }
 
-                public class Gate {
+                public class Gate : IDisposable {
                     public Gate(IReadOnlyList<Binding> bindings) {
                         Binding[] copiedBindings = new Binding[bindings.Count];
                         Bindings = copiedBindings;
                     }
 
+                    [NativeOwnedMember]
                     public IReadOnlyList<Binding> Bindings { get; }
+
+                    public void Dispose() {
+                        NativeOwnership.Delete(Bindings);
+                    }
                 }
                 """;
 

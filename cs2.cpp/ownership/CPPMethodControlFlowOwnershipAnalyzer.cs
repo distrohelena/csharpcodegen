@@ -145,7 +145,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         Dictionary<ILocalSymbol, VariableDeclaratorSyntax> declarations = new(SymbolEqualityComparer.Default);
         foreach (VariableDeclaratorSyntax declaration in methodDeclaration.DescendantNodes()
             .OfType<VariableDeclaratorSyntax>()) {
-            if (IsInsideNestedExecutable(declaration, methodDeclaration) || declaration.Initializer == null) {
+            if (IsInsideNestedExecutable(declaration, methodDeclaration)) {
                 continue;
             }
 
@@ -154,8 +154,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                 continue;
             }
 
-            IOperation initializer = semanticModel.GetOperation(declaration.Initializer.Value);
-            CPPOwnershipKind initialOwnership = ExpressionClassifier.Classify(initializer, summaries.Summaries);
+            CPPOwnershipKind initialOwnership = declaration.Initializer == null
+                ? CPPOwnershipKind.Unknown
+                : ExpressionClassifier.Classify(
+                    semanticModel.GetOperation(declaration.Initializer.Value),
+                    summaries.Summaries);
             bool initiallyOwnsValue = initialOwnership == CPPOwnershipKind.Owned;
             bool gainsOwnedValue = initiallyOwnsValue || HasOwnedReplacement(
                 methodDeclaration,
@@ -625,6 +628,8 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             ProcessDeclaration(declaration, semanticModel, summaries, plansByLocal, state, emit, transitions);
         } else if (syntax is InvocationExpressionSyntax invocation) {
             ProcessInvocation(invocation, semanticModel, method, summaries, declarations, state, emit, transitions, diagnostics);
+        } else if (syntax is BaseObjectCreationExpressionSyntax objectCreation) {
+            ProcessObjectCreation(objectCreation, semanticModel, method, summaries, declarations, state, emit, transitions, diagnostics);
         } else if (syntax is AssignmentExpressionSyntax assignment) {
             ProcessAssignment(assignment, semanticModel, method, summaries, declarations, plansByLocal, state, emit, transitions, diagnostics);
         } else if (syntax is ReturnStatementSyntax returnStatement) {
@@ -652,6 +657,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         ICollection<CPPOwnershipTransition> transitions) {
         ILocalSymbol local = semanticModel.GetDeclaredSymbol(declaration) as ILocalSymbol;
         if (local == null || !plansByLocal.TryGetValue(local, out CPPLocalOwnershipPlan plan)) {
+            return;
+        }
+
+        if (declaration.Initializer == null) {
+            state[local] = CPPLocalOwnershipState.CreateUninitialized();
             return;
         }
 
@@ -712,39 +722,190 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             return;
         }
 
-        CPPMethodOwnershipSummary targetSummary = ResolveSummary(invocation.TargetMethod, summaries);
-        foreach (IArgumentOperation argument in invocation.Arguments) {
-            ILocalReferenceOperation localReference = UnwrapLocalReference(argument.Value);
-            if (localReference == null ||
-                !state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
-                !localState.IsInitialized ||
-                localState.Ownership != CPPOwnershipKind.Owned ||
-                localState.Lifecycle != CPPOwnershipLifecycle.Live) {
-                continue;
+        if (invocation.TargetMethod.ReducedFrom != null && invocation.Instance != null) {
+            ProcessOwnershipArgument(
+                invocationSyntax,
+                invocation.Instance,
+                invocation.TargetMethod.ReducedFrom.Parameters[0],
+                invocation.Instance.Syntax,
+                method,
+                ResolveSummary(invocation.TargetMethod.ReducedFrom, summaries),
+                declarations,
+                state,
+                emit,
+                transitions,
+                diagnostics);
+        }
+
+        ProcessOwnershipArguments(
+            invocationSyntax,
+            invocation.TargetMethod,
+            invocation.Arguments,
+            method,
+            summaries,
+            declarations,
+            state,
+            emit,
+            transitions,
+            diagnostics);
+    }
+
+    /// <summary>
+    /// Applies takes-ownership constructor parameter semantics to one object creation expression.
+    /// </summary>
+    /// <param name="objectCreationSyntax">Object creation source syntax.</param>
+    /// <param name="semanticModel">Semantic model for constructor arguments.</param>
+    /// <param name="method">Containing method when diagnostics are enabled.</param>
+    /// <param name="summaries">Resolved ownership contracts.</param>
+    /// <param name="declarations">Source declarations keyed by local.</param>
+    /// <param name="state">Mutable local state.</param>
+    /// <param name="emit">Whether to append diagnostics and transitions.</param>
+    /// <param name="transitions">Aggregate transitions when enabled.</param>
+    /// <param name="diagnostics">Aggregate diagnostics when enabled.</param>
+    void ProcessObjectCreation(
+        BaseObjectCreationExpressionSyntax objectCreationSyntax,
+        SemanticModel semanticModel,
+        IMethodSymbol method,
+        CPPMethodOwnershipSummaryResolution summaries,
+        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> declarations,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        bool emit,
+        ICollection<CPPOwnershipTransition> transitions,
+        ICollection<CPPConversionDiagnostic> diagnostics) {
+        IObjectCreationOperation objectCreation = semanticModel.GetOperation(objectCreationSyntax) as IObjectCreationOperation;
+        if (objectCreation?.Constructor == null) {
+            return;
+        }
+
+        if (emit) {
+            foreach (IArgumentOperation argument in objectCreation.Arguments) {
+                ValidateDeadLocalUsesAfterNestedOwnershipOperations(argument.Value, method, state, diagnostics);
+            }
+        }
+
+        ProcessOwnershipArguments(
+            objectCreationSyntax,
+            objectCreation.Constructor,
+            objectCreation.Arguments,
+            method,
+            summaries,
+            declarations,
+            state,
+            emit,
+            transitions,
+            diagnostics);
+    }
+
+    /// <summary>
+    /// Applies resolved parameter ownership to direct local arguments at one invocation or constructor boundary.
+    /// </summary>
+    /// <param name="transferSyntax">Exact call-site syntax that receives transfer transitions.</param>
+    /// <param name="targetMethod">Invoked method or constructor.</param>
+    /// <param name="arguments">Semantically aligned call arguments.</param>
+    /// <param name="method">Containing source method.</param>
+    /// <param name="summaries">Resolved ownership contracts.</param>
+    /// <param name="declarations">Source declarations keyed by local.</param>
+    /// <param name="state">Mutable local state.</param>
+    /// <param name="emit">Whether to append diagnostics and transitions.</param>
+    /// <param name="transitions">Aggregate transitions when enabled.</param>
+    /// <param name="diagnostics">Aggregate diagnostics when enabled.</param>
+    void ProcessOwnershipArguments(
+        SyntaxNode transferSyntax,
+        IMethodSymbol targetMethod,
+        System.Collections.Immutable.ImmutableArray<IArgumentOperation> arguments,
+        IMethodSymbol method,
+        CPPMethodOwnershipSummaryResolution summaries,
+        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> declarations,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        bool emit,
+        ICollection<CPPOwnershipTransition> transitions,
+        ICollection<CPPConversionDiagnostic> diagnostics) {
+        CPPMethodOwnershipSummary targetSummary = ResolveSummary(targetMethod, summaries);
+        foreach (IArgumentOperation argument in arguments) {
+            ProcessOwnershipArgument(
+                transferSyntax,
+                argument.Value,
+                argument.Parameter,
+                argument.Syntax,
+                method,
+                targetSummary,
+                declarations,
+                state,
+                emit,
+                transitions,
+                diagnostics);
+        }
+    }
+
+    /// <summary>
+    /// Applies one parameter ownership contract to a direct local value at a call boundary.
+    /// </summary>
+    /// <param name="transferSyntax">Exact invocation or construction syntax receiving a transfer transition.</param>
+    /// <param name="value">Argument or reduced-extension receiver value.</param>
+    /// <param name="parameter">Target parameter receiving the value.</param>
+    /// <param name="diagnosticSyntax">Source syntax used for boundary diagnostics.</param>
+    /// <param name="method">Containing source method.</param>
+    /// <param name="targetSummary">Resolved target ownership summary when available.</param>
+    /// <param name="declarations">Source declarations keyed by local.</param>
+    /// <param name="state">Mutable local ownership state.</param>
+    /// <param name="emit">Whether to append diagnostics and transitions.</param>
+    /// <param name="transitions">Aggregate transitions when enabled.</param>
+    /// <param name="diagnostics">Aggregate diagnostics when enabled.</param>
+    void ProcessOwnershipArgument(
+        SyntaxNode transferSyntax,
+        IOperation value,
+        IParameterSymbol parameter,
+        SyntaxNode diagnosticSyntax,
+        IMethodSymbol method,
+        CPPMethodOwnershipSummary targetSummary,
+        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> declarations,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        bool emit,
+        ICollection<CPPOwnershipTransition> transitions,
+        ICollection<CPPConversionDiagnostic> diagnostics) {
+        ILocalReferenceOperation localReference = UnwrapLocalReference(value);
+        if (localReference == null ||
+            !state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
+            !localState.IsInitialized ||
+            localState.Ownership != CPPOwnershipKind.Owned) {
+            return;
+        }
+
+        CPPParameterOwnershipKind parameterOwnership = ResolveParameterOwnership(parameter, targetSummary);
+        if (parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+            if (localState.Lifecycle != CPPOwnershipLifecycle.Live) {
+                if (emit) {
+                    AddDiagnostic(diagnostics, DiagnosticFactory.Create(
+                        "CPPOWN004",
+                        diagnosticSyntax,
+                        method,
+                        $"Local '{localReference.Local.Name}' is transferred more than once by the same call boundary.",
+                        "Pass each owned local to at most one takes-ownership parameter or receiver."));
+                }
+                return;
             }
 
-            CPPParameterOwnershipKind parameterOwnership = ResolveParameterOwnership(argument.Parameter, targetSummary);
-            if (parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
-                state[localReference.Local] = new CPPLocalOwnershipState(
+            state[localReference.Local] = new CPPLocalOwnershipState(
+                CPPOwnershipKind.Owned,
+                CPPOwnershipLifecycle.Transferred,
+                true);
+            if (emit) {
+                AddTransition(transitions, new CPPOwnershipTransition(
+                    transferSyntax,
+                    declarations[localReference.Local],
+                    CPPOwnershipTransitionKind.Transfer,
                     CPPOwnershipKind.Owned,
-                    CPPOwnershipLifecycle.Transferred,
-                    true);
-                if (emit) {
-                    AddTransition(transitions, new CPPOwnershipTransition(
-                        invocationSyntax,
-                        declarations[localReference.Local],
-                        CPPOwnershipTransitionKind.Transfer,
-                        CPPOwnershipKind.Owned,
-                        CPPOwnershipLifecycle.Transferred));
-                }
-            } else if (emit && parameterOwnership == CPPParameterOwnershipKind.Unknown) {
-                AddDiagnostic(diagnostics, DiagnosticFactory.Create(
-                    "CPPOWN001",
-                    argument.Syntax,
-                    method,
-                    $"Owned local '{localReference.Local.Name}' crosses parameter '{argument.Parameter?.Name}' without a native ownership contract.",
-                    "Mark the parameter as no-escape or takes-ownership, or pass borrowed storage instead."));
+                    CPPOwnershipLifecycle.Transferred));
             }
+        } else if (emit &&
+            parameterOwnership == CPPParameterOwnershipKind.Unknown &&
+            localState.Lifecycle == CPPOwnershipLifecycle.Live) {
+            AddDiagnostic(diagnostics, DiagnosticFactory.Create(
+                "CPPOWN001",
+                diagnosticSyntax,
+                method,
+                $"Owned local '{localReference.Local.Name}' crosses parameter '{parameter?.Name}' without a native ownership contract.",
+                "Mark the parameter as no-escape or takes-ownership, or pass borrowed storage instead."));
         }
     }
 
@@ -833,7 +994,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         }
 
         if (emit) {
-            ValidateDeadLocalUses(assignment.Value, method, state, diagnostics);
+            ValidateDeadLocalUsesAfterNestedOwnershipOperations(assignment.Value, method, state, diagnostics);
         }
         if (assignment.Target is ILocalReferenceOperation targetLocal && plansByLocal.ContainsKey(targetLocal.Local)) {
             ProcessLocalAssignment(
@@ -941,22 +1102,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             return;
         }
 
-        bool overwritesLiveOwned = currentState.IsInitialized &&
-            currentState.Ownership == CPPOwnershipKind.Owned &&
-            currentState.Lifecycle == CPPOwnershipLifecycle.Live;
-        if (overwritesLiveOwned && emit) {
-            AddDiagnostic(diagnostics, DiagnosticFactory.Create(
-                "CPPOWN008",
-                assignment.Syntax,
-                method,
-                $"Owned local '{local.Name}' is overwritten before its previous native value is released.",
-                "Release the previous value before assigning the new owned allocation."));
-        }
         state[local] = new CPPLocalOwnershipState(
             CPPOwnershipKind.Owned,
             CPPOwnershipLifecycle.Live,
             true);
-        if (!overwritesLiveOwned && emit) {
+        if (emit) {
             AddTransition(transitions, new CPPOwnershipTransition(
                 assignment.Syntax,
                 declarations[local],
@@ -993,7 +1143,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             return;
         }
         if (emit) {
-            ValidateDeadLocalUses(returnOperation.ReturnedValue, method, state, diagnostics);
+            ValidateDeadLocalUsesAfterNestedOwnershipOperations(returnOperation.ReturnedValue, method, state, diagnostics);
         }
 
         ILocalReferenceOperation localReference = UnwrapLocalReference(returnOperation.ReturnedValue);
@@ -1284,6 +1434,8 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         SyntaxNode syntax = null;
         if (operation is IInvocationOperation && operation.Syntax is InvocationExpressionSyntax) {
             syntax = operation.Syntax;
+        } else if (operation is IObjectCreationOperation && operation.Syntax is BaseObjectCreationExpressionSyntax) {
+            syntax = operation.Syntax;
         } else if (operation is ISimpleAssignmentOperation && operation.Syntax is VariableDeclaratorSyntax) {
             syntax = operation.Syntax;
         } else if (operation is ISimpleAssignmentOperation && operation.Syntax is AssignmentExpressionSyntax) {
@@ -1309,13 +1461,37 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
         ICollection<CPPConversionDiagnostic> diagnostics) {
         if (invocation.Instance != null) {
-            ValidateDeadLocalUses(invocation.Instance, method, state, diagnostics);
+            ValidateDeadLocalUsesAfterNestedOwnershipOperations(invocation.Instance, method, state, diagnostics);
         }
         foreach (IArgumentOperation argument in invocation.Arguments) {
-            if (argument.Value is IInvocationOperation) {
-                continue;
-            }
-            ValidateDeadLocalUses(argument.Value, method, state, diagnostics);
+            ValidateDeadLocalUsesAfterNestedOwnershipOperations(argument.Value, method, state, diagnostics);
+        }
+    }
+
+    /// <summary>
+    /// Reports dead local references evaluated by the current expression while excluding nested calls and assignments validated at their own evaluation points.
+    /// </summary>
+    /// <param name="operation">Current expression operation whose non-boundary descendants should be validated.</param>
+    /// <param name="method">Containing method.</param>
+    /// <param name="state">Current local ownership state.</param>
+    /// <param name="diagnostics">Aggregate ownership diagnostics.</param>
+    void ValidateDeadLocalUsesAfterNestedOwnershipOperations(
+        IOperation operation,
+        IMethodSymbol method,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        ICollection<CPPConversionDiagnostic> diagnostics) {
+        if (operation is IInvocationOperation ||
+            operation is IObjectCreationOperation ||
+            operation is IAssignmentOperation) {
+            return;
+        }
+        if (operation is ILocalReferenceOperation localReference) {
+            ValidateDeadLocalUse(localReference, method, state, diagnostics);
+            return;
+        }
+
+        foreach (IOperation childOperation in operation.ChildOperations) {
+            ValidateDeadLocalUsesAfterNestedOwnershipOperations(childOperation, method, state, diagnostics);
         }
     }
 
@@ -1348,18 +1524,33 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
         ICollection<CPPConversionDiagnostic> diagnostics) {
         foreach (ILocalReferenceOperation localReference in operation.DescendantsAndSelf().OfType<ILocalReferenceOperation>()) {
-            if (!state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
-                localState.Lifecycle == CPPOwnershipLifecycle.Live) {
-                continue;
-            }
-
-            AddDiagnostic(diagnostics, DiagnosticFactory.Create(
-                "CPPOWN004",
-                localReference.Syntax,
-                method,
-                $"Local '{localReference.Local.Name}' is used after its native lifetime became {localState.Lifecycle.ToString().ToLowerInvariant()}.",
-                "Move the use before the release or transfer, or assign a new owned value before using the local."));
+            ValidateDeadLocalUse(localReference, method, state, diagnostics);
         }
+    }
+
+    /// <summary>
+    /// Reports one local reference when its native lifetime has already ended.
+    /// </summary>
+    /// <param name="localReference">Local reference evaluated at the current point.</param>
+    /// <param name="method">Containing method.</param>
+    /// <param name="state">Current local ownership state.</param>
+    /// <param name="diagnostics">Aggregate ownership diagnostics.</param>
+    void ValidateDeadLocalUse(
+        ILocalReferenceOperation localReference,
+        IMethodSymbol method,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        ICollection<CPPConversionDiagnostic> diagnostics) {
+        if (!state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
+            localState.Lifecycle == CPPOwnershipLifecycle.Live) {
+            return;
+        }
+
+        AddDiagnostic(diagnostics, DiagnosticFactory.Create(
+            "CPPOWN004",
+            localReference.Syntax,
+            method,
+            $"Local '{localReference.Local.Name}' is used after its native lifetime became {localState.Lifecycle.ToString().ToLowerInvariant()}.",
+            "Move the use before the release or transfer, or assign a new owned value before using the local."));
     }
 
     /// <summary>

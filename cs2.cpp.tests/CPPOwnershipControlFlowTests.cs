@@ -93,10 +93,10 @@ public sealed class CPPOwnershipControlFlowTests {
     }
 
     /// <summary>
-    /// Ensures loop-carried owned storage cannot be overwritten without first destroying its previous value.
+    /// Ensures loop-carried owned storage records structured replacement cleanup for each iteration.
     /// </summary>
     [Fact]
-    public void Analyze_WithUncleanLoopOverwrite_ReportsCPPOWN008() {
+    public void Analyze_WithLoopOwnedReplacement_RecordsReplaceTransition() {
         CPPOwnershipAnalysisResult result = Analyze("""
             public static void Run(bool enabled) {
                 List<int> values = new List<int>();
@@ -107,7 +107,8 @@ public sealed class CPPOwnershipControlFlowTests {
             }
             """);
 
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN008");
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN008");
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Replace && transition.LocalName == "values");
     }
 
     /// <summary>
@@ -316,6 +317,73 @@ public sealed class CPPOwnershipControlFlowTests {
             """);
 
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN002");
+    }
+
+    /// <summary>
+    /// Ensures an owned local cannot cross an unclassified constructor parameter boundary.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithUnknownConstructorArgument_ReportsCPPOWN001() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            sealed class Asset {
+                List<int> Stored;
+
+                public Asset(List<int> values) {
+                    Stored = values;
+                }
+            }
+
+            public static void Run() {
+                List<int> values = new List<int>();
+                Asset asset = new Asset(values);
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN001" && diagnostic.SourceMemberName == "Run");
+    }
+
+    /// <summary>
+    /// Ensures an owned local passed to a takes-ownership constructor records a transfer at the object creation site.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithTakesOwnershipConstructorArgument_RecordsTransfer() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            sealed class Asset {
+                public Asset([NativeTakesOwnership] List<int> values) {
+                    NativeOwnership.Delete(values);
+                }
+            }
+
+            public static void Run() {
+                List<int> values = new List<int>();
+                Asset asset = new Asset(values);
+            }
+            """);
+
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "values");
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures one owned local cannot satisfy two takes-ownership parameters in the same call.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithDuplicateTakesOwnershipArguments_ReportsCPPOWN004() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Consume(
+                [NativeTakesOwnership] List<int> first,
+                [NativeTakesOwnership] List<int> second) {
+                NativeOwnership.Delete(first);
+                NativeOwnership.Delete(second);
+            }
+
+            public static void Run() {
+                List<int> values = new List<int>();
+                Consume(values, values);
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN004" && diagnostic.SourceMemberName == "Run");
     }
 
     /// <summary>

@@ -60,4 +60,20 @@ public sealed class CPPOwnershipEmissionPlan {
         transition = TransitionValues.FirstOrDefault(candidate => ReferenceEquals(candidate.Syntax, syntax));
         return transition != null;
     }
+
+    /// <summary>
+    /// Gets every ownership transition attached to one exact source syntax node.
+    /// </summary>
+    /// <param name="syntax">Source syntax whose ownership effects should be emitted.</param>
+    /// <returns>Transitions attached to the syntax in deterministic local declaration order.</returns>
+    public IReadOnlyList<CPPOwnershipTransition> GetTransitions(SyntaxNode syntax) {
+        if (syntax == null) {
+            throw new ArgumentNullException(nameof(syntax));
+        }
+
+        return TransitionValues
+            .Where(candidate => ReferenceEquals(candidate.Syntax, syntax))
+            .OrderBy(candidate => candidate.LocalDeclaration.SpanStart)
+            .ToArray();
+    }
 }

@@ -811,9 +811,11 @@ public sealed class CPPOwnedMemberContractValidator {
     static IReadOnlyList<SyntaxNode> GetMemberSyntax(BasicBlock block) {
         HashSet<SyntaxNode> syntaxValues = [];
         foreach (IOperation operation in block.Operations) {
-            foreach (SyntaxNode syntax in operation.Syntax.DescendantNodesAndSelf()) {
-                if (syntax is AssignmentExpressionSyntax || syntax is InvocationExpressionSyntax) {
-                    syntaxValues.Add(syntax);
+            foreach (IOperation descendant in operation.DescendantsAndSelf()) {
+                if (descendant is IAssignmentOperation && descendant.Syntax is AssignmentExpressionSyntax assignment) {
+                    syntaxValues.Add(assignment);
+                } else if (descendant is IInvocationOperation && descendant.Syntax is InvocationExpressionSyntax invocation) {
+                    syntaxValues.Add(invocation);
                 }
             }
         }

@@ -26,6 +26,11 @@ namespace cs2.cpp {
         public CPPConversionOptions Options => codeConverter?.Options;
 
         /// <summary>
+        /// Gets the validated semantic ownership plan for the active conversion run when pipeline analysis has completed.
+        /// </summary>
+        CPPOwnershipEmissionPlan OwnershipEmissionPlan => codeConverter?.OwnershipAnalysisResult?.EmissionPlan;
+
+        /// <summary>
         /// Returns whether generated native exception construction should omit message arguments to reduce runtime string payload size.
         /// </summary>
         /// <returns>True when native exception object creation should compact away message arguments.</returns>
@@ -386,9 +391,18 @@ namespace cs2.cpp {
             lines.Add("{\n");
 
             int start = context.DepthClass;
-            ProcessDeclaration(semantic, context, localDeclaration.Declaration, lines);
+            bool emittedOwnedDeclaration = TryProcessOwnedManagedLocalDeclaration(
+                semantic,
+                context,
+                localDeclaration.Declaration,
+                lines);
+            if (!emittedOwnedDeclaration) {
+                ProcessDeclaration(semantic, context, localDeclaration.Declaration, lines);
+            }
             context.PopClass(start);
-            lines.Add(";\n");
+            if (!emittedOwnedDeclaration) {
+                lines.Add(";\n");
+            }
 
             string disposalTarget = localDeclaration.Declaration.Variables.FirstOrDefault()?.Identifier.Text ?? string.Empty;
             bool disposalUsesPointerAccess = IsPointerDeclaration(semantic, localDeclaration.Declaration);
@@ -426,7 +440,7 @@ namespace cs2.cpp {
             }
 
             if (statement is LocalDeclarationStatementSyntax localDeclarationStatement &&
-                TryProcessNonEscapingManagedLocalDeclarationStatement(semantic, context, localDeclarationStatement, lines)) {
+                TryProcessOwnedManagedLocalDeclarationStatement(semantic, context, localDeclarationStatement, lines)) {
                 return new ExpressionResult(true);
             }
 
@@ -478,6 +492,7 @@ namespace cs2.cpp {
                 lines.Add("delete ");
                 lines.Add(nativeOwnershipTarget.ReadExpression);
                 lines.Add(";\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
                 return true;
             }
 
@@ -493,6 +508,7 @@ namespace cs2.cpp {
                 lines.Add(nativeOwnershipTarget.ReadExpression);
                 lines.Add(";\n");
                 lines.Add("}\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
                 return true;
             }
 
@@ -504,6 +520,7 @@ namespace cs2.cpp {
                 lines.Add(";\n");
                 lines.Add(nativeOwnershipTarget.ClearExpression);
                 lines.Add(";\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
                 return true;
             }
 
@@ -521,6 +538,7 @@ namespace cs2.cpp {
                 lines.Add("}\n");
                 lines.Add(nativeOwnershipTarget.ClearExpression);
                 lines.Add(";\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
                 return true;
             }
 
@@ -638,7 +656,15 @@ namespace cs2.cpp {
             public List<string> BeforeLines { get; }
         }
 
-        bool TryProcessNonEscapingManagedLocalDeclarationStatement(
+        /// <summary>
+        /// Emits ownership flags and conditional scope guards for every semantically owned local in one declaration statement.
+        /// </summary>
+        /// <param name="semantic">Semantic model used by ordinary declaration lowering.</param>
+        /// <param name="context">Current C++ lowering context.</param>
+        /// <param name="localDeclarationStatement">Source declaration whose local ownership plans should be consumed.</param>
+        /// <param name="lines">Output token buffer receiving the declaration and guards.</param>
+        /// <returns><c>true</c> when at least one declarator requires plan-driven ownership state; otherwise <c>false</c>.</returns>
+        bool TryProcessOwnedManagedLocalDeclarationStatement(
             SemanticModel semantic,
             LayerContext context,
             LocalDeclarationStatementSyntax localDeclarationStatement,
@@ -647,26 +673,140 @@ namespace cs2.cpp {
                 return false;
             }
 
-            if (localDeclarationStatement.Declaration.Variables.Count != 1) {
+            return TryProcessOwnedManagedLocalDeclaration(
+                semantic,
+                context,
+                localDeclarationStatement.Declaration,
+                lines);
+        }
+
+        /// <summary>
+        /// Lowers one variable declaration in declarator order and installs each owned local's guard immediately after its initializer.
+        /// </summary>
+        /// <param name="semantic">Semantic model used by ordinary declaration lowering.</param>
+        /// <param name="context">Current C++ lowering context.</param>
+        /// <param name="declaration">Variable declaration whose local ownership plans should be consumed.</param>
+        /// <param name="lines">Output token buffer receiving split declarations and guards.</param>
+        /// <returns><c>true</c> when at least one declarator requires plan-driven ownership state; otherwise <c>false</c>.</returns>
+        bool TryProcessOwnedManagedLocalDeclaration(
+            SemanticModel semantic,
+            LayerContext context,
+            VariableDeclarationSyntax declaration,
+            List<string> lines) {
+            if (declaration == null) {
                 return false;
             }
 
-            VariableDeclaratorSyntax variable = localDeclarationStatement.Declaration.Variables[0];
-            if (!ShouldDeleteManagedLocalAtScopeExit(semantic, context, variable, localDeclarationStatement.Declaration)) {
+            List<CPPLocalOwnershipPlan> localPlans = declaration.Variables
+                .Select(variable => ResolveLocalOwnershipPlan(variable))
+                .Where(plan => plan != null && plan.RequiresScopeGuard)
+                .ToList();
+            if (localPlans.Count == 0) {
                 return false;
             }
 
-            ProcessDeclaration(semantic, context, localDeclarationStatement.Declaration, lines);
-            lines.Add(";\n");
-
-            string guardName = CreateTemporaryName("__localDeleteGuard");
             RegisterRuntimeRequirement("NativeFinally");
-            lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
-            lines.Add("delete ");
-            lines.Add(variable.Identifier.Text);
-            lines.Add(";\n");
-            lines.Add("});\n");
+            ProcessDeclaration(semantic, context, declaration, lines);
+            if (declaration.Variables.Count == 1) {
+                lines.Add(";\n");
+                AppendOwnedLocalScopeGuard(localPlans[0], lines);
+            } else {
+                CPPLocalOwnershipPlan finalPlan = ResolveLocalOwnershipPlan(declaration.Variables[^1]);
+                if (finalPlan == null || !finalPlan.RequiresScopeGuard) {
+                    lines.Add(";\n");
+                }
+            }
             return true;
+        }
+
+        /// <summary>
+        /// Emits one conditional scope guard controlled by a semantic local ownership flag.
+        /// </summary>
+        /// <param name="plan">Validated local ownership plan defining the flag and local names.</param>
+        /// <param name="lines">Output token buffer receiving the ownership flag and guard.</param>
+        void AppendOwnedLocalScopeGuard(CPPLocalOwnershipPlan plan, List<string> lines) {
+            string guardName = CreateTemporaryName("__localDeleteGuard");
+            string initialValue = plan.InitiallyOwnsValue ? "true" : "false";
+            lines.Add($"bool {plan.OwnershipFlagName} = {initialValue};\n");
+            lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
+            lines.Add($"if ({plan.OwnershipFlagName}) {{\n");
+            lines.Add("delete ");
+            lines.Add(plan.LocalName);
+            lines.Add(";\n}\n});\n");
+        }
+
+        /// <summary>
+        /// Resolves the semantic ownership plan attached to one exact local declaration.
+        /// </summary>
+        /// <param name="declaration">Source local declaration entering C++ lowering.</param>
+        /// <returns>The local ownership plan when analysis classified the declaration; otherwise null.</returns>
+        CPPLocalOwnershipPlan ResolveLocalOwnershipPlan(VariableDeclaratorSyntax declaration) {
+            if (declaration == null || OwnershipEmissionPlan == null) {
+                return null;
+            }
+
+            OwnershipEmissionPlan.TryGetLocalPlan(declaration, out CPPLocalOwnershipPlan plan);
+            return plan;
+        }
+
+        /// <summary>
+        /// Gets semantic ownership transitions of one kind attached to an exact source syntax node.
+        /// </summary>
+        /// <param name="syntax">Source syntax currently entering C++ lowering.</param>
+        /// <param name="kind">Transition kind to select.</param>
+        /// <returns>Matching transitions ordered by local declaration position.</returns>
+        IReadOnlyList<CPPOwnershipTransition> GetOwnershipTransitions(SyntaxNode syntax, CPPOwnershipTransitionKind kind) {
+            if (syntax == null || OwnershipEmissionPlan == null) {
+                return Array.Empty<CPPOwnershipTransition>();
+            }
+
+            return OwnershipEmissionPlan.GetTransitions(syntax)
+                .Where(transition => transition.Kind == kind)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Emits ownership-flag disarms for transitions that transfer or release local cleanup responsibility.
+        /// </summary>
+        /// <param name="syntax">Exact source syntax carrying transitions.</param>
+        /// <param name="kind">Transition kind whose flags should be disarmed.</param>
+        /// <param name="lines">Output token buffer receiving flag assignments.</param>
+        /// <param name="terminateLast">Whether the final assignment includes its own statement terminator instead of using the containing expression statement.</param>
+        void AppendOwnershipDisarms(
+            SyntaxNode syntax,
+            CPPOwnershipTransitionKind kind,
+            List<string> lines,
+            bool terminateLast = true) {
+            IReadOnlyList<CPPOwnershipTransition> transitions = GetOwnershipTransitions(syntax, kind);
+            for (int transitionIndex = 0; transitionIndex < transitions.Count; transitionIndex++) {
+                CPPOwnershipTransition transition = transitions[transitionIndex];
+                CPPLocalOwnershipPlan plan = ResolveLocalOwnershipPlan(transition.LocalDeclaration);
+                if (plan == null || !plan.RequiresScopeGuard) {
+                    throw new InvalidOperationException($"Ownership transition for local '{transition.LocalName}' has no cleanup plan.");
+                }
+
+                bool terminateAssignment = terminateLast || transitionIndex < transitions.Count - 1;
+                lines.Add($"{plan.OwnershipFlagName} = false{(terminateAssignment ? ";\n" : string.Empty)}");
+            }
+        }
+
+        /// <summary>
+        /// Attaches semantic ownership-transfer disarms to the statements evaluated immediately before an expression.
+        /// </summary>
+        /// <param name="syntax">Exact expression syntax carrying transfer transitions.</param>
+        /// <param name="result">Lowered expression result receiving pre-expression statements.</param>
+        /// <returns>The expression result with transfer disarms appended after existing preparation statements and before expression evaluation.</returns>
+        ExpressionResult AttachOwnershipTransferBeforeLines(SyntaxNode syntax, ExpressionResult result) {
+            if (GetOwnershipTransitions(syntax, CPPOwnershipTransitionKind.Transfer).Count == 0) {
+                return result;
+            }
+
+            List<string> beforeLines = result.BeforeLines == null
+                ? new List<string>()
+                : new List<string>(result.BeforeLines);
+            AppendOwnershipDisarms(syntax, CPPOwnershipTransitionKind.Transfer, beforeLines);
+            result.BeforeLines = beforeLines;
+            return result;
         }
 
         bool TryProcessConditionalDelegateInvocationStatement(
@@ -1454,7 +1594,7 @@ namespace cs2.cpp {
                 return;
             }
 
-            if (TryProcessScopeDeletedManagedLocalReassignment(semantic, context, assignment, lines)) {
+            if (TryProcessPlannedOwnedLocalAssignment(semantic, context, assignment, lines)) {
                 return;
             }
 
@@ -1467,11 +1607,47 @@ namespace cs2.cpp {
             List<string> rightLines = new List<string>();
             ExpressionResult rightResult = ProcessExpression(semantic, context, assignment.Right, rightLines);
             context.PopClass(startDepth);
-            if (assignResult.BeforeLines != null && assignResult.BeforeLines.Count > 0) {
-                lines.AddRange(assignResult.BeforeLines);
+            bool transfersOwnership = GetOwnershipTransitions(assignment, CPPOwnershipTransitionKind.Transfer).Count > 0;
+            string ownershipAssignmentValueName = string.Empty;
+            List<string> ownershipTargetPreparationLines = assignResult.BeforeLines == null
+                ? new List<string>()
+                : new List<string>(assignResult.BeforeLines);
+            if (transfersOwnership && assignment.Left is MemberAccessExpressionSyntax ownershipMemberAccess) {
+                List<string> receiverLines = new List<string>();
+                int receiverStartDepth = context.Class.Count;
+                ExpressionResult receiverResult = ProcessExpression(
+                    semantic,
+                    context,
+                    ownershipMemberAccess.Expression,
+                    receiverLines);
+                context.PopClass(receiverStartDepth);
+
+                string receiverText = string.Concat(receiverLines);
+                string targetText = string.Concat(leftLines);
+                if (receiverResult.Processed &&
+                    (receiverResult.AfterLines == null || receiverResult.AfterLines.Count == 0) &&
+                    !string.IsNullOrWhiteSpace(receiverText) &&
+                    targetText.StartsWith(receiverText, StringComparison.Ordinal)) {
+                    string targetName = CreateTemporaryName("__ownershipTarget");
+                    ownershipTargetPreparationLines = receiverResult.BeforeLines == null
+                        ? new List<string>()
+                        : new List<string>(receiverResult.BeforeLines);
+                    ownershipTargetPreparationLines.Add($"auto&& {targetName} = {receiverText};\n");
+                    leftLines = [targetName + targetText[receiverText.Length..]];
+                }
+            }
+            if (transfersOwnership) {
+                ownershipAssignmentValueName = CreateTemporaryName("__ownershipAssignmentValue");
+                lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            }
+            if (ownershipTargetPreparationLines.Count > 0) {
+                lines.AddRange(ownershipTargetPreparationLines);
             }
             if (rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0) {
                 lines.AddRange(rightResult.BeforeLines);
+            }
+            if (transfersOwnership) {
+                lines.Add($"auto {ownershipAssignmentValueName} = ");
             }
             lines.AddRange(leftLines);
 
@@ -1490,7 +1666,15 @@ namespace cs2.cpp {
             } else {
                 lines.AddRange(rightLines);
             }
-            if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+            if (transfersOwnership) {
+                lines.Add(";\n");
+                if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                    lines.AddRange(rightResult.AfterLines);
+                }
+                AppendOwnershipDisarms(assignment, CPPOwnershipTransitionKind.Transfer, lines);
+                lines.Add($"return {ownershipAssignmentValueName};\n");
+                lines.Add("})()");
+            } else if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
                 lines.Add(";\n");
                 lines.AddRange(rightResult.AfterLines);
             }
@@ -2050,47 +2234,80 @@ namespace cs2.cpp {
                 || expression.IsKind(SyntaxKind.DefaultExpression);
         }
 
-        bool TryProcessScopeDeletedManagedLocalReassignment(
+        /// <summary>
+        /// Emits semantic replacement or null-release cleanup for one ownership-tracked local assignment.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to lower the replacement value.</param>
+        /// <param name="context">Current C++ lowering context.</param>
+        /// <param name="assignment">Source assignment carrying a semantic ownership transition.</param>
+        /// <param name="lines">Output token buffer receiving ordered cleanup and assignment statements.</param>
+        /// <returns><c>true</c> when a planned owned-local transition was emitted; otherwise <c>false</c>.</returns>
+        bool TryProcessPlannedOwnedLocalAssignment(
             SemanticModel semantic,
             LayerContext context,
             AssignmentExpressionSyntax assignment,
             List<string> lines) {
-            if (semantic == null || context == null || assignment == null || lines == null) {
+            if (assignment == null || OwnershipEmissionPlan == null) {
                 return false;
             }
 
-            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
-                assignment.Left is not IdentifierNameSyntax identifierName ||
-                !ShouldDeleteManagedLocalAtScopeExit(semantic, context, identifierName) ||
-                !IsManagedHeapAllocationExpression(assignment.Right) ||
-                DoesExpressionReferenceLocal(semantic, assignment.Right, identifierName)) {
+            CPPOwnershipTransition[] transitions = OwnershipEmissionPlan.GetTransitions(assignment)
+                .Where(transition =>
+                    transition.Kind == CPPOwnershipTransitionKind.Replace ||
+                    transition.Kind == CPPOwnershipTransitionKind.Release)
+                .ToArray();
+            if (transitions.Length == 0) {
                 return false;
             }
-
-            if (!TryGetExpressionTypeSymbol(semantic, assignment.Right, out ITypeSymbol rightTypeSymbol)) {
-                return false;
+            if (transitions.Length != 1) {
+                throw new InvalidOperationException("One local assignment cannot carry multiple ownership replacement transitions.");
             }
 
-            VariableType rightType = VariableUtil.GetVarType(rightTypeSymbol);
-            VariableType cppRightType = ConvertToCPPType(rightType, out CPPTypeData rightTypeData);
-            if (cppRightType == null || !rightTypeData.IsPointer) {
-                return false;
+            CPPOwnershipTransition transition = transitions[0];
+            CPPLocalOwnershipPlan plan = ResolveLocalOwnershipPlan(transition.LocalDeclaration);
+            if (plan == null || !plan.RequiresScopeGuard) {
+                throw new InvalidOperationException($"Owned assignment for local '{transition.LocalName}' has no cleanup plan.");
             }
 
-            string valueName = CreateTemporaryName("__reassignValue");
-            lines.Add("auto ");
-            lines.Add(valueName);
-            lines.Add(" = ");
-            int rightStartDepth = context.Class.Count;
-            ProcessExpression(semantic, context, assignment.Right, lines);
-            context.PopClass(rightStartDepth);
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+
+            if (transition.Kind == CPPOwnershipTransitionKind.Release) {
+                if (!IsNullLikeExpression(assignment.Right)) {
+                    throw new InvalidOperationException($"Release assignment for local '{transition.LocalName}' must store a null value.");
+                }
+
+                lines.Add($"if ({plan.OwnershipFlagName}) {{\n");
+                lines.Add($"delete {plan.LocalName};\n");
+                lines.Add("}\n");
+                lines.Add($"{plan.LocalName} = nullptr;\n");
+                lines.Add($"{plan.OwnershipFlagName} = false;\n");
+                lines.Add($"return {plan.LocalName};\n");
+                lines.Add("})()");
+                return true;
+            }
+
+            List<string> replacementLines = new List<string>();
+            int replacementStartDepth = context.Class.Count;
+            ExpressionResult replacementResult = ProcessExpression(semantic, context, assignment.Right, replacementLines);
+            context.PopClass(replacementStartDepth);
+            if (replacementResult.BeforeLines != null && replacementResult.BeforeLines.Count > 0) {
+                lines.AddRange(replacementResult.BeforeLines);
+            }
+
+            string replacementName = CreateTemporaryName("__reassignValue");
+            lines.Add($"auto {replacementName} = ");
+            lines.AddRange(replacementLines);
             lines.Add(";\n");
-            lines.Add("delete ");
-            lines.Add(identifierName.Identifier.Text);
-            lines.Add(";\n");
-            lines.Add(identifierName.Identifier.Text);
-            lines.Add(" = ");
-            lines.Add(valueName);
+            if (replacementResult.AfterLines != null && replacementResult.AfterLines.Count > 0) {
+                lines.AddRange(replacementResult.AfterLines);
+            }
+            lines.Add($"if ({plan.OwnershipFlagName}) {{\n");
+            lines.Add($"delete {plan.LocalName};\n");
+            lines.Add("}\n");
+            lines.Add($"{plan.LocalName} = {replacementName};\n");
+            lines.Add($"{plan.OwnershipFlagName} = true;\n");
+            lines.Add($"return {plan.LocalName};\n");
+            lines.Add("})()");
             return true;
         }
 
@@ -2869,11 +3086,13 @@ namespace cs2.cpp {
 
             if (IsSystemObjectType(semantic, objectCreation.Type)) {
                 lines.Add("new char[1]");
-                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
+                ExpressionResult systemObjectResult = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object"));
+                return AttachOwnershipTransferBeforeLines(objectCreation, systemObjectResult);
             }
 
             if (TryProcessDelegateObjectCreationExpression(semantic, context, objectCreation, lines, out VariableType delegateObjectCreationType)) {
-                return new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+                ExpressionResult delegateResult = new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+                return AttachOwnershipTransferBeforeLines(objectCreation, delegateResult);
             }
 
             int diagnosticCount = GetDiagnosticCount();
@@ -2902,7 +3121,8 @@ namespace cs2.cpp {
                 implicitObjectCreation.ArgumentList,
                 lines,
                 out VariableType delegateObjectCreationType)) {
-                return new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+                ExpressionResult delegateResult = new ExpressionResult(true, VariablePath.Unknown, delegateObjectCreationType);
+                return AttachOwnershipTransferBeforeLines(implicitObjectCreation, delegateResult);
             }
 
             if (implicitObjectCreation.Initializer is InitializerExpressionSyntax initializer &&
@@ -2914,6 +3134,7 @@ namespace cs2.cpp {
                     createdTypeSymbol,
                     implicitObjectCreation.ArgumentList,
                     initializer,
+                    implicitObjectCreation,
                     lines);
             }
 
@@ -2924,7 +3145,7 @@ namespace cs2.cpp {
                 explicitTypeSyntax,
                 createdTypeSymbol,
                 implicitObjectCreation.ArgumentList,
-                null,
+                implicitObjectCreation,
                 lines);
 
             return new ExpressionResult(diagnosticCount == GetDiagnosticCount());
@@ -3001,9 +3222,22 @@ namespace cs2.cpp {
                 ResolveObjectCreationTypeSymbol(semantic, objectCreation),
                 objectCreation.ArgumentList,
                 initializer,
+                objectCreation,
                 lines);
         }
 
+        /// <summary>
+        /// Lowers explicit or implicit object construction plus member initialization while preserving constructor ownership transitions.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the current document.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="objectCreationTypeSyntax">Explicit type syntax used for native construction.</param>
+        /// <param name="objectCreationTypeSymbol">Resolved constructed type.</param>
+        /// <param name="argumentList">Constructor arguments in source order.</param>
+        /// <param name="initializer">Object initializer assignments applied after construction.</param>
+        /// <param name="ownershipSyntax">Exact construction syntax carrying semantic ownership transfers.</param>
+        /// <param name="lines">Output token buffer receiving the lowered expression.</param>
+        /// <returns>The expression result produced by the underlying construction.</returns>
         ExpressionResult ProcessObjectInitializerCreation(
             SemanticModel semantic,
             LayerContext context,
@@ -3011,6 +3245,7 @@ namespace cs2.cpp {
             ITypeSymbol objectCreationTypeSymbol,
             ArgumentListSyntax argumentList,
             InitializerExpressionSyntax initializer,
+            BaseObjectCreationExpressionSyntax ownershipSyntax,
             List<string> lines) {
             string objectName = CreateTemporaryName("__object");
 
@@ -3025,7 +3260,7 @@ namespace cs2.cpp {
                 objectCreationTypeSyntax,
                 objectCreationTypeSymbol,
                 argumentList,
-                null,
+                ownershipSyntax,
                 lines);
             lines.Add(";\n");
             string memberAccessOperator = UsesDirectMemberAccess(result) ? "." : "->";
@@ -3122,13 +3357,24 @@ namespace cs2.cpp {
                 lines);
         }
 
+        /// <summary>
+        /// Emits the core native construction expression for explicit or implicit C# object creation.
+        /// </summary>
+        /// <param name="semantic">Semantic model for the current document.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="objectCreationTypeSyntax">Explicit type syntax used for native construction.</param>
+        /// <param name="objectCreationTypeSymbol">Resolved constructed type.</param>
+        /// <param name="argumentList">Constructor arguments in source order.</param>
+        /// <param name="ownershipSyntax">Exact construction syntax carrying semantic ownership transfers.</param>
+        /// <param name="lines">Output token buffer receiving the construction expression.</param>
+        /// <returns>The lowered construction result and converted native type.</returns>
         ExpressionResult BuildObjectCreationExpression(
             SemanticModel semantic,
             LayerContext context,
             TypeSyntax objectCreationTypeSyntax,
             ITypeSymbol objectCreationTypeSymbol,
             ArgumentListSyntax argumentList,
-            ObjectCreationExpressionSyntax semanticObjectCreation,
+            BaseObjectCreationExpressionSyntax ownershipSyntax,
             List<string> lines) {
             if (IsSystemObjectType(semantic, objectCreationTypeSyntax)) {
                 lines.Add("new char[1]");
@@ -3178,8 +3424,8 @@ namespace cs2.cpp {
             } else {
                 if (objectCreationTypeSymbol != null) {
                     sourceType = VariableUtil.GetVarType(objectCreationTypeSymbol);
-                } else if (semanticObjectCreation != null &&
-                    TryGetExpressionTypeSymbol(semantic, semanticObjectCreation, out ITypeSymbol createdTypeSymbol)) {
+                } else if (ownershipSyntax != null &&
+                    TryGetExpressionTypeSymbol(semantic, ownershipSyntax, out ITypeSymbol createdTypeSymbol)) {
                     sourceType = VariableUtil.GetVarType(createdTypeSymbol);
                 }
             }
@@ -3193,8 +3439,8 @@ namespace cs2.cpp {
             bool emitHeapAllocation = !hasConvertedType
                 ? !(IsValueRuntimeTypeName(objectCreationTypeSyntax.ToString()) || objectCreationTypeSymbol?.IsValueType == true)
                 : cppTypeData.IsPointer;
-            IMethodSymbol constructorSymbol = semanticObjectCreation != null
-                ? ResolveObjectCreationConstructorSymbol(semantic, semanticObjectCreation)
+            IMethodSymbol constructorSymbol = ownershipSyntax is ObjectCreationExpressionSyntax explicitObjectCreation
+                ? ResolveObjectCreationConstructorSymbol(semantic, explicitObjectCreation)
                 : ResolveObjectCreationConstructorSymbol(objectCreationTypeSymbol, effectiveArgumentList);
             System.Collections.Immutable.ImmutableArray<IParameterSymbol> constructorParameterSymbols = constructorSymbol != null
                 ? constructorSymbol.Parameters
@@ -3202,7 +3448,9 @@ namespace cs2.cpp {
             int explicitArgumentCount = effectiveArgumentList?.Arguments.Count ?? 0;
             bool hasOptionalConstructorArguments = constructorParameterSymbols.Length > explicitArgumentCount &&
                 constructorParameterSymbols.Skip(explicitArgumentCount).Any(parameter => parameter.HasExplicitDefaultValue);
-            bool requiresStableArgumentEvaluation = explicitArgumentCount > 1 &&
+            bool hasOwnershipTransfer = GetOwnershipTransitions(ownershipSyntax, CPPOwnershipTransitionKind.Transfer).Count > 0;
+            bool requiresStableArgumentEvaluation = hasOwnershipTransfer ||
+                explicitArgumentCount > 1 &&
                 effectiveArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
             if (requiresStableArgumentEvaluation) {
                 lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
@@ -3249,7 +3497,13 @@ namespace cs2.cpp {
                     temporaryArgumentNames.Add(temporaryName);
                 }
 
-                lines.Add("return ");
+                string constructedValueName = string.Empty;
+                if (hasOwnershipTransfer) {
+                    constructedValueName = CreateTemporaryName("__constructedValue");
+                    lines.Add($"auto {constructedValueName} = ");
+                } else {
+                    lines.Add("return ");
+                }
                 AppendObjectCreationTypePrefix(
                     semantic,
                     context,
@@ -3290,6 +3544,10 @@ namespace cs2.cpp {
 
                 AppendOptionalInvocationArguments(constructorParameterSymbols, explicitArgumentCount, lines);
                 lines.Add(");\n");
+                if (hasOwnershipTransfer) {
+                    AppendOwnershipDisarms(ownershipSyntax, CPPOwnershipTransitionKind.Transfer, lines);
+                    lines.Add($"return {constructedValueName};\n");
+                }
                 lines.Add("})()");
                 return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
             }
@@ -5458,7 +5716,12 @@ namespace cs2.cpp {
             }
 
             if (TryProcessMultiImplementationGenericInvocation(semantic, context, invocationExpression, invokedMethodSymbol, lines, out VariableType multiImplementationInvocationType, out List<string> multiImplementationBeforeLines)) {
-                return new ExpressionResult(true, VariablePath.Unknown, multiImplementationInvocationType, multiImplementationBeforeLines);
+                ExpressionResult multiImplementationResult = new ExpressionResult(
+                    true,
+                    VariablePath.Unknown,
+                    multiImplementationInvocationType,
+                    multiImplementationBeforeLines);
+                return AttachOwnershipTransferBeforeLines(invocationExpression, multiImplementationResult);
             }
 
             List<string> argLines = ["("];
@@ -5623,6 +5886,7 @@ namespace cs2.cpp {
             }
 
             invocationTargetLines.AddRange(argLines);
+            AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Transfer, beforeLines);
 
             if (beforeLines.Count > 0) {
                 result.BeforeLines = beforeLines;
@@ -5731,6 +5995,7 @@ namespace cs2.cpp {
                 argumentTemporaryNames.Add(argumentTemporaryName);
             }
 
+            AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Transfer, lines);
             lines.Add("return ");
             lines.Add(sequencedTargetText);
             lines.Add("(");
@@ -5803,6 +6068,7 @@ namespace cs2.cpp {
                 argumentTemporaryNames.Add(argumentTemporaryName);
             }
 
+            AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Transfer, lines);
             lines.Add("return ");
             lines.AddRange(invocationTargetLines);
             lines.Add("(");
@@ -6013,9 +6279,7 @@ namespace cs2.cpp {
                     "The C++ backend cannot preserve receiver-first, left-to-right evaluation for this reduced extension invocation shape.");
             }
 
-            if (beforeLines.Count > 0) {
-                lines.AddRange(beforeLines);
-            }
+            AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Transfer, beforeLines);
 
             lines.AddRange(invocationTargetLines);
             lines.Add("(");
@@ -6028,6 +6292,7 @@ namespace cs2.cpp {
             }
             lines.Add(")");
             result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+            result.BeforeLines = beforeLines.Count > 0 ? beforeLines : null;
             return true;
         }
 
@@ -12383,8 +12648,10 @@ namespace cs2.cpp {
             bool disposalUsesPointerAccess = false;
 
             if (usingStatement.Declaration != null) {
-                ProcessDeclaration(semantic, context, usingStatement.Declaration, lines);
-                lines.Add(";\n");
+                if (!TryProcessOwnedManagedLocalDeclaration(semantic, context, usingStatement.Declaration, lines)) {
+                    ProcessDeclaration(semantic, context, usingStatement.Declaration, lines);
+                    lines.Add(";\n");
+                }
 
                 VariableDeclaratorSyntax declaredVariable = usingStatement.Declaration.Variables.FirstOrDefault();
                 if (declaredVariable != null) {
@@ -12550,10 +12817,20 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessForStatement(SemanticModel semantic, LayerContext context, ForStatementSyntax forStatement, List<string> lines) {
+            bool hasOwnedDeclaration = forStatement.Declaration != null &&
+                forStatement.Declaration.Variables.Any(variable => {
+                    CPPLocalOwnershipPlan plan = ResolveLocalOwnershipPlan(variable);
+                    return plan != null && plan.RequiresScopeGuard;
+                });
+            if (hasOwnedDeclaration) {
+                lines.Add("{\n");
+                TryProcessOwnedManagedLocalDeclaration(semantic, context, forStatement.Declaration, lines);
+            }
+
             lines.Add("for (");
 
             // Process initialization (if it exists)
-            if (forStatement.Declaration != null) {
+            if (forStatement.Declaration != null && !hasOwnedDeclaration) {
                 ProcessDeclaration(semantic, context, forStatement.Declaration, lines);
             } else if (forStatement.Initializers.Any()) {
                 for (int initializerIndex = 0; initializerIndex < forStatement.Initializers.Count; initializerIndex++) {
@@ -12591,6 +12868,9 @@ namespace cs2.cpp {
             ProcessStatement(semantic, context, forStatement.Statement, lines);
 
             lines.Add("}\n");
+            if (hasOwnedDeclaration) {
+                lines.Add("}\n");
+            }
         }
 
         protected override ExpressionResult ProcessIfStatement(SemanticModel semantic, LayerContext context, IfStatementSyntax ifStatement, List<string> lines) {
@@ -15727,387 +16007,6 @@ namespace cs2.cpp {
             return false;
         }
 
-        bool ShouldDeleteManagedLocalAtScopeExit(
-            SemanticModel semantic,
-            LayerContext context,
-            VariableDeclaratorSyntax variable,
-            VariableDeclarationSyntax declaration) {
-            if (semantic == null || context == null || variable == null || declaration == null) {
-                return false;
-            }
-
-            if (declaration.Parent is not LocalDeclarationStatementSyntax) {
-                return false;
-            }
-
-            if (!IsOwnedManagedLocalInitializerExpression(semantic, variable.Initializer?.Value)) {
-                return false;
-            }
-
-            VariableType declarationType = ResolveDeclarationType(semantic, declaration);
-            if (declarationType == null) {
-                return false;
-            }
-
-            VariableType cppType = ConvertToCPPType(declarationType, out CPPTypeData typeData);
-            if (cppType == null || !typeData.IsPointer) {
-                return false;
-            }
-
-            if (HasExplicitNativeOwnershipRelease(semantic, variable)) {
-                return false;
-            }
-
-            return !DoesLocalEscapeScope(semantic, variable);
-        }
-
-        bool ShouldDeleteManagedLocalAtScopeExit(
-            SemanticModel semantic,
-            LayerContext context,
-            IdentifierNameSyntax identifierName) {
-            if (semantic == null || context == null || identifierName == null) {
-                return false;
-            }
-
-            if (semantic.SyntaxTree != identifierName.SyntaxTree) {
-                return false;
-            }
-
-            ILocalSymbol localSymbol;
-            try {
-                localSymbol = semantic.GetSymbolInfo(identifierName).Symbol as ILocalSymbol;
-            } catch (ArgumentException) {
-                return false;
-            }
-
-            if (localSymbol == null ||
-                localSymbol.DeclaringSyntaxReferences.Length == 0) {
-                return false;
-            }
-
-            SyntaxNode declarationNode = localSymbol.DeclaringSyntaxReferences[0].GetSyntax();
-            if (declarationNode is not VariableDeclaratorSyntax variableDeclarator ||
-                variableDeclarator.Parent is not VariableDeclarationSyntax declaration) {
-                return false;
-            }
-
-            return ShouldDeleteManagedLocalAtScopeExit(semantic, context, variableDeclarator, declaration);
-        }
-
-        static bool IsManagedHeapAllocationExpression(ExpressionSyntax expression) {
-            if (expression == null) {
-                return false;
-            }
-
-            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
-                expression = parenthesizedExpression.Expression;
-            }
-
-            return expression is ObjectCreationExpressionSyntax ||
-                expression is ImplicitObjectCreationExpressionSyntax ||
-                expression is ArrayCreationExpressionSyntax ||
-                expression is ImplicitArrayCreationExpressionSyntax ||
-                expression is CollectionExpressionSyntax;
-        }
-
-        bool IsOwnedManagedLocalInitializerExpression(SemanticModel semantic, ExpressionSyntax expression) {
-            if (expression == null) {
-                return false;
-            }
-
-            while (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
-                expression = parenthesizedExpression.Expression;
-            }
-
-            if (expression is CastExpressionSyntax castExpression) {
-                expression = castExpression.Expression;
-            }
-
-            if (IsManagedHeapAllocationExpression(expression)) {
-                return true;
-            }
-
-            ISymbol symbol = semantic.GetSymbolInfo(expression).Symbol;
-            if (symbol is IPropertySymbol propertySymbol) {
-                return DoesMemberReturnArrayAsOwnedNativeList(semantic, propertySymbol);
-            }
-
-            if (expression is InvocationExpressionSyntax invocationExpression) {
-                IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
-                return DoesMemberReturnArrayAsOwnedNativeList(semantic, methodSymbol);
-            }
-
-            return false;
-        }
-
-        bool DoesMemberReturnArrayAsOwnedNativeList(SemanticModel semantic, ISymbol symbol) {
-            if (semantic == null || symbol == null) {
-                return false;
-            }
-
-            ITypeSymbol returnTypeSymbol = ResolveMemberReturnTypeSymbol(symbol);
-            if (!IsListFamilyTypeSymbol(returnTypeSymbol)) {
-                return false;
-            }
-
-            bool foundReturnExpression = false;
-            foreach (SyntaxReference syntaxReference in symbol.DeclaringSyntaxReferences) {
-                SyntaxNode declaration = syntaxReference.GetSyntax();
-                if (!semantic.Compilation.ContainsSyntaxTree(declaration.SyntaxTree)) {
-                    return false;
-                }
-
-                SemanticModel declarationSemantic;
-                try {
-                    declarationSemantic = semantic.Compilation.GetSemanticModel(declaration.SyntaxTree);
-                } catch (ArgumentException) {
-                    return false;
-                }
-
-                foreach (ExpressionSyntax returnExpression in EnumerateMemberReturnExpressions(declaration)) {
-                    foundReturnExpression = true;
-                    if (!TryResolveArrayElementTypeSymbol(declarationSemantic, returnExpression, out _)) {
-                        return false;
-                    }
-                }
-            }
-
-            return foundReturnExpression;
-        }
-
-        static ITypeSymbol ResolveMemberReturnTypeSymbol(ISymbol symbol) {
-            if (symbol is IPropertySymbol propertySymbol) {
-                return propertySymbol.Type;
-            }
-
-            if (symbol is IMethodSymbol methodSymbol) {
-                return methodSymbol.ReturnType;
-            }
-
-            return null;
-        }
-
-        static IEnumerable<ExpressionSyntax> EnumerateMemberReturnExpressions(SyntaxNode declaration) {
-            if (declaration is PropertyDeclarationSyntax propertyDeclaration) {
-                if (propertyDeclaration.ExpressionBody?.Expression != null) {
-                    yield return propertyDeclaration.ExpressionBody.Expression;
-                }
-
-                foreach (AccessorDeclarationSyntax accessor in propertyDeclaration.AccessorList?.Accessors ?? default) {
-                    if (!accessor.IsKind(SyntaxKind.GetAccessorDeclaration)) {
-                        continue;
-                    }
-
-                    if (accessor.ExpressionBody?.Expression != null) {
-                        yield return accessor.ExpressionBody.Expression;
-                    }
-
-                    foreach (ReturnStatementSyntax returnStatement in accessor.DescendantNodes().OfType<ReturnStatementSyntax>()) {
-                        if (returnStatement.Expression != null) {
-                            yield return returnStatement.Expression;
-                        }
-                    }
-                }
-            }
-
-            if (declaration is MethodDeclarationSyntax methodDeclaration) {
-                if (methodDeclaration.ExpressionBody?.Expression != null) {
-                    yield return methodDeclaration.ExpressionBody.Expression;
-                }
-
-                foreach (ReturnStatementSyntax returnStatement in methodDeclaration.DescendantNodes().OfType<ReturnStatementSyntax>()) {
-                    if (returnStatement.Expression != null) {
-                        yield return returnStatement.Expression;
-                    }
-                }
-            }
-        }
-
-        static bool DoesExpressionReferenceLocal(
-            SemanticModel semantic,
-            ExpressionSyntax expression,
-            IdentifierNameSyntax identifierName) {
-            if (semantic == null || expression == null || identifierName == null) {
-                return false;
-            }
-
-            if (semantic.SyntaxTree != expression.SyntaxTree ||
-                semantic.SyntaxTree != identifierName.SyntaxTree) {
-                return false;
-            }
-
-            ILocalSymbol localSymbol;
-            try {
-                localSymbol = semantic.GetSymbolInfo(identifierName).Symbol as ILocalSymbol;
-            } catch (ArgumentException) {
-                return false;
-            }
-
-            if (localSymbol == null) {
-                return false;
-            }
-
-            foreach (IdentifierNameSyntax candidate in expression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()) {
-                if (SymbolsMatch(semantic.GetSymbolInfo(candidate).Symbol, localSymbol)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        static bool DoesLocalEscapeScope(SemanticModel semantic, VariableDeclaratorSyntax variable) {
-            if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
-                return false;
-            }
-
-            SyntaxNode scope = variable.FirstAncestorOrSelf<BlockSyntax>() ?? variable.SyntaxTree.GetRoot();
-            foreach (IdentifierNameSyntax identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>()) {
-                if (!SymbolsMatch(semantic.GetSymbolInfo(identifier).Symbol, localSymbol)) {
-                    continue;
-                }
-
-                if (identifier.Ancestors().OfType<AnonymousFunctionExpressionSyntax>().Any() ||
-                    identifier.Ancestors().OfType<LocalFunctionStatementSyntax>().Any()) {
-                    return true;
-                }
-
-                if (identifier.Ancestors().OfType<ReturnStatementSyntax>().Any() &&
-                    identifier.FirstAncestorOrSelf<ReturnStatementSyntax>()?.Expression is ExpressionSyntax returnExpression &&
-                    IsDirectLocalValueExpression(semantic, returnExpression, localSymbol)) {
-                    return true;
-                }
-
-                if (identifier.Parent is EqualsValueClauseSyntax equalsValueClause &&
-                    IsDirectLocalValueExpression(semantic, equalsValueClause.Value, localSymbol) &&
-                    equalsValueClause.Parent is VariableDeclaratorSyntax targetVariable &&
-                    !SymbolEqualityComparer.Default.Equals(semantic.GetDeclaredSymbol(targetVariable), localSymbol)) {
-                    return true;
-                }
-
-                if (identifier.Parent is AssignmentExpressionSyntax assignmentExpression &&
-                    IsDirectLocalValueExpression(semantic, assignmentExpression.Right, localSymbol) &&
-                    !SymbolsMatch(semantic.GetSymbolInfo(assignmentExpression.Left).Symbol, localSymbol)) {
-                    return true;
-                }
-
-                if (identifier.Parent is ArgumentSyntax argumentSyntax) {
-                    bool isRefOrOutArgument = argumentSyntax.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword) ||
-                        argumentSyntax.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword);
-                    if (isRefOrOutArgument) {
-                        return true;
-                    }
-
-                    if (argumentSyntax.Parent?.Parent is InvocationExpressionSyntax invocationExpression) {
-                        if (invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess &&
-                            memberAccess.Expression == identifier) {
-                            continue;
-                        }
-
-                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol) &&
-                            !IsNativeNoEscapeArgument(semantic, invocationExpression, argumentSyntax)) {
-                            return true;
-                        }
-                    }
-
-                    if (argumentSyntax.Parent?.Parent is BaseObjectCreationExpressionSyntax objectCreationExpression) {
-                        if (IsDirectLocalValueExpression(semantic, argumentSyntax.Expression, localSymbol)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        static bool HasExplicitNativeOwnershipRelease(SemanticModel semantic, VariableDeclaratorSyntax variable) {
-            if (semantic.GetDeclaredSymbol(variable) is not ILocalSymbol localSymbol) {
-                return false;
-            }
-
-            SyntaxNode scope = variable.FirstAncestorOrSelf<BlockSyntax>() ?? variable.SyntaxTree.GetRoot();
-            foreach (InvocationExpressionSyntax invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>()) {
-                if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess) {
-                    continue;
-                }
-
-                string methodName = memberAccess.Name.Identifier.Text;
-                if (!string.Equals(methodName, "Delete", StringComparison.Ordinal) &&
-                    !string.Equals(methodName, "Release", StringComparison.Ordinal) &&
-                    !string.Equals(methodName, "DisposeAndDelete", StringComparison.Ordinal) &&
-                    !string.Equals(methodName, "DisposeAndRelease", StringComparison.Ordinal)) {
-                    continue;
-                }
-
-                ISymbol invokedMethodSymbol = semantic.GetSymbolInfo(memberAccess).Symbol;
-                if (!string.Equals(invokedMethodSymbol?.ContainingType?.Name, "NativeOwnership", StringComparison.Ordinal)) {
-                    continue;
-                }
-
-                foreach (ArgumentSyntax argument in invocation.ArgumentList.Arguments) {
-                    if (IsDirectLocalValueExpression(semantic, argument.Expression, localSymbol)) {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        static bool IsNativeNoEscapeArgument(
-            SemanticModel semantic,
-            InvocationExpressionSyntax invocationExpression,
-            ArgumentSyntax argumentSyntax) {
-            if (semantic == null || invocationExpression == null || argumentSyntax == null) {
-                return false;
-            }
-
-            IMethodSymbol methodSymbol = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
-            if (methodSymbol == null) {
-                return false;
-            }
-
-            int argumentIndex = invocationExpression.ArgumentList.Arguments.IndexOf(argumentSyntax);
-            if (argumentIndex < 0 || argumentIndex >= methodSymbol.Parameters.Length) {
-                return false;
-            }
-
-            IParameterSymbol parameterSymbol = methodSymbol.Parameters[argumentIndex];
-            foreach (AttributeData attributeData in parameterSymbol.GetAttributes()) {
-                string attributeName = attributeData.AttributeClass?.Name;
-                if (string.Equals(attributeName, "NativeNoEscapeAttribute", StringComparison.Ordinal) ||
-                    string.Equals(attributeName, "NativeNoEscape", StringComparison.Ordinal)) {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        static bool IsDirectLocalValueExpression(
-            SemanticModel semantic,
-            ExpressionSyntax expression,
-            ILocalSymbol localSymbol) {
-            if (expression == null) {
-                return false;
-            }
-
-            if (expression is ParenthesizedExpressionSyntax parenthesizedExpression) {
-                return IsDirectLocalValueExpression(semantic, parenthesizedExpression.Expression, localSymbol);
-            }
-
-            if (expression is CastExpressionSyntax castExpression) {
-                return IsDirectLocalValueExpression(semantic, castExpression.Expression, localSymbol);
-            }
-
-            if (expression is IdentifierNameSyntax identifierName) {
-                return SymbolsMatch(semantic.GetSymbolInfo(identifierName).Symbol, localSymbol);
-            }
-
-            return false;
-        }
-
         static bool SymbolsMatch(ISymbol symbol, ILocalSymbol localSymbol) {
             if (symbol is IAliasSymbol aliasSymbol) {
                 symbol = aliasSymbol.Target;
@@ -16968,7 +16867,8 @@ namespace cs2.cpp {
             VariableType varType,
             List<string> lines) {
             if (declaration.Variables.Count <= 1 ||
-                declaration.Parent is not LocalDeclarationStatementSyntax) {
+                declaration.Parent is not LocalDeclarationStatementSyntax &&
+                declaration.Parent is not ForStatementSyntax) {
                 return false;
             }
 
@@ -17032,7 +16932,11 @@ namespace cs2.cpp {
                 }
 
                 lines.AddRange(declarationLines);
-                if (index < declaration.Variables.Count - 1) {
+                CPPLocalOwnershipPlan ownershipPlan = ResolveLocalOwnershipPlan(variable);
+                if (ownershipPlan != null && ownershipPlan.RequiresScopeGuard) {
+                    lines.Add(";\n");
+                    AppendOwnedLocalScopeGuard(ownershipPlan, lines);
+                } else if (index < declaration.Variables.Count - 1) {
                     lines.Add(";\n");
                 }
             }
@@ -17239,6 +17143,7 @@ namespace cs2.cpp {
             ExpressionSyntax returnExpression = ret.Expression is RefExpressionSyntax refExpression
                 ? refExpression.Expression
                 : ret.Expression;
+            AppendOwnershipDisarms(ret, CPPOwnershipTransitionKind.Transfer, lines);
             ExpressionResult result = ProcessExpression(semantic, context, returnExpression, returnLines);
 
             if (result.BeforeLines != null) {

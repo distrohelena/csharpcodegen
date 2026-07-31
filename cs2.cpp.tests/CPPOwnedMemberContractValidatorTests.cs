@@ -450,6 +450,30 @@ public sealed class CPPOwnedMemberContractValidatorTests {
     }
 
     /// <summary>
+    /// Ensures a get-only native-owned property begins released and accepts its first constructor assignment without replacement cleanup.
+    /// </summary>
+    [Fact]
+    public void Validate_WithOwnedGetOnlyPropertyInitializedByConstructor_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                public Consumer(IReadOnlyList<int> source) {
+                    int[] values = new int[source.Count];
+                    Stored = values;
+                }
+
+                [NativeOwnedMember]
+                public IReadOnlyList<int> Stored { get; }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
     /// Ensures owned-member writes from another participating compilation retain the metadata ownership contract.
     /// </summary>
     [Fact]
