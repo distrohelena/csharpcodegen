@@ -1216,7 +1216,8 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("system/collections/generic/equality_comparer.hpp", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("EqualityComparer<T>::get_Default()->GetHashCode(value)", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("int32_t GetHashCode(T& value)", equalityComparerRuntime, StringComparison.Ordinal);
+            Assert.Contains("int32_t GetHashCode(const T& value)", equalityComparerRuntime, StringComparison.Ordinal);
+            Assert.Contains("bool Equals(const T& left, const T& right)", equalityComparerRuntime, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -1917,6 +1918,7 @@ namespace cs2.cpp.tests {
             string header = File.ReadAllText(Path.Combine(output.OutputPath, "Task.hpp"));
 
             Assert.Contains("#include \"runtime/function_pointer.hpp\"", header);
+            Assert.DoesNotContain("delegate*", header, StringComparison.Ordinal);
             Assert.DoesNotContain("object* Function", output.GeneratedText, StringComparison.Ordinal);
             Assert.Contains("FunctionPointer<void, int64_t, void*, int32_t, ::IThreadDispatcher*> Function;", output.GeneratedText);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "function_pointer.hpp")));

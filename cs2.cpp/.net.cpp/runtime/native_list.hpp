@@ -8,6 +8,7 @@
 
 #include "array.hpp"
 #include "native_exceptions.hpp"
+#include "native_read_only_list.hpp"
 #include "native_string.hpp"
 
 template<typename T>
@@ -15,43 +16,6 @@ class List;
 
 template<typename T>
 class ReadOnlyCollection;
-
-/// <summary>
-/// Defines the non-mutating list contract used for managed read-only list and collection references.
-/// </summary>
-template<typename T>
-class IReadOnlyList {
-public:
-    /// <summary>
-    /// Names the stable constant iterator used by read-only range traversal.
-    /// </summary>
-    using ConstIterator = typename std::vector<T>::const_iterator;
-
-    /// <summary>
-    /// Releases one read-only contract through its interface pointer.
-    /// </summary>
-    virtual ~IReadOnlyList() = default;
-
-    /// <summary>
-    /// Returns the current number of elements exposed by the live view.
-    /// </summary>
-    virtual int32_t get_Count() const = 0;
-
-    /// <summary>
-    /// Returns one element without granting mutation access.
-    /// </summary>
-    virtual const T& get_Item(int32_t index) const = 0;
-
-    /// <summary>
-    /// Returns the beginning of the current live sequence.
-    /// </summary>
-    virtual ConstIterator begin() const = 0;
-
-    /// <summary>
-    /// Returns the end of the current live sequence.
-    /// </summary>
-    virtual ConstIterator end() const = 0;
-};
 
 template<typename T>
 class NativeListEqual {
@@ -100,8 +64,32 @@ public:
         }
     }
 
+    explicit List(const IReadOnlyList<T>* values) {
+        if (values == nullptr) {
+            throw ArgumentNullException("values");
+        }
+
+        int32_t count = values->get_Count();
+        this->reserve(static_cast<size_t>(count));
+        for (int32_t index = 0; index < count; index++) {
+            this->push_back(values->get_Item(index));
+        }
+    }
+
     void Add(const T& value) {
         this->push_back(value);
+    }
+
+    void AddRange(const IReadOnlyList<T>* values) {
+        if (values == nullptr) {
+            throw ArgumentNullException("values");
+        }
+
+        int32_t count = values->get_Count();
+        this->reserve(this->size() + static_cast<size_t>(count));
+        for (int32_t index = 0; index < count; index++) {
+            this->push_back(values->get_Item(index));
+        }
     }
 
     void Clear() {
@@ -116,6 +104,19 @@ public:
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
         return std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); }) != this->end();
+    }
+
+    int32_t IndexOf(const T& value) const {
+        NativeListEqual<T> equal;
+        typename std::vector<T>::const_iterator iterator = std::find_if(
+            std::vector<T>::begin(),
+            std::vector<T>::end(),
+            [&](const T& candidate) { return equal(candidate, value); });
+        if (iterator == std::vector<T>::end()) {
+            return -1;
+        }
+
+        return static_cast<int32_t>(std::distance(std::vector<T>::begin(), iterator));
     }
 
     bool Remove(const T& value) {
@@ -152,7 +153,7 @@ public:
     /// <summary>
     /// Returns a constant iterator for read-only traversal of this list.
     /// </summary>
-    typename IReadOnlyList<T>::ConstIterator begin() const override {
+    typename std::vector<T>::const_iterator begin() const {
         return std::vector<T>::begin();
     }
 
@@ -166,7 +167,7 @@ public:
     /// <summary>
     /// Returns the constant end iterator for read-only traversal of this list.
     /// </summary>
-    typename IReadOnlyList<T>::ConstIterator end() const override {
+    typename std::vector<T>::const_iterator end() const {
         return std::vector<T>::end();
     }
 
@@ -278,7 +279,7 @@ public:
     /// </summary>
     int32_t IndexOf(const T& value) const {
         NativeListEqual<T> equal;
-        typename IReadOnlyList<T>::ConstIterator iterator = std::find_if(
+        typename std::vector<T>::const_iterator iterator = std::find_if(
             Source->begin(),
             Source->end(),
             [&](const T& candidate) { return equal(candidate, value); });
@@ -308,20 +309,6 @@ public:
         for (int32_t index = 0; index < count; index++) {
             (*array)[arrayIndex + index] = get_Item(index);
         }
-    }
-
-    /// <summary>
-    /// Returns the beginning of the source list's current sequence.
-    /// </summary>
-    typename IReadOnlyList<T>::ConstIterator begin() const override {
-        return Source->begin();
-    }
-
-    /// <summary>
-    /// Returns the end of the source list's current sequence.
-    /// </summary>
-    typename IReadOnlyList<T>::ConstIterator end() const override {
-        return Source->end();
     }
 
     /// <summary>

@@ -6,13 +6,18 @@ namespace cs2.cpp {
     /// </summary>
     public class CPPGeneratedFunctionProfilingScopeEmitter {
         readonly CPPGeneratedFunctionProfilingManifest Manifest;
+        readonly IReadOnlyList<string> MaintainedSymbolPrefixes;
 
         /// <summary>
         /// Initializes a scope emitter that records every scope it writes.
         /// </summary>
         /// <param name="manifest">Manifest collector for the active conversion run.</param>
-        public CPPGeneratedFunctionProfilingScopeEmitter(CPPGeneratedFunctionProfilingManifest manifest) {
+        /// <param name="maintainedSymbolPrefixes">Optional maintained-symbol prefixes that are eligible for scopes.</param>
+        public CPPGeneratedFunctionProfilingScopeEmitter(
+            CPPGeneratedFunctionProfilingManifest manifest,
+            IReadOnlyList<string> maintainedSymbolPrefixes) {
             Manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
+            MaintainedSymbolPrefixes = maintainedSymbolPrefixes ?? throw new ArgumentNullException(nameof(maintainedSymbolPrefixes));
         }
 
         /// <summary>
@@ -27,6 +32,11 @@ namespace cs2.cpp {
             }
 
             if (sourceLocation == null) {
+                return;
+            }
+
+            if (MaintainedSymbolPrefixes.Count > 0 &&
+                !MaintainedSymbolPrefixes.Any(prefix => sourceLocation.MaintainedSymbol.StartsWith(prefix, StringComparison.Ordinal))) {
                 return;
             }
 

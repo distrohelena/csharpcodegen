@@ -4,6 +4,11 @@ namespace cs2.cpp {
     /// </summary>
     public static class CPPCodegenOptionNames {
         /// <summary>
+        /// Gets the generic option name that forces selected runtime features on.
+        /// </summary>
+        public const string EnabledFeatures = "codegen-enabled-features";
+
+        /// <summary>
         /// Gets the generic option name that forces selected runtime features off.
         /// </summary>
         public const string ForcedDisabledFeatures = "codegen-forced-disabled-features";
@@ -17,5 +22,10 @@ namespace cs2.cpp {
         /// Gets the generic option name that enables direct Tracy scopes for generated C++ function bodies.
         /// </summary>
         public const string GeneratedFunctionProfiling = "codegen-generated-function-profiling";
+
+        /// <summary>
+        /// Gets the generic option name containing semicolon-delimited maintained-symbol prefixes selected for generated function profiling.
+        /// </summary>
+        public const string GeneratedFunctionProfilingMaintainedSymbolPrefixes = "codegen-generated-function-profiling-maintained-symbol-prefixes";
     }
 }

@@ -82,6 +82,24 @@ public sealed class CPPOwnershipControlFlowTests {
     }
 
     /// <summary>
+    /// Ensures an owned loop-local transferred into array storage is reinitialized on each iteration instead of merging with its prior transferred state.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLoopLocalTransferredToArrayElement_DoesNotReportAmbiguousJoin() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(byte[][] values) {
+                for (int i = 0; i < values.Length; i++) {
+                    byte[] data = new byte[4];
+                    values[i] = data;
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN009");
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "data");
+    }
+
+    /// <summary>
     /// Ensures reviewed metadata-only no-escape parameters preserve ownership of caller-created storage.
     /// </summary>
     [Fact]
@@ -95,6 +113,57 @@ public sealed class CPPOwnershipControlFlowTests {
 
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
         Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.ScopeCleanup && transition.LocalName == "values");
+    }
+
+    /// <summary>
+    /// Ensures every explicitly annotated parameter in a multi-argument call preserves caller ownership independently.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithMultipleNoEscapeParameters_KeepsCallerOwnership() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            static void Consume([NativeNoEscape] List<int> first, [NativeNoEscape] List<int> second) {
+            }
+
+            public static void Run() {
+                List<int> first = new List<int>();
+                List<int> second = new List<int>();
+                Consume(first, second);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.Equal(2, result.EmissionPlan.Transitions.Count(transition => transition.Kind == CPPOwnershipTransitionKind.ScopeCleanup));
+    }
+
+    /// <summary>
+    /// Ensures an owned argument retained only by a returned disposable remains caller-owned when that disposable is bounded by a using declaration.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithBorrowRetainedByUsingResult_KeepsCallerOwnership() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            sealed class Reader : IDisposable {
+                readonly List<int> Source;
+
+                Reader(List<int> source) {
+                    Source = source;
+                }
+
+                public static Reader Create(List<int> source) {
+                    return new Reader(source);
+                }
+
+                public void Dispose() {
+                }
+            }
+
+            public static void Run() {
+                List<int> source = new List<int>();
+                using Reader reader = Reader.Create(source);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.ScopeCleanup && transition.LocalName == "source");
     }
 
     /// <summary>
@@ -410,10 +479,10 @@ public sealed class CPPOwnershipControlFlowTests {
     }
 
     /// <summary>
-    /// Ensures an owned local cannot cross an unclassified constructor parameter boundary.
+    /// Ensures an owned local cannot escape through a constructor parameter without transferring cleanup responsibility.
     /// </summary>
     [Fact]
-    public void Analyze_WithUnknownConstructorArgument_ReportsCPPOWN001() {
+    public void Analyze_WithEscapingConstructorArgument_ReportsCPPOWN002() {
         CPPOwnershipAnalysisResult result = Analyze("""
             sealed class Asset {
                 List<int> Stored;
@@ -429,7 +498,7 @@ public sealed class CPPOwnershipControlFlowTests {
             }
             """);
 
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN001" && diagnostic.SourceMemberName == "Run");
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN002" && diagnostic.SourceMemberName == "Run");
     }
 
     /// <summary>
@@ -452,6 +521,37 @@ public sealed class CPPOwnershipControlFlowTests {
 
         Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "values");
         Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures a retained-borrow constructor can store an owner back-reference without consuming the owner's lifetime.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithRetainsBorrowConstructorArgument_PreservesOwnerLifetime() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            sealed class Owner {
+            }
+
+            sealed class Child {
+                Owner OwnerValue;
+
+                public Child([NativeRetainsBorrow] Owner owner) {
+                    OwnerValue = owner;
+                }
+            }
+
+            public static Owner Run() {
+                Owner owner = new Owner();
+                Child child = new Child(owner);
+                return owner;
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        CPPOwnershipTransition transfer = Assert.Single(
+            result.EmissionPlan.Transitions,
+            transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "owner");
+        Assert.IsType<Microsoft.CodeAnalysis.CSharp.Syntax.ReturnStatementSyntax>(transfer.Syntax);
     }
 
     /// <summary>
@@ -488,6 +588,14 @@ public sealed class CPPOwnershipControlFlowTests {
 
             [AttributeUsage(AttributeTargets.Parameter)]
             public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeNoEscapeAttribute : Attribute {
+            }
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeRetainsBorrowAttribute : Attribute {
             }
 
             public static class NativeOwnership {

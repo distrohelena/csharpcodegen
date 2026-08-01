@@ -57,6 +57,12 @@ public sealed class CPPOwnershipExpressionClassifier {
             return CPPOwnershipKind.Borrowed;
         } else if (IsNullOperation(operation)) {
             return CPPOwnershipKind.Unknown;
+        } else if (operation is ICoalesceOperation coalesceOperation) {
+            return MergeConditionalOwnership(
+                Classify(coalesceOperation.Value, summaries),
+                IsNullOperation(coalesceOperation.Value),
+                Classify(coalesceOperation.WhenNull, summaries),
+                IsNullOperation(coalesceOperation.WhenNull));
         } else if (operation is IConditionalOperation conditionalOperation) {
             return MergeConditionalOwnership(
                 Classify(conditionalOperation.WhenTrue, summaries),
@@ -67,6 +73,8 @@ public sealed class CPPOwnershipExpressionClassifier {
             return ResolveInvocationOwnership(invocationOperation.TargetMethod, summaries);
         } else if (operation is IPropertyReferenceOperation propertyReferenceOperation) {
             return ResolvePropertyOwnership(propertyReferenceOperation.Property, summaries);
+        } else if (operation is IArrayElementReferenceOperation) {
+            return CPPOwnershipKind.Borrowed;
         } else if (operation is IParameterReferenceOperation ||
                    operation is IFieldReferenceOperation ||
                    operation is IInstanceReferenceOperation) {

@@ -30,6 +30,10 @@ public static class CPPMethodOwnershipKey {
         IMethodSymbol originalMethod = method.OriginalDefinition;
         string assemblyName = originalMethod.ContainingAssembly?.Identity.Name ?? string.Empty;
         if (string.IsNullOrWhiteSpace(assemblyName)) {
+            if (originalMethod.MethodKind == MethodKind.FunctionPointerSignature) {
+                return "<function-pointer>|" + originalMethod.ToDisplayString(MethodDisplayFormat);
+            }
+
             throw new InvalidOperationException($"Method '{method}' does not belong to a named assembly.");
         }
 

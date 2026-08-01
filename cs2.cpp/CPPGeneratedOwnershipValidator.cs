@@ -56,7 +56,11 @@ namespace cs2.cpp {
             bool requiresTransientSceneLoadResultDisposal = RequiresTransientSceneLoadResultDisposal(source);
             bool requiresLoadedSceneRecordDisposal = RequiresLoadedSceneRecordDisposal(source);
             if (requiresPendingSceneOperationDisposal) {
-                RequireContains(sourcePath, source, "delete operation;", "pending scene operation disposal");
+                RequireContainsAny(
+                    sourcePath,
+                    source,
+                    ["delete operation;", "delete (*this->PendingOperations).get_Item("],
+                    "pending scene operation disposal");
             }
 
             if (requiresTransientSceneLoadResultDisposal) {
@@ -149,6 +153,27 @@ namespace cs2.cpp {
             if (contents.Contains(forbiddenText, StringComparison.Ordinal)) {
                 throw new InvalidOperationException($"Generated C++ output '{filePath}' still contains forbidden legacy contract '{contractName}'.");
             }
+        }
+
+        /// <summary>
+        /// Throws when the supplied source text does not contain any accepted marker for one required contract.
+        /// </summary>
+        /// <param name="filePath">File being validated.</param>
+        /// <param name="contents">Current emitted file contents.</param>
+        /// <param name="acceptedTexts">Equivalent generated markers accepted for the contract.</param>
+        /// <param name="contractName">Human-readable contract description.</param>
+        static void RequireContainsAny(
+            string filePath,
+            string contents,
+            IReadOnlyList<string> acceptedTexts,
+            string contractName) {
+            for (int index = 0; index < acceptedTexts.Count; index++) {
+                if (contents.Contains(acceptedTexts[index], StringComparison.Ordinal)) {
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException($"Generated C++ output '{filePath}' is missing required contract '{contractName}'.");
         }
 
         /// <summary>

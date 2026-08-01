@@ -28,6 +28,7 @@ public sealed class CPPIntrinsicOwnershipCatalog {
                    IsMethod(method, "System.Collections.Generic.List<T>", "ToArray") ||
                    IsMethod(method, "System.Collections.Generic.List<T>", "AsReadOnly") ||
                    IsMethod(method, "System.Text.Encoding", "GetBytes") ||
+                   IsMethod(method, "System.Security.Cryptography.SHA256", "HashData") ||
                    IsMethod(method, "System.IO.MemoryStream", "ToArray") ||
                    IsMethod(method, "System.IO.File", "OpenRead") ||
                    IsMethod(method, "System.String", "Split")) {
@@ -56,6 +57,9 @@ public sealed class CPPIntrinsicOwnershipCatalog {
             if (MatchesAttributeName(attributeName, "NativeNoEscape")) {
                 ownership = CPPParameterOwnershipKind.NoEscape;
                 return true;
+            } else if (MatchesAttributeName(attributeName, "NativeRetainsBorrow")) {
+                ownership = CPPParameterOwnershipKind.RetainsBorrow;
+                return true;
             } else if (MatchesAttributeName(attributeName, "NativeTakesOwnership")) {
                 ownership = CPPParameterOwnershipKind.TakesOwnership;
                 return true;
@@ -63,7 +67,17 @@ public sealed class CPPIntrinsicOwnershipCatalog {
         }
 
         IMethodSymbol method = parameter.ContainingSymbol as IMethodSymbol;
-        if (IsMethod(method, "System.String", "Join") ||
+        if (IsMethod(method, "System.Collections.Generic.List<T>", "Add") ||
+            IsMethod(method, "System.Collections.Generic.Dictionary<TKey, TValue>", "Add")) {
+            ownership = CPPParameterOwnershipKind.RetainsBorrow;
+            return true;
+        } else if (IsMethod(method, "System.Array", "Copy") ||
+            IsMethod(method, "System.Collections.Generic.List<T>", "AddRange") ||
+            IsMethod(method, "System.Text.Encoding", "GetString") ||
+            IsMethod(method, "System.Security.Cryptography.SHA256", "HashData") ||
+            IsMethodOrOverride(method, "System.IO.Stream", "CopyTo") ||
+            IsMethodOrOverride(method, "System.IO.Stream", "Write") ||
+            IsMethod(method, "System.String", "Join") ||
             IsMethod(method, "System.String", "Split")) {
             ownership = CPPParameterOwnershipKind.NoEscape;
             return true;
@@ -90,6 +104,26 @@ public sealed class CPPIntrinsicOwnershipCatalog {
             : method.ContainingType?.OriginalDefinition.ToDisplayString();
         return string.Equals(method.Name, methodName, StringComparison.Ordinal) &&
             string.Equals(resolvedContainingTypeName, containingTypeName, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Determines whether one Roslyn method or any overridden base declaration matches an exact type and method name.
+    /// </summary>
+    /// <param name="method">Method symbol whose override chain should be inspected.</param>
+    /// <param name="containingTypeName">Fully qualified containing type name expected in the override chain.</param>
+    /// <param name="methodName">Exact source method name.</param>
+    /// <returns><c>true</c> when the method or one overridden declaration matches the requested identity.</returns>
+    static bool IsMethodOrOverride(IMethodSymbol method, string containingTypeName, string methodName) {
+        IMethodSymbol candidate = method;
+        while (candidate != null) {
+            if (IsMethod(candidate, containingTypeName, methodName)) {
+                return true;
+            }
+
+            candidate = candidate.OverriddenMethod;
+        }
+
+        return false;
     }
 
     /// <summary>

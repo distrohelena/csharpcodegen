@@ -36,6 +36,10 @@ namespace cs2.cpp {
         /// <param name="featureCatalog">External feature catalog that defines which types own which caller-owned features.</param>
         /// <returns><c>true</c> when the type should be kept; otherwise <c>false</c>.</returns>
         static bool ShouldIncludeType(ConversionClass conversionClass, CPPBuildUsageReport report, IReadOnlyDictionary<string, IReadOnlyList<string>> ruleMap) {
+            if (!CPPGeneratedTypeEmissionPolicy.ShouldEmit(conversionClass)) {
+                return false;
+            }
+
             if (conversionClass.TypeSymbol == null) {
                 return true;
             }
@@ -87,6 +91,7 @@ namespace cs2.cpp {
                 foreach (ConversionClass dependency in EnumerateGeneratedDependencies(program, currentType)) {
                     if (dependency == null ||
                         dependency.IsNative ||
+                        !CPPGeneratedTypeEmissionPolicy.ShouldEmit(dependency) ||
                         !includedTypeNames.Add(dependency.GetEmittedTypeName())) {
                         continue;
                     }

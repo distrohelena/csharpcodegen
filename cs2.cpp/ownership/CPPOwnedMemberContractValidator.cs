@@ -185,10 +185,9 @@ public sealed class CPPOwnedMemberContractValidator {
                 if (method == null || !MethodReferencesMember(methodDeclaration, semanticModel, member, method)) {
                     continue;
                 }
-                bool isDispose = methodDeclaration is MethodDeclarationSyntax &&
-                    SymbolEqualityComparer.Default.Equals(method.ContainingType, member.ContainingType) &&
-                    string.Equals(method.Name, "Dispose", StringComparison.Ordinal) &&
-                    method.Parameters.Length == 0;
+                bool isDispose = !member.IsStatic &&
+                    methodDeclaration is MethodDeclarationSyntax &&
+                    IsDisposeMethod(method, member.ContainingType);
                 if (isDispose) {
                     disposeDeclaration = (MethodDeclarationSyntax)methodDeclaration;
                 }
@@ -227,7 +226,7 @@ public sealed class CPPOwnedMemberContractValidator {
             }
         }
 
-        if (disposeDeclaration == null) {
+        if (!member.IsStatic && disposeDeclaration == null) {
             AddDiagnostic(diagnostics, DiagnosticFactory.Create(
                 "CPPOWN007",
                 declarationSyntax,
@@ -295,9 +294,7 @@ public sealed class CPPOwnedMemberContractValidator {
         SemanticModel semanticModel,
         ISymbol member,
         IMethodSymbol method) {
-        bool isDispose = SymbolEqualityComparer.Default.Equals(method.ContainingType, member.ContainingType) &&
-            string.Equals(method.Name, "Dispose", StringComparison.Ordinal) &&
-            method.Parameters.Length == 0;
+        bool isDispose = !member.IsStatic && IsDisposeMethod(method, member.ContainingType);
         if (isDispose) {
             return true;
         }
@@ -309,6 +306,29 @@ public sealed class CPPOwnedMemberContractValidator {
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Determines whether one method is the parameterless disposal boundary for the supplied containing type.
+    /// </summary>
+    /// <param name="method">Method whose ordinary or explicit-interface identity should be inspected.</param>
+    /// <param name="containingType">Type that owns the native-owned member being validated.</param>
+    /// <returns><c>true</c> for either a normal Dispose method or an explicit IDisposable.Dispose implementation.</returns>
+    static bool IsDisposeMethod(IMethodSymbol method, INamedTypeSymbol containingType) {
+        if (!SymbolEqualityComparer.Default.Equals(method.ContainingType, containingType) ||
+            method.Parameters.Length != 0) {
+            return false;
+        }
+        if (string.Equals(method.Name, "Dispose", StringComparison.Ordinal)) {
+            return true;
+        }
+
+        return method.ExplicitInterfaceImplementations.Any(interfaceMethod =>
+            string.Equals(interfaceMethod.Name, "Dispose", StringComparison.Ordinal) &&
+            string.Equals(
+                interfaceMethod.ContainingType.ToDisplayString(),
+                "System.IDisposable",
+                StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -358,8 +378,9 @@ public sealed class CPPOwnedMemberContractValidator {
                 if (syntax is InvocationExpressionSyntax invocation && IsMemberRelease(invocation, semanticModel, member)) {
                     released = true;
                 } else if (syntax is AssignmentExpressionSyntax assignment && IsMemberAssignment(assignment, semanticModel, member)) {
+                    bool clearsMember = IsNullAssignment(assignment, semanticModel);
                     ValidateAssignedOwnership(assignment, semanticModel, method, analysis, diagnostics);
-                    if (!released) {
+                    if (!released && !IsFreshReceiverAssignment(assignment, semanticModel, member)) {
                         AddDiagnostic(diagnostics, DiagnosticFactory.Create(
                             "CPPOWN007",
                             assignment,
@@ -367,7 +388,7 @@ public sealed class CPPOwnedMemberContractValidator {
                             $"Native-owned member '{member.Name}' is replaced before its prior value is released.",
                             "Release the existing member value on every path before assigning its replacement."));
                     }
-                    released = false;
+                    released = clearsMember;
                 }
             }
         }
@@ -424,11 +445,11 @@ public sealed class CPPOwnedMemberContractValidator {
                     member,
                     semanticModel);
                 foreach (SyntaxNode syntax in GetMemberSyntax(block)) {
-                    if (syntax is InvocationExpressionSyntax invocation && IsMemberRelease(invocation, semanticModel, member)) {
-                        released = true;
-                    } else if (syntax is AssignmentExpressionSyntax assignment && IsMemberAssignment(assignment, semanticModel, member)) {
-                        released = false;
-                    }
+                if (syntax is InvocationExpressionSyntax invocation && IsMemberRelease(invocation, semanticModel, member)) {
+                    released = true;
+                } else if (syntax is AssignmentExpressionSyntax assignment && IsMemberAssignment(assignment, semanticModel, member)) {
+                    released = IsNullAssignment(assignment, semanticModel);
+                }
                 }
 
                 if (!outputStates.TryGetValue(block, out bool previous) || previous != released) {
@@ -559,7 +580,7 @@ public sealed class CPPOwnedMemberContractValidator {
                     if (syntax is InvocationExpressionSyntax invocation && IsMemberRelease(invocation, semanticModel, member)) {
                         released = true;
                     } else if (syntax is AssignmentExpressionSyntax assignment && IsMemberAssignment(assignment, semanticModel, member)) {
-                        released = false;
+                        released = IsNullAssignment(assignment, semanticModel);
                     }
                 }
                 if (!regionOutputs.TryGetValue(block, out bool priorReleased) || priorReleased != released) {
@@ -677,8 +698,9 @@ public sealed class CPPOwnedMemberContractValidator {
                     if (syntax is InvocationExpressionSyntax invocation && IsMemberRelease(invocation, semanticModel, member)) {
                         released = true;
                     } else if (syntax is AssignmentExpressionSyntax assignment && IsMemberAssignment(assignment, semanticModel, member)) {
+                        bool clearsMember = IsNullAssignment(assignment, semanticModel);
                         ValidateAssignedOwnership(assignment, semanticModel, method, analysis, diagnostics);
-                        if (!released) {
+                        if (!released && !IsFreshReceiverAssignment(assignment, semanticModel, member)) {
                             AddDiagnostic(diagnostics, DiagnosticFactory.Create(
                                 "CPPOWN007",
                                 assignment,
@@ -686,7 +708,7 @@ public sealed class CPPOwnedMemberContractValidator {
                                 $"Native-owned member '{member.Name}' is replaced before its prior value is released.",
                                 "Release the existing member value on every path before assigning its replacement."));
                         }
-                        released = false;
+                        released = clearsMember;
                     }
                 }
                 if (!regionOutputs.TryGetValue(block, out bool priorReleased) || priorReleased != released) {
@@ -736,12 +758,17 @@ public sealed class CPPOwnedMemberContractValidator {
         CPPOwnershipAnalysisResult analysis,
         ICollection<CPPConversionDiagnostic> diagnostics) {
         IAssignmentOperation assignment = semanticModel.GetOperation(assignmentSyntax) as IAssignmentOperation;
+        if (IsNullAssignment(assignmentSyntax, semanticModel)) {
+            return;
+        }
+
         CPPOwnershipKind ownership = ExpressionClassifier.Classify(
             assignment.Value,
             analysis.MethodSummaries.Summaries);
         IOperation assignedValue = UnwrapConversion(assignment.Value);
-        if (assignedValue is IParameterReferenceOperation parameterReference &&
-            IntrinsicCatalog.TryGetParameterOwnership(parameterReference.Parameter, out CPPParameterOwnershipKind parameterOwnership) &&
+        IParameterSymbol transferredParameter = ResolveTransferredParameter(assignedValue);
+        if (transferredParameter != null &&
+            IntrinsicCatalog.TryGetParameterOwnership(transferredParameter, out CPPParameterOwnershipKind parameterOwnership) &&
             parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
             ownership = CPPOwnershipKind.Owned;
         } else if (assignedValue is ILocalReferenceOperation &&
@@ -759,6 +786,121 @@ public sealed class CPPOwnedMemberContractValidator {
             method,
             $"Native-owned member assignment receives a {ownership.ToString().ToLowerInvariant()} value.",
             "Assign only a fresh or explicitly owned value to a native-owned member."));
+    }
+
+    /// <summary>
+    /// Resolves a directly transferred parameter through identity-preserving conversions and a throwing null guard.
+    /// </summary>
+    /// <param name="operation">Assigned value operation whose parameter provenance should be resolved.</param>
+    /// <returns>The transferred parameter, or <c>null</c> when the expression can produce another value.</returns>
+    static IParameterSymbol ResolveTransferredParameter(IOperation operation) {
+        operation = UnwrapConversion(operation);
+        if (operation is IParameterReferenceOperation parameterReference) {
+            return parameterReference.Parameter;
+        }
+        if (operation is ICoalesceOperation coalesce &&
+            UnwrapConversion(coalesce.WhenNull) is IThrowOperation) {
+            return ResolveTransferredParameter(coalesce.Value);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Determines whether one member assignment explicitly clears its target with a null value.
+    /// </summary>
+    /// <param name="assignmentSyntax">Assignment whose value should be inspected.</param>
+    /// <param name="semanticModel">Semantic model for the assignment expression.</param>
+    /// <returns><c>true</c> when conversion unwrapping exposes a constant null value.</returns>
+    static bool IsNullAssignment(AssignmentExpressionSyntax assignmentSyntax, SemanticModel semanticModel) {
+        IAssignmentOperation assignment = semanticModel.GetOperation(assignmentSyntax) as IAssignmentOperation;
+        IOperation assignedValue = UnwrapConversion(assignment?.Value);
+        return assignedValue != null &&
+            assignedValue.ConstantValue.HasValue &&
+            assignedValue.ConstantValue.Value == null;
+    }
+
+    /// <summary>
+    /// Determines whether one owned-member assignment initializes a receiver proven to originate from a fresh allocation.
+    /// </summary>
+    /// <param name="assignmentSyntax">Assignment whose receiver lifetime should be inspected.</param>
+    /// <param name="semanticModel">Semantic model used to resolve the receiver and its allocation.</param>
+    /// <param name="member">Owned member being initialized.</param>
+    /// <returns><c>true</c> when the assignment belongs to an object initializer or is the first write through a fresh local receiver.</returns>
+    static bool IsFreshReceiverAssignment(
+        AssignmentExpressionSyntax assignmentSyntax,
+        SemanticModel semanticModel,
+        ISymbol member) {
+        if (assignmentSyntax.Ancestors()
+            .OfType<InitializerExpressionSyntax>()
+            .Any(initializer => initializer.IsKind(SyntaxKind.ObjectInitializerExpression))) {
+            return true;
+        }
+
+        IAssignmentOperation assignment = semanticModel.GetOperation(assignmentSyntax) as IAssignmentOperation;
+        ILocalSymbol receiver = ResolveReceiverLocal(assignment?.Target);
+        VariableDeclaratorSyntax receiverDeclaration = receiver?.DeclaringSyntaxReferences
+            .Select(reference => reference.GetSyntax())
+            .OfType<VariableDeclaratorSyntax>()
+            .SingleOrDefault();
+        if (receiverDeclaration?.Initializer == null ||
+            receiverDeclaration.SpanStart >= assignmentSyntax.SpanStart) {
+            return false;
+        }
+
+        IOperation receiverInitializer = UnwrapConversion(
+            semanticModel.GetOperation(receiverDeclaration.Initializer.Value));
+        if (receiverInitializer is not IObjectCreationOperation objectCreation ||
+            !SymbolEqualityComparer.Default.Equals(objectCreation.Type, member.ContainingType)) {
+            return false;
+        }
+
+        SyntaxNode executableDeclaration = assignmentSyntax.Ancestors()
+            .FirstOrDefault(ancestor => ancestor is BaseMethodDeclarationSyntax || ancestor is AccessorDeclarationSyntax);
+        if (executableDeclaration == null) {
+            return false;
+        }
+
+        foreach (AssignmentExpressionSyntax priorAssignment in executableDeclaration.DescendantNodes()
+            .OfType<AssignmentExpressionSyntax>()
+            .Where(candidate => candidate.SpanStart < assignmentSyntax.SpanStart &&
+                candidate.SpanStart > receiverDeclaration.SpanStart)) {
+            IAssignmentOperation priorOperation = semanticModel.GetOperation(priorAssignment) as IAssignmentOperation;
+            if (SymbolEqualityComparer.Default.Equals(ResolveReferencedLocal(priorOperation?.Target), receiver)) {
+                return false;
+            }
+            if (SymbolEqualityComparer.Default.Equals(ResolveMemberSymbol(priorOperation?.Target), member) &&
+                SymbolEqualityComparer.Default.Equals(ResolveReceiverLocal(priorOperation?.Target), receiver)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the local used as the receiver of a field or property reference.
+    /// </summary>
+    /// <param name="target">Assignment target whose receiver should be inspected.</param>
+    /// <returns>The receiver local, or <c>null</c> when the target uses another receiver form.</returns>
+    static ILocalSymbol ResolveReceiverLocal(IOperation target) {
+        IOperation instance = target switch {
+            IFieldReferenceOperation fieldReference => fieldReference.Instance,
+            IPropertyReferenceOperation propertyReference => propertyReference.Instance,
+            _ => null
+        };
+        return ResolveReferencedLocal(instance);
+    }
+
+    /// <summary>
+    /// Resolves a local reference after removing implicit conversion wrappers.
+    /// </summary>
+    /// <param name="operation">Operation that may reference a local.</param>
+    /// <returns>The referenced local, or <c>null</c> for nonlocal operations.</returns>
+    static ILocalSymbol ResolveReferencedLocal(IOperation operation) {
+        return UnwrapConversion(operation) is ILocalReferenceOperation localReference
+            ? localReference.Local
+            : null;
     }
 
     /// <summary>
@@ -795,7 +937,9 @@ public sealed class CPPOwnedMemberContractValidator {
             (!string.Equals(invocation.TargetMethod.Name, "Delete", StringComparison.Ordinal) &&
              !string.Equals(invocation.TargetMethod.Name, "Release", StringComparison.Ordinal) &&
              !string.Equals(invocation.TargetMethod.Name, "DisposeAndDelete", StringComparison.Ordinal) &&
-             !string.Equals(invocation.TargetMethod.Name, "DisposeAndRelease", StringComparison.Ordinal))) {
+             !string.Equals(invocation.TargetMethod.Name, "DisposeAndRelease", StringComparison.Ordinal) &&
+             !string.Equals(invocation.TargetMethod.Name, "DeleteItemsAndRelease", StringComparison.Ordinal) &&
+             !string.Equals(invocation.TargetMethod.Name, "DisposeItemsAndRelease", StringComparison.Ordinal))) {
             return false;
         }
 

@@ -36,6 +36,228 @@ public sealed class CPPOwnedMemberContractValidatorTests {
     }
 
     /// <summary>
+    /// Ensures a null-guarded transfer parameter remains proven owned when assigned into an owned member.
+    /// </summary>
+    [Fact]
+    public void Validate_WithNullGuardedTransferParameterAssignment_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object Stored;
+
+                public Consumer([NativeTakesOwnership] object value) {
+                    Stored = value ?? throw new ArgumentNullException(nameof(value));
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures an explicit IDisposable implementation is recognized as the final cleanup boundary for owned members.
+    /// </summary>
+    [Fact]
+    public void Validate_WithExplicitInterfaceDispose_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                List<int> Stored;
+
+                public Consumer() {
+                    Stored = new List<int>();
+                }
+
+                void IDisposable.Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures a process-lifetime static owner proves replacement cleanup without requiring instance disposal to clear the static root.
+    /// </summary>
+    [Fact]
+    public void Validate_WithStaticOwnedMemberAndSafeReplacement_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Registry : IDisposable {
+                [NativeOwnedMember]
+                public static List<int> Stored;
+
+                public static void Replace() {
+                    NativeOwnership.Delete(Stored);
+                    Stored = new List<int>();
+                }
+
+                public void Dispose() {
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures clearing an owned member after explicit release preserves the released lifecycle state.
+    /// </summary>
+    [Fact]
+    public void Validate_WithReleasedMemberClearedToNull_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                List<int> Stored;
+
+                public Consumer() {
+                    Stored = new List<int>();
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                    Stored = null;
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures clearing an owned member without first releasing its prior value remains a hard lifecycle error.
+    /// </summary>
+    [Fact]
+    public void Validate_WithLiveMemberClearedToNull_ReportsCPPOWN007() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                List<int> Stored;
+
+                public Consumer() {
+                    Stored = new List<int>();
+                }
+
+                public void Dispose() {
+                    Stored = null;
+                }
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007" && diagnostic.SourceMemberName == "Dispose");
+    }
+
+    /// <summary>
+    /// Ensures an owned member may be initialized directly on a fresh object initializer receiver without prior cleanup.
+    /// </summary>
+    [Fact]
+    public void Validate_WithFreshObjectInitializerAssignment_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                public List<int> Stored;
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+
+            public static class Factory {
+                public static Consumer Create() {
+                    return new Consumer {
+                        Stored = new List<int>()
+                    };
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures the first owned-member assignment through a freshly allocated local receiver is treated as initialization.
+    /// </summary>
+    [Fact]
+    public void Validate_WithFreshLocalReceiverAssignment_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                List<int> Stored;
+
+                public static Consumer Create() {
+                    Consumer consumer = new Consumer();
+                    consumer.Stored = new List<int>();
+                    return consumer;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Ensures a fresh receiver exemption applies only to its first owned-member write.
+    /// </summary>
+    [Fact]
+    public void Validate_WithFreshLocalReceiverSecondAssignment_ReportsCPPOWN007() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                List<int> Stored;
+
+                public static Consumer Create() {
+                    Consumer consumer = new Consumer();
+                    consumer.Stored = new List<int>();
+                    consumer.Stored = new List<int>();
+                    return consumer;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Stored);
+                }
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007" && diagnostic.SourceMemberName == "Create");
+    }
+
+    /// <summary>
+    /// Ensures deep array cleanup primitives satisfy owned-member replacement and disposal proofs.
+    /// </summary>
+    [Fact]
+    public void Validate_WithDeepArrayCleanup_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+
+                public Consumer() {
+                    Stored = new object[1];
+                }
+
+                public void Replace() {
+                    NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                    Stored = new object[1];
+                }
+
+                public void Dispose() {
+                    NativeOwnership.DisposeItemsAndRelease(ref Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" || diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
     /// Ensures replacing an owned member without releasing its prior value is rejected.
     /// </summary>
     [Fact]
@@ -640,6 +862,34 @@ public sealed class CPPOwnedMemberContractValidatorTests {
     }
 
     /// <summary>
+    /// Ensures null coalescing preserves ownership when both possible non-null results are explicitly owned.
+    /// </summary>
+    [Fact]
+    public void Validate_WithOwnedInvocationCoalescedWithFreshArray_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+
+                public Consumer() {
+                    Stored = ReadValues() ?? new object[0];
+                }
+
+                [NativeOwnedReturn]
+                static object[] ReadValues() {
+                    return null;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.DisposeItemsAndRelease(ref Stored);
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006");
+    }
+
+    /// <summary>
     /// Builds one owned-member fixture and runs local plus member ownership validation.
     /// </summary>
     /// <param name="consumerSource">Consumer type under validation.</param>
@@ -653,11 +903,21 @@ public sealed class CPPOwnedMemberContractValidatorTests {
             public sealed class NativeOwnedMemberAttribute : Attribute {
             }
 
+            [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property)]
+            public sealed class NativeOwnedReturnAttribute : Attribute {
+            }
+
             public static class NativeOwnership {
                 public static void Delete<T>(T value) where T : class {
                 }
 
                 public static void DisposeAndRelease<T>(T value) where T : class {
+                }
+
+                public static void DeleteItemsAndRelease<T>(ref T[] values) where T : class {
+                }
+
+                public static void DisposeItemsAndRelease<T>(ref T[] values) where T : class {
                 }
             }
             """ + Environment.NewLine + consumerSource;

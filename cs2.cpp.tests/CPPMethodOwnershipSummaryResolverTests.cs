@@ -10,6 +10,36 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPMethodOwnershipSummaryResolverTests {
     /// <summary>
+    /// Ensures an integer comparer implemented on a nested value type never enters native pointer ownership analysis.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithNestedRefComparer_SkipsValueReturnOwnership() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            public interface IComparerRef<T> {
+                int Compare(ref T first, ref T second);
+            }
+
+            public sealed class Owner {
+                struct Target {
+                    public int Value;
+                }
+
+                struct Comparer : IComparerRef<Target> {
+                    public int Compare(ref Target first, ref Target second) {
+                        return first.Value.CompareTo(second.Value);
+                    }
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.SourceMemberName == "Compare");
+    }
+
+    /// <summary>
     /// Ensures anonymous functions and explicit delegate wrappers are classified as fresh owned native delegate storage.
     /// </summary>
     [Fact]
@@ -232,6 +262,144 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
     }
 
     /// <summary>
+    /// Ensures a parameter referenced only by a null guard and <c>nameof</c> remains non-escaping.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithNameOfUse_InfersNoEscape() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeNoEscapeAttribute : Attribute {
+            }
+
+            public sealed class Header {
+                public int FormatId { get; }
+                public int Version { get; }
+            }
+
+            public static class HeaderValidator {
+                public static void Validate([NativeNoEscape] Header header, int expectedFormatId) {
+                    if (header == null) {
+                        throw new ArgumentNullException(nameof(header));
+                    }
+                }
+
+                static void ValidateVersion(int version) {
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, ResolveSummary(compilation, resolution, "Validate").GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Validate");
+    }
+
+    /// <summary>
+    /// Ensures an explicit no-escape contract can classify an otherwise opaque downstream boundary without permitting a proven escape.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithDeclaredNoEscapeAroundOpaqueBoundary_AcceptsAssertion() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeNoEscapeAttribute : Attribute {
+            }
+
+            public interface IConsumer {
+                void Use(object value);
+            }
+
+            public sealed class Wrapper {
+                readonly IConsumer Consumer;
+
+                public Wrapper(IConsumer consumer) {
+                    Consumer = consumer;
+                }
+
+                public void Use([NativeNoEscape] object value) {
+                    Consumer.Use(value);
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, ResolveSummary(compilation, resolution, "Wrapper", "Use").GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Use");
+    }
+
+    /// <summary>
+    /// Ensures a borrow retained only by a returned disposable is non-escaping when that disposable remains inside a using scope.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithBorrowConfinedByUsingResult_InfersNoEscape() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            public sealed class Reader : IDisposable {
+                readonly object Source;
+
+                Reader(object source) {
+                    Source = source;
+                }
+
+                public static Reader Create(object source) {
+                    return new Reader(source);
+                }
+
+                public void Dispose() {
+                }
+            }
+
+            public static class Consumer {
+                public static void Read(object source) {
+                    using Reader reader = Reader.Create(source);
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.EscapesWithReturn, ResolveSummary(compilation, resolution, "Reader", "Create").GetParameterOwnership(0));
+        Assert.Equal(CPPParameterOwnershipKind.NoEscape, ResolveSummary(compilation, resolution, "Consumer", "Read").GetParameterOwnership(0));
+    }
+
+    /// <summary>
+    /// Ensures an explicit transfer contract can classify an opaque collection insertion while a no-op implementation remains contradictory.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithDeclaredTransferAroundOpaqueCollection_AcceptsOnlyUnresolvedFlow() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+            using System.Collections.Generic;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            public sealed class Owner {
+                readonly List<object> Items = new List<object>();
+
+                public void Add([NativeTakesOwnership] object value) {
+                    Items.Add(value);
+                }
+
+                public void Ignore([NativeTakesOwnership] object value) {
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, ResolveSummary(compilation, resolution, "Owner", "Add").GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Add");
+        Assert.Contains(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Ignore");
+    }
+
+    /// <summary>
     /// Ensures a parameter used as an indexer receiver inside an argument expression is not mistaken for the index argument itself.
     /// </summary>
     [Fact]
@@ -249,6 +417,94 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
         CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
 
         Assert.Equal(CPPParameterOwnershipKind.NoEscape, ResolveSummary(compilation, resolution, "Read").GetParameterOwnership(0));
+    }
+
+    /// <summary>
+    /// Ensures a constructor parameter retained through a null-guard expression escapes with the constructed instance.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithConstructorMemberAssignmentThroughNullGuard_InfersEscapeWithReturn() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            public sealed class Owner {
+                object Value { get; }
+
+                public Owner(object value) {
+                    Value = value ?? throw new ArgumentNullException(nameof(value));
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+        IMethodSymbol constructor = compilation.GetTypeByMetadataName("Owner")
+            ?.InstanceConstructors
+            .Single(candidate => candidate.Parameters.Length == 1)
+            ?? throw new InvalidOperationException("Owner constructor did not resolve.");
+
+        Assert.Equal(CPPParameterOwnershipKind.EscapesWithReturn, resolution.GetSummary(constructor).GetParameterOwnership(0));
+    }
+
+    /// <summary>
+    /// Ensures an explicit ownership-transfer contract is compatible with a constructor retaining the parameter in the constructed instance.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithTakesOwnershipConstructorMemberAssignment_AcceptsEscapeWithReturnImplementation() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            public sealed class Owner {
+                object Value { get; }
+
+                public Owner([NativeTakesOwnership] object value) {
+                    Value = value ?? throw new ArgumentNullException(nameof(value));
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+        IMethodSymbol constructor = compilation.GetTypeByMetadataName("Owner")
+            ?.InstanceConstructors
+            .Single(candidate => candidate.Parameters.Length == 1)
+            ?? throw new InvalidOperationException("Owner constructor did not resolve.");
+
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, resolution.GetSummary(constructor).GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006");
+    }
+
+    /// <summary>
+    /// Ensures a retained-borrow constructor contract is compatible with storing a non-owning back-reference in the constructed object.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithRetainsBorrowConstructorMemberAssignment_AcceptsEscapeWithReturnImplementation() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeRetainsBorrowAttribute : Attribute {
+            }
+
+            public sealed class Child {
+                object Owner { get; }
+
+                public Child([NativeRetainsBorrow] object owner) {
+                    Owner = owner ?? throw new ArgumentNullException(nameof(owner));
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+        IMethodSymbol constructor = compilation.GetTypeByMetadataName("Child")
+            ?.InstanceConstructors
+            .Single(candidate => candidate.Parameters.Length == 1)
+            ?? throw new InvalidOperationException("Child constructor did not resolve.");
+
+        Assert.Equal(CPPParameterOwnershipKind.RetainsBorrow, resolution.GetSummary(constructor).GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006");
     }
 
     /// <summary>
@@ -272,6 +528,45 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
                 object Value;
 
                 public void Take([NativeTakesOwnership] object value) {
+                    Value = value;
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, ResolveSummary(compilation, resolution, "Take").GetParameterOwnership(0));
+        Assert.DoesNotContain(resolution.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN006" && diagnostic.SourceMemberName == "Take");
+    }
+
+    /// <summary>
+    /// Ensures reading scalar data from a transfer parameter does not make that parameter escape before its owned-member assignment.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithScalarMemberReadBeforeOwnedMemberAssignment_InfersTransfer() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Parameter)]
+            public sealed class NativeTakesOwnershipAttribute : Attribute {
+            }
+
+            [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+            public sealed class NativeOwnedMemberAttribute : Attribute {
+            }
+
+            public sealed class Payload {
+                public int Width { get; set; }
+            }
+
+            public sealed class Owner {
+                [NativeOwnedMember]
+                object Value { get; set; }
+
+                int Width { get; set; }
+
+                public void Take([NativeTakesOwnership] Payload value) {
+                    Width = value.Width;
                     Value = value;
                 }
             }
@@ -314,6 +609,26 @@ public sealed class CPPMethodOwnershipSummaryResolverTests {
         CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
 
         Assert.Equal(CPPOwnershipKind.Owned, resolution.GetSummary(property.GetMethod).ReturnOwnership);
+    }
+
+    /// <summary>
+    /// Ensures returning one reference stored in an existing array is classified as a borrow from that container.
+    /// </summary>
+    [Fact]
+    public void Resolve_WithArrayElementReferenceReturn_ClassifiesBorrowed() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            public sealed class Source {
+                readonly object[] Items = new object[1];
+
+                public object Get(int index) {
+                    return Items[index];
+                }
+            }
+            """);
+
+        CPPMethodOwnershipSummaryResolution resolution = new CPPMethodOwnershipSummaryResolver().Resolve([compilation]);
+
+        Assert.Equal(CPPOwnershipKind.Borrowed, ResolveSummary(compilation, resolution, "Get").ReturnOwnership);
     }
 
     /// <summary>

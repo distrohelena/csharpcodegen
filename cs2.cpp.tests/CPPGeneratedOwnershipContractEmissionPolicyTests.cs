@@ -58,6 +58,20 @@ public sealed class CPPGeneratedOwnershipContractEmissionPolicyTests {
         return """
             using cs2.attributes;
 
+            namespace helengine {
+                public sealed class NativeOwnedReturnAttribute : System.Attribute {
+                }
+
+                public sealed class NativeBorrowedReturnAttribute : System.Attribute {
+                }
+
+                public sealed class NativeTakesOwnershipAttribute : System.Attribute {
+                }
+
+                public sealed class NativeOwnedMemberAttribute : System.Attribute {
+                }
+            }
+
             public static class NativeOwnership {
                 public static void Delete<T>(T value) where T : class {
                 }

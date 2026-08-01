@@ -19,7 +19,11 @@ public static class CPPOwnershipTypeClassifier {
             return true;
         }
         if (type is ITypeParameterSymbol typeParameter) {
-            return typeParameter.HasReferenceTypeConstraint;
+            return typeParameter.HasReferenceTypeConstraint ||
+                typeParameter.ConstraintTypes.Any(constraintType =>
+                    constraintType is IArrayTypeSymbol ||
+                    constraintType.TypeKind == TypeKind.Class ||
+                    constraintType.TypeKind == TypeKind.Delegate);
         }
 
         return type.IsReferenceType;

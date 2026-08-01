@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
 
@@ -303,8 +304,12 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             return;
         }
         if (operation is ILocalReferenceOperation localReferenceOperation &&
-            TryResolveStableLocalInitializer(method, localReferenceOperation.Local, semanticModel, out ExpressionSyntax initializerExpression)) {
-            CollectReturnEvidence(method, initializerExpression, semanticModel, summaries, sourceMethods, ref ownedCount, ref borrowedCount, ref unknownCount, ref deferredCount);
+            CPPLocalValueProvenanceResolver.TryResolveStableSourceExpression(
+                method,
+                localReferenceOperation.Local,
+                semanticModel,
+                out ExpressionSyntax sourceExpression)) {
+            CollectReturnEvidence(method, sourceExpression, semanticModel, summaries, sourceMethods, ref ownedCount, ref borrowedCount, ref unknownCount, ref deferredCount);
             return;
         }
 
@@ -320,39 +325,6 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         } else {
             unknownCount++;
         }
-    }
-
-    /// <summary>
-    /// Traces one returned local to an initializer only when no later assignment can change its provenance.
-    /// </summary>
-    /// <param name="method">Method containing the local.</param>
-    /// <param name="local">Returned local symbol.</param>
-    /// <param name="semanticModel">Semantic model for the method body.</param>
-    /// <param name="initializerExpression">Stable initializer expression when provenance is provable.</param>
-    /// <returns><c>true</c> when the local has one unchanged initializer.</returns>
-    static bool TryResolveStableLocalInitializer(
-        IMethodSymbol method,
-        ILocalSymbol local,
-        SemanticModel semanticModel,
-        out ExpressionSyntax initializerExpression) {
-        initializerExpression = null;
-        VariableDeclaratorSyntax declaration = local.DeclaringSyntaxReferences
-            .Select(reference => reference.GetSyntax())
-            .OfType<VariableDeclaratorSyntax>()
-            .FirstOrDefault();
-        if (declaration?.Initializer?.Value == null) {
-            return false;
-        }
-
-        SyntaxNode methodDeclaration = GetMethodDeclaration(method);
-        foreach (AssignmentExpressionSyntax assignment in methodDeclaration.DescendantNodes().OfType<AssignmentExpressionSyntax>()) {
-            if (SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(assignment.Left).Symbol, local)) {
-                return false;
-            }
-        }
-
-        initializerExpression = declaration.Initializer.Value;
-        return true;
     }
 
     /// <summary>
@@ -373,13 +345,21 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             if (!SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(reference).Symbol, parameter)) {
                 continue;
             }
+            if (IsInsideNameOfExpression(reference, semanticModel)) {
+                continue;
+            }
             if (reference.Ancestors().Any(IsNestedExecutableSyntax)) {
-                return CPPParameterOwnershipKind.Unknown;
+                return CPPParameterOwnershipKind.Escapes;
             }
             if (ReturnsParameterReference(reference, parameter, semanticModel)) {
-                return CPPParameterOwnershipKind.Unknown;
+                return CPPParameterOwnershipKind.Escapes;
             }
-            if (reference.Parent is AssignmentExpressionSyntax directAssignment && directAssignment.Right.Span.Contains(reference.Span)) {
+            AssignmentExpressionSyntax directAssignment = reference.AncestorsAndSelf()
+                .OfType<AssignmentExpressionSyntax>()
+                .FirstOrDefault(candidate =>
+                    candidate.Right.Span.Contains(reference.Span) &&
+                    AssignmentCarriesParameterIdentity(candidate.Right, parameter, semanticModel));
+            if (directAssignment != null) {
                 ISymbol destination = semanticModel.GetSymbolInfo(directAssignment.Left).Symbol;
                 if (destination is IFieldSymbol || destination is IPropertySymbol) {
                     if (HasAttribute(destination, "NativeOwnedMember") &&
@@ -389,7 +369,11 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                         continue;
                     }
 
-                    return CPPParameterOwnershipKind.Unknown;
+                    if (IsConstructedInstanceMemberAssignment(method, directAssignment, semanticModel)) {
+                        return CPPParameterOwnershipKind.EscapesWithReturn;
+                    }
+
+                    return CPPParameterOwnershipKind.Escapes;
                 }
             }
 
@@ -413,6 +397,14 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             if (IntrinsicCatalog.TryGetParameterOwnership(argumentOperation.Parameter, out CPPParameterOwnershipKind declaredOwnership)) {
                 if (declaredOwnership == CPPParameterOwnershipKind.TakesOwnership) {
                     takesOwnership = true;
+                } else if (declaredOwnership == CPPParameterOwnershipKind.RetainsBorrow) {
+                    if (IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind sourceOwnership) &&
+                        sourceOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+                        takesOwnership = true;
+                        continue;
+                    }
+
+                    return CPPParameterOwnershipKind.Escapes;
                 }
                 continue;
             }
@@ -424,6 +416,17 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                     continue;
                 } else if (targetOwnership == CPPParameterOwnershipKind.NoEscape) {
                     continue;
+                } else if (targetOwnership == CPPParameterOwnershipKind.EscapesWithReturn) {
+                    if (IsCallResultConfinedByUsing(argumentOperation)) {
+                        continue;
+                    }
+                    if (IsCallResultReturned(argumentOperation) || method.MethodKind == MethodKind.Constructor) {
+                        return CPPParameterOwnershipKind.EscapesWithReturn;
+                    }
+
+                    return CPPParameterOwnershipKind.Escapes;
+                } else if (targetOwnership == CPPParameterOwnershipKind.Escapes) {
+                    return CPPParameterOwnershipKind.Escapes;
                 }
             }
 
@@ -431,6 +434,140 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         }
 
         return takesOwnership ? CPPParameterOwnershipKind.TakesOwnership : CPPParameterOwnershipKind.NoEscape;
+    }
+
+    /// <summary>
+    /// Determines whether an assignment expression preserves one parameter's object identity instead of merely reading data from it.
+    /// </summary>
+    /// <param name="expression">Right-hand expression whose resulting reference may be stored.</param>
+    /// <param name="parameter">Parameter whose identity must reach the assignment destination.</param>
+    /// <param name="semanticModel">Semantic model used to resolve direct parameter references.</param>
+    /// <returns><c>true</c> when the expression can evaluate to the original parameter reference.</returns>
+    static bool AssignmentCarriesParameterIdentity(
+        ExpressionSyntax expression,
+        IParameterSymbol parameter,
+        SemanticModel semanticModel) {
+        if (expression is IdentifierNameSyntax identifier) {
+            return SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(identifier).Symbol, parameter);
+        }
+        if (expression is ParenthesizedExpressionSyntax parenthesized) {
+            return AssignmentCarriesParameterIdentity(parenthesized.Expression, parameter, semanticModel);
+        }
+        if (expression is CastExpressionSyntax cast) {
+            return AssignmentCarriesParameterIdentity(cast.Expression, parameter, semanticModel);
+        }
+        if (expression is PostfixUnaryExpressionSyntax postfix) {
+            return AssignmentCarriesParameterIdentity(postfix.Operand, parameter, semanticModel);
+        }
+        if (expression is BinaryExpressionSyntax binary && binary.IsKind(SyntaxKind.CoalesceExpression)) {
+            return AssignmentCarriesParameterIdentity(binary.Left, parameter, semanticModel) ||
+                AssignmentCarriesParameterIdentity(binary.Right, parameter, semanticModel);
+        }
+        if (expression is ConditionalExpressionSyntax conditional) {
+            return AssignmentCarriesParameterIdentity(conditional.WhenTrue, parameter, semanticModel) ||
+                AssignmentCarriesParameterIdentity(conditional.WhenFalse, parameter, semanticModel);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether a constructor stores its parameter only on the instance being constructed.
+    /// </summary>
+    /// <param name="method">Method containing the assignment.</param>
+    /// <param name="assignment">Assignment that receives the parameter.</param>
+    /// <param name="semanticModel">Semantic model that owns the assignment operation.</param>
+    /// <returns><c>true</c> when the destination is an instance member on the constructed receiver.</returns>
+    static bool IsConstructedInstanceMemberAssignment(
+        IMethodSymbol method,
+        AssignmentExpressionSyntax assignment,
+        SemanticModel semanticModel) {
+        if (method.MethodKind != MethodKind.Constructor ||
+            semanticModel.GetOperation(assignment) is not ISimpleAssignmentOperation assignmentOperation) {
+            return false;
+        }
+
+        IOperation instance = null;
+        if (assignmentOperation.Target is IFieldReferenceOperation fieldReference && !fieldReference.Field.IsStatic) {
+            instance = fieldReference.Instance;
+        } else if (assignmentOperation.Target is IPropertyReferenceOperation propertyReference && !propertyReference.Property.IsStatic) {
+            instance = propertyReference.Instance;
+        }
+
+        return instance is IInstanceReferenceOperation instanceReference &&
+            instanceReference.ReferenceKind == InstanceReferenceKind.ContainingTypeInstance;
+    }
+
+    /// <summary>
+    /// Determines whether the object retaining one argument is immediately bounded by a using declaration or statement.
+    /// </summary>
+    /// <param name="argument">Argument whose target call produces the retaining object.</param>
+    /// <returns><c>true</c> when the complete call initializes a local disposed by the containing method.</returns>
+    static bool IsCallResultConfinedByUsing(IArgumentOperation argument) {
+        IOperation call = ResolveContainingCall(argument);
+        if (call == null) {
+            return false;
+        }
+
+        VariableDeclaratorSyntax declaration = call.Syntax.AncestorsAndSelf()
+            .OfType<VariableDeclaratorSyntax>()
+            .FirstOrDefault(candidate => candidate.Initializer?.Value.Span.Contains(call.Syntax.Span) == true);
+        if (declaration == null) {
+            return false;
+        }
+
+        LocalDeclarationStatementSyntax localDeclaration = declaration.Ancestors().OfType<LocalDeclarationStatementSyntax>().FirstOrDefault();
+        if (localDeclaration != null && !localDeclaration.UsingKeyword.IsKind(SyntaxKind.None)) {
+            return true;
+        }
+
+        return declaration.Ancestors().OfType<UsingStatementSyntax>().Any();
+    }
+
+    /// <summary>
+    /// Determines whether the object retaining one argument is returned directly to the current caller.
+    /// </summary>
+    /// <param name="argument">Argument whose target call produces the retaining object.</param>
+    /// <returns><c>true</c> when the complete call contributes to a return expression.</returns>
+    static bool IsCallResultReturned(IArgumentOperation argument) {
+        IOperation call = ResolveContainingCall(argument);
+        return call != null && call.Syntax.AncestorsAndSelf().OfType<ReturnStatementSyntax>()
+            .Any(returnStatement => returnStatement.Expression?.Span.Contains(call.Syntax.Span) == true);
+    }
+
+    /// <summary>
+    /// Resolves the invocation or object creation that owns one argument operation.
+    /// </summary>
+    /// <param name="argument">Argument operation to inspect.</param>
+    /// <returns>The containing call operation, or null when Roslyn does not expose one.</returns>
+    static IOperation ResolveContainingCall(IArgumentOperation argument) {
+        IOperation operation = argument.Parent;
+        while (operation is IConversionOperation || operation is IParenthesizedOperation) {
+            operation = operation.Parent;
+        }
+
+        return operation is IInvocationOperation || operation is IObjectCreationOperation
+            ? operation
+            : null;
+    }
+
+    /// <summary>
+    /// Determines whether one parameter identifier contributes only its source name to a <c>nameof</c> expression.
+    /// </summary>
+    /// <param name="reference">Parameter identifier use to inspect.</param>
+    /// <param name="semanticModel">Semantic model that owns the identifier operation.</param>
+    /// <returns><c>true</c> when the identifier is nested beneath a <c>nameof</c> operation that cannot evaluate or retain it.</returns>
+    static bool IsInsideNameOfExpression(IdentifierNameSyntax reference, SemanticModel semanticModel) {
+        IOperation operation = semanticModel.GetOperation(reference);
+        while (operation != null) {
+            if (operation.Kind == OperationKind.NameOf) {
+                return true;
+            }
+
+            operation = operation.Parent;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -520,7 +657,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                         "CPPOWN001",
                         declaration,
                         method,
-                        $"Return ownership for method '{method.Name}' cannot be inferred because a non-null boundary is unclassified.",
+                        $"Return ownership for method '{method.Name}' with return type '{method.ReturnType.ToDisplayString()}', type kind '{method.ReturnType.TypeKind}', special type '{method.ReturnType.SpecialType}', and reference flag '{method.ReturnType.IsReferenceType}' cannot be inferred because a non-null boundary is unclassified.",
                         "Declare owned or borrowed return ownership at the non-analyzable boundary."));
                 }
             }
@@ -532,6 +669,18 @@ public sealed class CPPMethodOwnershipSummaryResolver {
 
                 CPPParameterOwnershipKind inferredParameter = InferParameterOwnership(method, parameter, summaries);
                 if (inferredParameter == declaredParameter) {
+                    continue;
+                }
+                if (inferredParameter == CPPParameterOwnershipKind.Unknown) {
+                    continue;
+                }
+                if (declaredParameter == CPPParameterOwnershipKind.TakesOwnership &&
+                    inferredParameter == CPPParameterOwnershipKind.EscapesWithReturn) {
+                    continue;
+                }
+                if (declaredParameter == CPPParameterOwnershipKind.RetainsBorrow &&
+                    (inferredParameter == CPPParameterOwnershipKind.Escapes ||
+                     inferredParameter == CPPParameterOwnershipKind.EscapesWithReturn)) {
                     continue;
                 }
 

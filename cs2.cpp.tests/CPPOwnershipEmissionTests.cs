@@ -42,6 +42,40 @@ public sealed class CPPOwnershipEmissionTests {
     }
 
     /// <summary>
+    /// Ensures returning a successful type-pattern alias transfers the allocation owned by the pattern input local.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithReturnedTypePatternAlias_DisarmsSourceOwnerBeforeReturn() {
+        string outputPath = Convert("""
+            public class Asset {
+            }
+
+            public sealed class SceneAsset : Asset {
+            }
+
+            public static class Serializer {
+                public static Asset Deserialize() {
+                    return new SceneAsset();
+                }
+            }
+
+            public sealed class Processor<TAsset> where TAsset : Asset {
+                public TAsset Read() {
+                    Asset asset = Serializer.Deserialize();
+                    if (asset is TAsset typedAsset) {
+                        return typedAsset;
+                    }
+
+                    throw new System.InvalidOperationException();
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Processor_1.cpp"));
+
+        AssertAppearsInOrder(sourceOutput, "bool __owns_asset_", " = false;", "return typedAsset;");
+    }
+
+    /// <summary>
     /// Ensures passing an owned local to a takes-ownership parameter disarms caller cleanup before the invocation.
     /// </summary>
     [Fact]
@@ -132,6 +166,80 @@ public sealed class CPPOwnershipEmissionTests {
     }
 
     /// <summary>
+    /// Ensures array-wide native release destroys every owned item, deletes the container, clears the pointer, and disarms caller cleanup.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithDeleteItemsAndRelease_LowersCompleteArrayCleanupInline() {
+        string outputPath = Convert("""
+            public static class NativeOwnership {
+                public static void DeleteItemsAndRelease<T>(ref T[] values) where T : class {
+                }
+            }
+
+            public sealed class Item {
+            }
+
+            public sealed class Consumer {
+                public void Run() {
+                    Item[] values = new Item[] { new Item(), new Item() };
+                    NativeOwnership.DeleteItemsAndRelease(ref values);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        Assert.Contains("delete (*__nativeOwnershipTarget_", sourceOutput, StringComparison.Ordinal);
+        AssertAppearsInOrder(
+            sourceOutput,
+            "auto __nativeOwnershipTarget_",
+            " = values;",
+            "delete (*__nativeOwnershipTarget_",
+            "delete __nativeOwnershipTarget_",
+            "values = nullptr;",
+            "__owns_values_",
+            " = false;");
+        Assert.DoesNotContain("NativeOwnership::DeleteItemsAndRelease", sourceOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures array-wide disposable release invokes disposal before deleting each item and then clears the owned container.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithDisposeItemsAndRelease_LowersCompleteArrayCleanupInline() {
+        string outputPath = Convert("""
+            using System;
+
+            public static class NativeOwnership {
+                public static void DisposeItemsAndRelease<T>(ref T[] values) where T : class, IDisposable {
+                }
+            }
+
+            public sealed class Item : IDisposable {
+                public void Dispose() {
+                }
+            }
+
+            public sealed class Consumer {
+                public void Run() {
+                    Item[] values = new Item[] { new Item(), new Item() };
+                    NativeOwnership.DisposeItemsAndRelease(ref values);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        AssertAppearsInOrder(
+            sourceOutput,
+            "auto __nativeOwnershipTarget_",
+            " = values;",
+            ")[index]->Dispose();",
+            "delete (*__nativeOwnershipTarget_",
+            "delete __nativeOwnershipTarget_",
+            "values = nullptr;");
+        Assert.DoesNotContain("NativeOwnership::DisposeItemsAndRelease", sourceOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Ensures assigning an owned local into a native-owned member disarms local cleanup only after assignment succeeds.
     /// </summary>
     [Fact]
@@ -171,6 +279,50 @@ public sealed class CPPOwnershipEmissionTests {
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Holder.cpp"));
 
         AssertAppearsInOrder(sourceOutput, "this->Values = values", "__owns_values_", " = false;");
+    }
+
+    /// <summary>
+    /// Ensures assigning an owned concrete local through an owned interface property transfers cleanup after the property setter succeeds.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithPolymorphicOwnedPropertyTransfer_DisarmsAfterAssignment() {
+        string outputPath = Convert("""
+            using System;
+
+            [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+            public sealed class NativeOwnedMemberAttribute : Attribute {
+            }
+
+            public static class NativeOwnership {
+                public static void Delete<T>(T value) where T : class {
+                }
+            }
+
+            public interface IResource {
+            }
+
+            public sealed class Resource : IResource {
+            }
+
+            public sealed class Holder : IDisposable {
+                [NativeOwnedMember]
+                public IResource Value { get; private set; }
+
+                public static Holder Build() {
+                    Holder holder = new Holder();
+                    Resource resource = new Resource();
+                    holder.Value = resource;
+                    return holder;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Value);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Holder.cpp"));
+
+        AssertAppearsInOrder(sourceOutput, "holder->set_Value(resource);", "__owns_resource_", " = false;");
     }
 
     /// <summary>
@@ -312,10 +464,10 @@ public sealed class CPPOwnershipEmissionTests {
     }
 
     /// <summary>
-    /// Ensures an owned using-statement resource is disposed before its native storage guard deletes it.
+    /// Ensures an owned using-statement resource is disposed and deleted exactly once before its ownership guard exits.
     /// </summary>
     [Fact]
-    public void WriteOutput_WithOwnedUsingResource_EmitsDisposalAndDeleteGuards() {
+    public void WriteOutput_WithOwnedUsingResource_EmitsSingleDeleteAcrossCleanupGuards() {
         string outputPath = Convert("""
             using System;
 
@@ -334,15 +486,15 @@ public sealed class CPPOwnershipEmissionTests {
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
 
         AssertAppearsInOrder(sourceOutput, "Resource *resource", "bool __owns_resource_", "__localDeleteGuard", "__usingDisposeGuard");
-        Assert.Contains("delete resource;", sourceOutput, StringComparison.Ordinal);
-        Assert.Contains("resource->Dispose();", sourceOutput, StringComparison.Ordinal);
+        AssertAppearsInOrder(sourceOutput, "__localDeleteGuard", "delete resource;", "__usingDisposeGuard", "resource->Dispose();");
+        Assert.Equal(1, sourceOutput.Split("delete resource;", StringSplitOptions.None).Length - 1);
     }
 
     /// <summary>
-    /// Ensures an owned using declaration retains both disposal and native deletion through the remainder scope.
+    /// Ensures an owned using declaration retains disposal and exactly-once native deletion through the remainder scope.
     /// </summary>
     [Fact]
-    public void WriteOutput_WithOwnedUsingDeclaration_EmitsDisposalAndDeleteGuards() {
+    public void WriteOutput_WithOwnedUsingDeclaration_EmitsSingleDeleteAcrossCleanupGuards() {
         string outputPath = Convert("""
             using System;
 
@@ -360,8 +512,8 @@ public sealed class CPPOwnershipEmissionTests {
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
 
         AssertAppearsInOrder(sourceOutput, "Resource *resource", "bool __owns_resource_", "__localDeleteGuard", "__usingDisposeGuard");
-        Assert.Contains("delete resource;", sourceOutput, StringComparison.Ordinal);
-        Assert.Contains("resource->Dispose();", sourceOutput, StringComparison.Ordinal);
+        AssertAppearsInOrder(sourceOutput, "__localDeleteGuard", "delete resource;", "__usingDisposeGuard", "resource->Dispose();");
+        Assert.Equal(1, sourceOutput.Split("delete resource;", StringSplitOptions.None).Length - 1);
     }
 
     /// <summary>
@@ -572,6 +724,101 @@ public sealed class CPPOwnershipEmissionTests {
 
         AssertAppearsInOrder(sourceOutput, "auto&& __ownershipTarget", "Consumer::GetHolder(holder)", "auto __ownershipAssignmentValue", "__ownershipTarget", "->Values = values", "__owns_values_", " = false;", "return __ownershipAssignmentValue", "})()");
         Assert.Contains("Consumer::Use((", sourceOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures an object initializer transfers a tracked local into an owned member before the initializer lambda returns.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithOwnedLocalObjectInitializerMember_TransfersLocalCleanupToObject() {
+        string outputPath = Convert("""
+            using System;
+            using System.Collections.Generic;
+
+            [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+            public sealed class NativeOwnedMemberAttribute : Attribute {
+            }
+
+            public static class NativeOwnership {
+                public static void Delete<T>(T value) where T : class {
+                }
+            }
+
+            public sealed class Holder : IDisposable {
+                [NativeOwnedMember]
+                public List<int> Values;
+
+                public void Dispose() {
+                    NativeOwnership.Delete(Values);
+                }
+            }
+
+            public sealed class Consumer {
+                public Holder Build() {
+                    List<int> values = new List<int>();
+                    return new Holder {
+                        Values = values
+                    };
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        AssertAppearsInOrder(
+            sourceOutput,
+            "__object_",
+            "->Values = values;",
+            "__owns_values_",
+            " = false;",
+            "return __object_");
+    }
+
+    /// <summary>
+    /// Ensures assigning an owned local to an out parameter transfers cleanup responsibility to the caller.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithOwnedLocalOutParameterAssignment_DisarmsAfterAssignment() {
+        string outputPath = Convert("""
+            public static class Factory {
+                public static bool TryBuild(out byte[] data) {
+                    byte[] localData = new byte[] { 1, 2, 3, 4 };
+                    data = localData;
+                    return true;
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Factory.cpp"));
+
+        AssertAppearsInOrder(sourceOutput, "data = localData", "__owns_localData_", " = false;");
+    }
+
+    /// <summary>
+    /// Ensures storing an owned local in an array element transfers cleanup responsibility to the containing storage.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithOwnedLocalArrayElementAssignment_DisarmsAfterAssignment() {
+        string outputPath = Convert("""
+            public static class NativeOwnership {
+                public static void DeleteItemsAndRelease<T>(ref T[] values) where T : class {
+                }
+            }
+
+            public sealed class Owner : System.IDisposable {
+                byte[][] Values = new byte[1][];
+
+                public void Store() {
+                    byte[] data = new byte[] { 1, 2, 3, 4 };
+                    Values[0] = data;
+                }
+
+                public void Dispose() {
+                    NativeOwnership.DeleteItemsAndRelease(ref Values);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Owner.cpp"));
+
+        AssertAppearsInOrder(sourceOutput, "(*this->Values)[0] = data", "__owns_data_", " = false;");
     }
 
     /// <summary>

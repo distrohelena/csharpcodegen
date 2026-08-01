@@ -664,6 +664,7 @@ namespace cs2.core {
 
             if (typeSymbol is IFunctionPointerTypeSymbol functionPointerTypeSymbol) {
                 VariableType functionPointerType = CreateVariableType(VariableDataType.Callback, "FunctionPointer", functionPointerTypeSymbol);
+                functionPointerType.QualifiedTypeName = "FunctionPointer";
                 VariableType returnType = GetVarType(functionPointerTypeSymbol.Signature.ReturnType);
                 if (functionPointerTypeSymbol.Signature.ReturnsByRefReadonly) {
                     returnType.IsConstReference = true;

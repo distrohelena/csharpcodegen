@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <initializer_list>
 
+#include "native_exceptions.hpp"
+#include "native_read_only_list.hpp"
+
 template<typename T>
-class Array {
+class Array : public IReadOnlyList<T> {
 public:
     int32_t Length;
     T* Data;
@@ -124,11 +127,19 @@ public:
         return Length;
     }
 
+    int32_t get_Count() const override {
+        return Length;
+    }
+
     T& operator[](int32_t index) {
         return Data[index];
     }
 
     const T& operator[](int32_t index) const {
+        return Data[index];
+    }
+
+    const T& get_Item(int32_t index) const override {
         return Data[index];
     }
 
@@ -148,6 +159,24 @@ public:
         return Data + Length;
     }
 };
+
+/// <summary>
+/// Allocates a distinct managed-style array containing the current elements exposed by one read-only native collection.
+/// </summary>
+template<typename T>
+Array<T>* NativeCollectionToArray(const IReadOnlyList<T>* values) {
+    if (values == nullptr) {
+        throw ArgumentNullException("values");
+    }
+
+    int32_t count = values->get_Count();
+    Array<T>* copy = new Array<T>(count);
+    for (int32_t index = 0; index < count; index++) {
+        (*copy)[index] = values->get_Item(index);
+    }
+
+    return copy;
+}
 
 template<typename T>
 T* begin(Array<T>* values) {

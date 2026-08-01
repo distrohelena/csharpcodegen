@@ -131,7 +131,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                 true,
                 transitions,
                 diagnostics);
-            ReportAmbiguousJoin(block, methodDeclaration, method, state, diagnostics);
+            ReportAmbiguousJoin(block, methodDeclaration, semanticModel, method, state, diagnostics);
             ProcessBlock(
                 block,
                 semanticModel,
@@ -904,6 +904,8 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         }
 
         CPPParameterOwnershipKind parameterOwnership = ResolveParameterOwnership(parameter, targetSummary);
+        bool retainedBorrowConfinedByUsing = parameterOwnership == CPPParameterOwnershipKind.EscapesWithReturn &&
+            IsCallResultConfinedByUsing(transferSyntax);
         if (parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
             if (localState.Lifecycle != CPPOwnershipLifecycle.Live) {
                 if (emit) {
@@ -930,15 +932,51 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                     CPPOwnershipLifecycle.Transferred));
             }
         } else if (emit &&
-            parameterOwnership == CPPParameterOwnershipKind.Unknown &&
+            parameterOwnership != CPPParameterOwnershipKind.NoEscape &&
+            parameterOwnership != CPPParameterOwnershipKind.RetainsBorrow &&
+            !retainedBorrowConfinedByUsing &&
             localState.Lifecycle == CPPOwnershipLifecycle.Live) {
+            bool escapes = parameterOwnership == CPPParameterOwnershipKind.Escapes ||
+                parameterOwnership == CPPParameterOwnershipKind.EscapesWithReturn;
+            string diagnosticCode = escapes
+                ? "CPPOWN002"
+                : "CPPOWN001";
+            string diagnosticMessage = escapes
+                ? $"Owned local '{localReference.Local.Name}' escapes through parameter '{parameter?.Name}' without transferring cleanup responsibility."
+                : $"Owned local '{localReference.Local.Name}' crosses parameter '{parameter?.Name}' without a native ownership contract.";
+            string correction = escapes
+                ? "Redesign the callee to take ownership with verified cleanup or keep the argument scoped to the call."
+                : "Mark the parameter as no-escape, retains-borrow, or takes-ownership, or pass borrowed storage instead.";
             AddDiagnostic(diagnostics, DiagnosticFactory.Create(
-                "CPPOWN001",
+                diagnosticCode,
                 diagnosticSyntax,
                 method,
-                $"Owned local '{localReference.Local.Name}' crosses parameter '{parameter?.Name}' without a native ownership contract.",
-                "Mark the parameter as no-escape or takes-ownership, or pass borrowed storage instead."));
+                diagnosticMessage,
+                correction));
         }
+    }
+
+    /// <summary>
+    /// Determines whether one call result that retains a borrowed argument is immediately bounded by a using declaration or statement.
+    /// </summary>
+    /// <param name="callSyntax">Invocation or object-creation syntax producing the retaining disposable.</param>
+    /// <returns><c>true</c> when the complete call initializes a local disposed by the containing scope.</returns>
+    static bool IsCallResultConfinedByUsing(SyntaxNode callSyntax) {
+        VariableDeclaratorSyntax declaration = callSyntax.AncestorsAndSelf()
+            .OfType<VariableDeclaratorSyntax>()
+            .FirstOrDefault(candidate => candidate.Initializer?.Value.Span.Contains(callSyntax.Span) == true);
+        if (declaration == null) {
+            return false;
+        }
+
+        LocalDeclarationStatementSyntax localDeclaration = declaration.Ancestors()
+            .OfType<LocalDeclarationStatementSyntax>()
+            .FirstOrDefault();
+        if (localDeclaration != null && localDeclaration.UsingKeyword.RawKind != 0) {
+            return true;
+        }
+
+        return declaration.Ancestors().OfType<UsingStatementSyntax>().Any();
     }
 
     /// <summary>
@@ -997,7 +1035,7 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     }
 
     /// <summary>
-    /// Applies local replacement, nulling, and member-escape semantics to one assignment.
+    /// Applies local replacement, nulling, out-parameter transfer, container-element transfer, and member-escape semantics to one assignment.
     /// </summary>
     /// <param name="assignmentSyntax">Assignment source syntax.</param>
     /// <param name="semanticModel">Semantic model for the assignment.</param>
@@ -1046,8 +1084,29 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         if (valueLocal == null ||
             !state.TryGetValue(valueLocal.Local, out CPPLocalOwnershipState valueState) ||
             valueState.Ownership != CPPOwnershipKind.Owned ||
-            valueState.Lifecycle != CPPOwnershipLifecycle.Live ||
-            !IsOrdinaryMemberTarget(assignment.Target)) {
+            valueState.Lifecycle != CPPOwnershipLifecycle.Live) {
+            return;
+        }
+
+        bool transfersToOutParameter = assignment.Target is IParameterReferenceOperation targetParameter &&
+            targetParameter.Parameter.RefKind == RefKind.Out;
+        if (transfersToOutParameter || assignment.Target is IArrayElementReferenceOperation) {
+            state[valueLocal.Local] = new CPPLocalOwnershipState(
+                CPPOwnershipKind.Owned,
+                CPPOwnershipLifecycle.Transferred,
+                true);
+            if (emit) {
+                AddTransition(transitions, new CPPOwnershipTransition(
+                    assignmentSyntax,
+                    declarations[valueLocal.Local],
+                    CPPOwnershipTransitionKind.Transfer,
+                    CPPOwnershipKind.Owned,
+                    CPPOwnershipLifecycle.Transferred));
+            }
+            return;
+        }
+
+        if (!IsOrdinaryMemberTarget(assignment.Target)) {
             return;
         }
 
@@ -1186,13 +1245,18 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             ValidateDeadLocalUsesAfterNestedOwnershipOperations(returnOperation.ReturnedValue, method, state, diagnostics);
         }
 
-        ILocalReferenceOperation localReference = UnwrapLocalReference(returnOperation.ReturnedValue);
         CPPMethodOwnershipSummary methodSummary = ResolveSummary(method, summaries);
-        if (localReference == null ||
-            methodSummary?.ReturnOwnership != CPPOwnershipKind.Owned ||
-            !state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
-            localState.Ownership != CPPOwnershipKind.Owned ||
-            localState.Lifecycle != CPPOwnershipLifecycle.Live) {
+        if (methodSummary?.ReturnOwnership != CPPOwnershipKind.Owned) {
+            return;
+        }
+
+        ILocalReferenceOperation localReference = ResolveReturnedOwnedLocal(
+            returnOperation.ReturnedValue,
+            method,
+            semanticModel,
+            state,
+            new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default));
+        if (localReference == null) {
             return;
         }
 
@@ -1208,6 +1272,48 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                 CPPOwnershipKind.Owned,
                 CPPOwnershipLifecycle.Transferred));
         }
+    }
+
+    /// <summary>
+    /// Resolves a returned local alias chain to the live owned local responsible for the underlying native allocation.
+    /// </summary>
+    /// <param name="operation">Returned value operation or one recursively resolved alias source.</param>
+    /// <param name="method">Method containing the return.</param>
+    /// <param name="semanticModel">Semantic model for local provenance expressions.</param>
+    /// <param name="state">Current ownership state keyed by tracked local.</param>
+    /// <param name="visitedLocals">Locals already traversed while resolving the alias chain.</param>
+    /// <returns>The live owned source local, or null when the returned value does not provably alias one.</returns>
+    static ILocalReferenceOperation ResolveReturnedOwnedLocal(
+        IOperation operation,
+        IMethodSymbol method,
+        SemanticModel semanticModel,
+        IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
+        ISet<ILocalSymbol> visitedLocals) {
+        ILocalReferenceOperation localReference = UnwrapLocalReference(operation);
+        if (localReference == null || !visitedLocals.Add(localReference.Local)) {
+            return null;
+        }
+
+        if (state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) &&
+            localState.Ownership == CPPOwnershipKind.Owned &&
+            localState.Lifecycle == CPPOwnershipLifecycle.Live) {
+            return localReference;
+        }
+
+        if (!CPPLocalValueProvenanceResolver.TryResolveStableSourceExpression(
+            method,
+            localReference.Local,
+            semanticModel,
+            out ExpressionSyntax sourceExpression)) {
+            return null;
+        }
+
+        return ResolveReturnedOwnedLocal(
+            semanticModel.GetOperation(sourceExpression),
+            method,
+            semanticModel,
+            state,
+            visitedLocals);
     }
 
     /// <summary>
@@ -1337,12 +1443,14 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
     /// </summary>
     /// <param name="block">Joined basic block.</param>
     /// <param name="methodDeclaration">Containing source method.</param>
+    /// <param name="semanticModel">Semantic model used to distinguish active locals from values carried out of a completed lexical scope.</param>
     /// <param name="method">Containing method symbol.</param>
     /// <param name="state">Merged input state.</param>
     /// <param name="diagnostics">Aggregate ownership diagnostics.</param>
     void ReportAmbiguousJoin(
         BasicBlock block,
         SyntaxNode methodDeclaration,
+        SemanticModel semanticModel,
         IMethodSymbol method,
         IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
         ICollection<CPPConversionDiagnostic> diagnostics) {
@@ -1355,6 +1463,9 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             if (!localState.Value.IsAmbiguous) {
                 continue;
             }
+            if (!IsLocalVisibleAtJoin(localState.Key, joinSyntax, semanticModel)) {
+                continue;
+            }
 
             AddDiagnostic(diagnostics, DiagnosticFactory.Create(
                 "CPPOWN009",
@@ -1363,6 +1474,21 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                 $"Control-flow paths disagree about ownership or lifecycle for local '{localState.Key.Name}'.",
                 "Make every incoming path leave the local in the same owned, released, or transferred state."));
         }
+    }
+
+    /// <summary>
+    /// Determines whether one local is lexically visible at a control-flow join so a prior iteration's completed lifetime cannot contaminate a later declaration.
+    /// </summary>
+    /// <param name="local">Local whose lexical visibility should be tested.</param>
+    /// <param name="joinSyntax">Source syntax representing the joined basic block.</param>
+    /// <param name="semanticModel">Semantic model that resolves symbols visible at the join.</param>
+    /// <returns><c>true</c> when the local is in scope at the join; otherwise <c>false</c>.</returns>
+    static bool IsLocalVisibleAtJoin(
+        ILocalSymbol local,
+        SyntaxNode joinSyntax,
+        SemanticModel semanticModel) {
+        return semanticModel.LookupSymbols(joinSyntax.SpanStart, name: local.Name)
+            .Any(symbol => SymbolEqualityComparer.Default.Equals(symbol, local));
     }
 
     /// <summary>
@@ -1639,7 +1765,9 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             (string.Equals(method.Name, "Delete", StringComparison.Ordinal) ||
              string.Equals(method.Name, "Release", StringComparison.Ordinal) ||
              string.Equals(method.Name, "DisposeAndDelete", StringComparison.Ordinal) ||
-             string.Equals(method.Name, "DisposeAndRelease", StringComparison.Ordinal));
+             string.Equals(method.Name, "DisposeAndRelease", StringComparison.Ordinal) ||
+             string.Equals(method.Name, "DeleteItemsAndRelease", StringComparison.Ordinal) ||
+             string.Equals(method.Name, "DisposeItemsAndRelease", StringComparison.Ordinal));
     }
 
     /// <summary>

@@ -5020,6 +5020,28 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures collection-expression returns targeting read-only list interfaces allocate a concrete native list rather than attempting to construct the abstract interface.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCollectionExpressionReturnForReadOnlyList_UsesConcreteNativeList() {
+            string source = """
+                using System.Collections.Generic;
+
+                public static class Catalog {
+                    public static IReadOnlyList<int> Create() {
+                        return [1, 2, 3];
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Catalog.cpp"));
+
+            Assert.Contains("return new List<int32_t>({ 1, 2, 3 });", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("new IReadOnlyList", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures null-coalescing array expressions lower to valid native C++ instead of leaking the C# coalesce operator.
         /// </summary>
         [Fact]
@@ -6636,14 +6658,57 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("delete child;", sourceOutput);
-            Assert.Contains("if (child != nullptr)", sourceOutput);
-            Assert.Contains("child->Dispose();", sourceOutput);
+            Assert.Contains("auto __nativeOwnershipTarget", sourceOutput);
+            Assert.Contains(" = child;", sourceOutput);
+            Assert.Contains("__nativeOwnershipTarget", sourceOutput);
+            Assert.Contains("->Dispose();", sourceOutput);
+            Assert.Contains("delete __nativeOwnershipTarget", sourceOutput);
             Assert.Contains("delete this->Source;", sourceOutput);
             Assert.Contains("this->Source = nullptr;", sourceOutput);
-            Assert.Contains("if (this->Owned != nullptr)", sourceOutput);
-            Assert.Contains("this->Owned->Dispose();", sourceOutput);
-            Assert.Contains("delete this->Owned;", sourceOutput);
+            Assert.Contains(" = this->Owned;", sourceOutput);
             Assert.Contains("this->set_Owned(nullptr);", sourceOutput);
+        }
+
+        /// <summary>
+        /// Ensures disposal helpers evaluate an indexed ownership target once before disposal can mutate its source collection.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithIndexedDisposeAndDelete_EvaluatesTargetExactlyOnce() {
+            string source = """
+                using System;
+                using System.Collections.Generic;
+
+                public static class NativeOwnership {
+                    public static void DisposeAndDelete<T>(T value) where T : class, IDisposable {
+                        value?.Dispose();
+                    }
+                }
+
+                public sealed class Child : IDisposable {
+                    public void Dispose() {
+                    }
+                }
+
+                public sealed class Owner {
+                    public void DisposeLast(List<Child> children) {
+                        NativeOwnership.DisposeAndDelete(children[children.Count - 1]);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Owner.cpp"));
+
+            Assert.Contains("auto __nativeOwnershipTarget", sourceOutput, StringComparison.Ordinal);
+            Assert.Equal(1, sourceOutput.Split("children->get_Count() - 1", StringSplitOptions.None).Length - 1);
+            int stableTargetIndex = sourceOutput.IndexOf("auto __nativeOwnershipTarget", StringComparison.Ordinal);
+            int targetReadIndex = sourceOutput.IndexOf(" = (*children).get_Item", stableTargetIndex, StringComparison.Ordinal);
+            int disposeIndex = sourceOutput.IndexOf("->Dispose();", targetReadIndex, StringComparison.Ordinal);
+            int deleteIndex = sourceOutput.IndexOf("delete __nativeOwnershipTarget", disposeIndex, StringComparison.Ordinal);
+            Assert.True(stableTargetIndex >= 0);
+            Assert.True(targetReadIndex > stableTargetIndex);
+            Assert.True(disposeIndex > targetReadIndex);
+            Assert.True(deleteIndex > disposeIndex);
         }
 
         /// <summary>
@@ -6993,6 +7058,34 @@ namespace cs2.cpp.tests {
             Assert.Contains("Item_1<T>", headerOutput, StringComparison.Ordinal);
             Assert.Contains("Read();", headerOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Cache<Item>", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures a nested generic value field declared inside another nested generic type includes its flattened generated definition before the owning class body.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithDeepNestedGenericValueField_IncludesCompleteGeneratedType() {
+            string source = """
+                public class Outer<T> {
+                    public struct Callbacks {
+                        public struct Pair {
+                            public T Value;
+                        }
+
+                        public struct Cache<TValue> {
+                            public TValue Value;
+                        }
+
+                        Cache<Pair> cache;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string callbacksHeader = File.ReadAllText(Path.Combine(output.OutputPath, "Outer_1_Callbacks_1.hpp"));
+
+            Assert.Contains("#include \"Outer_1_Callbacks_Cache_2.hpp\"", callbacksHeader, StringComparison.Ordinal);
+            Assert.Contains("template <typename T, typename TValue> class Outer_1_Callbacks_Cache_2;", callbacksHeader, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -9939,6 +10032,55 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("Helpers::Validate(static_cast<int32_t>(value), static_cast<int32_t>(laneCount));", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("value.Validate(laneCount, -1)", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures LINQ array-copy calls lower to the native collection clone helper instead of referencing an unimplemented Enumerable class.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithEnumerableToArrayOnArray_EmitsNativeCollectionClone() {
+            string source = """
+                using System.Linq;
+
+                public static class Fixture {
+                    public static int[] Copy(int[] values) {
+                        return values.ToArray();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("return NativeCollectionToArray(values);", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("Enumerable::ToArray", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures instance members of readonly structs are emitted as const C++ members so const value references can invoke them directly.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithReadonlyStructInstanceMethod_EmitsConstMember() {
+            string source = """
+                public readonly struct Key {
+                    public Key(int value) {
+                        Value = value;
+                    }
+
+                    public int Value { get; }
+
+                    public bool Equals(Key other) {
+                        return Value == other.Value;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Key.hpp"));
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Key.cpp"));
+
+            Assert.Matches(@"bool Equals\([^;]+\) const;", headerOutput);
+            Assert.Matches(@"bool Key::Equals\([^)]*\) const", sourceOutput);
         }
 
         /// <summary>

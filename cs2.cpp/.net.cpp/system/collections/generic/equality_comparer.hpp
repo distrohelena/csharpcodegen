@@ -12,7 +12,7 @@ public:
         return &Instance;
     }
 
-    int32_t GetHashCode(T& value) {
+    int32_t GetHashCode(const T& value) {
         if constexpr (std::is_pointer_v<T>) {
             if (value == nullptr) {
                 return 0;
@@ -25,20 +25,24 @@ public:
             }
         } else if constexpr (std::is_arithmetic_v<T> || std::is_enum_v<T>) {
             return static_cast<int32_t>(std::hash<T>{}(value));
-        } else if constexpr (requires(T& instance) { instance.GetHashCode(); }) {
+        } else if constexpr (requires(const T& instance) { instance.GetHashCode(); }) {
             return value.GetHashCode();
+        } else if constexpr (requires(T& instance) { instance.GetHashCode(); }) {
+            return const_cast<T&>(value).GetHashCode();
         } else {
             return static_cast<int32_t>(std::hash<T>{}(value));
         }
     }
 
-    bool Equals(T& left, T& right) {
+    bool Equals(const T& left, const T& right) {
         if constexpr (std::is_pointer_v<T>) {
             return left == right;
         } else if constexpr (std::is_arithmetic_v<T> || std::is_enum_v<T>) {
             return left == right;
-        } else if constexpr (requires(T& a, T& b) { a.Equals(b); }) {
+        } else if constexpr (requires(const T& a, const T& b) { a.Equals(b); }) {
             return left.Equals(right);
+        } else if constexpr (requires(T& a, T& b) { a.Equals(b); }) {
+            return const_cast<T&>(left).Equals(const_cast<T&>(right));
         } else {
             return left == right;
         }

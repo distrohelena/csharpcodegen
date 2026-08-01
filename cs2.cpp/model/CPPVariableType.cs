@@ -725,8 +725,8 @@ namespace cs2.cpp {
                 return null;
             }
 
-            string normalizedQualifiedTypeName = NormalizeQualifiedTypeName(qualifiedTypeName);
-            Dictionary<string, ConversionClass> lookup = program.GetQualifiedGeneratedClassLookup(GetNormalizedQualifiedTypeName);
+            string normalizedQualifiedTypeName = NormalizeQualifiedGenericDefinitionIdentity(NormalizeQualifiedTypeName(qualifiedTypeName));
+            Dictionary<string, ConversionClass> lookup = program.GetQualifiedGeneratedClassLookup(GetNormalizedQualifiedGenericDefinitionTypeName);
             return lookup.TryGetValue(normalizedQualifiedTypeName, out ConversionClass conversionClass)
                 ? conversionClass
                 : null;
@@ -778,6 +778,54 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Converts constructed generic arguments in a qualified source identity into arity markers so constructed uses resolve to their generated declarations.
+        /// </summary>
+        /// <param name="qualifiedTypeName">Qualified Roslyn display identity that may contain constructed generic arguments.</param>
+        /// <returns>Definition-oriented identity preserving namespaces, containing types, and generic arity at every nesting level.</returns>
+        static string NormalizeQualifiedGenericDefinitionIdentity(string qualifiedTypeName) {
+            if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder(qualifiedTypeName.Length);
+            for (int index = 0; index < qualifiedTypeName.Length; index++) {
+                char character = qualifiedTypeName[index];
+                if (character != '<') {
+                    builder.Append(character);
+                    continue;
+                }
+
+                int depth = 1;
+                int argumentCount = 1;
+                bool hasArgumentContent = false;
+                int argumentIndex = index + 1;
+                for (; argumentIndex < qualifiedTypeName.Length && depth > 0; argumentIndex++) {
+                    char argumentCharacter = qualifiedTypeName[argumentIndex];
+                    if (argumentCharacter == '<') {
+                        depth++;
+                    } else if (argumentCharacter == '>') {
+                        depth--;
+                    } else if (depth == 1 && argumentCharacter == ',') {
+                        argumentCount++;
+                    } else if (depth == 1 && !char.IsWhiteSpace(argumentCharacter)) {
+                        hasArgumentContent = true;
+                    }
+                }
+
+                if (depth != 0) {
+                    builder.Append(character);
+                    continue;
+                }
+
+                builder.Append('`');
+                builder.Append(hasArgumentContent ? argumentCount : 0);
+                index = argumentIndex - 1;
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
         /// Resolves one stable qualified-type lookup key for a generated class so repeated Roslyn symbol scans are avoided during backend type resolution.
         /// </summary>
         /// <param name="conversionClass">Generated class whose qualified identity is needed.</param>
@@ -788,6 +836,15 @@ namespace cs2.cpp {
             }
 
             return NormalizeQualifiedTypeName(conversionClass.TypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        }
+
+        /// <summary>
+        /// Builds the definition-oriented qualified lookup key for one generated class while preserving each containing generic arity.
+        /// </summary>
+        /// <param name="conversionClass">Generated class whose Roslyn identity supplies the lookup key.</param>
+        /// <returns>Normalized generic-definition identity, or an empty string when semantic metadata is unavailable.</returns>
+        static string GetNormalizedQualifiedGenericDefinitionTypeName(ConversionClass conversionClass) {
+            return NormalizeQualifiedGenericDefinitionIdentity(GetNormalizedQualifiedTypeName(conversionClass));
         }
 
         /// <summary>

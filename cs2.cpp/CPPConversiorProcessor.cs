@@ -404,9 +404,15 @@ namespace cs2.cpp {
                 lines.Add(";\n");
             }
 
-            string disposalTarget = localDeclaration.Declaration.Variables.FirstOrDefault()?.Identifier.Text ?? string.Empty;
+            VariableDeclaratorSyntax disposalVariable = localDeclaration.Declaration.Variables.FirstOrDefault();
+            string disposalTarget = disposalVariable?.Identifier.Text ?? string.Empty;
             bool disposalUsesPointerAccess = IsPointerDeclaration(semantic, localDeclaration.Declaration);
-            AppendDisposalGuard(lines, disposalTarget, disposalUsesPointerAccess, "__usingDisposeGuard");
+            AppendDisposalGuard(
+                lines,
+                disposalTarget,
+                disposalUsesPointerAccess,
+                "__usingDisposeGuard",
+                ResolveLocalOwnershipPlan(disposalVariable));
 
             ProcessStatementsInScope(semantic, context, statements, statementIndex + 1, lines, depth);
 
@@ -498,14 +504,14 @@ namespace cs2.cpp {
 
             if (string.Equals(invokedMethodSymbol.Name, "DisposeAndDelete", StringComparison.Ordinal)) {
                 NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
-                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                string stableTargetName = AppendStableNativeOwnershipTarget(nativeOwnershipTarget, lines);
                 lines.Add("if (");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add(" != nullptr)\n{\n");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add("->Dispose();\n");
                 lines.Add("delete ");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add(";\n");
                 lines.Add("}\n");
                 AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
@@ -526,14 +532,14 @@ namespace cs2.cpp {
 
             if (string.Equals(invokedMethodSymbol.Name, "DisposeAndRelease", StringComparison.Ordinal)) {
                 NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, true);
-                lines.AddRange(nativeOwnershipTarget.BeforeLines);
+                string stableTargetName = AppendStableNativeOwnershipTarget(nativeOwnershipTarget, lines);
                 lines.Add("if (");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add(" != nullptr)\n{\n");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add("->Dispose();\n");
                 lines.Add("delete ");
-                lines.Add(nativeOwnershipTarget.ReadExpression);
+                lines.Add(stableTargetName);
                 lines.Add(";\n");
                 lines.Add("}\n");
                 lines.Add(nativeOwnershipTarget.ClearExpression);
@@ -542,7 +548,71 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(invokedMethodSymbol.Name, "DeleteItemsAndRelease", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, true);
+                string stableTargetName = AppendStableNativeOwnershipTarget(nativeOwnershipTarget, lines);
+                lines.Add("if (");
+                lines.Add(stableTargetName);
+                lines.Add(" != nullptr)\n{\n");
+                lines.Add("for (int32_t index = 0; index < ");
+                lines.Add(stableTargetName);
+                lines.Add("->get_Length(); index++)\n{\n");
+                lines.Add("delete (*");
+                lines.Add(stableTargetName);
+                lines.Add(")[index];\n");
+                lines.Add("}\n}\n");
+                lines.Add("delete ");
+                lines.Add(stableTargetName);
+                lines.Add(";\n");
+                lines.Add(nativeOwnershipTarget.ClearExpression);
+                lines.Add(";\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
+                return true;
+            }
+
+            if (string.Equals(invokedMethodSymbol.Name, "DisposeItemsAndRelease", StringComparison.Ordinal)) {
+                NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, true);
+                string stableTargetName = AppendStableNativeOwnershipTarget(nativeOwnershipTarget, lines);
+                lines.Add("if (");
+                lines.Add(stableTargetName);
+                lines.Add(" != nullptr)\n{\n");
+                lines.Add("for (int32_t index = 0; index < ");
+                lines.Add(stableTargetName);
+                lines.Add("->get_Length(); index++)\n{\n");
+                lines.Add("if ((*");
+                lines.Add(stableTargetName);
+                lines.Add(")[index] != nullptr)\n{\n(*");
+                lines.Add(stableTargetName);
+                lines.Add(")[index]->Dispose();\ndelete (*");
+                lines.Add(stableTargetName);
+                lines.Add(")[index];\n}\n}\n}\n");
+                lines.Add("delete ");
+                lines.Add(stableTargetName);
+                lines.Add(";\n");
+                lines.Add(nativeOwnershipTarget.ClearExpression);
+                lines.Add(";\n");
+                AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Release, lines);
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Captures an ownership target in one native local so disposal cannot mutate state that a repeated target expression would read again.
+        /// </summary>
+        /// <param name="target">Lowered ownership target and any prerequisite statements required to evaluate it.</param>
+        /// <param name="lines">Output token buffer that receives the prerequisite statements and stable local declaration.</param>
+        /// <returns>The generated local name containing the ownership target's single evaluated value.</returns>
+        string AppendStableNativeOwnershipTarget(NativeOwnershipTarget target, List<string> lines) {
+            lines.AddRange(target.BeforeLines);
+            string targetName = CreateTemporaryName("__nativeOwnershipTarget");
+            lines.Add("auto ");
+            lines.Add(targetName);
+            lines.Add(" = ");
+            lines.Add(target.ReadExpression);
+            lines.Add(";\n");
+            return targetName;
         }
 
         NativeOwnershipTarget ResolveNativeOwnershipTarget(
@@ -3271,6 +3341,7 @@ namespace cs2.cpp {
                 }
 
                 if (TryAppendObjectInitializerSetterAssignment(semantic, context, objectCreationTypeSyntax, objectName, memberAccessOperator, assignment, lines)) {
+                    AppendOwnershipDisarms(assignment, CPPOwnershipTransitionKind.Transfer, lines);
                     continue;
                 }
 
@@ -3289,6 +3360,10 @@ namespace cs2.cpp {
                 lines.AddRange(rightLines);
 
                 lines.Add(";\n");
+                if (rightResult.AfterLines != null && rightResult.AfterLines.Count > 0) {
+                    lines.AddRange(rightResult.AfterLines);
+                }
+                AppendOwnershipDisarms(assignment, CPPOwnershipTransitionKind.Transfer, lines);
             }
 
             lines.Add("return ");
@@ -4631,6 +4706,14 @@ namespace cs2.cpp {
                 }
             }
             lines.Add(")");
+            if (GetOwnershipTransitions(assignment, CPPOwnershipTransitionKind.Transfer).Count > 0) {
+                lines.Add(";\n");
+                AppendOwnershipDisarms(
+                    assignment,
+                    CPPOwnershipTransitionKind.Transfer,
+                    lines,
+                    false);
+            }
             return true;
         }
 
@@ -6185,6 +6268,18 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (TryProcessEnumerableToArrayInvocation(
+                    semantic,
+                    context,
+                    invocationExpression,
+                    invokedMethodSymbol,
+                    extensionMethodSymbol,
+                    memberAccess,
+                    lines,
+                    out result)) {
+                return true;
+            }
+
             List<string> beforeLines = new List<string>();
             List<string> invocationTargetLines = new List<string>();
             List<List<string>> argumentLines = new List<List<string>>();
@@ -6293,6 +6388,49 @@ namespace cs2.cpp {
             lines.Add(")");
             result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
             result.BeforeLines = beforeLines.Count > 0 ? beforeLines : null;
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers LINQ <c>Enumerable.ToArray</c> calls to the shared native collection clone helper that preserves the managed distinct-array contract.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to lower the extension receiver.</param>
+        /// <param name="context">Current C++ emission context.</param>
+        /// <param name="invocationExpression">Reduced extension invocation being emitted.</param>
+        /// <param name="invokedMethodSymbol">Resolved reduced method whose return type defines the result.</param>
+        /// <param name="extensionMethodSymbol">Unreduced extension method used to identify the LINQ operation.</param>
+        /// <param name="memberAccess">Member access containing the source collection expression.</param>
+        /// <param name="lines">Output token buffer receiving the native helper invocation.</param>
+        /// <param name="result">Lowered expression metadata, including receiver preparation statements.</param>
+        /// <returns><c>true</c> when this invocation is the supported LINQ array-copy operation; otherwise <c>false</c>.</returns>
+        bool TryProcessEnumerableToArrayInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            IMethodSymbol invokedMethodSymbol,
+            IMethodSymbol extensionMethodSymbol,
+            MemberAccessExpressionSyntax memberAccess,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (!string.Equals(extensionMethodSymbol.Name, "ToArray", StringComparison.Ordinal) ||
+                !string.Equals(extensionMethodSymbol.ContainingType?.ToDisplayString(), "System.Linq.Enumerable", StringComparison.Ordinal) ||
+                invocationExpression.ArgumentList.Arguments.Count != 0) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeArray");
+            List<string> receiverLines = new List<string>();
+            int receiverStart = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(receiverStart);
+
+            lines.Add("NativeCollectionToArray(");
+            lines.AddRange(receiverLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(invokedMethodSymbol.ReturnType));
+            result.BeforeLines = receiverResult.BeforeLines;
+            result.AfterLines = receiverResult.AfterLines;
             return true;
         }
 
@@ -7713,15 +7851,12 @@ namespace cs2.cpp {
                 return false;
             }
 
-            VariableType targetType = VariableUtil.GetVarType(parameterSymbol.Type);
-            CPPTypeData targetTypeData;
-            VariableType cppTargetType = ConvertToCPPType(targetType, out targetTypeData);
-
-            argumentLines.Add("new ");
-            argumentLines.Add(cppTargetType.ToCPPString(context.Program));
-            argumentLines.Add("(");
-            AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, argumentLines);
-            argumentLines.Add(")");
+            AppendConcreteListCollectionExpression(
+                semantic,
+                context,
+                collectionExpression,
+                parameterSymbol.Type,
+                argumentLines);
             return true;
         }
 
@@ -10690,16 +10825,42 @@ namespace cs2.cpp {
                 : VariableUtil.GetVarType("object");
 
             if (targetVariableType.Type == VariableDataType.List) {
-                CPPTypeData targetTypeData;
-                VariableType cppTargetType = ConvertToCPPType(targetVariableType, out targetTypeData);
-                lines.Add($"new {cppTargetType.ToCPPString(context.Program)}(");
-                AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
-                lines.Add(")");
-                return new ExpressionResult(true, VariablePath.Unknown, cppTargetType);
+                AppendConcreteListCollectionExpression(
+                    semantic,
+                    context,
+                    collectionExpression,
+                    targetTypeSymbol,
+                    lines);
+                return new ExpressionResult(true, VariablePath.Unknown, targetVariableType);
             }
 
             AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
             return new ExpressionResult(true, VariablePath.Unknown, null);
+        }
+
+        /// <summary>
+        /// Emits one concrete native list allocation for a collection expression whose managed target may be a list interface.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to lower collection elements.</param>
+        /// <param name="context">Current C++ emission context.</param>
+        /// <param name="collectionExpression">Collection expression supplying the initial elements.</param>
+        /// <param name="targetTypeSymbol">Managed list-family target whose element type defines the concrete list.</param>
+        /// <param name="lines">Output token buffer receiving the concrete native list construction.</param>
+        void AppendConcreteListCollectionExpression(
+            SemanticModel semantic,
+            LayerContext context,
+            CollectionExpressionSyntax collectionExpression,
+            ITypeSymbol targetTypeSymbol,
+            List<string> lines) {
+            if (targetTypeSymbol is not INamedTypeSymbol namedTargetType || namedTargetType.TypeArguments.Length != 1) {
+                throw new InvalidOperationException($"Collection expression target '{targetTypeSymbol?.ToDisplayString()}' does not expose one required list element type.");
+            }
+
+            RegisterRuntimeRequirement("NativeList");
+            string elementTypeName = GetCppTypeToken(VariableUtil.GetVarType(namedTargetType.TypeArguments[0]), context.Program);
+            lines.Add($"new List<{elementTypeName}>(");
+            AppendCollectionExpressionInitializerList(semantic, context, collectionExpression, lines);
+            lines.Add(")");
         }
 
         void AppendCollectionExpressionInitializerList(
@@ -12646,6 +12807,7 @@ namespace cs2.cpp {
 
             string disposalTarget = string.Empty;
             bool disposalUsesPointerAccess = false;
+            CPPLocalOwnershipPlan disposalOwnershipPlan = null;
 
             if (usingStatement.Declaration != null) {
                 if (!TryProcessOwnedManagedLocalDeclaration(semantic, context, usingStatement.Declaration, lines)) {
@@ -12656,6 +12818,7 @@ namespace cs2.cpp {
                 VariableDeclaratorSyntax declaredVariable = usingStatement.Declaration.Variables.FirstOrDefault();
                 if (declaredVariable != null) {
                     disposalTarget = declaredVariable.Identifier.Text;
+                    disposalOwnershipPlan = ResolveLocalOwnershipPlan(declaredVariable);
                 }
 
                 VariableType declarationType = VariableUtil.GetVarType(usingStatement.Declaration.Type, semantic);
@@ -12679,7 +12842,12 @@ namespace cs2.cpp {
                 disposalUsesPointerAccess = !UsesDirectMemberAccess(resourceResult);
             }
 
-            AppendDisposalGuard(lines, disposalTarget, disposalUsesPointerAccess, "__usingDisposeGuard");
+            AppendDisposalGuard(
+                lines,
+                disposalTarget,
+                disposalUsesPointerAccess,
+                "__usingDisposeGuard",
+                disposalOwnershipPlan);
             ProcessStatement(semantic, context, usingStatement.Statement, lines);
             lines.Add("}\n");
         }
@@ -12688,7 +12856,8 @@ namespace cs2.cpp {
             List<string> lines,
             string disposalTarget,
             bool disposalUsesPointerAccess,
-            string guardPrefix) {
+            string guardPrefix,
+            CPPLocalOwnershipPlan ownershipPlan) {
             if (string.IsNullOrWhiteSpace(disposalTarget)) {
                 return;
             }
@@ -12696,18 +12865,21 @@ namespace cs2.cpp {
             string guardName = CreateTemporaryName(guardPrefix);
             RegisterRuntimeRequirement("NativeFinally");
             lines.Add($"auto {guardName} = he_cpp_make_scope_exit([&]() {{\n");
-            AppendDisposalCleanupBody(lines, disposalTarget, disposalUsesPointerAccess);
+            AppendDisposalCleanupBody(lines, disposalTarget, disposalUsesPointerAccess, ownershipPlan);
             lines.Add("});\n");
         }
 
         void AppendDisposalCleanupBody(
             List<string> lines,
             string disposalTarget,
-            bool disposalUsesPointerAccess) {
+            bool disposalUsesPointerAccess,
+            CPPLocalOwnershipPlan ownershipPlan) {
             if (disposalUsesPointerAccess) {
                 lines.Add($"if ({disposalTarget} != nullptr) {{\n");
                 lines.Add($"{disposalTarget}->Dispose();\n");
-                lines.Add($"delete {disposalTarget};\n");
+                if (ownershipPlan == null || !ownershipPlan.RequiresScopeGuard) {
+                    lines.Add($"delete {disposalTarget};\n");
+                }
                 lines.Add("}\n");
                 return;
             }

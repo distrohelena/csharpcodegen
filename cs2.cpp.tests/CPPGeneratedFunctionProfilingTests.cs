@@ -42,6 +42,37 @@ public class CPPGeneratedFunctionProfilingTests {
     }
 
     /// <summary>
+    /// Ensures a maintained-symbol prefix policy emits only explicitly selected coarse scopes.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WhenMaintainedSymbolPrefixesAreConfigured_EmitsOnlyMatchingScopes() {
+        string outputPath = CPPGeneratedFunctionProfilingTestFixture.RunConversion(
+            true,
+            "ProfileSubject.Add(;ProfileSubject.operator +(");
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "ProfileSubject.cpp"));
+        string manifestPath = Path.Combine(outputPath, "runtime", "generated_profiler_manifest.json");
+
+        Assert.Equal(2, CPPGeneratedFunctionProfilingTestFixture.CountScopes(sourceOutput));
+        Assert.Contains("ProfileSubject.Add(int)", sourceOutput, StringComparison.Ordinal);
+        Assert.Contains("ProfileSubject.operator +(ProfileSubject, ProfileSubject)", sourceOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProfileSubject.Value", sourceOutput, StringComparison.Ordinal);
+        Assert.Equal(2, CPPGeneratedFunctionProfilingTestFixture.ReadManifestScopeCount(manifestPath));
+    }
+
+    /// <summary>
+    /// Ensures empty entries in the maintained-symbol prefix policy are rejected instead of widening instrumentation.
+    /// </summary>
+    [Fact]
+    public void ResolveMaintainedSymbolPrefixes_WhenAnEntryIsEmpty_Throws() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            [CPPCodegenOptionNames.GeneratedFunctionProfilingMaintainedSymbolPrefixes] = "ProfileSubject.Add(;;ProfileSubject.operator +("
+        };
+
+        Assert.Throws<InvalidOperationException>(() => CPPGeneratedFunctionProfilingOptionResolver.ResolveMaintainedSymbolPrefixes(options));
+    }
+
+    /// <summary>
     /// Ensures a profiling-disabled conversion leaves Tracy support and profiling manifests out of generated output.
     /// </summary>
     [Fact]
@@ -112,7 +143,7 @@ public static class CPPGeneratedFunctionProfilingTestFixture {
     /// </summary>
     /// <param name="enabled">Whether the profiling option should be enabled.</param>
     /// <returns>Root folder containing the generated C++ output.</returns>
-    public static string RunConversion(bool enabled) {
+    public static string RunConversion(bool enabled, string? maintainedSymbolPrefixes = null) {
         string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-generated-function-profiling-tests", Guid.NewGuid().ToString("N"));
         string projectPath = Path.Combine(rootPath, "Fixture.csproj");
         string sourcePath = Path.Combine(rootPath, "ProfileSubject.cs");
@@ -123,9 +154,13 @@ public static class CPPGeneratedFunctionProfilingTestFixture {
 
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
         options.LoadNativeRuntimeMetadata = false;
-        options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        Dictionary<string, string> platformOptionValues = new(StringComparer.OrdinalIgnoreCase) {
             [CPPCodegenOptionNames.GeneratedFunctionProfiling] = enabled.ToString()
         };
+        if (maintainedSymbolPrefixes != null) {
+            platformOptionValues[CPPCodegenOptionNames.GeneratedFunctionProfilingMaintainedSymbolPrefixes] = maintainedSymbolPrefixes;
+        }
+        options.PlatformOptionValues = platformOptionValues;
         CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
         converter.AddCsproj(projectPath);
         converter.WriteOutput(outputPath);

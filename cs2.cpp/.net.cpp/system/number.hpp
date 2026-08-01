@@ -239,6 +239,20 @@ public:
     }
 
     /// <summary>
+    /// Applies managed checked addition when equivalent managed operands use different C++ integral representations on one target ABI.
+    /// </summary>
+    /// <typeparam name="TLeft">Integral representation that defines the managed result type.</typeparam>
+    /// <typeparam name="TRight">Integral representation supplied by the right operand, such as one native integer literal.</typeparam>
+    /// <param name="left">Left value to add.</param>
+    /// <param name="right">Right value that must first be representable by the result type.</param>
+    /// <returns>The representable sum expressed with the left operand's native type.</returns>
+    template <typename TLeft, typename TRight>
+    static TLeft CheckedAdd(const TLeft& left, const TRight& right) {
+        TLeft convertedRight = CheckedCast<TLeft>(right);
+        return CheckedAdd<TLeft>(left, convertedRight);
+    }
+
+    /// <summary>
     /// Applies managed checked same-type integral addition and writes the result only after proving it is representable.
     /// </summary>
     /// <typeparam name="T">Integral type shared by the target and value.</typeparam>

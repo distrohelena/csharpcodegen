@@ -79,6 +79,18 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Verifies direct deletion of a queued list element satisfies pending-operation cleanup without requiring a borrowed local alias.
+        /// </summary>
+        [Fact]
+        public void Validate_whenPendingOperationListElementIsDeletedDirectly_acceptsCleanup() {
+            File.WriteAllText(
+                Path.Combine(OutputFolder, "SceneManager.cpp"),
+                "PendingSceneOperation* marker; delete (*this->PendingOperations).get_Item(static_cast<int32_t>(0)); he_cpp_make_scope_exit");
+
+            CPPGeneratedOwnershipValidator.Validate(OutputFolder);
+        }
+
+        /// <summary>
         /// Verifies non-engine font-asset fixtures do not require transient source-texture ownership cleanup markers.
         /// </summary>
         [Fact]

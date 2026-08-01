@@ -43,6 +43,18 @@ public sealed class CPPNativeOwnershipAttributeTests {
     }
 
     /// <summary>
+    /// Ensures retained-borrow contracts apply only to method parameters.
+    /// </summary>
+    [Fact]
+    public void NativeRetainsBorrowAttribute_TargetsParameters() {
+        AttributeUsageAttribute usage = ResolveUsage<NativeRetainsBorrowAttribute>();
+
+        Assert.Equal(AttributeTargets.Parameter, usage.ValidOn);
+        Assert.False(usage.AllowMultiple);
+        Assert.False(usage.Inherited);
+    }
+
+    /// <summary>
     /// Ensures owned-member contracts can annotate fields and properties without being inherited or repeated.
     /// </summary>
     [Fact]

@@ -67,6 +67,27 @@ public sealed class CPPMethodOwnershipKeyTests {
     }
 
     /// <summary>
+    /// Ensures function-pointer signatures receive stable intrinsic identities even though Roslyn gives them no containing assembly.
+    /// </summary>
+    [Fact]
+    public void Create_WithFunctionPointerSignature_UsesIntrinsicIdentity() {
+        CSharpCompilation compilation = OwnershipRoslynTestHelper.CreateCompilation("""
+            public unsafe sealed class Fixture {
+                public void Run(delegate*<void*, int, void> callback) {
+                }
+            }
+            """, assemblyName: "FunctionPointerKeys");
+        IMethodSymbol method = ResolveMethods(compilation, "Run").Single();
+        IFunctionPointerTypeSymbol functionPointer = Assert.IsAssignableFrom<IFunctionPointerTypeSymbol>(method.Parameters[0].Type);
+
+        string firstKey = CPPMethodOwnershipKey.Create(functionPointer.Signature);
+        string secondKey = CPPMethodOwnershipKey.Create(functionPointer.Signature);
+
+        Assert.Equal(firstKey, secondKey);
+        Assert.StartsWith("<function-pointer>|", firstKey, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Creates source containing overloaded and generic methods for stable identity checks.
     /// </summary>
     /// <returns>The semantic compilation used by the key tests.</returns>

@@ -15,6 +15,21 @@ public enum CPPParameterOwnershipKind {
     NoEscape,
 
     /// <summary>
+    /// Indicates that the callee retains or returns the argument without assuming cleanup responsibility.
+    /// </summary>
+    Escapes,
+
+    /// <summary>
+    /// Indicates that the argument is retained only by the object returned from the call.
+    /// </summary>
+    EscapesWithReturn,
+
+    /// <summary>
+    /// Indicates that the callee retains a non-owning reference while cleanup responsibility remains with the caller.
+    /// </summary>
+    RetainsBorrow,
+
+    /// <summary>
     /// Indicates that the callee assumes cleanup responsibility for the argument.
     /// </summary>
     TakesOwnership

@@ -345,6 +345,34 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies native arrays and lists share the managed read-only-list contract and expose the collection operations emitted by full-engine conversion.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_collections_implement_full_engine_read_only_and_copy_surfaces() {
+        string repositoryRootPath = ResolveRepositoryRootPath();
+        string arraySource = File.ReadAllText(Path.Combine(repositoryRootPath, "cs2.cpp", ".net.cpp", "runtime", "array.hpp"));
+        string listSource = File.ReadAllText(Path.Combine(repositoryRootPath, "cs2.cpp", ".net.cpp", "runtime", "native_list.hpp"));
+
+        Assert.Contains("class Array : public IReadOnlyList<T>", arraySource, StringComparison.Ordinal);
+        Assert.Contains("explicit List(const IReadOnlyList<T>* values)", listSource, StringComparison.Ordinal);
+        Assert.Contains("void AddRange(const IReadOnlyList<T>* values)", listSource, StringComparison.Ordinal);
+        Assert.Contains("int32_t IndexOf(const T& value) const", listSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies checked addition accepts C++ ABI aliases and integer literals that represent the same managed integral type without template-deduction failure.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_checked_addition_accepts_mixed_native_integral_representations() {
+        string repositoryRootPath = ResolveRepositoryRootPath();
+        string numberSource = File.ReadAllText(Path.Combine(repositoryRootPath, "cs2.cpp", ".net.cpp", "system", "number.hpp"));
+
+        Assert.Contains("template <typename TLeft, typename TRight>", numberSource, StringComparison.Ordinal);
+        Assert.Contains("static TLeft CheckedAdd(const TLeft& left, const TRight& right)", numberSource, StringComparison.Ordinal);
+        Assert.Contains("TLeft convertedRight = CheckedCast<TLeft>(right);", numberSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the native event runtime stores and invokes free or static subscribers instead of discarding all event traffic.
     /// </summary>
     [Fact]

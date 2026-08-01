@@ -35,7 +35,12 @@ namespace cs2.cpp {
             this.processor = processor;
             this.program = program;
             functionBodyOverrideCatalog = new CPPGeneratedFunctionBodyOverrideCatalog();
-            generatedFunctionProfilingScopeEmitter = new CPPGeneratedFunctionProfilingScopeEmitter(generatedFunctionProfilingManifest);
+            IReadOnlyList<string> maintainedSymbolPrefixes = processor?.Options == null
+                ? Array.Empty<string>()
+                : CPPGeneratedFunctionProfilingOptionResolver.ResolveMaintainedSymbolPrefixes(processor.Options);
+            generatedFunctionProfilingScopeEmitter = new CPPGeneratedFunctionProfilingScopeEmitter(
+                generatedFunctionProfilingManifest,
+                maintainedSymbolPrefixes);
         }
 
         /// <summary>
@@ -539,6 +544,7 @@ namespace cs2.cpp {
             string normalizedReferencedClass = NormalizeReferencedClassName(normalizedIncludeCandidate);
             generatedClass = program.Classes.FirstOrDefault(candidate =>
                 !candidate.IsNative &&
+                CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&
                 string.Equals(candidate.GetEmittedTypeName(), normalizedIncludeCandidate, StringComparison.Ordinal));
 
             if (generatedClass != null) {
@@ -547,6 +553,7 @@ namespace cs2.cpp {
 
             generatedClass = program.Classes.FirstOrDefault(candidate =>
                 !candidate.IsNative &&
+                CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&
                 string.Equals(candidate.GetEmittedTypeName(), normalizedReferencedClass, StringComparison.Ordinal));
             return generatedClass != null;
         }
@@ -1892,6 +1899,7 @@ namespace cs2.cpp {
             string emittedTypePrefix = conversionClass.GetEmittedTypeName() + "_";
             foreach (ConversionClass nestedType in program.Classes.Where(candidate =>
                          candidate != null &&
+                         CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&
                          candidate.DeclarationType != MemberDeclarationType.Delegate &&
                          candidate.DeclarationType != MemberDeclarationType.Enum &&
                          ((candidate.TypeSymbol?.ContainingType != null &&
@@ -3432,12 +3440,16 @@ namespace cs2.cpp {
 
             headerWriter.Write($"{GetFunctionName(conversionClass, function)}(");
             WriteParameters(conversionClass, function, headerWriter);
+            headerWriter.Write(")");
+            if (ShouldEmitConstInstanceMember(conversionClass, function)) {
+                headerWriter.Write(" const");
+            }
             if (emitPureVirtualDeclaration) {
-                headerWriter.WriteLine(") = 0;");
+                headerWriter.WriteLine(" = 0;");
                 return;
             }
 
-            headerWriter.WriteLine(");");
+            headerWriter.WriteLine(";");
         }
 
         /// <summary>
@@ -3465,6 +3477,9 @@ namespace cs2.cpp {
             sourceWriter.Write($"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}(");
             WriteParameters(conversionClass, function, sourceWriter, true);
             sourceWriter.Write(")");
+            if (ShouldEmitConstInstanceMember(conversionClass, function)) {
+                sourceWriter.Write(" const");
+            }
             WriteConstructorInitializer(conversionClass, function, sourceWriter);
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
@@ -3524,6 +3539,19 @@ namespace cs2.cpp {
 
             return ShouldEmitPureVirtualDeclaration(conversionClass, function) ||
                 function.DeclarationType == MemberDeclarationType.Virtual;
+        }
+
+        /// <summary>
+        /// Determines whether one instance function belongs to a readonly managed value type and therefore requires a const-qualified C++ receiver.
+        /// </summary>
+        /// <param name="conversionClass">Generated type that owns the function.</param>
+        /// <param name="function">Function whose native receiver qualification is being selected.</param>
+        /// <returns><c>true</c> for non-static, non-constructor members of readonly structs; otherwise <c>false</c>.</returns>
+        static bool ShouldEmitConstInstanceMember(ConversionClass conversionClass, ConversionFunction function) {
+            return conversionClass.IsValueType &&
+                conversionClass.TypeSymbol?.IsReadOnly == true &&
+                !function.IsStatic &&
+                !function.IsConstructor;
         }
 
         static bool ShouldSkipFunctionDefinition(ConversionClass conversionClass, ConversionFunction function) {
