@@ -32,5 +32,10 @@ public enum CPPParameterOwnershipKind {
     /// <summary>
     /// Indicates that the callee assumes cleanup responsibility for the argument.
     /// </summary>
-    TakesOwnership
+    TakesOwnership,
+
+    /// <summary>
+    /// Indicates that the callee stores the argument in a retaining collection that assumes cleanup responsibility while the value stays alive and borrowable.
+    /// </summary>
+    TakesOwnershipRetained
 }

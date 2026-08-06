@@ -341,6 +341,7 @@ public sealed class CPPMethodOwnershipSummaryResolver {
         SyntaxNode methodDeclaration = GetMethodDeclaration(method);
         SemanticModel semanticModel = ResolveSemanticModel(methodDeclaration.SyntaxTree);
         bool takesOwnership = false;
+        bool takesOwnershipRetained = false;
         foreach (IdentifierNameSyntax reference in methodDeclaration.DescendantNodes().OfType<IdentifierNameSyntax>()) {
             if (!SymbolEqualityComparer.Default.Equals(semanticModel.GetSymbolInfo(reference).Symbol, parameter)) {
                 continue;
@@ -396,7 +397,11 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             }
             if (IntrinsicCatalog.TryGetParameterOwnership(argumentOperation.Parameter, out CPPParameterOwnershipKind declaredOwnership)) {
                 if (declaredOwnership == CPPParameterOwnershipKind.TakesOwnership) {
-                    takesOwnership = true;
+                    if (IntrinsicCatalog.IsOwnershipTransferringCollectionInsertion(targetMethod)) {
+                        takesOwnershipRetained = true;
+                    } else {
+                        takesOwnership = true;
+                    }
                 } else if (declaredOwnership == CPPParameterOwnershipKind.RetainsBorrow) {
                     if (IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind sourceOwnership) &&
                         sourceOwnership == CPPParameterOwnershipKind.TakesOwnership) {
@@ -413,6 +418,9 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                 CPPParameterOwnershipKind targetOwnership = targetSummary.GetParameterOwnership(argumentOperation.Parameter.Ordinal);
                 if (targetOwnership == CPPParameterOwnershipKind.TakesOwnership) {
                     takesOwnership = true;
+                    continue;
+                } else if (targetOwnership == CPPParameterOwnershipKind.TakesOwnershipRetained) {
+                    takesOwnershipRetained = true;
                     continue;
                 } else if (targetOwnership == CPPParameterOwnershipKind.NoEscape) {
                     continue;
@@ -433,7 +441,11 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             return CPPParameterOwnershipKind.Unknown;
         }
 
-        return takesOwnership ? CPPParameterOwnershipKind.TakesOwnership : CPPParameterOwnershipKind.NoEscape;
+        if (takesOwnership) {
+            return CPPParameterOwnershipKind.TakesOwnership;
+        }
+
+        return takesOwnershipRetained ? CPPParameterOwnershipKind.TakesOwnershipRetained : CPPParameterOwnershipKind.NoEscape;
     }
 
     /// <summary>
@@ -676,6 +688,14 @@ public sealed class CPPMethodOwnershipSummaryResolver {
                 }
                 if (declaredParameter == CPPParameterOwnershipKind.TakesOwnership &&
                     inferredParameter == CPPParameterOwnershipKind.EscapesWithReturn) {
+                    continue;
+                }
+                if (declaredParameter == CPPParameterOwnershipKind.TakesOwnership &&
+                    inferredParameter == CPPParameterOwnershipKind.TakesOwnershipRetained) {
+                    continue;
+                }
+                if (declaredParameter == CPPParameterOwnershipKind.RetainsBorrow &&
+                    inferredParameter == CPPParameterOwnershipKind.TakesOwnershipRetained) {
                     continue;
                 }
                 if (declaredParameter == CPPParameterOwnershipKind.RetainsBorrow &&

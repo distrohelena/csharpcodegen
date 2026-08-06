@@ -30,6 +30,8 @@ namespace cs2.cpp {
         /// </summary>
         CPPOwnershipEmissionPlan OwnershipEmissionPlan => codeConverter?.OwnershipAnalysisResult?.EmissionPlan;
 
+        CPPMethodOwnershipSummaryResolution OwnershipMethodSummaries => codeConverter?.OwnershipAnalysisResult?.MethodSummaries;
+
         /// <summary>
         /// Returns whether generated native exception construction should omit message arguments to reduce runtime string payload size.
         /// </summary>
@@ -492,6 +494,14 @@ namespace cs2.cpp {
             }
 
             ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[0];
+            if (string.Equals(invokedMethodSymbol.Name, "DetachOwned", StringComparison.Ordinal)) {
+                NativeOwnershipTarget detachTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
+                lines.AddRange(detachTarget.BeforeLines);
+                lines.Add(detachTarget.ReadExpression);
+                lines.Add("->DetachOwned();\n");
+                return true;
+            }
+
             if (string.Equals(invokedMethodSymbol.Name, "Delete", StringComparison.Ordinal)) {
                 NativeOwnershipTarget nativeOwnershipTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
                 lines.AddRange(nativeOwnershipTarget.BeforeLines);
@@ -5733,6 +5743,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, runtimeGetTypeType);
             }
 
+            if (TryProcessOwnedCollectionInsertionInvocation(semantic, context, invocationExpression, lines, out ExpressionResult ownedInsertionResult)) {
+                return ownedInsertionResult;
+            }
+
             if (TryProcessEncodingInvocation(semantic, context, invocationExpression, lines, out VariableType encodingInvocationType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, encodingInvocationType);
             }
@@ -7098,6 +7112,139 @@ namespace cs2.cpp {
             ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression, lines);
             lines.Add(")");
             return true;
+        }
+
+        /// <summary>
+        /// Lowers a collection insertion that consumes ownership of its inserted value into the owning runtime insertion call.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the invoked collection method and argument types.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Candidate collection insertion invocation.</param>
+        /// <param name="lines">Output token buffer receiving the owning insertion call.</param>
+        /// <param name="result">Complete expression result including transfer disarms emitted before the call.</param>
+        /// <returns><c>true</c> when the invocation was lowered as an owning insertion; otherwise <c>false</c>.</returns>
+        bool TryProcessOwnedCollectionInsertionInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                !string.Equals(memberAccess.Name.Identifier.Text, "Add", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            if (semantic.GetSymbolInfo(invocationExpression).Symbol is not IMethodSymbol invokedMethodSymbol) {
+                return false;
+            }
+
+            string containingTypeName = invokedMethodSymbol.ContainingType?.OriginalDefinition.ToDisplayString() ?? string.Empty;
+            bool isListInsertion = string.Equals(containingTypeName, "System.Collections.Generic.List<T>", StringComparison.Ordinal);
+            bool isDictionaryInsertion = string.Equals(containingTypeName, "System.Collections.Generic.Dictionary<TKey, TValue>", StringComparison.Ordinal);
+            if (!isListInsertion && !isDictionaryInsertion) {
+                return false;
+            }
+
+            int expectedArgumentCount = isListInsertion ? 1 : 2;
+            if (invocationExpression.ArgumentList.Arguments.Count != expectedArgumentCount) {
+                return false;
+            }
+
+            ExpressionSyntax insertedValueExpression = invocationExpression.ArgumentList.Arguments[expectedArgumentCount - 1].Expression;
+            ITypeSymbol insertedValueTypeSymbol = semantic.GetTypeInfo(insertedValueExpression).Type;
+            if (insertedValueTypeSymbol == null || !insertedValueTypeSymbol.IsReferenceType) {
+                return false;
+            }
+
+            if (!InsertedValueTransfersOwnership(semantic, invocationExpression, insertedValueExpression)) {
+                return false;
+            }
+
+            List<string> beforeLines = new List<string>();
+            List<string> receiverLines = new List<string>();
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            if (!receiverResult.Processed) {
+                return false;
+            }
+            if (receiverResult.BeforeLines != null && receiverResult.BeforeLines.Count > 0) {
+                beforeLines.AddRange(receiverResult.BeforeLines);
+            }
+
+            List<List<string>> argumentLineGroups = new List<List<string>>();
+            for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
+                List<string> argumentLines = new List<string>();
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[argumentIndex].Expression, argumentLines);
+                if (!argumentResult.Processed) {
+                    return false;
+                }
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
+
+                argumentLineGroups.Add(argumentLines);
+            }
+
+            AppendOwnershipDisarms(invocationExpression, CPPOwnershipTransitionKind.Transfer, beforeLines);
+
+            lines.AddRange(receiverLines);
+            lines.Add("->AddOwned(");
+            for (int argumentIndex = 0; argumentIndex < argumentLineGroups.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+
+                lines.AddRange(argumentLineGroups[argumentIndex]);
+            }
+
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("void"));
+            if (beforeLines.Count > 0) {
+                result.BeforeLines = beforeLines;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether the inserted collection value carries ownership into the collection at this call site.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve owned-return metadata on argument invocations.</param>
+        /// <param name="invocationExpression">Collection insertion invocation owning any recorded transfer transitions.</param>
+        /// <param name="insertedValueExpression">Argument expression supplying the inserted value.</param>
+        /// <returns><c>true</c> when the inserted value is a fresh allocation, a transferred owned local, or an owned-return call result.</returns>
+        bool InsertedValueTransfersOwnership(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            ExpressionSyntax insertedValueExpression) {
+            if (insertedValueExpression is ObjectCreationExpressionSyntax ||
+                insertedValueExpression is ImplicitObjectCreationExpressionSyntax) {
+                return true;
+            }
+
+            if (insertedValueExpression is IdentifierNameSyntax insertedIdentifier &&
+                semantic.GetSymbolInfo(insertedIdentifier).Symbol is ILocalSymbol) {
+                IReadOnlyList<CPPOwnershipTransition> transferTransitions = GetOwnershipTransitions(invocationExpression, CPPOwnershipTransitionKind.Transfer);
+                for (int transitionIndex = 0; transitionIndex < transferTransitions.Count; transitionIndex++) {
+                    if (string.Equals(transferTransitions[transitionIndex].LocalName, insertedIdentifier.Identifier.Text, StringComparison.Ordinal)) {
+                        return true;
+                    }
+                }
+            }
+
+            if (insertedValueExpression is InvocationExpressionSyntax argumentInvocation &&
+                semantic.GetSymbolInfo(argumentInvocation).Symbol is IMethodSymbol argumentMethodSymbol) {
+                foreach (AttributeData attribute in argumentMethodSymbol.GetAttributes()) {
+                    string attributeName = attribute.AttributeClass?.Name ?? string.Empty;
+                    if (string.Equals(attributeName, "NativeOwnedReturn", StringComparison.Ordinal) ||
+                        string.Equals(attributeName, "NativeOwnedReturnAttribute", StringComparison.Ordinal)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         bool TryProcessRuntimeGetTypeInvocation(

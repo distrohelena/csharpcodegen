@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "native_exceptions.hpp"
 #include "native_string.hpp"
 
 class StringComparer;
@@ -41,6 +42,35 @@ public:
 
 template<typename TKey, typename TValue>
 class Dictionary : public std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>> {
+    /// <summary>
+    /// Tracks whether this dictionary owns its pointer values and must delete them on removal and destruction.
+    /// </summary>
+    bool OwnsValuesFlag = false;
+
+    /// <summary>
+    /// Deletes one stored value when this dictionary owns its pointer values.
+    /// </summary>
+    void DeleteOwnedValue(const TValue& value) {
+        if constexpr (std::is_pointer_v<TValue>) {
+            if (OwnsValuesFlag) {
+                delete value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes every stored value when this dictionary owns its pointer values.
+    /// </summary>
+    void DeleteOwnedValues() {
+        if constexpr (std::is_pointer_v<TValue>) {
+            if (OwnsValuesFlag) {
+                for (const auto& pair : *this) {
+                    delete pair.second;
+                }
+            }
+        }
+    }
+
 public:
     using std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>>::unordered_map;
 
@@ -48,10 +78,49 @@ public:
     }
 
     ~Dictionary() {
+        DeleteOwnedValues();
         this->clear();
     }
 
+    /// <summary>
+    /// Gets whether this dictionary owns its pointer values.
+    /// </summary>
+    bool get_OwnsValues() const {
+        return OwnsValuesFlag;
+    }
+
+    /// <summary>
+    /// Releases this dictionary's ownership claim over its values so another verified owner can assume cleanup responsibility.
+    /// </summary>
+    void DetachOwned() {
+        OwnsValuesFlag = false;
+    }
+
     void Add(const TKey& key, const TValue& value) {
+        if constexpr (std::is_pointer_v<TValue>) {
+            if (OwnsValuesFlag) {
+                throw InvalidOperationException("Cannot insert a borrowed value into a dictionary that owns its values.");
+            }
+        }
+
+        this->insert_or_assign(key, value);
+    }
+
+    /// <summary>
+    /// Stores one value whose ownership transfers to this dictionary; the dictionary deletes it on removal and destruction.
+    /// </summary>
+    void AddOwned(const TKey& key, const TValue& value) {
+        static_assert(std::is_pointer_v<TValue>, "AddOwned requires pointer values.");
+        if (!OwnsValuesFlag && !this->empty()) {
+            throw InvalidOperationException("Cannot insert an owned value into a dictionary that already borrows its values.");
+        }
+
+        OwnsValuesFlag = true;
+        auto iterator = this->find(key);
+        if (iterator != this->end() && iterator->second != value) {
+            delete iterator->second;
+        }
+
         this->insert_or_assign(key, value);
     }
 
@@ -64,6 +133,13 @@ public:
     }
 
     void set_Item(const TKey& key, const TValue& value) {
+        if constexpr (std::is_pointer_v<TValue>) {
+            auto iterator = this->find(key);
+            if (iterator != this->end() && iterator->second != value) {
+                DeleteOwnedValue(iterator->second);
+            }
+        }
+
         this->insert_or_assign(key, value);
     }
 
@@ -72,10 +148,19 @@ public:
     }
 
     bool Remove(const TKey& key) {
-        return this->erase(key) > 0;
+        auto iterator = this->find(key);
+        if (iterator == this->end()) {
+            return false;
+        }
+
+        TValue removedValue = iterator->second;
+        this->erase(iterator);
+        DeleteOwnedValue(removedValue);
+        return true;
     }
 
     void Clear() {
+        DeleteOwnedValues();
         this->clear();
     }
 

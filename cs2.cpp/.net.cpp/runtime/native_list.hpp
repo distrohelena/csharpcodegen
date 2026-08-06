@@ -33,9 +33,69 @@ public:
 
 template<typename T>
 class List : public std::vector<T>, public IReadOnlyList<T> {
+    /// <summary>
+    /// Tracks whether this list owns its pointer elements and must delete them on removal and destruction.
+    /// </summary>
+    bool OwnsElementsFlag = false;
+
+    /// <summary>
+    /// Deletes one element when this list owns its pointer elements.
+    /// </summary>
+    void DeleteOwnedElement(const T& value) {
+        if constexpr (std::is_pointer_v<T>) {
+            if (OwnsElementsFlag) {
+                delete value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes every remaining element when this list owns its pointer elements.
+    /// </summary>
+    void DeleteOwnedElements() {
+        if constexpr (std::is_pointer_v<T>) {
+            if (OwnsElementsFlag) {
+                for (const T& value : static_cast<std::vector<T>&>(*this)) {
+                    delete value;
+                }
+            }
+        }
+    }
+
 public:
     List()
         : std::vector<T>() {
+    }
+
+    ~List() override {
+        DeleteOwnedElements();
+    }
+
+    /// <summary>
+    /// Gets whether this list owns its pointer elements.
+    /// </summary>
+    bool get_OwnsElements() const {
+        return OwnsElementsFlag;
+    }
+
+    /// <summary>
+    /// Releases this list's ownership claim over its elements so another verified owner can assume cleanup responsibility.
+    /// </summary>
+    void DetachOwned() {
+        OwnsElementsFlag = false;
+    }
+
+    /// <summary>
+    /// Appends one element whose ownership transfers to this list; the list deletes it on removal and destruction.
+    /// </summary>
+    void AddOwned(const T& value) {
+        static_assert(std::is_pointer_v<T>, "AddOwned requires pointer elements.");
+        if (!OwnsElementsFlag && !this->empty()) {
+            throw InvalidOperationException("Cannot insert an owned element into a list that already borrows its elements.");
+        }
+
+        OwnsElementsFlag = true;
+        this->push_back(value);
     }
 
     explicit List(int32_t capacity)
@@ -77,12 +137,23 @@ public:
     }
 
     void Add(const T& value) {
+        if constexpr (std::is_pointer_v<T>) {
+            if (OwnsElementsFlag) {
+                throw InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements.");
+            }
+        }
+
         this->push_back(value);
     }
 
     void AddRange(const IReadOnlyList<T>* values) {
         if (values == nullptr) {
             throw ArgumentNullException("values");
+        }
+        if constexpr (std::is_pointer_v<T>) {
+            if (OwnsElementsFlag) {
+                throw InvalidOperationException("Cannot insert borrowed elements into a list that owns its elements.");
+            }
         }
 
         int32_t count = values->get_Count();
@@ -93,6 +164,7 @@ public:
     }
 
     void Clear() {
+        DeleteOwnedElements();
         this->clear();
     }
 
@@ -126,7 +198,9 @@ public:
             return false;
         }
 
+        T removedValue = *iterator;
         this->erase(iterator);
+        DeleteOwnedElement(removedValue);
         return true;
     }
 
@@ -143,6 +217,13 @@ public:
     }
 
     void set_Item(int32_t index, const T& value) {
+        if constexpr (std::is_pointer_v<T>) {
+            T previousValue = (*this)[static_cast<size_t>(index)];
+            if (previousValue != value) {
+                DeleteOwnedElement(previousValue);
+            }
+        }
+
         (*this)[static_cast<size_t>(index)] = value;
     }
 
@@ -201,6 +282,12 @@ public:
     }
 
     void Insert(int32_t index, const T& value) {
+        if constexpr (std::is_pointer_v<T>) {
+            if (OwnsElementsFlag) {
+                throw InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements.");
+            }
+        }
+
         if (index < 0) {
             index = 0;
         }
@@ -218,7 +305,9 @@ public:
             return;
         }
 
+        T removedValue = (*this)[static_cast<size_t>(index)];
         this->erase(this->begin() + index);
+        DeleteOwnedElement(removedValue);
     }
 
     Array<T>* ToArray() const {

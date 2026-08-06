@@ -20,6 +20,11 @@ public enum CPPOwnershipLifecycle {
     Transferred,
 
     /// <summary>
+    /// Indicates that cleanup responsibility has moved to a retaining collection while the value stays alive and borrowable.
+    /// </summary>
+    TransferredRetained,
+
+    /// <summary>
     /// Indicates that the declaring lexical scope retains responsibility for automatic cleanup.
     /// </summary>
     ScopeCleanup

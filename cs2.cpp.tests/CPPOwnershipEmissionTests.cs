@@ -112,10 +112,10 @@ public sealed class CPPOwnershipEmissionTests {
     }
 
     /// <summary>
-    /// Ensures inserting an owned local into a collection disarms caller cleanup so the stored entry cannot dangle.
+    /// Ensures inserting an owned local into a collection disarms caller cleanup and lowers to the owning insertion call.
     /// </summary>
     [Fact]
-    public void WriteOutput_WithOwnedLocalAddedToCollection_DisarmsBeforeInsertion() {
+    public void WriteOutput_WithOwnedLocalAddedToCollection_DisarmsAndEmitsAddOwned() {
         string outputPath = Convert("""
             using System.Collections.Generic;
 
@@ -130,7 +130,72 @@ public sealed class CPPOwnershipEmissionTests {
             """);
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
 
-        AssertAppearsInOrder(sourceOutput, "bool __owns_record_", " = false;", "->Add(record)");
+        AssertAppearsInOrder(sourceOutput, "bool __owns_record_", " = false;", "->AddOwned(record)");
+    }
+
+    /// <summary>
+    /// Ensures inserting a fresh allocation directly into a collection lowers to the owning insertion call.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithFreshAllocationAddedToCollection_EmitsAddOwned() {
+        string outputPath = Convert("""
+            using System.Collections.Generic;
+
+            public sealed class Consumer {
+                readonly List<List<int>> Records = new List<List<int>>();
+
+                public void Run() {
+                    Records.Add(new List<int>());
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        Assert.Contains("->AddOwned(", sourceOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures inserting a borrowed reference keeps the non-owning insertion call.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithBorrowedReferenceAddedToCollection_EmitsPlainAdd() {
+        string outputPath = Convert("""
+            using System.Collections.Generic;
+
+            public sealed class Consumer {
+                readonly List<List<int>> Records = new List<List<int>>();
+
+                public void Run(List<int> element) {
+                    Records.Add(element);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        Assert.Contains("->Add(element)", sourceOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("->AddOwned(", sourceOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures value-type insertions keep the non-owning insertion call because no element ownership exists.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithValueTypeAddedToCollection_EmitsPlainAdd() {
+        string outputPath = Convert("""
+            using System.Collections.Generic;
+
+            public sealed class Consumer {
+                readonly List<int> Values = new List<int>();
+
+                public void Run(int value) {
+                    Values.Add(value);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        Assert.Contains("->Add(", sourceOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain("->AddOwned(", sourceOutput, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -841,6 +906,15 @@ public sealed class CPPOwnershipEmissionTests {
         string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Owner.cpp"));
 
         AssertAppearsInOrder(sourceOutput, "(*this->Values)[0] = data", "__owns_data_", " = false;");
+    }
+
+    /// <summary>
+    /// Converts one source fixture through the production pipeline for sibling emission test classes.
+    /// </summary>
+    /// <param name="source">Complete C# source converted by the production pipeline.</param>
+    /// <returns>The generated C++ output directory.</returns>
+    internal static string ConvertForTest(string source) {
+        return Convert(source);
     }
 
     /// <summary>

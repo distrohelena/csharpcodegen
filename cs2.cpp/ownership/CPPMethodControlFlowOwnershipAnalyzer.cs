@@ -906,7 +906,13 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         CPPParameterOwnershipKind parameterOwnership = ResolveParameterOwnership(parameter, targetSummary);
         bool retainedBorrowConfinedByUsing = parameterOwnership == CPPParameterOwnershipKind.EscapesWithReturn &&
             IsCallResultConfinedByUsing(transferSyntax);
-        if (parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+        if (parameterOwnership == CPPParameterOwnershipKind.TakesOwnership ||
+            parameterOwnership == CPPParameterOwnershipKind.TakesOwnershipRetained) {
+            bool insertsIntoRetainingCollection = IntrinsicCatalog.IsOwnershipTransferringCollectionInsertion(parameter?.ContainingSymbol as IMethodSymbol);
+            if (localState.Lifecycle == CPPOwnershipLifecycle.TransferredRetained && insertsIntoRetainingCollection) {
+                return;
+            }
+
             if (localState.Lifecycle != CPPOwnershipLifecycle.Live) {
                 if (emit) {
                     AddDiagnostic(diagnostics, DiagnosticFactory.Create(
@@ -919,9 +925,11 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
                 return;
             }
 
+            bool retainedByCollection = insertsIntoRetainingCollection ||
+                parameterOwnership == CPPParameterOwnershipKind.TakesOwnershipRetained;
             state[localReference.Local] = new CPPLocalOwnershipState(
                 CPPOwnershipKind.Owned,
-                CPPOwnershipLifecycle.Transferred,
+                retainedByCollection ? CPPOwnershipLifecycle.TransferredRetained : CPPOwnershipLifecycle.Transferred,
                 true);
             if (emit) {
                 AddTransition(transitions, new CPPOwnershipTransition(
@@ -1707,7 +1715,8 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
         IDictionary<ILocalSymbol, CPPLocalOwnershipState> state,
         ICollection<CPPConversionDiagnostic> diagnostics) {
         if (!state.TryGetValue(localReference.Local, out CPPLocalOwnershipState localState) ||
-            localState.Lifecycle == CPPOwnershipLifecycle.Live) {
+            localState.Lifecycle == CPPOwnershipLifecycle.Live ||
+            localState.Lifecycle == CPPOwnershipLifecycle.TransferredRetained) {
             return;
         }
 

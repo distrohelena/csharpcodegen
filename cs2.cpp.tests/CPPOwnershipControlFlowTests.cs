@@ -623,10 +623,26 @@ public sealed class CPPOwnershipControlFlowTests {
     }
 
     /// <summary>
-    /// Ensures inserting the same owned local into two collections reports the double-transfer ambiguity.
+    /// Ensures a local remains readable after its ownership transfers into a retaining collection.
     /// </summary>
     [Fact]
-    public void Analyze_WithOwnedLocalAddedToTwoCollections_ReportsCPPOWN004() {
+    public void Analyze_WithOwnedLocalReadAfterCollectionInsert_DoesNotReportDeadUse() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<List<int>> records) {
+                List<int> record = new List<int>();
+                records.Add(record);
+                Use(record.Count);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures inserting the same owned local into two collections stays legal: the first insertion owns and later insertions borrow.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLocalAddedToTwoCollections_TreatsLaterInsertsAsBorrows() {
         CPPOwnershipAnalysisResult result = Analyze("""
             public static void Run(List<List<int>> first, List<List<int>> second) {
                 List<int> record = new List<int>();
@@ -635,7 +651,8 @@ public sealed class CPPOwnershipControlFlowTests {
             }
             """);
 
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN004" && diagnostic.SourceMemberName == "Run");
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.Single(result.EmissionPlan.Transitions.Where(transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "record"));
     }
 
     /// <summary>
