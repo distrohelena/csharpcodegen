@@ -112,6 +112,28 @@ public sealed class CPPOwnershipEmissionTests {
     }
 
     /// <summary>
+    /// Ensures inserting an owned local into a collection disarms caller cleanup so the stored entry cannot dangle.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithOwnedLocalAddedToCollection_DisarmsBeforeInsertion() {
+        string outputPath = Convert("""
+            using System.Collections.Generic;
+
+            public sealed class Consumer {
+                readonly List<List<int>> Records = new List<List<int>>();
+
+                public void Run() {
+                    List<int> record = new List<int>();
+                    Records.Add(record);
+                }
+            }
+            """);
+        string sourceOutput = File.ReadAllText(Path.Combine(outputPath, "Consumer.cpp"));
+
+        AssertAppearsInOrder(sourceOutput, "bool __owns_record_", " = false;", "->Add(record)");
+    }
+
+    /// <summary>
     /// Ensures explicit native deletion disarms the local guard immediately after destroying the owned value.
     /// </summary>
     [Fact]

@@ -67,9 +67,8 @@ public sealed class CPPIntrinsicOwnershipCatalog {
         }
 
         IMethodSymbol method = parameter.ContainingSymbol as IMethodSymbol;
-        if (IsMethod(method, "System.Collections.Generic.List<T>", "Add") ||
-            IsMethod(method, "System.Collections.Generic.Dictionary<TKey, TValue>", "Add")) {
-            ownership = CPPParameterOwnershipKind.RetainsBorrow;
+        if (IsOwnershipTransferringCollectionInsertion(method)) {
+            ownership = CPPParameterOwnershipKind.TakesOwnership;
             return true;
         } else if (IsMethod(method, "System.Array", "Copy") ||
             IsMethod(method, "System.Collections.Generic.List<T>", "AddRange") ||
@@ -85,6 +84,16 @@ public sealed class CPPIntrinsicOwnershipCatalog {
 
         ownership = CPPParameterOwnershipKind.Unknown;
         return false;
+    }
+
+    /// <summary>
+    /// Determines whether one framework method inserts its arguments into a collection whose entries outlive the call, consuming caller ownership of owned arguments.
+    /// </summary>
+    /// <param name="method">Method whose insertion behavior should be classified.</param>
+    /// <returns><c>true</c> for reviewed collection insertions that take ownership of inserted owned values.</returns>
+    public bool IsOwnershipTransferringCollectionInsertion(IMethodSymbol method) {
+        return IsMethod(method, "System.Collections.Generic.List<T>", "Add") ||
+            IsMethod(method, "System.Collections.Generic.Dictionary<TKey, TValue>", "Add");
     }
 
     /// <summary>

@@ -577,6 +577,86 @@ public sealed class CPPOwnershipControlFlowTests {
     }
 
     /// <summary>
+    /// Ensures an owned local inserted into a collection transfers ownership so the scope-end delete is disarmed instead of dangling the entry.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLocalAddedToCollection_TransfersOwnershipWithoutDiagnostics() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<List<int>> records) {
+                List<int> record = new List<int>();
+                records.Add(record);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.Contains(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "record");
+    }
+
+    /// <summary>
+    /// Ensures a fresh allocation passed directly into a collection insertion stays diagnostic-free.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithFreshAllocationAddedToCollection_DoesNotReportDiagnostics() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<List<int>> records) {
+                records.Add(new List<int>());
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures a borrowed local inserted into a collection neither transfers ownership nor reports diagnostics.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithBorrowedLocalAddedToCollection_KeepsBorrowedStateWithoutDiagnostics() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<List<int>> records, List<int> element) {
+                List<int> borrowed = element;
+                records.Add(borrowed);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.EmissionPlan.Transitions, transition => transition.Kind == CPPOwnershipTransitionKind.Transfer && transition.LocalName == "borrowed");
+    }
+
+    /// <summary>
+    /// Ensures inserting the same owned local into two collections reports the double-transfer ambiguity.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLocalAddedToTwoCollections_ReportsCPPOWN004() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static void Run(List<List<int>> first, List<List<int>> second) {
+                List<int> record = new List<int>();
+                first.Add(record);
+                second.Add(record);
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN004" && diagnostic.SourceMemberName == "Run");
+    }
+
+    /// <summary>
+    /// Ensures an explicitly annotated retains-borrow parameter stays diagnostic-free because the annotation is a reviewed lifetime contract.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithOwnedLocalPassedToAnnotatedRetainsBorrowParameter_DoesNotReportDiagnostics() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            static void Retain([NativeRetainsBorrow] List<int> value) {
+            }
+
+            public static void Run() {
+                List<int> value = new List<int>();
+                Retain(value);
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code.StartsWith("CPPOWN", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Builds one ownership fixture and analyzes its consumer method.
     /// </summary>
     /// <param name="methodSource">Consumer method declaration.</param>

@@ -167,31 +167,31 @@ public sealed class CPPIntrinsicOwnershipCatalogTests {
     }
 
     /// <summary>
-    /// Ensures list insertion retains a non-owning alias to a reference element without consuming caller ownership.
+    /// Ensures list insertion consumes ownership of an inserted owned element so no scope-end delete can dangle the stored entry.
     /// </summary>
     [Fact]
-    public void TryGetParameterOwnership_ClassifiesListAddElementAsRetainedBorrow() {
+    public void TryGetParameterOwnership_ClassifiesListAddElementAsTakesOwnership() {
         IMethodSymbol addMethod = OwnershipRoslynTestHelper.ResolveInvocation(
             "new System.Collections.Generic.List<object>().Add(new object())");
         CPPIntrinsicOwnershipCatalog catalog = new CPPIntrinsicOwnershipCatalog();
 
         Assert.True(catalog.TryGetParameterOwnership(addMethod.Parameters[0], out CPPParameterOwnershipKind item));
-        Assert.Equal(CPPParameterOwnershipKind.RetainsBorrow, item);
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, item);
     }
 
     /// <summary>
-    /// Ensures dictionary insertion retains non-owning aliases to reference keys and values without consuming caller ownership.
+    /// Ensures dictionary insertion consumes ownership of inserted owned keys and values so no scope-end delete can dangle the stored entry.
     /// </summary>
     [Fact]
-    public void TryGetParameterOwnership_ClassifiesDictionaryAddEntriesAsRetainedBorrows() {
+    public void TryGetParameterOwnership_ClassifiesDictionaryAddEntriesAsTakesOwnership() {
         IMethodSymbol addMethod = OwnershipRoslynTestHelper.ResolveInvocation(
             "new System.Collections.Generic.Dictionary<object, object>().Add(new object(), new object())");
         CPPIntrinsicOwnershipCatalog catalog = new CPPIntrinsicOwnershipCatalog();
 
         Assert.True(catalog.TryGetParameterOwnership(addMethod.Parameters[0], out CPPParameterOwnershipKind key));
-        Assert.Equal(CPPParameterOwnershipKind.RetainsBorrow, key);
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, key);
         Assert.True(catalog.TryGetParameterOwnership(addMethod.Parameters[1], out CPPParameterOwnershipKind value));
-        Assert.Equal(CPPParameterOwnershipKind.RetainsBorrow, value);
+        Assert.Equal(CPPParameterOwnershipKind.TakesOwnership, value);
     }
 
     /// <summary>
