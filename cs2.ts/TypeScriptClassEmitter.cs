@@ -298,7 +298,11 @@ namespace cs2.ts {
                         return true;
                     }
                 }
-                if (var.IsGet && var.IsSet) {
+                // Accessor BODIES take precedence over the auto-property backing-field emission: the
+                // preprocessor sets IsGet for expression-bodied and block-bodied getters too, so checking
+                // bare IsGet first silently discarded computed getter bodies (e.g. SsnClient.HasCompletedSession
+                // emitted as an uninitialized backing field).
+                if (var.ArrowExpression == null && var.GetBlock == null && var.SetBlock == null && var.IsGet && var.IsSet) {
                     writer.WriteLine($"private{isStatic} _{var.Name}{definiteAssignment}: {type}{assignment};".TrimStart());
                     writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
                     writer.WriteLine($"return this._{var.Name};");
@@ -307,7 +311,7 @@ namespace cs2.ts {
                     writer.WriteLine($"this._{var.Name} = value;");
                     writer.WriteLine("}");
                     return true;
-                } else if (var.IsGet) {
+                } else if (var.ArrowExpression == null && var.GetBlock == null && var.SetBlock == null && var.IsGet) {
                     writer.WriteLine($"private _{var.Name}{definiteAssignment}: {type}{assignment};".TrimStart());
                     writer.WriteLine($"{access}{isStatic} get {var.Name}(): {type} {{".TrimStart());
                     writer.WriteLine($"return this._{var.Name};");
@@ -324,10 +328,20 @@ namespace cs2.ts {
                     List<string> lines = new List<string>();
                     TypeScriptLayerContext context = new TypeScriptLayerContext(TypeScriptProgram);
 
+                    // A function frame in addition to the class frame: expression processing (e.g. of an
+                    // invocation like `public T X => ComputeX();`) dereferences the current function, and a
+                    // bare class-only context made arrow properties with calls crash the conversion.
+                    ConversionFunction arrowFn = new ConversionFunction();
+                    arrowFn.Name = $"get_{var.Name}";
+                    arrowFn.ReturnType = var.VarType;
+
                     int start = context.DepthClass;
+                    int startFn = context.DepthFunction;
                     context.AddClass(cl);
+                    context.AddFunction(new FunctionStack(arrowFn));
                     Conversion.ProcessExpression(cl.Semantic, context, var.ArrowExpression, lines);
                     context.PopClass(start);
+                    context.PopFunction(startFn);
 
                     for (int k = 0; k < lines.Count; k++) {
                         string str = lines[k];

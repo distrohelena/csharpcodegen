@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using cs2.ts.util;
+using StringUtil = cs2.core.StringUtil;
 
 namespace cs2.ts {
     /// <summary>
@@ -3486,6 +3487,16 @@ namespace cs2.ts {
                 if (!isAsync && bodyLines.Any(l => l.Contains("await "))) {
                     isAsync = true;
                 }
+            } else if (simpleLambda.Body is BlockSyntax preprocessedBlock) {
+                // Process the block BEFORE emitting the lambda header so async infection is visible: a
+                // synchronous C# lambda whose body calls a method that became async in TS gains awaits
+                // during conversion, and emitting `x => { await ... }` without `async` is invalid TS.
+                bodyLines.Add("{\n");
+                ProcessStatement(semantic, context, preprocessedBlock, bodyLines);
+                bodyLines.Add("}\n");
+                if (bodyLines.Any(l => l.Contains("await "))) {
+                    isAsync = true;
+                }
             }
 
             if (isAsync) {
@@ -3499,12 +3510,8 @@ namespace cs2.ts {
                 lines.AddRange(bodyResult.BeforeLines);
             }
 
-            if (simpleLambda.Body is ExpressionSyntax) {
+            if (simpleLambda.Body is ExpressionSyntax || simpleLambda.Body is BlockSyntax) {
                 lines.AddRange(bodyLines);
-            } else if (simpleLambda.Body is BlockSyntax block) {
-                lines.Add("{\n");
-                ProcessStatement(semantic, context, block, lines);
-                lines.Add("}\n");
             }
 
             if (hasBodyResult && bodyResult.AfterLines != null) {
@@ -4714,6 +4721,12 @@ namespace cs2.ts {
                 if (result.Type != null && result.Type.TypeName.StartsWith("Promise<", StringComparison.Ordinal)) {
                     isAsync = true;
                 }
+
+                // Async infection: a synchronous C# lambda whose body calls a method that became async in
+                // TS gains awaits during conversion; without `async` on the lambda the emitted TS is invalid.
+                if (!isAsync && lines.Skip(startIndex).Any(l => l.Contains("await "))) {
+                    isAsync = true;
+                }
             } else if (lambda.Body is ExpressionSyntax expressionBody) {
                 List<string> bodyLines = new List<string>();
                 ExpressionResult result = ProcessExpression(semantic, context, expressionBody, bodyLines);
@@ -4900,8 +4913,15 @@ namespace cs2.ts {
             ProcessStatement(semantic, context, tryStatement.Block, lines);
             lines.Add("}\n");
 
-            // Process the 'catch' block(s)
-            foreach (var catchClause in tryStatement.Catches) {
+            // Process the 'catch' block(s). TypeScript allows only ONE catch clause and this emitter has
+            // always erased C# catch type filters (a typed C# catch becomes an untyped TS catch), so under
+            // the established semantics the FIRST clause already catches everything: emitting one TS catch
+            // per C# clause produced syntactically invalid `catch {} catch {}` output. For multi-catch we
+            // therefore emit only the first clause and note the merge.
+            var catchClauses = tryStatement.Catches.Count > 1
+                ? new[] { tryStatement.Catches[0] }
+                : tryStatement.Catches.ToArray();
+            foreach (var catchClause in catchClauses) {
                 string catchVarName = null;
                 if (catchClause.Declaration != null) {
                     var identifier = catchClause.Declaration.Identifier;
@@ -4922,6 +4942,9 @@ namespace cs2.ts {
                     var.Name = catchVarName;
                     var.VarType = VariableUtil.GetVarType(catchClause.Declaration?.Type, semantic);
                     fn.Stack.Add(var);
+                }
+                if (tryStatement.Catches.Count > 1) {
+                    lines.Add("// cs2.ts: subsequent C# catch clauses merged into this one (catch type filters are erased in TS)\n");
                 }
                 ProcessStatement(semantic, context, catchClause.Block, lines);
                 lines.Add("}\n");

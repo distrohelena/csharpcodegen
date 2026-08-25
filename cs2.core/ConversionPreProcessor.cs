@@ -817,7 +817,10 @@ namespace cs2.core {
             if (pMember.Initializer != null) {
                 variable.AssignmentExpression = pMember.Initializer.Value;
                 if (pMember.Initializer.Value is LiteralExpressionSyntax literal) {
-                    variable.Assignment = literal.Token.ValueText;
+                    // Same literal processing as the field-declarator path: Token.ValueText strips string
+                    // quotes, which emitted `= static` / `= ntp` (invalid or silently-undefined TS) for
+                    // string auto-property initializers.
+                    variable.Assignment = ProcessLiteralExpression(literal, context);
                 }
             }
 

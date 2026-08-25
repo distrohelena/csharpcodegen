@@ -1,8 +1,9 @@
-﻿using cs2.core;
+using cs2.core;
 using Nucleus;
 using System;
 using System.Reflection;
 using cs2.ts.util;
+using AssemblyUtil = cs2.core.AssemblyUtil;
 
 namespace cs2.ts {
     /// <summary>
