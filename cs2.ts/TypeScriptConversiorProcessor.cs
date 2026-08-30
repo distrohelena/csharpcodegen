@@ -34,8 +34,11 @@ namespace cs2.ts {
                 return false;
             }
 
-            // Then check if that initializer belongs to an ObjectCreationExpression
-            return initializer.Parent is ObjectCreationExpressionSyntax;
+            // Then check if that initializer belongs to an object creation — explicit or
+            // target-typed (`new() { ... }`), which otherwise emitted raw `=` member assignments
+            // inside the Object.assign literal instead of `:` properties.
+            return initializer.Parent is ObjectCreationExpressionSyntax
+                || initializer.Parent is ImplicitObjectCreationExpressionSyntax;
         }
 
         /// <summary>
@@ -979,7 +982,13 @@ namespace cs2.ts {
             }
 
             lines.AddRange(newLines);
-            lines.AddRange(afterLines);
+            if (foundMultiple) {
+                // TypeScript forbids `Type<Args>.NewN` (property access on an instantiation
+                // expression); the generic arguments move onto the generic factory method.
+                lines.Add(TypeScriptUtils.MoveGenericArgumentsAfterFactoryName(string.Concat(afterLines)));
+            } else {
+                lines.AddRange(afterLines);
+            }
             lines.AddRange(finalLines);
             return result;
         }
@@ -1693,7 +1702,9 @@ namespace cs2.ts {
 
             result = default;
 
-            if (objectCreation.ArgumentList != null && objectCreation.ArgumentList.Arguments.Count > 0) {
+            // The runtime dictionary constructor takes up to two shape-detected arguments (a copy
+            // source and/or a comparer); anything beyond that falls through to the ordinary path.
+            if (objectCreation.ArgumentList != null && objectCreation.ArgumentList.Arguments.Count > 2) {
                 return false;
             }
 
@@ -1709,26 +1720,65 @@ namespace cs2.ts {
 
             List<string> beforeLines = new List<string>();
             List<string> entryStrings = new List<string>();
+            List<string> entryKeys = new List<string>();
+            List<string> entryValues = new List<string>();
 
             foreach (var element in initializer.Expressions) {
-                if (element is not InitializerExpressionSyntax complex || complex.Expressions.Count < 2) {
+                if (element is InitializerExpressionSyntax complex && complex.Expressions.Count >= 2) {
+                    // Collection-initializer entry: { key, value }.
+                    string keyText = BuildExpressionString(semantic, context, complex.Expressions[0], beforeLines);
+                    string valueText = BuildExpressionString(semantic, context, complex.Expressions[1], beforeLines);
+                    entryStrings.Add($"[{keyText}, {valueText}]");
+                    entryKeys.Add(keyText);
+                    entryValues.Add(valueText);
+                } else if (element is AssignmentExpressionSyntax assignment &&
+                    assignment.Left is ImplicitElementAccessSyntax elementAccess &&
+                    elementAccess.ArgumentList != null &&
+                    elementAccess.ArgumentList.Arguments.Count == 1) {
+                    // Index-initializer entry: ["key"] = value. Without this branch these fell into the
+                    // object-initializer emission, which dropped the bracketed keys entirely.
+                    string keyText = BuildExpressionString(semantic, context, elementAccess.ArgumentList.Arguments[0].Expression, beforeLines);
+                    string valueText = BuildExpressionString(semantic, context, assignment.Right, beforeLines);
+                    entryStrings.Add($"[{keyText}, {valueText}]");
+                    entryKeys.Add(keyText);
+                    entryValues.Add(valueText);
+                } else {
                     return false;
                 }
+            }
 
-                string keyText = BuildExpressionString(semantic, context, complex.Expressions[0], beforeLines);
-                string valueText = BuildExpressionString(semantic, context, complex.Expressions[1], beforeLines);
-                entryStrings.Add($"[{keyText}, {valueText}]");
+            List<string> argumentTexts = new List<string>();
+            if (objectCreation.ArgumentList != null) {
+                foreach (var argument in objectCreation.ArgumentList.Arguments) {
+                    argumentTexts.Add(BuildExpressionString(semantic, context, argument.Expression, beforeLines));
+                }
             }
 
             if (beforeLines.Count > 0) {
                 lines.AddRange(beforeLines);
             }
 
+            if (entryStrings.Count > 0 && argumentTexts.Count > 0) {
+                // Constructor arguments (a copy source, a comparer) AND initializer entries cannot
+                // share the runtime constructor's two slots, so the entries apply through set calls.
+                string dictionaryName = "__dictionary_" + Guid.NewGuid().ToString("N")[..8];
+                lines.Add("(() => {\nconst ");
+                lines.Add(dictionaryName);
+                lines.Add(" = new ");
+                lines.AddRange(typeLines);
+                lines.Add($"({string.Join(", ", argumentTexts)});\n");
+                for (int i = 0; i < entryKeys.Count; i++) {
+                    lines.Add($"{dictionaryName}.set({entryKeys[i]}, {entryValues[i]});\n");
+                }
+                lines.Add($"return {dictionaryName}; }})()");
+                return true;
+            }
+
             lines.Add("new ");
             lines.AddRange(typeLines);
 
             if (entryStrings.Count == 0) {
-                lines.Add("()");
+                lines.Add($"({string.Join(", ", argumentTexts)})");
             } else {
                 lines.Add("(undefined, [ ");
                 for (int i = 0; i < entryStrings.Count; i++) {
@@ -2694,6 +2744,15 @@ namespace cs2.ts {
 
             BinaryOpTypes op = ParseBinaryOperator(binary.Kind());
 
+            if (op == BinaryOpTypes.As && string.IsNullOrWhiteSpace(string.Concat(right)) && binary.Right is TypeSyntax asTypeSyntax) {
+                // Composite type syntaxes (`as byte[]`) have no expression emission and left the cast
+                // target empty; map the TYPE through the variable-type pipeline instead
+                // (byte[] becomes Uint8Array).
+                VariableType asType = VariableUtil.GetVarType(asTypeSyntax, semantic);
+                right.Clear();
+                right.Add(asType.ToTypeScriptString((TypeScriptProgram)context.Program));
+            }
+
             bool hasLeftBefore = leftResult.BeforeLines != null && leftResult.BeforeLines.Count > 0;
             bool hasLeftAfter = leftResult.AfterLines != null && leftResult.AfterLines.Count > 0;
             bool hasRightBefore = rightResult.BeforeLines != null && rightResult.BeforeLines.Count > 0;
@@ -3170,54 +3229,66 @@ namespace cs2.ts {
             LayerContext context,
             SwitchExpressionSyntax switchExpression,
             List<string> lines) {
-            lines.Add("(() => {");
-            lines.Add("const __switch = ");
+            List<string> switchLines = new List<string>();
+            switchLines.Add("(() => {");
+            switchLines.Add("const __switch = ");
             int startDepth = context.DepthClass;
-            ProcessExpression(semantic, context, switchExpression.GoverningExpression, lines);
+            ProcessExpression(semantic, context, switchExpression.GoverningExpression, switchLines);
             context.PopClass(startDepth);
-            lines.Add(";");
+            switchLines.Add(";");
 
             foreach (var arm in switchExpression.Arms) {
-                lines.Add("if (");
+                switchLines.Add("if (");
 
-                if (!TryAppendSwitchPatternCondition(semantic, context, arm.Pattern, lines, out string declaredVariable)) {
+                if (!TryAppendSwitchPatternCondition(semantic, context, arm.Pattern, switchLines, out string declaredVariable)) {
                     throw new NotSupportedException($"Unsupported switch expression pattern: {arm.Pattern}");
                 }
 
                 if (arm.WhenClause != null) {
-                    lines.Add(" && (");
+                    switchLines.Add(" && (");
                     int whenDepth = context.DepthClass;
-                    ProcessExpression(semantic, context, arm.WhenClause.Condition, lines);
+                    ProcessExpression(semantic, context, arm.WhenClause.Condition, switchLines);
                     context.PopClass(whenDepth);
-                    lines.Add(")");
+                    switchLines.Add(")");
                 }
 
-                lines.Add(") {");
+                switchLines.Add(") {");
 
                 if (!string.IsNullOrEmpty(declaredVariable)) {
-                    lines.Add("const ");
-                    lines.Add(declaredVariable);
-                    lines.Add(" = __switch;");
+                    switchLines.Add("const ");
+                    switchLines.Add(declaredVariable);
+                    switchLines.Add(" = __switch;");
                 }
 
                 if (arm.Expression is ThrowExpressionSyntax throwExpression) {
-                    lines.Add("throw ");
+                    switchLines.Add("throw ");
                     int throwDepth = context.DepthClass;
-                    ProcessExpression(semantic, context, throwExpression.Expression, lines);
+                    ProcessExpression(semantic, context, throwExpression.Expression, switchLines);
                     context.PopClass(throwDepth);
-                    lines.Add(";");
+                    switchLines.Add(";");
                 } else {
-                    lines.Add("return ");
+                    switchLines.Add("return ");
                     int armDepth = context.DepthClass;
-                    ProcessExpression(semantic, context, arm.Expression, lines);
+                    ProcessExpression(semantic, context, arm.Expression, switchLines);
                     context.PopClass(armDepth);
-                    lines.Add(";");
+                    switchLines.Add(";");
                 }
-                lines.Add("}");
+                switchLines.Add("}");
             }
 
-            lines.Add("throw new Error(\"Non-exhaustive switch expression.\");");
-            lines.Add("})()");
+            switchLines.Add("throw new Error(\"Non-exhaustive switch expression.\");");
+            switchLines.Add("})()");
+
+            // Any awaiting arm makes the plain IIFE illegal ('await' outside an async function); the
+            // wrapper becomes an awaited async IIFE, which is only reachable from an async caller
+            // because the awaiting arm already marked the enclosing function async.
+            bool containsAwait = switchLines.Any(line => line != null && line.Contains("await ", StringComparison.Ordinal));
+            if (containsAwait) {
+                switchLines[0] = "(await (async () => {";
+                switchLines[switchLines.Count - 1] = "})())";
+            }
+
+            lines.AddRange(switchLines);
             return new ExpressionResult(true);
         }
 
@@ -5586,22 +5657,12 @@ namespace cs2.ts {
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
                         type = "char";
-                        string value = literalExpression.Token.ValueText;
-                        literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
-                        literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
-                            return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                    });
-                        literalValue = $"\"{literalValue}\"";
+                        literalValue = StringUtil.FormatDoubleQuotedLiteral(literalExpression.Token.ValueText);
                         break;
                 }
                 case SyntaxKind.StringLiteralExpression: {
                         type = "string";
-                        string value = literalExpression.Token.ValueText;
-                        literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
-                        literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
-                            return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                    });
-                        literalValue = $"\"{literalValue}\"";
+                        literalValue = StringUtil.FormatDoubleQuotedLiteral(literalExpression.Token.ValueText);
                         break;
                 }
                 case SyntaxKind.NullLiteralExpression:

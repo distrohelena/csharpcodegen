@@ -7,6 +7,50 @@ namespace cs2.ts {
     /// </summary>
     public static class TypeScriptUtils {
         /// <summary>
+        /// Rewrites a constructor-factory call target so generic arguments follow the factory method
+        /// instead of the class. C# writes <c>new TaskCompletionSource&lt;T&gt;(args)</c>, which the factory
+        /// emission turns into <c>TaskCompletionSource&lt;T&gt;.New4</c> — but TypeScript forbids a property
+        /// access on an instantiation expression (TS1477). The factories are declared generic
+        /// (<c>static New4&lt;T&gt;(...)</c>) with the class's own type parameter names, so the legal, equivalent
+        /// call is <c>TaskCompletionSource.New4&lt;T&gt;</c>.
+        /// </summary>
+        /// <param name="factoryCallTarget">Emitted call target, e.g. <c>Type&lt;Args&gt;.New2</c>.</param>
+        /// <returns>The call target with any trailing class generic arguments moved after the factory name.</returns>
+        public static string MoveGenericArgumentsAfterFactoryName(string factoryCallTarget) {
+            int factoryStart = factoryCallTarget.LastIndexOf(".New", StringComparison.Ordinal);
+            if (factoryStart <= 0) {
+                return factoryCallTarget;
+            }
+
+            string typeText = factoryCallTarget[..factoryStart];
+            string factoryText = factoryCallTarget[factoryStart..];
+            if (!typeText.EndsWith(">", StringComparison.Ordinal)) {
+                return factoryCallTarget;
+            }
+
+            int depth = 0;
+            int openIndex = -1;
+            for (int i = typeText.Length - 1; i >= 0; i--) {
+                char character = typeText[i];
+                if (character == '>') {
+                    depth++;
+                } else if (character == '<') {
+                    depth--;
+                    if (depth == 0) {
+                        openIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (openIndex <= 0) {
+                return factoryCallTarget;
+            }
+
+            return typeText[..openIndex] + factoryText + typeText[openIndex..];
+        }
+
+        /// <summary>
         /// Computes implements/extends clauses for a given class based on its extensions and declaration type.
         /// </summary>
         /// <param name="program">The program containing known classes and requirements.</param>

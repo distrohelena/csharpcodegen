@@ -44,8 +44,15 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         }
 
         if (entries) {
-            for (const [key, value] of entries) {
-                this.add(key, value);
+            // Entries may be [key, value] tuples OR KeyValuePair objects: a Dictionary's own
+            // iterator yields KeyValuePairs, and C#'s copy constructor
+            // `new Dictionary(other, comparer)` compiles to passing that dictionary here.
+            for (const entry of entries) {
+                if (Array.isArray(entry)) {
+                    this.add(entry[0] as TKey, entry[1] as TValue);
+                } else if (entry && typeof entry === "object" && "Key" in (entry as object)) {
+                    this.add((entry as any).Key as TKey, (entry as any).Value as TValue);
+                }
             }
         }
     }

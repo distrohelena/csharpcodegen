@@ -726,11 +726,7 @@ namespace cs2.core {
                     literalValue = literalExpression.Token.ValueText;
                     break;
                 case SyntaxKind.StringLiteralExpression:
-                    literalValue = $"\"{literalExpression.Token.ValueText}\"";
-                    literalValue = Regex.Replace(literalValue, @"(?<!\\)\\(?!\\)", @"\\");
-                    literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
-                        return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                });
+                    literalValue = StringUtil.FormatDoubleQuotedLiteral(literalExpression.Token.ValueText);
                     break;
                 case SyntaxKind.NullLiteralExpression:
                     literalValue = "null";
