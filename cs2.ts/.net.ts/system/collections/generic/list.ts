@@ -161,7 +161,10 @@ declare global {
 
 if (!(Array.prototype as any).toList) {
     (Array.prototype as any).toList = function () {
-        return new List(...this);
+        // Pass the array itself so the iterable constructor branch copies it element-wise.
+        // Spreading (`new List(...this)`) mis-binds single-element arrays: a lone string hits the
+        // iterable branch and char-splits, a lone number hits the capacity branch and vanishes.
+        return new List(this);
     };
 }
 
