@@ -4,7 +4,9 @@ namespace cs2.ts {
     /// </summary>
     public class TypeScriptRuntimeRequirementDefinition {
         /// <summary>
-        /// Initializes a standard requirement definition.
+        /// Initializes a standard requirement definition. The symbol metadata is loaded from
+        /// <c>.net.ts/&lt;path&gt;.json</c> (the shared bundled runtime), so <paramref name="path"/>
+        /// doubles as both the emitted import path and the symbol-file key.
         /// </summary>
         /// <param name="name">The C# type name to map.</param>
         /// <param name="path">The module path that provides the runtime symbol.</param>
@@ -19,6 +21,36 @@ namespace cs2.ts {
             IsType = isType;
             IsGeneric = false;
         }
+
+        /// <summary>
+        /// Initializes a requirement whose symbol metadata is supplied INLINE by the caller rather than
+        /// loaded from a <c>.net.ts</c> file. This is how a driver registers a runtime type that lives
+        /// OUTSIDE the shared bundled runtime — e.g. a project's own hand-written module — where the
+        /// emitted import path and the symbol source are two different things. <paramref name="path"/>
+        /// here is the import path only (emitted verbatim when it does not start with <c>./</c>); the
+        /// members come from <paramref name="symbols"/> (typically the single <see cref="Symbol"/> for
+        /// this type, as produced by the symbol extractor over the module's <c>.ts</c>).
+        /// </summary>
+        /// <param name="name">The C# type name to map.</param>
+        /// <param name="path">The module path to import the symbol from (import path only).</param>
+        /// <param name="symbols">The symbol metadata for the type, supplied inline.</param>
+        /// <param name="replacement">Optional replacement import identifier.</param>
+        /// <param name="isType">Whether the import is type-only.</param>
+        public TypeScriptRuntimeRequirementDefinition(string name, string path, System.Collections.Generic.IReadOnlyList<cs2.core.symbols.Symbol> symbols, string replacement = "", bool isType = false) {
+            Name = name;
+            Path = path;
+            Replacement = replacement;
+            GenericVoid = false;
+            IsType = isType;
+            IsGeneric = false;
+            InlineSymbols = symbols;
+        }
+
+        /// <summary>
+        /// Gets the inline symbol metadata for this requirement, when the caller supplied it directly
+        /// instead of relying on a <c>.net.ts</c> symbol file. Null for catalog-style requirements.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<cs2.core.symbols.Symbol> InlineSymbols { get; private set; }
 
         /// <summary>
         /// Creates a generic requirement definition that expands to multiple arities.
@@ -86,6 +118,10 @@ namespace cs2.ts {
         public TypeScriptKnownClass CreateKnownClass() {
             if (IsGeneric) {
                 return new TypeScriptGenericKnownClass(GenericTotalImports, GenericStart, GenericVoidReturn, Name, Path, Replacement);
+            }
+
+            if (InlineSymbols != null) {
+                return new TypeScriptKnownClass(Name, Path, InlineSymbols, Replacement, GenericVoid, IsType);
             }
 
             return new TypeScriptKnownClass(Name, Path, Replacement, GenericVoid, IsType);

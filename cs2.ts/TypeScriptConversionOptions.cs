@@ -37,6 +37,15 @@ namespace cs2.ts {
         public bool EmitStrictTsConfig { get; set; }
 
         /// <summary>
+        /// Extra runtime requirements a driver supplies on top of the built-in catalog. Each maps a C#
+        /// type name to a hand-written runtime module so the emitter IMPORTS it (as a native class)
+        /// instead of generating a body. Use for project-specific runtime types the shared catalog
+        /// must stay neutral about — e.g. a browser's noble-backed post-quantum crypto. A path that
+        /// does not start with <c>./</c> is emitted verbatim, so it can point outside the runtime base.
+        /// </summary>
+        public List<TypeScriptRuntimeRequirementDefinition> AdditionalRuntimeRequirements { get; set; } = new();
+
+        /// <summary>
         /// Creates a shallow copy so that callers can tweak options without mutating shared instances.
         /// </summary>
         /// <returns>A copy of the current options instance.</returns>
@@ -46,7 +55,8 @@ namespace cs2.ts {
                 AdditionalPreprocessorSymbols = new List<string>(AdditionalPreprocessorSymbols),
                 RuntimeImportPath = RuntimeImportPath,
                 IncludeProjectDefinedPreprocessorSymbols = IncludeProjectDefinedPreprocessorSymbols,
-                EmitStrictTsConfig = EmitStrictTsConfig
+                EmitStrictTsConfig = EmitStrictTsConfig,
+                AdditionalRuntimeRequirements = new List<TypeScriptRuntimeRequirementDefinition>(AdditionalRuntimeRequirements)
             };
         }
     }

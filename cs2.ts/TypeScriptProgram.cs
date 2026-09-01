@@ -165,7 +165,11 @@ namespace cs2.ts {
         /// Loads symbol JSON from .net.ts, sets up native remaps, and populates <see cref="Classes"/>.
         /// </summary>
         /// <param name="env">The target TypeScript runtime environment.</param>
-        public void AddDotNet(TypeScriptEnvironment env) {
+        /// <param name="additionalRequirements">
+        /// Driver-supplied runtime requirements registered on top of the built-in catalog, before
+        /// native classes are built — so they too become import-only (native) rather than generated.
+        /// </param>
+        public void AddDotNet(TypeScriptEnvironment env, IEnumerable<TypeScriptRuntimeRequirementDefinition> additionalRequirements = null) {
             buildTypeMap();
 
             buildNativeRemap();
@@ -174,6 +178,14 @@ namespace cs2.ts {
 
             var registrar = new TypeScriptRuntimeRequirementRegistrar();
             registrar.Register(this, env);
+
+            if (additionalRequirements != null) {
+                foreach (TypeScriptRuntimeRequirementDefinition requirement in additionalRequirements) {
+                    if (requirement != null) {
+                        AddRequirement(requirement.CreateKnownClass());
+                    }
+                }
+            }
 
             var nativeBuilder = new TypeScriptNativeClassBuilder();
             nativeBuilder.BuildNativeClasses(this, Requirements);

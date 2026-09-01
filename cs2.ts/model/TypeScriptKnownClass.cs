@@ -33,6 +33,33 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Creates a known class whose symbol metadata is supplied INLINE rather than loaded from a
+        /// <c>.net.ts</c> file. For runtime types that live outside the shared bundled runtime, where
+        /// <paramref name="path"/> is the emitted import path only and the members come from the caller
+        /// (typically the symbol extractor's output for the module's own <c>.ts</c>).
+        /// </summary>
+        /// <param name="name">The C# type name to map.</param>
+        /// <param name="path">The module path to import from (import path only; not a symbol-file key).</param>
+        /// <param name="symbols">The symbol metadata for the type.</param>
+        /// <param name="replacement">Optional replacement import identifier.</param>
+        /// <param name="genericVoid">Whether generic arguments default to void when missing.</param>
+        /// <param name="isType">Whether the import is type-only.</param>
+        public TypeScriptKnownClass(string name,
+            string path,
+            System.Collections.Generic.IReadOnlyList<Symbol> symbols,
+            string replacement = "",
+            bool genericVoid = false,
+            bool isType = false
+            ) {
+            Name = name;
+            Path = path;
+            Replacement = replacement;
+            GenericVoid = genericVoid;
+            IsType = isType;
+            Symbols = symbols != null ? new List<Symbol>(symbols) : new List<Symbol>();
+        }
+
+        /// <summary>
         /// Gets or sets the C# type name mapped to the runtime symbol.
         /// </summary>
         public string Name { get; set; }

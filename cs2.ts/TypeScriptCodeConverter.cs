@@ -125,7 +125,7 @@ namespace cs2.ts {
             tsProgram = new TypeScriptProgram(rules);
             program = tsProgram;
 
-            tsProgram.AddDotNet(env);
+            tsProgram.AddDotNet(env, conversionOptions.AdditionalRuntimeRequirements);
             context = new ConversionContext(program);
 
             conversion = new TypeScriptConversiorProcessor();
