@@ -521,10 +521,14 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("throw NotSupportedException", source, StringComparison.Ordinal);
         Assert.Contains("(void)newLength;", source, StringComparison.Ordinal);
         Assert.Contains("FileStream cannot query a file-backed stream on this target.", source, StringComparison.Ordinal);
+        Assert.Contains("FileStream file-backed paths require descriptor APIs on this target.", source, StringComparison.Ordinal);
         Assert.DoesNotContain("HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
         Assert.Contains("if (file == nullptr)", source, StringComparison.Ordinal);
         Assert.Contains("memoryBuffer.resize(newLength)", source, StringComparison.Ordinal);
         Assert.Contains("memoryBuffer.size()", source, StringComparison.Ordinal);
+        int capabilityGuard = source.IndexOf("#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", StringComparison.Ordinal);
+        int fopenCall = source.IndexOf("file = std::fopen", StringComparison.Ordinal);
+        Assert.True(capabilityGuard >= 0 && capabilityGuard < fopenCall);
     }
 
     /// <summary>

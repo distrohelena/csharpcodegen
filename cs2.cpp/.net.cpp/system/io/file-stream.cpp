@@ -174,6 +174,15 @@ FileStream::FileStream(const char* path, FileMode mode)
         return;
     }
 #endif
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+    (void)path;
+    (void)mode;
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    throw NotSupportedException();
+#else
+    throw NotSupportedException("FileStream file-backed paths require descriptor APIs on this target.");
+#endif
+#else
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
@@ -184,6 +193,7 @@ FileStream::FileStream(const char* path, FileMode mode)
     }
 
     UpdateLength();
+#endif
 }
 
 FileStream::FileStream(const char* path, FileMode mode, FileAccess, FileShare)
