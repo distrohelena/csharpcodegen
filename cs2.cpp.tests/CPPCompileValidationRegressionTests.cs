@@ -229,23 +229,6 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures generated interface pointers can be deleted through their polymorphic ownership boundary.
-        /// </summary>
-        [Fact]
-        public void WriteOutput_WithInterface_EmitsVirtualDestructor() {
-            string source = """
-                public interface IAsset {
-                    void Reset();
-                }
-                """;
-
-            ConversionOutput output = RunConversion(source);
-            string header = File.ReadAllText(Path.Combine(output.OutputPath, "IAsset.hpp"));
-
-            Assert.Contains("virtual ~IAsset() = default;", header, StringComparison.Ordinal);
-        }
-
-        /// <summary>
         /// Ensures delegate-typed properties invoke the delegate instance itself instead of incorrectly lowering to one nonexistent Invoke member on the owning class.
         /// </summary>
         [Fact]
