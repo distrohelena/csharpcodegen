@@ -8088,11 +8088,29 @@ namespace cs2.cpp {
             }
 
             if (parameterSymbol.Type?.TypeKind == TypeKind.Enum) {
-                argumentLines.Add($"{parameterSymbol.Type.Name}::{explicitDefaultValue}");
+                argumentLines.Add(FormatEnumDefaultArgument(parameterSymbol.Type, explicitDefaultValue));
                 return;
             }
 
             argumentLines.Add(Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
+        /// Formats an optional enum parameter default as a scoped member reference so generated C++ names the enum member
+        /// instead of the raw underlying constant Roslyn reports for the default value.
+        /// </summary>
+        /// <param name="enumType">Enum type declared by the optional parameter.</param>
+        /// <param name="explicitDefaultValue">Underlying constant of the parameter default.</param>
+        /// <returns>The enum member reference, or an explicit cast when no declared member carries the constant.</returns>
+        static string FormatEnumDefaultArgument(ITypeSymbol enumType, object explicitDefaultValue) {
+            foreach (IFieldSymbol enumMember in enumType.GetMembers().OfType<IFieldSymbol>()) {
+                if (enumMember.HasConstantValue && Equals(enumMember.ConstantValue, explicitDefaultValue)) {
+                    return $"{enumType.Name}::{enumMember.Name}";
+                }
+            }
+
+            string constantText = Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture);
+            return $"static_cast<{enumType.Name}>({constantText})";
         }
 
         static ArgumentSyntax[] AlignInvocationArguments(

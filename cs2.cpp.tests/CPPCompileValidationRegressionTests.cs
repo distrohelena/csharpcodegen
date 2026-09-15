@@ -10501,6 +10501,35 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures omitted enum-typed optional arguments are emitted as scoped enum members instead of raw underlying constants.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithOmittedEnumOptionalArgument_EmitsEnumMemberReference() {
+            string source = """
+                public enum RenderMode {
+                    Normal,
+                    Fast
+                }
+
+                public class Fixture {
+                    public int Render(RenderMode mode = RenderMode.Fast) {
+                        return (int)mode;
+                    }
+
+                    public int Invoke() {
+                        return Render();
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+
+            Assert.Contains("Render(RenderMode::Fast)", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("RenderMode::1", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures NativeMemory static allocation helpers lower to the portable runtime surface instead of unresolved managed symbols.
         /// </summary>
         [Fact]
