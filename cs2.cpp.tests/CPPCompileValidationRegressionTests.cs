@@ -10475,6 +10475,32 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures character string splitting preserves the explicit and default empty-entry options through native overloads.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithCharacterStringSplit_UsesNativeStringOverloads() {
+            string source = """
+                public class Fixture {
+                    public string[] WithOptions(string value) {
+                        return value.Split('\n', System.StringSplitOptions.None);
+                    }
+
+                    public string[] WithDefaultOptions(string value) {
+                        return value.Split('\n');
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeString = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_string.hpp"));
+
+            Assert.Contains("String::Split(value, '\\n', StringSplitOptions::None)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("String::Split(value, '\\n')", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Split(const std::string& value, char separator", runtimeString, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures NativeMemory static allocation helpers lower to the portable runtime surface instead of unresolved managed symbols.
         /// </summary>
         [Fact]

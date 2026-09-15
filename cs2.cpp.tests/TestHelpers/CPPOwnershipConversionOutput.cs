@@ -138,7 +138,7 @@ public sealed class CPPOwnershipConversionOutput : IDisposable {
     /// Resolves the newest installed Visual Studio developer command script used to configure the MSVC environment.
     /// </summary>
     /// <returns>The absolute developer command script path.</returns>
-    static string ResolveVisualStudioDeveloperCommandPath() {
+    internal static string ResolveVisualStudioDeveloperCommandPath() {
         string visualStudioRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             "Microsoft Visual Studio",

@@ -8474,7 +8474,7 @@ namespace cs2.cpp {
             }
 
             if (string.Equals(memberName, "Split", StringComparison.Ordinal) &&
-                invocationExpression.ArgumentList.Arguments.Count == 3) {
+                invocationExpression.ArgumentList.Arguments.Count is >= 1 and <= 3) {
                 ArgumentSyntax separatorArgument = invocationExpression.ArgumentList.Arguments[0];
                 List<string> separatorLines = new List<string>();
                 int separatorStart = context.DepthClass;
@@ -8499,8 +8499,10 @@ namespace cs2.cpp {
                     lines.Add(receiverText);
                     lines.Add(", ");
                     lines.Add(temporaryName);
-                    lines.Add(", ");
-                    AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments.Skip(1), lines);
+                    if (invocationExpression.ArgumentList.Arguments.Count > 1) {
+                        lines.Add(", ");
+                        AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments.Skip(1), lines);
+                    }
                     lines.Add(");\n");
                     lines.Add("})()");
                 } else {
