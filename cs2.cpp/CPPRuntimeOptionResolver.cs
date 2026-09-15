@@ -22,12 +22,23 @@ namespace cs2.cpp {
             options.RuntimeProfile.UseStdString = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdString, options.RuntimeProfile.UseStdString);
             options.RuntimeProfile.UseStdVector = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdVector, options.RuntimeProfile.UseStdVector);
             options.RuntimeProfile.UseStdUnorderedMap = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdUnorderedMap, options.RuntimeProfile.UseStdUnorderedMap);
+            options.RuntimeProfile.UseStdUnorderedSet = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdUnorderedSet, options.RuntimeProfile.UseStdUnorderedSet);
             options.RuntimeProfile.UseExceptions = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseExceptions, options.RuntimeProfile.UseExceptions);
             options.RuntimeProfile.UseRtti = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseRtti, options.RuntimeProfile.UseRtti);
+            options.RuntimeProfile.UseStdFunction = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdFunction, options.RuntimeProfile.UseStdFunction);
+            options.RuntimeProfile.UseStdChrono = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdChrono, options.RuntimeProfile.UseStdChrono);
+            options.RuntimeProfile.UseStdSharedPtr = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdSharedPtr, options.RuntimeProfile.UseStdSharedPtr);
+            options.RuntimeProfile.UseStdMath = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdMath, options.RuntimeProfile.UseStdMath);
+            options.RuntimeProfile.UseHostedFileSystem = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseHostedFileSystem, options.RuntimeProfile.UseHostedFileSystem);
 
-            if (UsesRestrictedStorage(options.RuntimeProfile) && string.IsNullOrWhiteSpace(GetProviderHeader(options))) {
+            if (!options.RuntimeProfile.UseStdMath &&
+                (!values.TryGetValue(CPPCodegenOptionNames.RuntimeMathHeader, out string mathHeader) || string.IsNullOrWhiteSpace(mathHeader))) {
+                throw new ArgumentException($"Option '{CPPCodegenOptionNames.RuntimeMathHeader}' is required when standard math is disabled.", nameof(options));
+            }
+
+            if ((UsesRestrictedStorage(options.RuntimeProfile) || !options.RuntimeProfile.UseStdFunction || !options.RuntimeProfile.UseStdChrono || !options.RuntimeProfile.UseStdSharedPtr) && string.IsNullOrWhiteSpace(GetProviderHeader(options))) {
                 throw new ArgumentException(
-                    $"Option '{CPPCodegenOptionNames.RuntimeProviderHeader}' is required when standard runtime storage is disabled.",
+                    $"Option '{CPPCodegenOptionNames.RuntimeProviderHeader}' is required when standard runtime storage or services are disabled.",
                     nameof(options));
             }
         }
@@ -82,7 +93,7 @@ namespace cs2.cpp {
         /// <param name="profile">Runtime profile to inspect.</param>
         /// <returns><c>true</c> when at least one standard storage capability is disabled.</returns>
         public static bool UsesRestrictedStorage(CPPRuntimeProfile profile) {
-            return profile != null && (!profile.UseStdString || !profile.UseStdVector || !profile.UseStdUnorderedMap);
+            return profile != null && (!profile.UseStdString || !profile.UseStdVector || !profile.UseStdUnorderedMap || !profile.UseStdUnorderedSet);
         }
 
         /// <summary>

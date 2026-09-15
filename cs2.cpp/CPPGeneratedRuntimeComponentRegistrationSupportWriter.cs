@@ -83,7 +83,7 @@ public static class CPPGeneratedRuntimeComponentRegistrationSupportWriter {
             + "{" + Environment.NewLine
             + "    if (registry == nullptr)" + Environment.NewLine
             + "    {" + Environment.NewLine
-            + "        throw new ArgumentNullException(\"registry\");" + Environment.NewLine
+            + "        he_cpp_raise(ArgumentNullException(\"registry\"));" + Environment.NewLine
             + "    }" + Environment.NewLine
             + "}" + Environment.NewLine;
     }

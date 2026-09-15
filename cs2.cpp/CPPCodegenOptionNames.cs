@@ -44,6 +44,29 @@ namespace cs2.cpp {
         public const string UseStdUnorderedMap = "codegen-use-std-unordered-map";
 
         /// <summary>
+        /// Gets the generic option name that selects standard-library unordered-set storage for the shared runtime.
+        /// </summary>
+        public const string UseStdUnorderedSet = "codegen-use-std-unordered-set";
+
+        /// <summary>Names the option selecting standard delegate storage.</summary>
+        public const string UseStdFunction = "codegen-use-std-function";
+
+        /// <summary>Names the option selecting the standard monotonic clock.</summary>
+        public const string UseStdChrono = "codegen-use-std-chrono";
+
+        /// <summary>Names the option selecting standard shared ownership for span storage.</summary>
+        public const string UseStdSharedPtr = "codegen-use-std-shared-ptr";
+
+        /// <summary>Names the option selecting standard C++ mathematical functions.</summary>
+        public const string UseStdMath = "codegen-use-std-math";
+
+        /// <summary>Names the caller-owned header declaring replacement mathematical functions.</summary>
+        public const string RuntimeMathHeader = "codegen-runtime-math-header";
+
+        /// <summary>Names the option permitting file streams to access the host file system.</summary>
+        public const string UseHostedFileSystem = "codegen-use-hosted-file-system";
+
+        /// <summary>
         /// Gets the generic option name that selects C++ exception unwinding for generated code and runtime helpers.
         /// </summary>
         public const string UseExceptions = "codegen-use-exceptions";

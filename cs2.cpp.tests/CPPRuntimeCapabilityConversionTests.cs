@@ -192,7 +192,13 @@ public class CPPRuntimeCapabilityConversionTests {
         Directory.CreateDirectory(rootPath);
         File.WriteAllText(projectPath, CreateProjectFile());
         File.WriteAllText(sourcePath, """
+            public class GateHolder {
+                public StringGate StringGate;
+                public void Set(StringGate value) { StringGate = value ?? throw new System.ArgumentNullException(nameof(value)); }
+                public double Modulo(double left, double right) { return left % right; }
+            }
             public class StringGate {
+                public System.Collections.Generic.Dictionary<int, System.Collections.Generic.Dictionary<string, StringGate>> Nested = new();
                 public string Name;
 
                 public StringGate(string name) {
@@ -216,8 +222,57 @@ public class CPPRuntimeCapabilityConversionTests {
             }
             """);
 
-        CPPConversionOptions options = CreateOptions(true, true);
+        CPPConversionOptions options = CreateOptions(false, true);
         options.WriteConversionReport = true;
+        Dictionary<string, string> platformOptions = new Dictionary<string, string>(options.PlatformOptionValues, StringComparer.OrdinalIgnoreCase) {
+            [CPPCodegenOptionNames.RuntimeProviderHeader] = "platform/runtime.hpp",
+            [CPPCodegenOptionNames.UseStdString] = "false",
+            [CPPCodegenOptionNames.UseStdMath] = "false",
+            [CPPCodegenOptionNames.RuntimeMathHeader] = "fixture_math.hpp"
+        };
+        options.PlatformOptionValues = platformOptions;
+        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
+        converter.AddCsproj(projectPath);
+        converter.WriteOutput(outputPath);
+
+        string generatedClassText = string.Join("\n", Directory.GetFiles(outputPath, "StringGate.*", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        string holderText = File.ReadAllText(Path.Combine(outputPath, "GateHolder.cpp"));
+        Assert.Contains("he_cpp_raise_value<::StringGate*>", holderText);
+        Assert.Contains("he_cpp_math_detail::Remainder(", holderText);
+        string configText = File.ReadAllText(Path.Combine(outputPath, CPPGeneratedConfigWriter.DefaultFileName));
+        Assert.Contains("HeCppString", generatedClassText, StringComparison.Ordinal);
+        Assert.DoesNotContain("std::string", generatedClassText, StringComparison.Ordinal);
+        Assert.Contains("#define HE_CPP_RUNTIME_PROVIDER_HEADER \"platform/runtime.hpp\"", configText, StringComparison.Ordinal);
+        Assert.Contains("#define HE_CPP_USE_STD_STRING 0", configText, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures single-character string splitting lowers to the native helper and names the defaulted option member.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithSingleCharacterSplit_LowersToNativeSplitWithNamedDefaultOption() {
+        string rootPath = Environment.GetEnvironmentVariable("CS2_CPP_CAPABILITY_ARTIFACT_ROOT")
+            ?? Path.Combine(Path.GetTempPath(), "cs2cpp-runtime-capability-tests", Guid.NewGuid().ToString("N"));
+        rootPath = Path.GetFullPath(Path.Combine(rootPath, "single-character-split"));
+        string projectPath = Path.Combine(rootPath, "Fixture.csproj");
+        string sourcePath = Path.Combine(rootPath, "Fixture.cs");
+        string outputPath = Path.Combine(rootPath, "out");
+        Directory.CreateDirectory(rootPath);
+        File.WriteAllText(projectPath, CreateProjectFile());
+        File.WriteAllText(sourcePath, """
+            public class SplitGate {
+                public string[] Lines(string content) {
+                    return content.Split('\n');
+                }
+
+                public string[] Words(string content) {
+                    return content.Split(' ', System.StringSplitOptions.RemoveEmptyEntries);
+                }
+            }
+            """);
+
+        CPPConversionOptions options = CreateOptions(false, true);
         Dictionary<string, string> platformOptions = new Dictionary<string, string>(options.PlatformOptionValues, StringComparer.OrdinalIgnoreCase) {
             [CPPCodegenOptionNames.RuntimeProviderHeader] = "platform/runtime.hpp",
             [CPPCodegenOptionNames.UseStdString] = "false"
@@ -227,13 +282,11 @@ public class CPPRuntimeCapabilityConversionTests {
         converter.AddCsproj(projectPath);
         converter.WriteOutput(outputPath);
 
-        string generatedClassText = string.Join("\n", Directory.GetFiles(outputPath, "StringGate.*", SearchOption.AllDirectories)
-            .Select(File.ReadAllText));
-        string configText = File.ReadAllText(Path.Combine(outputPath, CPPGeneratedConfigWriter.DefaultFileName));
-        Assert.Contains("HeCppString", generatedClassText, StringComparison.Ordinal);
-        Assert.DoesNotContain("std::string", generatedClassText, StringComparison.Ordinal);
-        Assert.Contains("#define HE_CPP_RUNTIME_PROVIDER_HEADER \"platform/runtime.hpp\"", configText, StringComparison.Ordinal);
-        Assert.Contains("#define HE_CPP_USE_STD_STRING 0", configText, StringComparison.Ordinal);
+        string gateText = File.ReadAllText(Path.Combine(outputPath, "SplitGate.cpp"));
+        Assert.Matches(@"String::Split\(content, (static_cast<char>\()?'\\n'\)?, StringSplitOptions::None\)", gateText);
+        Assert.Matches(@"String::Split\(content, (static_cast<char>\()?' '\)?, StringSplitOptions::RemoveEmptyEntries\)", gateText);
+        Assert.DoesNotContain("StringSplitOptions::0", gateText, StringComparison.Ordinal);
+        Assert.DoesNotContain("content.Split(", gateText, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -353,3 +406,6 @@ public class CPPRuntimeCapabilityConversionTests {
         }
     }
 }
+
+
+

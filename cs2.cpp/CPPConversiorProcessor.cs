@@ -1,4 +1,4 @@
-﻿using cs2.core;
+using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -8145,7 +8145,18 @@ namespace cs2.cpp {
             }
 
             if (parameterSymbol.Type?.TypeKind == TypeKind.Enum) {
-                argumentLines.Add($"{parameterSymbol.Type.Name}::{explicitDefaultValue}");
+                // Roslyn reports enum defaults as their underlying constant; emit the named member so the
+                // C++ enum class scope resolves instead of an invalid "Type::0" token.
+                IFieldSymbol enumMember = parameterSymbol.Type.GetMembers()
+                    .OfType<IFieldSymbol>()
+                    .FirstOrDefault(field => field.HasConstantValue && Equals(field.ConstantValue, explicitDefaultValue));
+                if (enumMember != null) {
+                    argumentLines.Add($"{parameterSymbol.Type.Name}::{enumMember.Name}");
+                    return;
+                }
+
+                string enumConstantText = Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture);
+                argumentLines.Add($"static_cast<{parameterSymbol.Type.Name}>({enumConstantText})");
                 return;
             }
 
@@ -8365,6 +8376,28 @@ namespace cs2.cpp {
             beforeLines.Add($"{typeName}{pointerSuffix} {emittedIdentifier};\n");
         }
 
+        /// <summary>
+        /// Resolves whether an invocation binds to <c>System.String.Split(char, StringSplitOptions)</c>, the overload
+        /// Roslyn selects for single-character separators such as <c>text.Split('\n')</c>.
+        /// </summary>
+        /// <param name="semantic">Semantic model owning the invocation.</param>
+        /// <param name="invocationExpression">Invocation being lowered.</param>
+        /// <param name="methodSymbol">Receives the bound overload so callers can append its optional defaults.</param>
+        /// <returns><c>true</c> when the bound overload takes exactly one separator character and one options value.</returns>
+        static bool TryGetSingleCharacterSplitMethod(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            out IMethodSymbol methodSymbol) {
+            methodSymbol = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
+            if (methodSymbol == null || methodSymbol.Parameters.Length != 2) {
+                return false;
+            }
+
+            return methodSymbol.Parameters[0].Type.SpecialType == SpecialType.System_Char &&
+                methodSymbol.Parameters[1].Type.TypeKind == TypeKind.Enum &&
+                string.Equals(methodSymbol.Parameters[1].Type.Name, "StringSplitOptions", StringComparison.Ordinal);
+        }
+
         bool TryProcessNativeStringInvocation(
             SemanticModel semantic,
             LayerContext context,
@@ -8516,6 +8549,25 @@ namespace cs2.cpp {
                 AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
                 lines.Add(")");
                 resultType = VariableUtil.GetVarType("string");
+                return true;
+            }
+
+            if (string.Equals(memberName, "Split", StringComparison.Ordinal) &&
+                TryGetSingleCharacterSplitMethod(semantic, invocationExpression, out IMethodSymbol singleCharacterSplitMethod)) {
+                lines.Add("String::Split(");
+                lines.Add(receiverText);
+                lines.Add(", ");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                if (invocationExpression.ArgumentList.Arguments.Count < singleCharacterSplitMethod.Parameters.Length) {
+                    lines.Add(", ");
+                    AppendOptionalInvocationArguments(
+                        singleCharacterSplitMethod.Parameters,
+                        invocationExpression.ArgumentList.Arguments.Count,
+                        lines);
+                }
+
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("string[]");
                 return true;
             }
 
@@ -10048,7 +10100,7 @@ namespace cs2.cpp {
             ExpressionResult rightResult = ProcessExpression(semantic, context, binary.Right, right);
             context.PopClass(startRight);
 
-            lines.Add("std::fmod(");
+            lines.Add(Options.RuntimeProfile.UseStdMath ? "std::fmod(" : "he_cpp_math_detail::Remainder(");
             lines.AddRange(left);
             lines.Add(", ");
             lines.AddRange(right);
@@ -10568,7 +10620,7 @@ namespace cs2.cpp {
                 lines.AddRange(thrown);
             } else {
                 RegisterRuntimeRequirement("NativeExceptions");
-                string resultTypeName = GetCppTypeToken(VariableUtil.GetVarType(resultTypeSymbol), context.Program);
+                string resultTypeName = QualifyRenderedCppTypeName(GetCppTypeToken(VariableUtil.GetVarType(resultTypeSymbol), context.Program), context);
                 string exceptionText = string.Concat(thrown).Trim();
                 if (exceptionText.StartsWith("new ", StringComparison.Ordinal)) {
                     exceptionText = exceptionText.Substring("new ".Length);
@@ -13605,7 +13657,7 @@ namespace cs2.cpp {
                 if (nullableBaseTypeData.IsPointer) {
                     nullableBaseType = new VariableType(
                         VariableDataType.Unknown,
-                        $"{nullableBaseType.ToCPPString(null)}*");
+                        $"{nullableBaseType.ToCPPString(codeConverter.Program)}*");
                 }
 
                 typeData.IsArray = false;
@@ -13631,7 +13683,7 @@ namespace cs2.cpp {
                 if (pointedTypeData.IsPointer) {
                     pointedCppType = new VariableType(
                         VariableDataType.Unknown,
-                        $"{pointedCppType.ToCPPString(null)}*");
+                        $"{pointedCppType.ToCPPString(codeConverter.Program)}*");
                 }
 
                 typeData.IsArray = false;
@@ -16042,7 +16094,7 @@ namespace cs2.cpp {
                 if (genericTypeData.IsPointer) {
                     convertedGenericArgument = new VariableType(
                         VariableDataType.Unknown,
-                        $"{convertedGenericArgument.ToCPPString(null)}*");
+                        $"{convertedGenericArgument.ToCPPString(codeConverter.Program)}*");
                 }
 
                 convertedGenericArguments.Add(convertedGenericArgument);
@@ -18426,3 +18478,5 @@ namespace cs2.cpp {
         }
     }
 }
+
+

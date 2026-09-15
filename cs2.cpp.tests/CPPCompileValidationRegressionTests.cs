@@ -6925,7 +6925,10 @@ namespace cs2.cpp.tests {
             Assert.True(File.Exists(headerPath));
             Assert.True(File.Exists(sourcePath));
             Assert.Contains("void RegisterGeneratedRuntimeComponentDeserializers(::RuntimeComponentRegistry* registry);", File.ReadAllText(headerPath));
-            Assert.Contains("void RegisterGeneratedRuntimeComponentDeserializers(::RuntimeComponentRegistry* registry)", File.ReadAllText(sourcePath));
+            string registrationSource = File.ReadAllText(sourcePath);
+            Assert.Contains("void RegisterGeneratedRuntimeComponentDeserializers(::RuntimeComponentRegistry* registry)", registrationSource);
+            Assert.Contains("he_cpp_raise(ArgumentNullException(\"registry\"));", registrationSource);
+            Assert.DoesNotContain("throw new ArgumentNullException", registrationSource, StringComparison.Ordinal);
         }
 
         /// <summary>

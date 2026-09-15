@@ -44,6 +44,12 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_STD_STRING {ToDefineValue(options.RuntimeProfile.UseStdString)}",
                 $"#define HE_CPP_USE_STD_VECTOR {ToDefineValue(options.RuntimeProfile.UseStdVector)}",
                 $"#define HE_CPP_USE_STD_UNORDERED_MAP {ToDefineValue(options.RuntimeProfile.UseStdUnorderedMap)}",
+                $"#define HE_CPP_USE_STD_UNORDERED_SET {ToDefineValue(options.RuntimeProfile.UseStdUnorderedSet)}",
+                $"#define HE_CPP_USE_STD_FUNCTION {ToDefineValue(options.RuntimeProfile.UseStdFunction)}",
+                $"#define HE_CPP_USE_STD_CHRONO {ToDefineValue(options.RuntimeProfile.UseStdChrono)}",
+                $"#define HE_CPP_USE_STD_SHARED_PTR {ToDefineValue(options.RuntimeProfile.UseStdSharedPtr)}",
+                $"#define HE_CPP_USE_STD_MATH {ToDefineValue(options.RuntimeProfile.UseStdMath)}",
+                $"#define HE_CPP_USE_HOSTED_FILE_SYSTEM {ToDefineValue(options.RuntimeProfile.UseHostedFileSystem)}",
                 $"#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES {ToDefineValue(UsesCompactNativeExceptionMessages(options))}",
                 $"#define HE_CPP_GENERATED_FUNCTION_PROFILING {ToDefineValue(CPPGeneratedFunctionProfilingOptionResolver.Resolve(options))}",
                 $"#define HE_CPP_USE_EXCEPTIONS {ToDefineValue(options.RuntimeProfile.UseExceptions)}",
@@ -61,6 +67,10 @@ namespace cs2.cpp {
             if (HasCustomFileSystem(options)) {
                 lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER {FormatHeaderMacroValue(GetRequiredPlatformOption(options, "native-file-system-header"))}");
                 lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE {GetRequiredPlatformOption(options, "native-file-system-type")}");
+            }
+
+            if (!options.RuntimeProfile.UseStdMath) {
+                lines.Add($"#define HE_CPP_RUNTIME_MATH_HEADER {FormatHeaderMacroValue(GetRequiredPlatformOption(options, CPPCodegenOptionNames.RuntimeMathHeader))}");
             }
 
             AppendAdditionalPreprocessorDefines(lines, options);

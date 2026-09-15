@@ -454,7 +454,7 @@ namespace cs2.cpp {
             diagnostic.Recommendation = recommendation ?? string.Empty;
             diagnostic.FilePath = filePath ?? string.Empty;
             SynchronizeRunState();
-            throw new NotSupportedException(message);
+            throw new NotSupportedException($"CPP1001 {diagnostic.FilePath}: {diagnostic.SourceTypeName}.{diagnostic.SourceMemberName}: {message}");
         }
 
         /// <summary>

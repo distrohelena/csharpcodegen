@@ -34,6 +34,26 @@ namespace cs2.cpp {
         public bool UseStdUnorderedMap { get; set; }
 
         /// <summary>
+        /// Gets or sets whether generated code may use unordered-set style containers.
+        /// </summary>
+        public bool UseStdUnorderedSet { get; set; }
+
+        /// <summary>Gets or sets whether delegates use the standard function wrapper.</summary>
+        public bool UseStdFunction { get; set; } = true;
+
+        /// <summary>Gets or sets whether stopwatch timing uses the standard monotonic clock.</summary>
+        public bool UseStdChrono { get; set; } = true;
+
+        /// <summary>Gets or sets whether shared span storage uses standard shared ownership.</summary>
+        public bool UseStdSharedPtr { get; set; } = true;
+
+        /// <summary>Gets or sets whether numeric helpers use the standard C++ math library.</summary>
+        public bool UseStdMath { get; set; } = true;
+
+        /// <summary>Gets or sets whether file streams may access the host file system.</summary>
+        public bool UseHostedFileSystem { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets whether generated code may depend on C++ exceptions.
         /// </summary>
         public bool UseExceptions { get; set; }
@@ -55,6 +75,7 @@ namespace cs2.cpp {
                 UseStdString = true,
                 UseStdVector = true,
                 UseStdUnorderedMap = true,
+                UseStdUnorderedSet = true,
                 UseExceptions = false,
                 UseRtti = false
             };
@@ -72,6 +93,7 @@ namespace cs2.cpp {
                 UseStdString = false,
                 UseStdVector = false,
                 UseStdUnorderedMap = false,
+                UseStdUnorderedSet = false,
                 UseExceptions = false,
                 UseRtti = false
             };
