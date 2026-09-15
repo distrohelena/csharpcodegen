@@ -1,11 +1,19 @@
 #ifndef MEMORY_STREAM_HPP
 #define MEMORY_STREAM_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_VECTOR
+#error "system/io/memory-stream.hpp requires HE_CPP_USE_STD_VECTOR=1; its backing buffer still uses std::vector."
+#endif
+
 
 #include "stream.hpp"
 #include "../../runtime/array.hpp"
 #include <vector>
 #include <cstddef>  // For size_t
 #include <cstdint>  // For uint8_t
+#include "../../runtime/native_runtime.hpp"
+
 
 class MemoryStream : public Stream {
 private:

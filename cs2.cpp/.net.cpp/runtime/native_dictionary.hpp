@@ -2,12 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <type_traits>
-#include <unordered_map>
-#include <vector>
 
 #include "native_exceptions.hpp"
+#include "native_runtime.hpp"
 #include "native_string.hpp"
 #include "../system/collections/generic/key_value_pair.hpp"
 
@@ -18,11 +16,11 @@ class NativeDictionaryHash {
 public:
     std::size_t operator()(const TKey& key) const {
         if constexpr (std::is_pointer_v<TKey>) {
-            return std::hash<TKey>{}(key);
+            return HeCppHash<TKey>{}(key);
         } else if constexpr (requires(TKey value) { value.GetHashCode(); }) {
             return static_cast<std::size_t>(const_cast<TKey&>(key).GetHashCode());
         } else {
-            return std::hash<TKey>{}(key);
+            return HeCppHash<TKey>{}(key);
         }
     }
 };
@@ -42,8 +40,8 @@ public:
 };
 
 template<typename TKey, typename TValue>
-class Dictionary : public std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>> {
-    using Base = std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>>;
+class Dictionary : public HeCppUnorderedMap<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>> {
+    using Base = HeCppUnorderedMap<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>>;
 
     /// <summary>Adapts an STL entry to the managed KeyValuePair shape.</summary>
     class ManagedIterator {
@@ -98,7 +96,7 @@ class Dictionary : public std::unordered_map<TKey, TValue, NativeDictionaryHash<
     }
 
 public:
-    using std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>>::unordered_map;
+    using Base::Base;
 
     explicit Dictionary(const StringComparer&) {
     }
@@ -130,11 +128,11 @@ public:
     void Add(const TKey& key, const TValue& value) {
         if constexpr (std::is_pointer_v<TValue>) {
             if (OwnsValuesFlag) {
-                throw InvalidOperationException("Cannot insert a borrowed value into a dictionary that owns its values.");
+                he_cpp_raise(InvalidOperationException("Cannot insert a borrowed value into a dictionary that owns its values."));
             }
         }
 
-        this->insert_or_assign(key, value);
+        (*this)[key] = value;
     }
 
     /// <summary>
@@ -143,7 +141,7 @@ public:
     void AddOwned(const TKey& key, const TValue& value) {
         static_assert(std::is_pointer_v<TValue>, "AddOwned requires pointer values.");
         if (!OwnsValuesFlag && !this->empty()) {
-            throw InvalidOperationException("Cannot insert an owned value into a dictionary that already borrows its values.");
+            he_cpp_raise(InvalidOperationException("Cannot insert an owned value into a dictionary that already borrows its values."));
         }
 
         OwnsValuesFlag = true;
@@ -152,7 +150,7 @@ public:
             delete iterator->second;
         }
 
-        this->insert_or_assign(key, value);
+        (*this)[key] = value;
     }
 
     TValue& get_Item(const TKey& key) {
@@ -171,7 +169,7 @@ public:
             }
         }
 
-        this->insert_or_assign(key, value);
+        (*this)[key] = value;
     }
 
     bool ContainsKey(const TKey& key) const {
@@ -205,8 +203,8 @@ public:
         return true;
     }
 
-    std::vector<TKey> Keys() const {
-        std::vector<TKey> keys;
+    HeCppVector<TKey> Keys() const {
+        HeCppVector<TKey> keys;
         keys.reserve(this->size());
         for (const auto& pair : static_cast<const Base&>(*this)) {
             keys.push_back(pair.first);

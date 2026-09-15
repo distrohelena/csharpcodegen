@@ -29,6 +29,8 @@ namespace cs2.cpp {
                 throw new ArgumentNullException(nameof(registrar));
             }
 
+            CPPRuntimeOptionResolver.Resolve(options);
+
             Directory.CreateDirectory(outputFolder);
 
             string filePath = Path.Combine(outputFolder, DefaultFileName);
@@ -50,6 +52,11 @@ namespace cs2.cpp {
                 $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}",
                 $"#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM {ToDefineValue(HasCustomFileSystem(options))}"
             };
+
+            string providerHeader = CPPRuntimeOptionResolver.GetProviderHeader(options);
+            if (!string.IsNullOrWhiteSpace(providerHeader)) {
+                lines.Add($"#define HE_CPP_RUNTIME_PROVIDER_HEADER {FormatHeaderMacroValue(providerHeader)}");
+            }
 
             if (HasCustomFileSystem(options)) {
                 lines.Add($"#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER {FormatHeaderMacroValue(GetRequiredPlatformOption(options, "native-file-system-header"))}");

@@ -1,4 +1,18 @@
 #pragma once
+#include "../../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/text/regular_expressions/regex.hpp requires HE_CPP_USE_STD_STRING=1; regex text has not been adapted to custom string storage."
+#endif
+
+#if !HE_CPP_USE_STD_VECTOR
+#error "system/text/regular_expressions/regex.hpp requires HE_CPP_USE_STD_VECTOR=1; regex match storage still uses std::vector."
+#endif
+
+#if !HE_CPP_USE_STD_UNORDERED_MAP
+#error "system/text/regular_expressions/regex.hpp requires HE_CPP_USE_STD_UNORDERED_MAP=1; regex group storage still uses std::unordered_map."
+#endif
+
 
 #include <cstdint>
 #include <regex>
@@ -6,6 +20,10 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "../../../runtime/native_runtime.hpp"
+
+
+
 
 /// <summary>
 /// Represents managed regex option flags needed by the transpiled engine parser surface.

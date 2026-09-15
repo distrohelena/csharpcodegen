@@ -1,5 +1,11 @@
 #ifndef STREAM_HPP
 #define STREAM_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_EXCEPTIONS
+#error "system/io/stream.hpp requires HE_CPP_USE_EXCEPTIONS=1; timeout operations still throw hosted exceptions."
+#endif
+
 
 #include <cstdint>  // For uint8_t
 
@@ -8,6 +14,7 @@
 #include "../../runtime/array.hpp"
 #include "../../runtime/native_span.hpp"
 #include "seek-origin.hpp"  // Assuming this exists like in your TypeScript
+
 
 class Stream {
 public:

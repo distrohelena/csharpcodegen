@@ -48,6 +48,30 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Resolves the native string type spelling used by all generated expressions in the active conversion.
+        /// </summary>
+        /// <returns>The selected standard or provider-backed native string type.</returns>
+        string GetNativeStringTypeName() {
+            return CPPRuntimeOptionResolver.GetStringTypeName(Options);
+        }
+
+        /// <summary>
+        /// Determines whether generated code may use C++ exception unwinding.
+        /// </summary>
+        /// <returns><c>true</c> when exception support is available or no converter-backed profile is active.</returns>
+        bool UsesExceptions() {
+            return codeConverter == null || Options?.RuntimeProfile == null || Options.RuntimeProfile.UseExceptions;
+        }
+
+        /// <summary>
+        /// Determines whether generated code may use compiler RTTI for runtime type checks.
+        /// </summary>
+        /// <returns><c>true</c> when RTTI is available or no converter-backed profile is active.</returns>
+        bool UsesRtti() {
+            return codeConverter == null || Options?.RuntimeProfile == null || Options.RuntimeProfile.UseRtti;
+        }
+
+        /// <summary>
         /// Begins runtime-helper tracking for the currently emitted type when a converter-backed registrar is available.
         /// </summary>
         /// <returns>The active type scope, or an empty scope when no converter-backed registrar is available.</returns>
@@ -1738,7 +1762,7 @@ namespace cs2.cpp {
                 lines.Add($" {operatorVal} ");
             }
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add("std::string()");
+                lines.Add($"{GetNativeStringTypeName()}()");
             } else if (TryAppendEventMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else if (TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
             } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
@@ -4025,7 +4049,7 @@ namespace cs2.cpp {
             }
 
             string sourceText = RenderExpressionText(semantic, context, sourceArgument.Expression);
-            lines.Add("std::string(");
+            lines.Add($"{GetNativeStringTypeName()}(");
             lines.Add($"{sourceText}->Data, static_cast<size_t>({sourceText}->Length)");
             lines.Add(")");
             resultType = VariableUtil.GetVarType("string");
@@ -4704,7 +4728,7 @@ namespace cs2.cpp {
 
             lines.Add($"set_{propertyName}(");
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add("std::string()");
+                lines.Add($"{GetNativeStringTypeName()}()");
             } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else {
                 int rightStartDepth = context.Class.Count;
@@ -4778,7 +4802,7 @@ namespace cs2.cpp {
             lines.Add($"get_{propertyName}()");
             lines.Add(" = ");
             if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add("std::string()");
+                lines.Add($"{GetNativeStringTypeName()}()");
             } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else {
                 int rightStartDepth = context.Class.Count;
@@ -6768,6 +6792,39 @@ namespace cs2.cpp {
                 currentClass.SourceIncludes.Add("runtime/native_exceptions.hpp");
             }
 
+            if (!UsesRtti()) {
+                ReportRuntimeCapabilityViolation(
+                    context,
+                    invocationExpression,
+                    "Generic implementation dispatch requires RTTI to select a concrete generated implementation.");
+                RegisterRuntimeRequirement("NativeExceptions");
+
+                bool returnsValueWithoutRtti = invokedMethodSymbol.ReturnType != null &&
+                    invokedMethodSymbol.ReturnType.SpecialType != SpecialType.System_Void;
+                if (returnsValueWithoutRtti) {
+                    invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
+                    VariableType convertedInvocationType = ConvertToCPPType(invocationType, out CPPTypeData invocationTypeData);
+                    string returnTypeName = QualifyRenderedCppTypeName(convertedInvocationType.ToCPPString(context.Program), context);
+                    if (invocationTypeData.IsPointer) {
+                        returnTypeName += "*";
+                    }
+
+                    lines.Add("([&]() -> ");
+                    lines.Add(returnTypeName);
+                    lines.Add(" {\n");
+                    lines.Add("return he_cpp_raise_value<");
+                    lines.Add(returnTypeName);
+                    lines.Add(">(NotSupportedException(\"Generic implementation dispatch requires RTTI.\"));\n");
+                } else {
+                    invocationType = VariableUtil.GetVarType("void");
+                    lines.Add("([&]() {\n");
+                    lines.Add("he_cpp_raise(NotSupportedException(\"Generic implementation dispatch requires RTTI.\"));\n");
+                }
+
+                lines.Add("})()");
+                return true;
+            }
+
             string emittedFunctionName = ResolveConvertedFunctionName(invokedMethodSymbol);
             if (invokedMethodSymbol.ReturnType != null && invokedMethodSymbol.ReturnType.SpecialType != SpecialType.System_Void) {
                 invocationType = VariableUtil.GetVarType(invokedMethodSymbol.ReturnType);
@@ -6807,7 +6864,11 @@ namespace cs2.cpp {
                 lines.Add("}\n");
             }
 
-            lines.Add("throw new NotSupportedException(\"No generated implementation matched generic dispatch receiver.\");\n");
+            if (UsesExceptions()) {
+                lines.Add("throw new NotSupportedException(\"No generated implementation matched generic dispatch receiver.\");\n");
+            } else {
+                lines.Add("he_cpp_raise(NotSupportedException(\"No generated implementation matched generic dispatch receiver.\"));\n");
+            }
             lines.Add("})()");
             return true;
         }
@@ -9245,18 +9306,18 @@ namespace cs2.cpp {
             }
 
             if (TryResolvePathSeparatorToStringInvocation(memberAccess.Expression, out string pathSeparatorMemberName)) {
-                lines.Add($"std::string(1, Path::{pathSeparatorMemberName})");
+                lines.Add($"{GetNativeStringTypeName()}(1, Path::{pathSeparatorMemberName})");
                 return true;
             }
 
             if (memberAccess.Expression is ObjectCreationExpressionSyntax guidObjectCreation &&
                 IsGuidObjectCreation(guidObjectCreation, semantic)) {
-                lines.Add("std::string(\"00000000-0000-0000-0000-000000000000\")");
+                lines.Add($"{GetNativeStringTypeName()}(\"00000000-0000-0000-0000-000000000000\")");
                 return true;
             }
 
             if (TryResolveStaticPathSeparatorMemberName(semantic, memberAccess.Expression, out string staticPathSeparatorMemberName)) {
-                lines.Add($"std::string(1, Path::{staticPathSeparatorMemberName})");
+                lines.Add($"{GetNativeStringTypeName()}(1, Path::{staticPathSeparatorMemberName})");
                 return true;
             }
 
@@ -9274,14 +9335,14 @@ namespace cs2.cpp {
             }
 
             if (receiverText.StartsWith("String::", StringComparison.Ordinal) ||
-                receiverText.StartsWith("std::string", StringComparison.Ordinal)) {
+                receiverText.StartsWith(GetNativeStringTypeName(), StringComparison.Ordinal)) {
                 lines.Add(receiverText);
                 return true;
             }
 
             ITypeSymbol receiverTypeSymbol = ResolveNativeToStringReceiverType(semantic, memberAccess.Expression, toStringMethodSymbol);
             if (receiverTypeSymbol?.SpecialType == SpecialType.System_Char) {
-                lines.Add($"std::string(1, {receiverText})");
+                lines.Add($"{GetNativeStringTypeName()}(1, {receiverText})");
                 return true;
             }
 
@@ -10389,6 +10450,7 @@ namespace cs2.cpp {
             VariableType expressionType = expressionResult.Type;
             if (expressionType?.Type == VariableDataType.String ||
                 string.Equals(expressionType?.TypeName, "std::string", StringComparison.Ordinal) ||
+                string.Equals(expressionType?.TypeName, "HeCppString", StringComparison.Ordinal) ||
                 string.Equals(expressionType?.TypeName, "string", StringComparison.Ordinal) ||
                 string.Equals(expressionType?.TypeName, "String", StringComparison.Ordinal)) {
                 return true;
@@ -10501,8 +10563,23 @@ namespace cs2.cpp {
             lines.AddRange(left);
             lines.Add(" != nullptr ? ");
             lines.AddRange(left);
-            lines.Add(" : throw ");
-            lines.AddRange(thrown);
+            if (UsesExceptions()) {
+                lines.Add(" : throw ");
+                lines.AddRange(thrown);
+            } else {
+                RegisterRuntimeRequirement("NativeExceptions");
+                string resultTypeName = GetCppTypeToken(VariableUtil.GetVarType(resultTypeSymbol), context.Program);
+                string exceptionText = string.Concat(thrown).Trim();
+                if (exceptionText.StartsWith("new ", StringComparison.Ordinal)) {
+                    exceptionText = exceptionText.Substring("new ".Length);
+                }
+
+                lines.Add(" : he_cpp_raise_value<");
+                lines.Add(resultTypeName);
+                lines.Add(">( ");
+                lines.Add(exceptionText);
+                lines.Add(" )");
+            }
             lines.Add(")");
             return leftResult;
         }
@@ -10858,6 +10935,16 @@ namespace cs2.cpp {
                 context.PopClass(typeCheckStart);
                 if (!typeCheckResult.Processed) {
                     return false;
+                }
+
+                if (!UsesRtti()) {
+                    ReportRuntimeCapabilityViolation(
+                        context,
+                        arm,
+                        "Type-pattern switch arms require RTTI for runtime type inspection.");
+                    RegisterRuntimeRequirement("NativeExceptions");
+                    lines.Add("he_cpp_raise_value<bool>(NotSupportedException(\"Type-pattern switch arm requires RTTI.\"))");
+                    return true;
                 }
 
                 lines.Add("dynamic_cast<");
@@ -11619,7 +11706,7 @@ namespace cs2.cpp {
                         continue;
                     }
 
-                    AppendInterpolatedStringSegment(lines, $"std::string(\"{EscapeCppStringLiteral(textValue)}\")", ref emittedAnySegment);
+                    AppendInterpolatedStringSegment(lines, $"{GetNativeStringTypeName()}(\"{EscapeCppStringLiteral(textValue)}\")", ref emittedAnySegment);
                     continue;
                 }
 
@@ -11629,7 +11716,7 @@ namespace cs2.cpp {
             }
 
             if (!emittedAnySegment) {
-                lines.Add("std::string()");
+                lines.Add($"{GetNativeStringTypeName()}()");
             }
 
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
@@ -11693,12 +11780,13 @@ namespace cs2.cpp {
             if (expressionType.Type == VariableDataType.String ||
                 IsStringLikeExpression(semantic, expression) ||
                 expressionText.StartsWith("String::", StringComparison.Ordinal) ||
-                expressionText.StartsWith("std::string", StringComparison.Ordinal)) {
+                expressionText.StartsWith("std::string", StringComparison.Ordinal) ||
+                expressionText.StartsWith("HeCppString", StringComparison.Ordinal)) {
                 return expressionText;
             }
 
             if (expressionType.Type == VariableDataType.Char) {
-                return $"std::string(1, {expressionText})";
+                return $"{GetNativeStringTypeName()}(1, {expressionText})";
             }
 
             if (expressionType.IsEnum) {
@@ -13056,6 +13144,14 @@ namespace cs2.cpp {
 
 
         protected override void ProcessTryStatement(SemanticModel semantic, LayerContext context, TryStatementSyntax tryStatement, List<string> lines) {
+            bool hasCatchClauses = tryStatement.Catches.Count > 0;
+            if (hasCatchClauses && !UsesExceptions()) {
+                ReportRuntimeCapabilityViolation(
+                    context,
+                    tryStatement,
+                    "Exception recovery requires C++ exceptions; the selected runtime profile only supports fatal failure handling.");
+            }
+
             if (tryStatement.Finally != null) {
                 RegisterRuntimeRequirement("NativeFinally");
 
@@ -13065,7 +13161,7 @@ namespace cs2.cpp {
                 ProcessStatement(semantic, context, tryStatement.Finally.Block, lines);
                 lines.Add("});\n");
 
-                if (tryStatement.Catches.Count > 0) {
+                if (hasCatchClauses && UsesExceptions()) {
                     lines.Add("try {\n");
                     ProcessStatement(semantic, context, tryStatement.Block, lines);
                     lines.Add("}\n");
@@ -13080,6 +13176,11 @@ namespace cs2.cpp {
                 }
 
                 lines.Add("}\n");
+                return;
+            }
+
+            if (!hasCatchClauses || !UsesExceptions()) {
+                ProcessStatement(semantic, context, tryStatement.Block, lines);
                 return;
             }
 
@@ -13354,13 +13455,38 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessThrowStatement(SemanticModel semantic, LayerContext context, ThrowStatementSyntax throwStatement, List<string> lines) {
-            if (throwStatement.Expression == null) {
-                lines.Add("throw;\n");
-            } else {
-                lines.Add("throw ");
-                ProcessExpression(semantic, context, throwStatement.Expression, lines);
-                lines.Add(";\n");
+            if (UsesExceptions()) {
+                if (throwStatement.Expression == null) {
+                    lines.Add("throw;\n");
+                } else {
+                    lines.Add("throw ");
+                    ProcessExpression(semantic, context, throwStatement.Expression, lines);
+                    lines.Add(";\n");
+                }
+
+                return;
             }
+
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add("he_cpp_raise(");
+            if (throwStatement.Expression == null) {
+                ReportRuntimeCapabilityViolation(
+                    context,
+                    throwStatement,
+                    "Exception rethrow requires C++ exception state and is unavailable when exceptions are disabled.");
+                lines.Add("Exception()");
+            } else {
+                List<string> exceptionLines = new List<string>();
+                ProcessExpression(semantic, context, throwStatement.Expression, exceptionLines);
+                string exceptionText = string.Concat(exceptionLines).Trim();
+                if (exceptionText.StartsWith("new ", StringComparison.Ordinal)) {
+                    exceptionText = exceptionText.Substring("new ".Length);
+                }
+
+                lines.Add(exceptionText);
+            }
+
+            lines.Add(");\n");
         }
 
         protected override void ProcessSwitchStatement(SemanticModel semantic, LayerContext context, SwitchStatementSyntax switchStatement, List<string> lines) {
@@ -13411,7 +13537,7 @@ namespace cs2.cpp {
 
             string switchValueName = $"__switchValue{lines.Count}_{context.DepthFunction}";
             lines.Add("{\n");
-            lines.Add($"const std::string {switchValueName} = ");
+            lines.Add($"const {GetNativeStringTypeName()} {switchValueName} = ");
             int depth = context.DepthClass;
             ProcessExpression(semantic, context, switchStatement.Expression, lines);
             context.PopClass(depth);
@@ -13622,7 +13748,7 @@ namespace cs2.cpp {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
-                        return new VariableType(parsedType.Type, "std::string");
+                        return new VariableType(parsedType.Type, GetNativeStringTypeName());
                 } else {
                         typeData.IsArray = true;
                         typeData.IsNativeType = true;
@@ -16047,7 +16173,8 @@ namespace cs2.cpp {
 
                 if (typeData.IsArray &&
                     cppType.Type != VariableDataType.String &&
-                    !string.Equals(cppType.TypeName, "std::string", StringComparison.Ordinal)) {
+                    !string.Equals(cppType.TypeName, "std::string", StringComparison.Ordinal) &&
+                    !string.Equals(cppType.TypeName, "HeCppString", StringComparison.Ordinal)) {
                     newLines.Add("[]");
                 }
 
@@ -16066,7 +16193,7 @@ namespace cs2.cpp {
                 if (variable.Initializer != null) {
                     newLines.Add($" = ");
                     if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
-                        newLines.Add("std::string()");
+                        newLines.Add($"{GetNativeStringTypeName()}()");
                     } else {
                         ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
                         if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
@@ -17215,7 +17342,8 @@ namespace cs2.cpp {
 
                 if (typeData.IsArray &&
                     cppType.Type != VariableDataType.String &&
-                    !string.Equals(cppType.TypeName, "std::string", StringComparison.Ordinal)) {
+                    !string.Equals(cppType.TypeName, "std::string", StringComparison.Ordinal) &&
+                    !string.Equals(cppType.TypeName, "HeCppString", StringComparison.Ordinal)) {
                     declarationLines.Add("[]");
                 }
 
@@ -17233,7 +17361,7 @@ namespace cs2.cpp {
                 if (variable.Initializer != null) {
                     declarationLines.Add(" = ");
                     if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
-                        declarationLines.Add("std::string()");
+                        declarationLines.Add($"{GetNativeStringTypeName()}()");
                     } else {
                         ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, declarationLines);
                         if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
@@ -18262,6 +18390,33 @@ namespace cs2.cpp {
             string recommendation = "Add a lowering rule for this syntax or move the behavior behind a native runtime adapter.";
 
             codeConverter.ReportUnsupportedConstruct(
+                sourceTypeName,
+                sourceMemberName,
+                node.Kind().ToString(),
+                message,
+                recommendation,
+                filePath);
+        }
+
+        /// <summary>
+        /// Records a capability-dependent lowering error and terminates the current conversion path.
+        /// </summary>
+        /// <param name="context">Current lowering context that identifies the active type and member.</param>
+        /// <param name="node">Syntax node requiring the unavailable capability.</param>
+        /// <param name="message">Human-readable explanation of the unavailable capability.</param>
+        void ReportRuntimeCapabilityViolation(LayerContext context, SyntaxNode node, string message) {
+            if (codeConverter == null || node == null) {
+                throw new NotSupportedException(message);
+            }
+
+            ConversionClass currentClass = context?.GetCurrentClass();
+            FunctionStack currentFunction = context?.GetCurrentFunction();
+            string sourceTypeName = currentClass?.Name ?? string.Empty;
+            string sourceMemberName = currentFunction?.Function?.Name ?? string.Empty;
+            string filePath = node.SyntaxTree?.FilePath ?? string.Empty;
+            string recommendation = "Enable the required runtime capability or move the behavior behind a native runtime adapter.";
+
+            codeConverter.ReportRuntimeCapabilityViolation(
                 sourceTypeName,
                 sourceMemberName,
                 node.Kind().ToString(),

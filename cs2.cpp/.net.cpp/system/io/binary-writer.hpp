@@ -1,10 +1,24 @@
 #ifndef BINARY_WRITER_HPP
 #define BINARY_WRITER_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_VECTOR
+#error "system/io/binary-writer.hpp requires HE_CPP_USE_STD_VECTOR=1; binary writer buffers still use std::vector."
+#endif
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/io/binary-writer.hpp requires HE_CPP_USE_STD_STRING=1; binary writer text still uses std::string."
+#endif
+
 
 #include "stream.hpp"
 #include <vector>
+#include <string>
 #include <cstring>  // For memcpy
 #include <type_traits>
+#include "../../runtime/native_runtime.hpp"
+
+
 
 class BinaryWriter {
 private:

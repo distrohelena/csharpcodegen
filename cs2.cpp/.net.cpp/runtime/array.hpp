@@ -166,7 +166,7 @@ public:
 template<typename T>
 Array<T>* NativeCollectionToArray(const IReadOnlyList<T>* values) {
     if (values == nullptr) {
-        throw ArgumentNullException("values");
+            return he_cpp_raise_value<Array<T>*>(ArgumentNullException("values"));
     }
 
     int32_t count = values->get_Count();

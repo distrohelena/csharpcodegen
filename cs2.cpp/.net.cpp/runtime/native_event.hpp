@@ -1,4 +1,10 @@
 #pragma once
+#include "native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_VECTOR
+#error "runtime/native_event.hpp requires HE_CPP_USE_STD_VECTOR=1; its hosted event storage still uses std::vector."
+#endif
+
 
 #include <algorithm>
 #include <array>
@@ -8,6 +14,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "native_runtime.hpp"
+
 
 /// <summary>
 /// Represents a lightweight managed event bridge used by transpiled engine members during native execution.

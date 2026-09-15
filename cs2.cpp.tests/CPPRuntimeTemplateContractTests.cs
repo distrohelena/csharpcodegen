@@ -171,10 +171,11 @@ public sealed class CPPRuntimeTemplateContractTests {
 
         string source = File.ReadAllText(templatePath);
 
-        Assert.Contains("#include \"helcpp_config.hpp\"", source, StringComparison.Ordinal);
+        Assert.Contains("#include \"native_runtime.hpp\"", source, StringComparison.Ordinal);
         Assert.Contains("#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES", source, StringComparison.Ordinal);
         Assert.Contains("class Exception : public std::exception", source, StringComparison.Ordinal);
-        Assert.Contains("const char* what() const noexcept override", source, StringComparison.Ordinal);
+        Assert.Contains("const char* Message;", source, StringComparison.Ordinal);
+        Assert.Contains("const char* what() const noexcept", source, StringComparison.Ordinal);
     }
 
     /// <summary>

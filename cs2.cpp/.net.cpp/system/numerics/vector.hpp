@@ -1,4 +1,10 @@
 #pragma once
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/numerics/vector.hpp requires HE_CPP_USE_STD_STRING=1; numeric formatting still uses std::string."
+#endif
+
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +14,7 @@
 #include <type_traits>
 #include "../../runtime/native_string.hpp"
 #include "../../runtime/native_span.hpp"
+
 
 template <typename T>
 class Vector128_1;

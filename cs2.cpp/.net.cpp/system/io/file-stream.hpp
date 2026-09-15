@@ -1,5 +1,19 @@
 #ifndef FILE_STREAM_HPP
 #define FILE_STREAM_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_VECTOR
+#error "system/io/file-stream.hpp requires HE_CPP_USE_STD_VECTOR=1; memory-backed file buffers still use std::vector."
+#endif
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/io/file-stream.hpp requires HE_CPP_USE_STD_STRING=1; file paths have not been adapted to custom string storage."
+#endif
+
+#if !HE_CPP_USE_EXCEPTIONS
+#error "system/io/file-stream.hpp requires HE_CPP_USE_EXCEPTIONS=1; file operations still throw hosted exceptions."
+#endif
+
 
 #include "stream.hpp"
 #include "seek-origin.hpp"
@@ -10,6 +24,10 @@
 #include <vector>
 #include <string>
 #include "file-mode.hpp"
+#include "../../runtime/native_runtime.hpp"
+
+
+
 
 class FileStream : public Stream {
 private:

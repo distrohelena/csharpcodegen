@@ -46,6 +46,9 @@ namespace cs2.cpp.tests {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = false;
             options.WriteConversionReport = true;
+            options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                [CPPCodegenOptionNames.UseExceptions] = "true"
+            };
 
             CPPConversionRules rules = new CPPConversionRules();
             CPPCodeConverter converter = new CPPCodeConverter(rules, options);

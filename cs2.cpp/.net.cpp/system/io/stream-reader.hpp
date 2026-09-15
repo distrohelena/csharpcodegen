@@ -1,5 +1,15 @@
 #ifndef STREAM_READER_HPP
 #define STREAM_READER_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/io/stream-reader.hpp requires HE_CPP_USE_STD_STRING=1; stream text has not been adapted to custom string storage."
+#endif
+
+#if !HE_CPP_USE_EXCEPTIONS
+#error "system/io/stream-reader.hpp requires HE_CPP_USE_EXCEPTIONS=1; null stream failures still throw std::invalid_argument."
+#endif
+
 
 #include <cstdint>
 #include <stdexcept>
@@ -7,6 +17,8 @@
 
 #include "stream.hpp"
 #include "../text/encoding.hpp"
+
+
 
 class StreamReader {
 private:

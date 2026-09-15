@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
+#include "native_runtime.hpp"
 
 template<typename T>
 class Stack {
@@ -29,5 +29,5 @@ public:
     }
 
 private:
-    std::vector<T> items;
+    HeCppVector<T> items;
 };

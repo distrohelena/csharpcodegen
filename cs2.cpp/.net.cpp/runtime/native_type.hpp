@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include "native_runtime.hpp"
 #include <type_traits>
 
 /// <summary>
@@ -18,8 +18,8 @@ public:
           IsEnum(isEnum) {
     }
 
-    std::string get_Name() const {
-        return Name == nullptr ? std::string() : std::string(Name);
+    HeCppString get_Name() const {
+        return Name == nullptr ? HeCppString() : HeCppString(Name);
     }
 
     bool get_IsEnum() const {

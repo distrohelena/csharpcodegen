@@ -1,8 +1,16 @@
 #ifndef STRING_READER_HPP
 #define STRING_READER_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/io/string-reader.hpp requires HE_CPP_USE_STD_STRING=1; its text storage has not been adapted to custom string storage."
+#endif
+
 
 #include <cstddef>
 #include <string>
+#include "../../runtime/native_runtime.hpp"
+
 
 class StringReaderLine {
 private:

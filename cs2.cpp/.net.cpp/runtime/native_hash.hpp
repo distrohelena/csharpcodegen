@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "system/number.hpp"
+#include "native_runtime.hpp"
 
 template <typename TValue>
 inline int32_t he_cpp_get_hash_code(const TValue& value) {
@@ -21,14 +21,20 @@ inline int32_t he_cpp_get_hash_code(const TValue& value) {
         if constexpr (requires(PointeeType* instance) { instance->GetHashCode(); }) {
             return value->GetHashCode();
         } else {
-            return Number::GetHashCode(reinterpret_cast<std::uintptr_t>(value));
+            return static_cast<int32_t>(std::hash<std::uintptr_t>{}(reinterpret_cast<std::uintptr_t>(value)));
         }
     } else if constexpr (std::is_arithmetic_v<DecayedType> || std::is_enum_v<DecayedType>) {
-        return Number::GetHashCode(value);
+        return static_cast<int32_t>(std::hash<DecayedType>{}(value));
+    } else if constexpr (std::is_same_v<DecayedType, HeCppString>) {
+#if HE_CPP_USE_STD_STRING
+        return static_cast<int32_t>(std::hash<DecayedType>{}(value));
+#else
+        return static_cast<int32_t>(HeCppHash<DecayedType>{}(value));
+#endif
     } else if constexpr (requires(const DecayedType& instance) { instance.GetHashCode(); }) {
         return value.GetHashCode();
     } else {
-        return static_cast<int32_t>(std::hash<DecayedType>{}(value));
+        return static_cast<int32_t>(HeCppHash<DecayedType>{}(value));
     }
 }
 

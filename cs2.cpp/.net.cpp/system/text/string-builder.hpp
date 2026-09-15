@@ -1,16 +1,17 @@
 #pragma once
 
-#include <string>
-#include <string_view>
 #include <cstddef>
 #include <cstdint>
 #include "../../runtime/native_string.hpp"
+#if HE_CPP_USE_STD_STRING
+#include <string_view>
+#endif
 
 /// <summary>
 /// Provides a lightweight append-oriented string builder for transpiled managed code.
 /// </summary>
 class StringBuilder {
-    std::string buffer;
+    HeCppString buffer;
 
 public:
     int32_t Length;
@@ -35,9 +36,47 @@ public:
     /// Initializes a builder from an existing string value.
     /// </summary>
     /// <param name="value">Initial text content for the builder.</param>
-    explicit StringBuilder(std::string_view value) {
+    explicit StringBuilder(const HeCppString& value) {
         buffer.append(value);
         Length = static_cast<int32_t>(buffer.size());
+    }
+
+    /// <summary>Initializes the builder from a nullable native character sequence.</summary>
+    explicit StringBuilder(const char* value) {
+        if (value != nullptr) {
+            buffer.append(value);
+        }
+        Length = static_cast<int32_t>(buffer.size());
+    }
+
+#if HE_CPP_USE_STD_STRING
+    /// <summary>Preserves the hosted string-view constructor without requiring an owned temporary string.</summary>
+    explicit StringBuilder(std::string_view value) {
+        buffer.append(value.data(), value.size());
+        Length = static_cast<int32_t>(buffer.size());
+    }
+
+    /// <summary>Appends a hosted string view without changing its explicit length.</summary>
+    StringBuilder& Append(std::string_view value) {
+        buffer.append(value.data(), value.size());
+        Length = static_cast<int32_t>(buffer.size());
+        return *this;
+    }
+
+    /// <summary>Appends a hosted string view and the same newline used by the managed helper.</summary>
+    StringBuilder& AppendLine(std::string_view value) {
+        Append(value);
+        return AppendLine();
+    }
+#endif
+
+    /// <summary>Accepts native integer representations that differ from int32_t on the target ABI, including integer literals.</summary>
+    template<typename T, std::enable_if_t<std::is_integral_v<T> &&
+        !std::is_same_v<T, char> && !std::is_same_v<T, int32_t> && !std::is_same_v<T, uint32_t>, int> = 0>
+    StringBuilder& Append(T value) {
+        buffer.append(String::ToJoinString(value));
+        Length = static_cast<int32_t>(buffer.size());
+        return *this;
     }
 
     /// <summary>
@@ -56,9 +95,18 @@ public:
     /// </summary>
     /// <param name="value">String content to append.</param>
     /// <returns>The current builder instance.</returns>
-    StringBuilder& Append(std::string_view value) {
+    StringBuilder& Append(const HeCppString& value) {
         buffer.append(value);
         Length = static_cast<int>(buffer.size());
+        return *this;
+    }
+
+    /// <summary>Appends a nullable native character sequence and updates the managed length.</summary>
+    StringBuilder& Append(const char* value) {
+        if (value != nullptr) {
+            buffer.append(value);
+        }
+        Length = static_cast<int32_t>(buffer.size());
         return *this;
     }
 
@@ -99,8 +147,18 @@ public:
     /// </summary>
     /// <param name="value">String content to append before the newline.</param>
     /// <returns>The current builder instance.</returns>
-    StringBuilder& AppendLine(std::string_view value) {
+    StringBuilder& AppendLine(const HeCppString& value) {
         buffer.append(value);
+        buffer.push_back('\n');
+        Length = static_cast<int32_t>(buffer.size());
+        return *this;
+    }
+
+    /// <summary>Appends a nullable native character sequence followed by a newline.</summary>
+    StringBuilder& AppendLine(const char* value) {
+        if (value != nullptr) {
+            buffer.append(value);
+        }
         buffer.push_back('\n');
         Length = static_cast<int32_t>(buffer.size());
         return *this;
@@ -127,7 +185,7 @@ public:
     /// <param name="startIndex">Start index of the substring.</param>
     /// <param name="length">Length of the substring.</param>
     /// <returns>A substring of the accumulated string content.</returns>
-    std::string ToString(int32_t startIndex, int32_t length) const {
+    HeCppString ToString(int32_t startIndex, int32_t length) const {
         if (startIndex < 0) {
             startIndex = 0;
         }
@@ -137,7 +195,7 @@ public:
 
         std::size_t start = static_cast<std::size_t>(startIndex);
         if (start >= buffer.size()) {
-            return std::string();
+            return HeCppString();
         }
 
         std::size_t count = static_cast<std::size_t>(length);
@@ -152,7 +210,7 @@ public:
     /// Materializes the built string value.
     /// </summary>
     /// <returns>A copy of the accumulated string content.</returns>
-    std::string ToString() const {
+    HeCppString ToString() const {
         return buffer;
     }
 };

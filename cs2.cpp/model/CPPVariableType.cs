@@ -235,7 +235,7 @@ namespace cs2.cpp {
             }
 
             if (varType.Type == VariableDataType.String) {
-                return "std::string";
+                return CPPRuntimeOptionResolver.GetStringTypeName(program);
             }
 
             if (varType.Type == VariableDataType.List) {
@@ -265,7 +265,7 @@ namespace cs2.cpp {
             }
 
             if (typeName == "string" || typeName == "String") {
-                return "std::string";
+                return CPPRuntimeOptionResolver.GetStringTypeName(program);
             }
 
             if (typeName == "void" || typeName == "Void") {

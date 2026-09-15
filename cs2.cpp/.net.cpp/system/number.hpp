@@ -1,4 +1,14 @@
 #pragma once
+#include "../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/number.hpp requires HE_CPP_USE_STD_STRING=1; numeric parsing still accepts std::string."
+#endif
+
+#if !HE_CPP_USE_EXCEPTIONS
+#error "system/number.hpp requires HE_CPP_USE_EXCEPTIONS=1; checked arithmetic still throws hosted exceptions."
+#endif
+
 
 #include "../runtime/native_exceptions.hpp"
 
@@ -10,6 +20,8 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+
+
 
 /// <summary>
 /// Provides lightweight managed numeric helpers used by transpiled static primitive calls.

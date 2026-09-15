@@ -1,10 +1,22 @@
 #ifndef APP_CONTEXT_HPP
 #define APP_CONTEXT_HPP
+#include "../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/app_context.hpp requires HE_CPP_USE_STD_STRING=1; executable path services have not been adapted to custom string storage."
+#endif
+
 
 #include "helcpp_config.hpp"
 
 #include <string>
+#include "../runtime/native_runtime.hpp"
 #include "../runtime/native_exceptions.hpp"
+
+
+#if defined(_WIN32) && !HE_CPP_USE_EXCEPTIONS
+#error "system/app_context.hpp requires HE_CPP_USE_EXCEPTIONS=1 on Windows; its executable path failure still throws a hosted exception."
+#endif
 
 #ifdef _WIN32
 #include <Windows.h>

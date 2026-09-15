@@ -1,9 +1,17 @@
 #ifndef FILE_HPP
 #define FILE_HPP
+#include "../../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/io/file.hpp requires HE_CPP_USE_STD_STRING=1; file paths have not been adapted to custom string storage."
+#endif
+
 
 #include "file-mode.hpp"
 #include "file-stream.hpp"
 #include <string>
+#include "../../runtime/native_runtime.hpp"
+
 
 class File {
 public:

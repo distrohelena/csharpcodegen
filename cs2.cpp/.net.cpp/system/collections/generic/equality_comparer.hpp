@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <type_traits>
+
+#include "../../../runtime/native_runtime.hpp"
 
 template <typename T>
 class EqualityComparer {
@@ -21,16 +22,16 @@ public:
             if constexpr (requires(std::remove_pointer_t<T>& instance) { instance.GetHashCode(); }) {
                 return value->GetHashCode();
             } else {
-                return static_cast<int32_t>(std::hash<T>{}(value));
+                return static_cast<int32_t>(HeCppHash<T>{}(value));
             }
         } else if constexpr (std::is_arithmetic_v<T> || std::is_enum_v<T>) {
-            return static_cast<int32_t>(std::hash<T>{}(value));
+            return static_cast<int32_t>(HeCppHash<T>{}(value));
         } else if constexpr (requires(const T& instance) { instance.GetHashCode(); }) {
             return value.GetHashCode();
         } else if constexpr (requires(T& instance) { instance.GetHashCode(); }) {
             return const_cast<T&>(value).GetHashCode();
         } else {
-            return static_cast<int32_t>(std::hash<T>{}(value));
+            return static_cast<int32_t>(HeCppHash<T>{}(value));
         }
     }
 

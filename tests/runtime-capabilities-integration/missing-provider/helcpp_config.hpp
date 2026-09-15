@@ -1,0 +1,6 @@
+#pragma once
+#define HE_CPP_USE_STD_STRING 0
+#define HE_CPP_USE_STD_VECTOR 0
+#define HE_CPP_USE_STD_UNORDERED_MAP 0
+#define HE_CPP_USE_EXCEPTIONS 0
+#define HE_CPP_USE_RTTI 0

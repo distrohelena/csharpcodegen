@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <string>
+#include <initializer_list>
 #include <type_traits>
-#include <vector>
 
 #include "array.hpp"
 #include "native_exceptions.hpp"
+#include "native_runtime.hpp"
 #include "native_read_only_list.hpp"
 #include "native_string.hpp"
 
@@ -32,7 +32,7 @@ public:
 };
 
 template<typename T>
-class List : public std::vector<T>, public IReadOnlyList<T> {
+class List : public HeCppVector<T>, public IReadOnlyList<T> {
     /// <summary>
     /// Tracks whether this list owns its pointer elements and must delete them on removal and destruction.
     /// </summary>
@@ -55,7 +55,7 @@ class List : public std::vector<T>, public IReadOnlyList<T> {
     void DeleteOwnedElements() {
         if constexpr (std::is_pointer_v<T>) {
             if (OwnsElementsFlag) {
-                for (const T& value : static_cast<std::vector<T>&>(*this)) {
+                for (const T& value : static_cast<HeCppVector<T>&>(*this)) {
                     delete value;
                 }
             }
@@ -64,7 +64,7 @@ class List : public std::vector<T>, public IReadOnlyList<T> {
 
 public:
     List()
-        : std::vector<T>() {
+        : HeCppVector<T>() {
     }
 
     ~List() override {
@@ -91,7 +91,7 @@ public:
     void AddOwned(const T& value) {
         static_assert(std::is_pointer_v<T>, "AddOwned requires pointer elements.");
         if (!OwnsElementsFlag && !this->empty()) {
-            throw InvalidOperationException("Cannot insert an owned element into a list that already borrows its elements.");
+            he_cpp_raise(InvalidOperationException("Cannot insert an owned element into a list that already borrows its elements."));
         }
 
         OwnsElementsFlag = true;
@@ -99,18 +99,18 @@ public:
     }
 
     explicit List(int32_t capacity)
-        : std::vector<T>() {
+        : HeCppVector<T>() {
         if (capacity > 0) {
             this->reserve(static_cast<size_t>(capacity));
         }
     }
 
     List(std::initializer_list<T> values)
-        : std::vector<T>(values) {
+        : HeCppVector<T>(values) {
     }
 
-    explicit List(const std::vector<T>& values)
-        : std::vector<T>(values) {
+    explicit List(const HeCppVector<T>& values)
+        : HeCppVector<T>(values) {
     }
 
     explicit List(const Array<T>* values) {
@@ -126,7 +126,7 @@ public:
 
     explicit List(const IReadOnlyList<T>* values) {
         if (values == nullptr) {
-            throw ArgumentNullException("values");
+            he_cpp_raise(ArgumentNullException("values"));
         }
 
         int32_t count = values->get_Count();
@@ -139,7 +139,7 @@ public:
     void Add(const T& value) {
         if constexpr (std::is_pointer_v<T>) {
             if (OwnsElementsFlag) {
-                throw InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements.");
+                he_cpp_raise(InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements."));
             }
         }
 
@@ -148,11 +148,11 @@ public:
 
     void AddRange(const IReadOnlyList<T>* values) {
         if (values == nullptr) {
-            throw ArgumentNullException("values");
+            he_cpp_raise(ArgumentNullException("values"));
         }
         if constexpr (std::is_pointer_v<T>) {
             if (OwnsElementsFlag) {
-                throw InvalidOperationException("Cannot insert borrowed elements into a list that owns its elements.");
+                he_cpp_raise(InvalidOperationException("Cannot insert borrowed elements into a list that owns its elements."));
             }
         }
 
@@ -180,20 +180,20 @@ public:
 
     int32_t IndexOf(const T& value) const {
         NativeListEqual<T> equal;
-        typename std::vector<T>::const_iterator iterator = std::find_if(
-            std::vector<T>::begin(),
-            std::vector<T>::end(),
+        typename HeCppVector<T>::const_iterator iterator = std::find_if(
+            HeCppVector<T>::begin(),
+            HeCppVector<T>::end(),
             [&](const T& candidate) { return equal(candidate, value); });
-        if (iterator == std::vector<T>::end()) {
+        if (iterator == HeCppVector<T>::end()) {
             return -1;
         }
 
-        return static_cast<int32_t>(std::distance(std::vector<T>::begin(), iterator));
+        return static_cast<int32_t>(std::distance(HeCppVector<T>::begin(), iterator));
     }
 
     bool Remove(const T& value) {
         NativeListEqual<T> equal;
-        typename std::vector<T>::iterator iterator = std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); });
+        typename HeCppVector<T>::iterator iterator = std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); });
         if (iterator == this->end()) {
             return false;
         }
@@ -234,29 +234,29 @@ public:
     /// <summary>
     /// Returns a constant iterator for read-only traversal of this list.
     /// </summary>
-    typename std::vector<T>::const_iterator begin() const {
-        return std::vector<T>::begin();
+    typename HeCppVector<T>::const_iterator begin() const {
+        return HeCppVector<T>::begin();
     }
 
     /// <summary>
     /// Returns a mutable iterator for internal list operations.
     /// </summary>
-    typename std::vector<T>::iterator begin() {
-        return std::vector<T>::begin();
+    typename HeCppVector<T>::iterator begin() {
+        return HeCppVector<T>::begin();
     }
 
     /// <summary>
     /// Returns the constant end iterator for read-only traversal of this list.
     /// </summary>
-    typename std::vector<T>::const_iterator end() const {
-        return std::vector<T>::end();
+    typename HeCppVector<T>::const_iterator end() const {
+        return HeCppVector<T>::end();
     }
 
     /// <summary>
     /// Returns the mutable end iterator for internal list operations.
     /// </summary>
-    typename std::vector<T>::iterator end() {
-        return std::vector<T>::end();
+    typename HeCppVector<T>::iterator end() {
+        return HeCppVector<T>::end();
     }
 
     int32_t Capacity() const {
@@ -284,7 +284,7 @@ public:
     void Insert(int32_t index, const T& value) {
         if constexpr (std::is_pointer_v<T>) {
             if (OwnsElementsFlag) {
-                throw InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements.");
+                he_cpp_raise(InvalidOperationException("Cannot insert a borrowed element into a list that owns its elements."));
             }
         }
 
@@ -337,7 +337,7 @@ public:
     explicit ReadOnlyCollection(const List<T>* source)
         : Source(source) {
         if (Source == nullptr) {
-            throw ArgumentNullException("source");
+            he_cpp_raise(ArgumentNullException("source"));
         }
     }
 
@@ -368,7 +368,7 @@ public:
     /// </summary>
     int32_t IndexOf(const T& value) const {
         NativeListEqual<T> equal;
-        typename std::vector<T>::const_iterator iterator = std::find_if(
+        typename HeCppVector<T>::const_iterator iterator = std::find_if(
             Source->begin(),
             Source->end(),
             [&](const T& candidate) { return equal(candidate, value); });
@@ -384,15 +384,15 @@ public:
     /// </summary>
     void CopyTo(Array<T>* array, int32_t arrayIndex) const {
         if (array == nullptr) {
-            throw ArgumentNullException("array");
+            he_cpp_raise(ArgumentNullException("array"));
         }
         if (arrayIndex < 0) {
-            throw ArgumentOutOfRangeException("arrayIndex");
+            he_cpp_raise(ArgumentOutOfRangeException("arrayIndex"));
         }
 
         int32_t count = get_Count();
         if (arrayIndex > array->Length - count) {
-            throw ArgumentException("The destination array does not have enough available elements.");
+            he_cpp_raise(ArgumentException("The destination array does not have enough available elements."));
         }
 
         for (int32_t index = 0; index < count; index++) {
@@ -405,14 +405,14 @@ public:
     /// </summary>
     void Add(const T& value) {
         (void)value;
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 
     /// <summary>
     /// Rejects attempts to clear through the managed read-only collection surface.
     /// </summary>
     void Clear() {
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 
     /// <summary>
@@ -420,7 +420,7 @@ public:
     /// </summary>
     bool Remove(const T& value) {
         (void)value;
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 
     /// <summary>
@@ -429,7 +429,7 @@ public:
     void set_Item(int32_t index, const T& value) {
         (void)index;
         (void)value;
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 
     /// <summary>
@@ -438,7 +438,7 @@ public:
     void Insert(int32_t index, const T& value) {
         (void)index;
         (void)value;
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 
     /// <summary>
@@ -446,7 +446,7 @@ public:
     /// </summary>
     void RemoveAt(int32_t index) {
         (void)index;
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
     }
 };
 

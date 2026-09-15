@@ -41,6 +41,13 @@ namespace cs2.cpp {
             this.CPPRules = rules;
             Options = options ?? CPPConversionOptions.CreateDefault();
             Options = new CPPConversionPresetCatalog().ApplyTo(Options);
+            CPPRuntimeOptionResolver.Resolve(Options);
+            CPPRules.UseStdString = Options.RuntimeProfile.UseStdString;
+            CPPRules.UseStdVector = Options.RuntimeProfile.UseStdVector;
+            CPPRules.UseStdUnorderedMap = Options.RuntimeProfile.UseStdUnorderedMap;
+            CPPRules.UseExceptions = Options.RuntimeProfile.UseExceptions;
+            CPPRules.UseRtti = Options.RuntimeProfile.UseRtti;
+            CPPRules.RuntimeProviderHeader = CPPRuntimeOptionResolver.GetProviderHeader(Options);
             preprocessorSymbols = BuildPreprocessorSymbols(Options);
             includeProjectPreprocessorSymbols = Options.IncludeProjectDefinedPreprocessorSymbols;
             Report = new CPPConversionReport();
@@ -423,6 +430,31 @@ namespace cs2.cpp {
             diagnostic.Recommendation = recommendation ?? string.Empty;
             diagnostic.FilePath = filePath ?? string.Empty;
             SynchronizeRunState();
+        }
+
+        /// <summary>
+        /// Records a runtime capability violation and stops lowering before an invalid artifact can be reported as successful.
+        /// </summary>
+        /// <param name="sourceTypeName">The source type that contains the capability-dependent construct.</param>
+        /// <param name="sourceMemberName">The source member that contains the capability-dependent construct.</param>
+        /// <param name="syntaxKind">The Roslyn syntax kind that requires the unavailable capability.</param>
+        /// <param name="message">Human-readable explanation of the unavailable capability.</param>
+        /// <param name="recommendation">Suggested action to make the construct portable.</param>
+        /// <param name="filePath">The source file path when available.</param>
+        public void ReportRuntimeCapabilityViolation(string sourceTypeName, string sourceMemberName, string syntaxKind, string message, string recommendation, string filePath = "") {
+            if (string.IsNullOrWhiteSpace(message)) {
+                throw new ArgumentException("Runtime capability violation message must not be empty.", nameof(message));
+            }
+
+            Report.AddDiagnostic(CPPDiagnosticSeverity.Error, "CPP1001", message);
+            CPPConversionDiagnostic diagnostic = Report.Diagnostics[^1];
+            diagnostic.SourceTypeName = sourceTypeName ?? string.Empty;
+            diagnostic.SourceMemberName = sourceMemberName ?? string.Empty;
+            diagnostic.SyntaxKind = syntaxKind ?? string.Empty;
+            diagnostic.Recommendation = recommendation ?? string.Empty;
+            diagnostic.FilePath = filePath ?? string.Empty;
+            SynchronizeRunState();
+            throw new NotSupportedException(message);
         }
 
         /// <summary>

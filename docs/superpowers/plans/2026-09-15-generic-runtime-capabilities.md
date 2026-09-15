@@ -24,29 +24,29 @@ Files: `CPPCodegenOptionNames.cs`, new `CPPRuntimeOptionResolver.cs`,
 `CPPCodeConverter.cs`, `CPPGeneratedConfigWriter.cs`,
 `CPPConversiorProcessor.cs`, `CPPClassEmitter.cs`, focused xUnit tests.
 
-- [ ] Add failing option tests for each capability, invalid booleans and caller-over-preset precedence.
-- [ ] Add conversion tests for custom string construction, throw/finally, catch/rethrow rejection and RTTI-dependent casts.
-- [ ] Resolve capabilities once, emit matching config, and route string lowering through the resolved type.
-- [ ] Route nonrecoverable throws through the shared failure helper; report disabled recovery/type operations.
-- [ ] Run focused tests and related conversion regressions; record exact failures and results.
+- [x] Add failing option tests for each capability, invalid booleans and caller-over-preset precedence.
+- [x] Add conversion tests for custom string construction, throw/finally, catch/rethrow rejection and RTTI-dependent casts.
+- [x] Resolve capabilities once, emit matching config, and route string lowering through the resolved type.
+- [x] Route nonrecoverable throws through the shared failure helper; report disabled recovery/type operations.
+- [x] Run focused tests and related conversion regressions; record exact failures and results.
 
 ## Task 2: Shared runtime provider and helpers
 
 Files: `.net.cpp/runtime/native_runtime.hpp`, existing string/list/dictionary,
 stack/array/exceptions/cast helpers and affected consumers; runtime fixtures.
 
-- [ ] Compile the existing collection/string fixture with disabled hosted storage/exceptions/RTTI and observe failure.
-- [ ] Add provider-backed aliases without namespace-std injection; require a provider when selected storage is unavailable.
-- [ ] Adapt shared runtime templates to selected storage and failure policy, preserving managed ownership behavior.
-- [ ] Remove incidental hosted character/math dependencies from the restricted string path.
-- [ ] Compile and execute standard and custom provider fixtures, including failure-hook checks.
+- [x] Compile the existing collection/string fixture with disabled hosted storage/exceptions/RTTI and observe failure.
+- [x] Add provider-backed aliases without namespace-std injection; require a provider when selected storage is unavailable.
+- [x] Adapt shared runtime templates to selected storage and failure policy, preserving managed ownership behavior.
+- [x] Remove incidental hosted character/math dependencies from the restricted string path.
+- [x] Compile and execute standard and custom provider fixtures, including failure-hook checks.
 
 ## Task 3: Integration and documentation
 
-- [ ] Compile a custom provider fixture against EASTL with pinned PS1 GCC, `-fno-exceptions -fno-rtti`.
-- [ ] Verify generated custom string code compiles against the same runtime contract.
-- [ ] Run relevant existing tests, inspect diff and record provider contract and default migration details.
-- [ ] Commit only verified source/docs. Distinguish capability support from full generated Helengine Core link/memory validation.
+- [x] Compile a custom provider fixture against EASTL with pinned PS1 GCC, `-fno-exceptions -fno-rtti`.
+- [x] Verify generated custom string code compiles against the same runtime contract.
+- [x] Run relevant existing tests, inspect diff and record provider contract and default migration details.
+- [x] Commit only verified source/docs. Distinguish capability support from full generated Helengine Core link/memory validation.
 
 ## Initial evidence
 
@@ -54,3 +54,10 @@ Baseline: 28 conversion-options/runtime-template tests pass at `3ff39bf`.
 Pinned compiler supports algorithm, cstdint, functional, array, utility and
 type_traits; cctype and cmath are absent. Build logs are external under
 `C:/dev/helworks/builds/helengine-ps1`.
+
+## Completion boundary
+
+Generic capability implementation and fixtures are complete. See
+[verification and limitations](../../generic-runtime-capabilities.md). Full Core
+runtime-source selection, remaining hosted-service adapters, and PS1 scene
+linking, memory validation and emulator execution remain integration work.

@@ -1,0 +1,14 @@
+#pragma once
+#ifndef HE_CPP_USE_STD_STRING
+#define HE_CPP_USE_STD_STRING 0
+#endif
+#ifndef HE_CPP_USE_STD_VECTOR
+#define HE_CPP_USE_STD_VECTOR 0
+#endif
+#ifndef HE_CPP_USE_STD_UNORDERED_MAP
+#define HE_CPP_USE_STD_UNORDERED_MAP 0
+#endif
+#define HE_CPP_USE_EXCEPTIONS 0
+#define HE_CPP_USE_RTTI 0
+#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 0
+#define HE_CPP_RUNTIME_PROVIDER_HEADER "eastl_provider.hpp"

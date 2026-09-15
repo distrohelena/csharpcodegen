@@ -1,9 +1,17 @@
 #pragma once
+#include "../runtime/native_runtime.hpp"
+
+#if !HE_CPP_USE_STD_STRING
+#error "system/guid.hpp requires HE_CPP_USE_STD_STRING=1; Guid formatting has not been adapted to custom string storage."
+#endif
+
 
 #include <atomic>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include "../runtime/native_runtime.hpp"
+
 
 /// <summary>
 /// Provides a lightweight Guid abstraction for transpiled managed code.

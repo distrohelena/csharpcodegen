@@ -1,6 +1,5 @@
 #pragma once
 
-#include <string>
 #include "../../runtime/array.hpp"
 
 /// <summary>
@@ -16,7 +15,7 @@ public:
     /// <summary>
     /// Encodes a UTF-8 string into a managed byte-array wrapper.
     /// </summary>
-    static Array<uint8_t>* GetBytes(const Encoding&, const std::string& value) {
+    static Array<uint8_t>* GetBytes(const Encoding&, const HeCppString& value) {
         Array<uint8_t>* bytes = new Array<uint8_t>(static_cast<int32_t>(value.size()));
         for (int32_t index = 0; index < bytes->Length; index++) {
             (*bytes)[index] = static_cast<uint8_t>(value[static_cast<size_t>(index)]);
@@ -28,12 +27,12 @@ public:
     /// <summary>
     /// Decodes a managed byte-array wrapper as a UTF-8 string.
     /// </summary>
-    static std::string GetString(const Encoding&, Array<uint8_t>* value) {
+    static HeCppString GetString(const Encoding&, Array<uint8_t>* value) {
         if (value == nullptr || value->Length == 0) {
-            return std::string();
+            return HeCppString();
         }
 
-        return std::string(reinterpret_cast<const char*>(value->Data), static_cast<size_t>(value->Length));
+        return HeCppString(reinterpret_cast<const char*>(value->Data), static_cast<size_t>(value->Length));
     }
 };
 

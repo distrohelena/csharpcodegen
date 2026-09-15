@@ -3145,7 +3145,7 @@ namespace cs2.cpp {
             context.PopClass(start);
 
             if (!expressionResult.Processed) {
-                sourceWriter.WriteLine("throw new NotSupportedException(\"Property getter could not be lowered.\");");
+                WriteUnsupportedFailure(sourceWriter, "Property getter could not be lowered.");
             } else {
                 sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
             }
@@ -3301,7 +3301,10 @@ namespace cs2.cpp {
                 return false;
             }
 
-            return string.Equals(variableType.ToCPPString(program), "std::string", StringComparison.Ordinal);
+            return string.Equals(
+                variableType.ToCPPString(program),
+                CPPRuntimeOptionResolver.GetStringTypeName(program),
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -3497,11 +3500,26 @@ namespace cs2.cpp {
             } else if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
             } else {
-                sourceWriter.WriteLine("throw new NotSupportedException(\"Method has no generated body.\");");
+                WriteUnsupportedFailure(sourceWriter, "Method has no generated body.");
             }
 
             sourceWriter.WriteLine("}");
             sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Emits a non-returning failure for generated fallback bodies using the active exception capability.
+        /// </summary>
+        /// <param name="sourceWriter">Source writer receiving the fallback statement.</param>
+        /// <param name="message">Failure message passed to the native exception type.</param>
+        void WriteUnsupportedFailure(TextWriter sourceWriter, string message) {
+            processor?.RegisterRuntimeRequirement("NativeExceptions");
+            if (processor?.Options?.RuntimeProfile?.UseExceptions == false) {
+                sourceWriter.WriteLine($"he_cpp_raise(NotSupportedException(\"{message}\"));");
+                return;
+            }
+
+            sourceWriter.WriteLine($"throw new NotSupportedException(\"{message}\");");
         }
 
         static bool IsNativeFreeFunctionStub(ConversionFunction function) {
@@ -3588,7 +3606,7 @@ namespace cs2.cpp {
             if (function.HasBody) {
                 function.WriteLines(processor, program, conversionClass, sourceWriter);
             } else {
-                sourceWriter.WriteLine("throw new NotSupportedException(\"Method has no generated body.\");");
+                WriteUnsupportedFailure(sourceWriter, "Method has no generated body.");
             }
 
             sourceWriter.WriteLine("}");
