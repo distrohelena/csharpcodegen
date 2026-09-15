@@ -36,10 +36,17 @@ if "$cxx" -std=c++20 -DEA_COMPILER_HAS_INTTYPES \
     -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
     -c "$fixture/unsupported-helper.cpp" -o "$output/unsupported-helper.o" \
     >"$output/unsupported-helper.log" 2>&1; then
-    echo 'Unsupported hosted event storage unexpectedly compiled.' >&2
+    echo 'Unsupported hosted console service unexpectedly compiled.' >&2
     exit 1
 fi
-grep -q 'requires HE_CPP_USE_STD_VECTOR=1' "$output/unsupported-helper.log"
+grep -q 'requires HE_CPP_USE_STD_STRING=1' "$output/unsupported-helper.log"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti \
+    -DEA_COMPILER_HAS_INTTYPES -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/shared_ptr_smoke.cpp" -o "$output/shared-ptr"
+"$output/shared-ptr"
 
 "$cxx" -std=c++20 -DHE_CPP_TEST_HOST -I"$fixture/hosted" -I"$runtime" \
     "$fixture/smoke.cpp" -o "$output/hosted"
@@ -53,6 +60,28 @@ test "$result" -eq 73
     "$fixture/smoke.cpp" -o "$output/hosted-no-unwind"
 "$output/hosted-no-unwind"
 
+"$cxx" -std=c++20 -DHE_CPP_TEST_HOST \
+    -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/services.cpp" -o "$output/hosted-services"
+"$output/hosted-services"
+
+"$cxx" -std=c++20 -DHE_CPP_TEST_HOST \
+    -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/streams.cpp" "$fixture/streams-main.cpp" \
+    "$runtime/system/io/memory-stream.cpp" \
+    "$runtime/system/io/file-stream.cpp" \
+    "$runtime/system/io/binary-reader.cpp" \
+    "$runtime/system/io/binary-writer.cpp" \
+    -o "$output/hosted-streams"
+"$output/hosted-streams"
+
+"$cxx" -std=c++20 -DHE_CPP_TEST_HOST -DHE_CPP_USE_HOSTED_FILE_SYSTEM=0 \
+    -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/nohost-file-stream.cpp" \
+    "$runtime/system/io/file-stream.cpp" \
+    -o "$output/host-nohost-file-stream"
+"$output/host-nohost-file-stream"
+
 "$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
     -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
     -DEA_COMPILER_HAS_INTTYPES \
@@ -65,6 +94,63 @@ result=0
 "$output/custom" fail >"$output/fatal.stdout" 2>"$output/fatal.stderr" || result=$?
 test "$result" -eq 73
 grep -q 'expected runtime failure' "$output/fatal.stderr"
+result=0
+"$output/custom" fail pointer >"$output/fatal-pointer.stdout" 2>"$output/fatal-pointer.stderr" || result=$?
+test "$result" -eq 73
+grep -q 'expected runtime failure' "$output/fatal-pointer.stderr"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+    -DEA_COMPILER_HAS_INTTYPES -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/number_math_smoke.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" -o "$output/number-math"
+"$output/number-math"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+    -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -DEA_COMPILER_HAS_INTTYPES \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/number_parse_smoke.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" \
+    -o "$output/number-parse"
+"$output/number-parse"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+    -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -DEA_COMPILER_HAS_INTTYPES \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/debug_fail.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" \
+    -o "$output/debug-fail"
+result=0
+"$output/debug-fail" >"$output/debug-fail.stdout" 2>"$output/debug-fail.stderr" || result=$?
+test "$result" -eq 73
+grep -q 'debug failure' "$output/debug-fail.stderr"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+    -DHE_CPP_USE_STD_CHRONO=0 \
+    -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -DEA_COMPILER_HAS_INTTYPES \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/services.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" \
+    "$dependencies/EASTL/source/hashtable.cpp" -o "$output/custom-services"
+"$output/custom-services"
+
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+    -DHE_CPP_USE_HOSTED_FILE_SYSTEM=0 \
+    -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -DEA_COMPILER_HAS_INTTYPES \
+    -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/streams.cpp" "$fixture/streams-main.cpp" \
+    "$runtime/system/io/memory-stream.cpp" \
+    "$runtime/system/io/file-stream.cpp" \
+    "$runtime/system/io/binary-reader.cpp" \
+    "$runtime/system/io/binary-writer.cpp" \
+    "$dependencies/EASTL/source/allocator_eastl.cpp" \
+    "$dependencies/EASTL/source/hashtable.cpp" -o "$output/custom-streams"
+"$output/custom-streams"
 
 # Each storage flag is independent: exercise the six mixed selections too.
 for selection in 001 010 011 100 101 110; do
@@ -89,6 +175,41 @@ if [ -n "${TARGET_CXX:-}" ]; then
         -I"$fixture/custom" -I"$fixture" -I"$runtime" \
         -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
         -c "$fixture/smoke.cpp" -o "$output/target.o"
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/shared_ptr_smoke.cpp" -o "$output/shared-ptr-target.o"
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DHE_CPP_USE_STD_CHRONO=0 \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/services.cpp" -o "$output/services-target.o"
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DHE_CPP_USE_HOSTED_FILE_SYSTEM=0 \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/streams.cpp" -o "$output/streams-target.o"
+    for stream_source in memory-stream file-stream binary-reader binary-writer; do
+        "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+            -DHE_CPP_USE_HOSTED_FILE_SYSTEM=0 \
+            -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+            -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+            -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+            -c "$runtime/system/io/$stream_source.cpp" -o "$output/$stream_source-target.o"
+    done
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/number_parse_smoke.cpp" -o "$output/number-parse-target.o"
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/debug_fail.cpp" -o "$output/debug-fail-target.o"
 fi
 if [ -n "${GENERATED_OUTPUT:-}" ]; then
     "$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
@@ -112,4 +233,17 @@ if [ -n "${GENERATED_OUTPUT:-}" ]; then
             -c "$GENERATED_OUTPUT/StringGate.cpp" -o "$output/generated-target.o"
     fi
 fi
+for math_mode in hosted custom; do
+    "$cxx" -std=c++20 -DHE_CPP_TEST_HOST -DEA_COMPILER_HAS_INTTYPES \
+        -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/$math_mode" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        "$fixture/math_extensions.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" \
+        -o "$output/math-extensions-$math_mode"
+    "$output/math-extensions-$math_mode"
+    result=0
+    "$output/math-extensions-$math_mode" nan || result=$?
+    test "$result" -eq 73
+done
 echo 'Runtime capability fixtures passed.'
+

@@ -1,6 +1,7 @@
 #include "runtime/native_string.hpp"
 #include "runtime/native_list.hpp"
 #include "runtime/native_dictionary.hpp"
+#include "runtime/native_hash_set.hpp"
 #include "runtime/native_stack.hpp"
 #include "runtime/native_cast.hpp"
 #include "runtime/native_hash.hpp"
@@ -14,6 +15,9 @@ struct Tracked {
     Tracked() { ++Alive; }
     ~Tracked() { --Alive; }
 };
+
+using SmokeHashSetBase = HeCppUnorderedSet<HeCppString, NativeHashSetHash<HeCppString>, NativeHashSetEqual<HeCppString>>;
+static_assert(std::is_base_of_v<SmokeHashSetBase, HashSet<HeCppString>>, "HashSet must use the selected unordered-set provider.");
 
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
 static_assert(sizeof(Exception) <= 2 * sizeof(void*), "Compact failures must retain pointer-sized message storage.");
@@ -36,6 +40,31 @@ int runtime_capability_smoke() {
     if (!String::Equals(String::Trim(HeCppString("  CUBE\t")), HeCppString("CUBE"))) return 2;
     if (String::ToLowerInvariant(HeCppString("CUBE")) != "cube") return 3;
     if (String::Concat(HeCppString("cube"), 42) != "cube42") return 4;
+    {
+        // Split(char, None) must keep empty leading, consecutive, and trailing segments.
+        Array<HeCppString>* keptSegments = String::Split(HeCppString("\na\n\nb\n"), '\n', StringSplitOptions::None);
+        bool keptSegmentsValid = keptSegments->Length == 5 &&
+            (*keptSegments)[0].empty() && (*keptSegments)[1] == "a" &&
+            (*keptSegments)[2].empty() && (*keptSegments)[3] == "b" && (*keptSegments)[4].empty();
+        delete keptSegments;
+        if (!keptSegmentsValid) return 24;
+        // Empty input with None yields a single empty segment, matching System.String.
+        Array<HeCppString>* emptySegments = String::Split(HeCppString(""), '\n', StringSplitOptions::None);
+        bool emptySegmentsValid = emptySegments->Length == 1 && (*emptySegments)[0].empty();
+        delete emptySegments;
+        if (!emptySegmentsValid) return 25;
+        // RemoveEmptyEntries drops every empty segment.
+        Array<HeCppString>* denseSegments = String::Split(HeCppString("\na\n\nb\n"), '\n', StringSplitOptions::RemoveEmptyEntries);
+        bool denseSegmentsValid = denseSegments->Length == 2 &&
+            (*denseSegments)[0] == "a" && (*denseSegments)[1] == "b";
+        delete denseSegments;
+        if (!denseSegmentsValid) return 26;
+        // A string without the separator is returned whole.
+        Array<HeCppString>* wholeSegments = String::Split(HeCppString("cube"), '\n', StringSplitOptions::None);
+        bool wholeSegmentsValid = wholeSegments->Length == 1 && (*wholeSegments)[0] == "cube";
+        delete wholeSegments;
+        if (!wholeSegmentsValid) return 27;
+    }
 
     List<HeCppString> names;
     for (int index = 0; index < 128; ++index) names.Add(copy);
@@ -47,6 +76,15 @@ int runtime_capability_smoke() {
     int found = 0;
     if (!values.TryGetValue(HeCppString("cube"), found) || found != 9) return 6;
     if (values.Keys().size() != 1 || !values.Remove(HeCppString("cube"))) return 7;
+    HashSet<HeCppString> namesSet;
+    if (!namesSet.Add(HeCppString("cube")) || namesSet.Add(HeCppString("cube"))) return 21;
+    if (!namesSet.Contains(HeCppString("cube")) || namesSet.Count() != 1) return 22;
+    namesSet.Add(HeCppString("scene"));
+    int setLength = 0;
+    for (const HeCppString& name : namesSet) {
+        setLength += static_cast<int>(name.size());
+    }
+    if (setLength != 9 || !namesSet.Remove(HeCppString("cube")) || namesSet.Contains(HeCppString("cube"))) return 23;
     Stack<int> stack;
     stack.Push(42);
     if (stack.Pop() != 42) return 8;
@@ -104,9 +142,14 @@ int main(int argc, char**) {
             return HeCppString(failure.what()) == "expected runtime failure" ? 73 : 13;
         }
 #else
+        if (argc > 2) {
+            ArgumentException failure("expected runtime failure");
+            he_cpp_raise(&failure);
+        }
         he_cpp_raise(ArgumentException("expected runtime failure"));
 #endif
     }
     return runtime_capability_smoke();
 }
 #endif
+

@@ -13,7 +13,8 @@ The dependencies directory must contain `EASTL/include`, `EASTL/source`, and
 also compiles the custom fixture to an object with exceptions and RTTI disabled.
 That target object is compile evidence only: it is not a linked application or
 a console memory-budget measurement. The host executable checks value ownership,
-string growth/copy, collections, and failure policy.
+string growth/copy, single-separator `String::Split` semantics, collections, and
+failure policy.
 
 `custom/helcpp_config.hpp` and `hosted/helcpp_config.hpp` are deliberate test
 inputs. Production configurations come from the generator. No generated output
@@ -30,6 +31,8 @@ generic platform and the following options (use an external output directory):
 --set generated-math-convention=engine-row-vector --set pointer-size-bytes=4
 --set load-native-runtime-metadata=false
 --set codegen-runtime-provider-header=eastl_provider.hpp
+--set codegen-use-std-unordered-set=false --set codegen-use-std-function=false
+--set codegen-use-std-shared-ptr=false --set codegen-use-std-chrono=false
 ```
 
 Set `GENERATED_OUTPUT` to that generated directory when running `run.sh`.
@@ -37,3 +40,4 @@ The runner builds `StringGate.cpp` with `generated-smoke.cpp`, executes normal
 behavior and both fatal paths, and cross-compiles the generated class when
 `TARGET_CXX` is supplied. It does not compile the full generated unity harness,
 which currently includes hosted I/O sources even for this small fixture.
+

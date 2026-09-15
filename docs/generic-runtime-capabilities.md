@@ -8,6 +8,13 @@ Use `CPPConversionOptions.PlatformOptionValues` to override preset defaults:
 | `codegen-use-std-string` | `true` / `false` | Standard or provider-owned string storage |
 | `codegen-use-std-vector` | `true` / `false` | Standard or provider-owned vector storage |
 | `codegen-use-std-unordered-map` | `true` / `false` | Standard or provider-owned map storage |
+| `codegen-use-std-unordered-set` | `true` / `false` | Standard or provider-owned set storage |
+| `codegen-use-std-function` | `true` / `false` | Standard or provider-owned delegate storage |
+| `codegen-use-std-shared-ptr` | `true` / `false` | Standard or provider-owned shared buffer ownership |
+| `codegen-use-std-chrono` | `true` / `false` | Standard or provider-owned monotonic timing |
+| `codegen-use-std-math` | `true` / `false` | Standard C++ math or caller-supplied C math functions |
+| `codegen-runtime-math-header` | C++ include path | Required declarations when standard math is disabled |
+| `codegen-use-hosted-file-system` | `true` / `false` | Enables path-backed FileStream access; memory-backed streams remain usable |
 | `codegen-use-exceptions` | `true` / `false` | C++ unwinding or fatal failure policy |
 | `codegen-use-rtti` | `true` / `false` | Compiler runtime type information |
 | `codegen-runtime-provider-header` | C++ include path | Consumer-owned provider declarations |
@@ -15,7 +22,7 @@ Use `CPPConversionOptions.PlatformOptionValues` to override preset defaults:
 Boolean values are validated. The existing `CPPRuntimeProfile` properties remain
 the defaults when no override is supplied. Caller options take precedence over
 named presets. A provider header is required when any standard storage facility
-is disabled.
+or delegate, shared ownership, or clock service is disabled.
 
 ## Provider contract
 
@@ -29,7 +36,11 @@ namespace he_cpp_custom {
     template<class T> using Vector = MyVector<T>;
     template<class K, class V, class H, class E>
     using UnorderedMap = MyMap<K, V, H, E>;
+    template<class T, class H, class E> using UnorderedSet = MySet<T, H, E>;
     template<class T> using Hash = MyHash<T>;
+    template<class Signature> using Function = MyFunction<Signature>;
+    template<class T> using SharedPtr = MySharedPtr<T>;
+    std::uint64_t MonotonicMicroseconds();
     [[noreturn]] void Fail(const char* message);
 }
 ```
@@ -74,17 +85,47 @@ hashing, equality, exception payloads, safe static casts, type-name tokens,
 string builders and UTF-8 byte conversion. Hosted string-view overloads and
 standard exception base types remain available in the standard configuration.
 
-Event storage, application context, console/debug output, GUID formatting,
-numeric parsing/checked arithmetic, vector formatting, regex and I/O helpers
-still have hosted dependencies. These helpers now reject incompatible storage
-or exception flags explicitly. They need further generic adapters before they
-can be used in a fully restricted engine build.
+Provider-backed event/delegate storage, monotonic stopwatch timing, shared span
+ownership, numeric helpers and memory stream I/O are also configurable. Shared
+owners must retain custom deleters and release storage exactly once after the
+last copy. The consumer defines its synchronization contract. The clock must
+return monotonically increasing microseconds in a 64-bit counter.
 
-The current generated unity compile harness includes all copied runtime `.cpp`
-files, including hosted I/O. The restricted fixture compiles its generated
-`StringGate.cpp` and required helper headers directly; it does not establish that
-the full unity harness is freestanding. Runtime-source selection is another
-integration requirement for a complete target build.
+String splitting lowers `text.Split(char)` and `text.Split(char, StringSplitOptions)`
+to `String::Split(text, separator, options)`. The runtime overload preserves
+empty leading, trailing and consecutive segments for `None`, returns one empty
+segment for empty input, and drops empties for `RemoveEmptyEntries`. Optional
+enum parameters emit their named member (`StringSplitOptions::None`) rather than
+the underlying constant. Other `Split` overloads keep their existing lowering;
+count-limited and separator-array forms are not newly claimed here.
+
+Custom math declares global C-ABI functions used by `system/math.hpp`, including
+`ceil`, `floor`, `fabs`, `acos`, `asin`, `sin`, `cos`, `tan`, `sqrt`, `log2`,
+`fmod`, `finite`, and `atan2`. The consumer supplies and links their implementation.
+Generic floating-point remainder emission selects the configured math path.
+
+Disabling hosted filesystem support retains read-only memory-backed FileStream
+and rejects path constructors through the runtime failure policy. Console,
+directory and file implementation translation units are skipped when their
+requirement is absent from generated configuration. GUID formatting, vector
+formatting and other unadapted hosted services still require their declared
+capabilities; this is not blanket support for every managed API.
+### Verification recorded on 2026-09-15 (Core boot follow-up)
+
+- `WriteOutput_WithSingleCharacterSplit_LowersToNativeSplitWithNamedDefaultOption`
+  was written first and failed on the instance-call emission and `::0` default,
+  then passed with the lowering fix; the eight capability conversion tests pass.
+- The runtime matrix (`tests/runtime-capabilities-integration/run.sh`) passed on
+  the host and cross-compiled with `mipsel-none-elf-g++`, including the new
+  `Split(char, options)` checks in `smoke.cpp` (`builds/helengine-ps1/split-runtime.log`).
+- The full `cs2.cpp.tests` suite is not passing: 125 failures and a test-host
+  crash in `CPPCompileValidationRegressionTests` with these changes
+  (`split-codegen-full-tests.log`). Every failing test also fails on a copy of
+  the same worktree with the Split changes reverted (`split-codegen-baseline-tests.log`,
+  156 failures because that run reached further); no failure is unique to this
+  change.
+- The generated PS1 Core built from this state linked and booted; see
+  `helengine-ps1/docs/GeneratedCorePrerequisite.md`.
 
 ### Verification recorded on 2026-09-15
 
@@ -105,3 +146,4 @@ Local logs and artifacts are under `C:/dev/helworks/builds/helengine-ps1`:
 `codegen-runtime-generated-restricted-final/`, and
 `codegen-runtime-current-representative.log`. The baseline comparison is in
 `codegen-runtime-baseline-source/baseline-representative-escalated.log`.
+
