@@ -37,6 +37,7 @@ namespace cs2.cpp {
 
             List<string> sourceFiles = Directory.GetFiles(outputFolder, "*.cpp", SearchOption.AllDirectories)
                 .Where(path => !string.Equals(Path.GetFileName(path), UnityFileName, StringComparison.OrdinalIgnoreCase))
+                .Where(path => !IsRuntimeMetadataAttributeSource(path))
                 .Select(path => Path.GetRelativePath(outputFolder, path).Replace('\\', '/'))
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToList();
@@ -77,6 +78,12 @@ namespace cs2.cpp {
 
             lines.Add(string.Empty);
             return string.Join(Environment.NewLine, lines);
+        }
+
+        static bool IsRuntimeMetadataAttributeSource(string path) {
+            string fileName = Path.GetFileName(path);
+            return string.Equals(fileName, "GeneratedRuntimeModuleManifestAttribute.cpp", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(fileName, "RuntimeFeatureRequirementAttribute.cpp", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

@@ -86,4 +86,20 @@ public class CPPCompileHarnessWriterTests {
         Assert.Contains("g++ -std=c++20", File.ReadAllText(gccPath));
         Assert.Contains("cl /nologo /std:c++20", File.ReadAllText(msvcPath));
     }
+
+    [Fact]
+    public void Write_ExcludesRuntimeMetadataAttributeSourcesFromUnity() {
+        string outputFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputFolder);
+        File.WriteAllText(Path.Combine(outputFolder, "Core.cpp"), "int core = 1;" + Environment.NewLine);
+        File.WriteAllText(Path.Combine(outputFolder, "GeneratedRuntimeModuleManifestAttribute.cpp"), "int manifest = 1;" + Environment.NewLine);
+        File.WriteAllText(Path.Combine(outputFolder, "RuntimeFeatureRequirementAttribute.cpp"), "int feature = 1;" + Environment.NewLine);
+
+        CPPCompileHarnessWriter.Write(outputFolder, CPPConversionOptions.CreateDefault());
+
+        string unity = File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.UnityFileName));
+        Assert.Contains("Core.cpp", unity);
+        Assert.DoesNotContain("GeneratedRuntimeModuleManifestAttribute.cpp", unity);
+        Assert.DoesNotContain("RuntimeFeatureRequirementAttribute.cpp", unity);
+    }
 }

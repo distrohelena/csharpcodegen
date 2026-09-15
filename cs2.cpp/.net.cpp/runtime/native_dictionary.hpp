@@ -9,6 +9,7 @@
 
 #include "native_exceptions.hpp"
 #include "native_string.hpp"
+#include "../system/collections/generic/key_value_pair.hpp"
 
 class StringComparer;
 
@@ -42,6 +43,31 @@ public:
 
 template<typename TKey, typename TValue>
 class Dictionary : public std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>> {
+    using Base = std::unordered_map<TKey, TValue, NativeDictionaryHash<TKey>, NativeDictionaryEqual<TKey>>;
+
+    /// <summary>Adapts an STL entry to the managed KeyValuePair shape.</summary>
+    class ManagedIterator {
+        typename Base::const_iterator Iterator;
+
+    public:
+        explicit ManagedIterator(typename Base::const_iterator iterator)
+            : Iterator(iterator) {
+        }
+
+        KeyValuePair<TKey, TValue> operator*() const {
+            return KeyValuePair<TKey, TValue>(Iterator->first, Iterator->second);
+        }
+
+        ManagedIterator& operator++() {
+            ++Iterator;
+            return *this;
+        }
+
+        bool operator!=(const ManagedIterator& other) const {
+            return Iterator != other.Iterator;
+        }
+    };
+
     /// <summary>
     /// Tracks whether this dictionary owns its pointer values and must delete them on removal and destruction.
     /// </summary>
@@ -64,7 +90,7 @@ class Dictionary : public std::unordered_map<TKey, TValue, NativeDictionaryHash<
     void DeleteOwnedValues() {
         if constexpr (std::is_pointer_v<TValue>) {
             if (OwnsValuesFlag) {
-                for (const auto& pair : *this) {
+                for (const auto& pair : static_cast<const Base&>(*this)) {
                     delete pair.second;
                 }
             }
@@ -81,6 +107,11 @@ public:
         DeleteOwnedValues();
         this->clear();
     }
+
+    ManagedIterator begin() { return ManagedIterator(Base::begin()); }
+    ManagedIterator end() { return ManagedIterator(Base::end()); }
+    ManagedIterator begin() const { return ManagedIterator(Base::begin()); }
+    ManagedIterator end() const { return ManagedIterator(Base::end()); }
 
     /// <summary>
     /// Gets whether this dictionary owns its pointer values.
@@ -117,7 +148,7 @@ public:
 
         OwnsValuesFlag = true;
         auto iterator = this->find(key);
-        if (iterator != this->end() && iterator->second != value) {
+        if (iterator != Base::end() && iterator->second != value) {
             delete iterator->second;
         }
 
@@ -135,7 +166,7 @@ public:
     void set_Item(const TKey& key, const TValue& value) {
         if constexpr (std::is_pointer_v<TValue>) {
             auto iterator = this->find(key);
-            if (iterator != this->end() && iterator->second != value) {
+            if (iterator != Base::end() && iterator->second != value) {
                 DeleteOwnedValue(iterator->second);
             }
         }
@@ -144,12 +175,12 @@ public:
     }
 
     bool ContainsKey(const TKey& key) const {
-        return this->find(key) != this->end();
+        return this->find(key) != Base::end();
     }
 
     bool Remove(const TKey& key) {
         auto iterator = this->find(key);
-        if (iterator == this->end()) {
+        if (iterator == Base::end()) {
             return false;
         }
 
@@ -166,7 +197,7 @@ public:
 
     bool TryGetValue(const TKey& key, TValue& value) const {
         auto iterator = this->find(key);
-        if (iterator == this->end()) {
+        if (iterator == Base::end()) {
             return false;
         }
 
@@ -177,7 +208,7 @@ public:
     std::vector<TKey> Keys() const {
         std::vector<TKey> keys;
         keys.reserve(this->size());
-        for (const auto& pair : *this) {
+        for (const auto& pair : static_cast<const Base&>(*this)) {
             keys.push_back(pair.first);
         }
 

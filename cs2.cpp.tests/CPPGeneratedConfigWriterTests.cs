@@ -133,6 +133,34 @@ public class CPPGeneratedConfigWriterTests {
     }
 
     /// <summary>
+    /// Ensures a platform option supplied without shell-preserved quotes still becomes a valid include macro.
+    /// </summary>
+    [Fact]
+    public void Write_WithBareCustomFileSystemHeader_QuotesHeaderMacro() {
+        CPPConversionOptions options = new CPPConversionOptions {
+            CompilerProfile = CPPCompilerProfile.CreateGcc(),
+            PlatformProfile = CPPPlatformProfile.CreateCustomHeadless("n64", true, CPPGeneratedMathConventionKind.NativeColumnVector, 4),
+            RuntimeProfile = CPPRuntimeProfile.CreateStlLite(),
+            CollectDiagnostics = true,
+            BuildFeatureProfile = CPPBuildFeatureProfile.CreateDefault(),
+            LoadNativeRuntimeMetadata = true,
+            PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                ["native-file-system-header"] = "platform/n64/Nintendo64ContentStreamSource.hpp",
+                ["native-file-system-type"] = "helengine::n64::Nintendo64ContentStreamSource"
+            }
+        };
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
+        registrar.RegisterDefaults(options);
+
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar);
+        string output = File.ReadAllText(filePath);
+
+        Assert.Contains("#define HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER \"platform/n64/Nintendo64ContentStreamSource.hpp\"", output);
+    }
+
+    /// <summary>
     /// Ensures the generated config writer emits resolved feature defines for compile-time pruning in native hosts.
     /// </summary>
     [Fact]
