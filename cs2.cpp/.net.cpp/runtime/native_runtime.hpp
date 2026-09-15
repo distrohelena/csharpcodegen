@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <type_traits>
+#include <memory>
 
 // The generated configuration is optional for direct hosted consumers.  When it
 // is present, its capability values remain the single source of truth.
@@ -23,6 +24,10 @@
 #define HE_CPP_USE_STD_UNORDERED_MAP 1
 #endif
 
+#ifndef HE_CPP_USE_STD_UNORDERED_SET
+#define HE_CPP_USE_STD_UNORDERED_SET 1
+#endif
+
 #ifndef HE_CPP_USE_EXCEPTIONS
 #define HE_CPP_USE_EXCEPTIONS 1
 #endif
@@ -31,9 +36,21 @@
 #define HE_CPP_USE_RTTI 1
 #endif
 
-#if !HE_CPP_USE_STD_STRING || !HE_CPP_USE_STD_VECTOR || !HE_CPP_USE_STD_UNORDERED_MAP
+#ifndef HE_CPP_USE_STD_FUNCTION
+#define HE_CPP_USE_STD_FUNCTION 1
+#endif
+
+#ifndef HE_CPP_USE_STD_CHRONO
+#define HE_CPP_USE_STD_CHRONO 1
+#endif
+
+#ifndef HE_CPP_USE_STD_SHARED_PTR
+#define HE_CPP_USE_STD_SHARED_PTR 1
+#endif
+
+#if !HE_CPP_USE_STD_STRING || !HE_CPP_USE_STD_VECTOR || !HE_CPP_USE_STD_UNORDERED_MAP || !HE_CPP_USE_STD_UNORDERED_SET || !HE_CPP_USE_STD_FUNCTION || !HE_CPP_USE_STD_CHRONO || !HE_CPP_USE_STD_SHARED_PTR
 #if !defined(HE_CPP_RUNTIME_PROVIDER_HEADER)
-#error "A custom runtime provider is required when standard string, vector, or unordered_map storage is disabled. Define HE_CPP_RUNTIME_PROVIDER_HEADER to a header that declares he_cpp_custom::String, Vector<T>, UnorderedMap<K,V,H,E>, Hash<T>, and Fail(const char*)."
+#error "A custom runtime provider is required when standard string, vector, unordered-map, or unordered-set storage is disabled. Define HE_CPP_RUNTIME_PROVIDER_HEADER to a header that declares he_cpp_custom::String, Vector<T>, UnorderedMap<K,V,H,E>, UnorderedSet<T,H,E>, Hash<T>, and Fail(const char*)."
 #endif
 #endif
 
@@ -53,7 +70,11 @@
 #include <unordered_map>
 #endif
 
-#if defined(HE_CPP_RUNTIME_PROVIDER_HEADER) && (!HE_CPP_USE_STD_UNORDERED_MAP || !HE_CPP_USE_STD_STRING)
+#if HE_CPP_USE_STD_UNORDERED_SET
+#include <unordered_set>
+#endif
+
+#if defined(HE_CPP_RUNTIME_PROVIDER_HEADER) && (!HE_CPP_USE_STD_UNORDERED_MAP || !HE_CPP_USE_STD_UNORDERED_SET || !HE_CPP_USE_STD_STRING)
 #define HE_CPP_RUNTIME_USE_CUSTOM_HASH 1
 #else
 #define HE_CPP_RUNTIME_USE_CUSTOM_HASH 0
@@ -78,6 +99,21 @@ using HeCppString = std::string;
 using HeCppString = he_cpp_custom::String;
 #endif
 
+/// <summary>Selects the consumer's callable storage when standard delegates are unavailable.</summary>
+#if HE_CPP_USE_STD_FUNCTION
+template <typename TSignature>
+using HeCppFunction = std::function<TSignature>;
+#else
+template <typename TSignature>
+using HeCppFunction = he_cpp_custom::Function<TSignature>;
+#endif
+
+#if HE_CPP_USE_STD_SHARED_PTR
+template <typename TValue> using HeCppSharedPtr = std::shared_ptr<TValue>;
+#else
+template <typename TValue> using HeCppSharedPtr = he_cpp_custom::SharedPtr<TValue>;
+#endif
+
 #if HE_CPP_USE_STD_VECTOR
 template <typename TValue>
 using HeCppVector = std::vector<TValue>;
@@ -92,6 +128,14 @@ using HeCppUnorderedMap = std::unordered_map<TKey, TValue, THash, TEqual>;
 #else
 template <typename TKey, typename TValue, typename THash, typename TEqual>
 using HeCppUnorderedMap = he_cpp_custom::UnorderedMap<TKey, TValue, THash, TEqual>;
+#endif
+
+#if HE_CPP_USE_STD_UNORDERED_SET
+template <typename TValue, typename THash, typename TEqual>
+using HeCppUnorderedSet = std::unordered_set<TValue, THash, TEqual>;
+#else
+template <typename TValue, typename THash, typename TEqual>
+using HeCppUnorderedSet = he_cpp_custom::UnorderedSet<TValue, THash, TEqual>;
 #endif
 
 #if HE_CPP_RUNTIME_USE_CUSTOM_HASH
@@ -138,6 +182,15 @@ namespace he_cpp_runtime_detail {
 #endif
 }
 
+/// <summary>Reads diagnostics from value exceptions and managed exception factory pointers.</summary>
+template <typename TException>
+inline const char* ExceptionMessage(const TException& exception) {
+    if constexpr (std::is_pointer_v<TException>) {
+        return exception == nullptr ? "Cannot raise a null exception." : exception->what();
+    } else {
+        return exception.what();
+    }
+}
 /// <summary>
 /// Raises one runtime exception or routes it to the configured non-returning failure hook.
 /// </summary>
@@ -149,9 +202,9 @@ template <typename TException>
     throw exception;
 #else
 #if defined(HE_CPP_RUNTIME_PROVIDER_HEADER)
-    he_cpp_custom::Fail(exception.what());
+    he_cpp_custom::Fail(ExceptionMessage(exception));
 #else
-    DefaultFail(exception.what());
+    DefaultFail(ExceptionMessage(exception));
 #endif
 #endif
 }
@@ -178,3 +231,5 @@ template <typename TResult, typename TException>
 [[noreturn]] inline TResult he_cpp_raise_value(const TException& exception) {
     he_cpp_runtime_detail::Raise(exception);
 }
+
+

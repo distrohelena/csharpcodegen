@@ -439,6 +439,18 @@ public:
     }
 };
 
+/// <summary>Represents an undefined arithmetic operation, including the sign of NaN.</summary>
+class ArithmeticException : public Exception {
+public:
+    /// <summary>Initializes the canonical arithmetic failure message.</summary>
+    ArithmeticException() : Exception("Arithmetic operation resulted in an exception.") {}
+    /// <summary>Preserves a caller message when full diagnostics are enabled.</summary>
+    explicit ArithmeticException(const char* message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Arithmetic operation resulted in an exception.")) {}
+    /// <summary>Preserves a managed caller message when full diagnostics are enabled.</summary>
+    explicit ArithmeticException(const HeCppString& message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Arithmetic operation resulted in an exception.")) {}
+};
 /// <summary>
 /// Represents checked arithmetic that exceeds the destination type range.
 /// </summary>
@@ -587,3 +599,4 @@ public:
         : Exception(he_cpp_exception_detail::SelectMessage(message, "Specified method is not supported.")) {
     }
 };
+

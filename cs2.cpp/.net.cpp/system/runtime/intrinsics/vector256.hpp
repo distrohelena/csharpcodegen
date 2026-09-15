@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 
 #include "system/numerics/vector.hpp"
 
@@ -33,7 +33,7 @@ public:
         if constexpr (std::is_same_v<T, float>) {
             uint32_t bits = 0xFFFFFFFFu;
             T value;
-            std::memcpy(&value, &bits, sizeof(T));
+            he_cpp_memory::Copy(&value, &bits, sizeof(T));
             return Vector256(value);
         } else {
             return Vector256(static_cast<T>(~T()));
@@ -46,7 +46,7 @@ public:
         Vector256<TTo> result;
         int32_t copyCount = std::min(Vector256<TTo>::LaneCount, LaneCount);
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -70,7 +70,7 @@ public:
         Vector_1<TTo> result;
         int32_t copyCount = std::min(Vector_1<TTo>::get_Count(), LaneCount);
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -81,7 +81,7 @@ public:
         Vector128_1<TTo> result;
         int32_t copyCount = std::min(Vector128_1<TTo>::LaneCount, LaneCount / 2);
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -93,7 +93,7 @@ public:
         int32_t upperOffset = LaneCount / 2;
         int32_t copyCount = std::min(Vector128_1<TTo>::LaneCount, LaneCount - upperOffset);
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[upperOffset + laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[upperOffset + laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -152,7 +152,7 @@ class Vector256Runtime {
     static TBits BitCast(const TValue& value) {
         static_assert(sizeof(TBits) == sizeof(TValue));
         TBits bits;
-        std::memcpy(&bits, &value, sizeof(TBits));
+        he_cpp_memory::Copy(&bits, &value, sizeof(TBits));
         return bits;
     }
 
@@ -160,7 +160,7 @@ class Vector256Runtime {
     static TValue BitCastBack(const TBits& bits) {
         static_assert(sizeof(TValue) == sizeof(TBits));
         TValue value;
-        std::memcpy(&value, &bits, sizeof(TValue));
+        he_cpp_memory::Copy(&value, &bits, sizeof(TValue));
         return value;
     }
 
@@ -367,7 +367,7 @@ Vector256<TTo> Vector_1<T>::AsVector256() const {
     Vector256<TTo> result;
     int32_t copyCount = std::min(Vector256<TTo>::LaneCount, get_Count());
     for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-        std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+        he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
     }
     return result;
 }

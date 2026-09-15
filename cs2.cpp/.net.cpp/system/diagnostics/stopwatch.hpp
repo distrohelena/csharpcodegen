@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include "runtime/native_runtime.hpp"
 
-#if defined(__gamecube__)
+#if !HE_CPP_USE_STD_CHRONO
+// The provider exposes monotonic microseconds, independent of its timer hardware.
+#elif defined(__gamecube__)
 #include <ogc/lwp_watchdog.h>
 #else
 #include <chrono>
@@ -18,7 +21,9 @@ namespace Diagnostics {
 /// </summary>
 class Stopwatch {
 public:
-#if defined(__gamecube__)
+#if !HE_CPP_USE_STD_CHRONO
+    using TickTimestamp = std::uint64_t;
+#elif defined(__gamecube__)
     using TickTimestamp = std::uint64_t;
 #else
     using TickClock = std::chrono::steady_clock;
@@ -151,7 +156,9 @@ private:
     /// </summary>
     /// <returns>Opaque timestamp that can be compared only by <see cref="ComputeElapsedMilliseconds"/>.</returns>
     static TickTimestamp CaptureCurrentTimestamp() {
-#if defined(__gamecube__)
+#if !HE_CPP_USE_STD_CHRONO
+        return he_cpp_custom::MonotonicMicroseconds();
+#elif defined(__gamecube__)
         return static_cast<TickTimestamp>(gettime());
 #else
         return TickClock::now();
@@ -164,7 +171,9 @@ private:
     /// <param name="startTimestamp">Timestamp captured at the beginning of the interval.</param>
     /// <returns>Elapsed milliseconds since <paramref name="startTimestamp"/>.</returns>
     static double ComputeElapsedMilliseconds(TickTimestamp startTimestamp) {
-#if defined(__gamecube__)
+#if !HE_CPP_USE_STD_CHRONO
+        return static_cast<double>(he_cpp_custom::MonotonicMicroseconds() - startTimestamp) / 1000.0;
+#elif defined(__gamecube__)
         return ticks_to_millisecs(gettime() - startTimestamp);
 #else
         const TickClock::duration duration = TickClock::now() - startTimestamp;

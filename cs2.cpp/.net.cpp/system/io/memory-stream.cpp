@@ -1,6 +1,6 @@
 #include "memory-stream.hpp"
+#include "../../runtime/native_memory_ops.hpp"
 #include <algorithm>  // For std::min
-#include <cstring>    // For std::memcpy
 
 // Constructor
 MemoryStream::MemoryStream() : buffer(), position(0), writable(true) {}
@@ -17,7 +17,7 @@ size_t MemoryStream::Read(uint8_t* outBuffer, size_t offset, size_t count) {
     if (!CanRead() || !outBuffer) return 0;
 
     size_t readable = std::min(count, buffer.size() - position);
-    std::memcpy(outBuffer + offset, buffer.data() + position, readable);
+    he_cpp_memory::Copy(outBuffer + offset, buffer.data() + position, readable);
     position += readable;
     return readable;
 }
@@ -30,7 +30,7 @@ void MemoryStream::Write(const uint8_t* inBuffer, size_t offset, size_t count) {
         buffer.resize(position + count);
     }
 
-    std::memcpy(buffer.data() + position, inBuffer + offset, count);
+    he_cpp_memory::Copy(buffer.data() + position, inBuffer + offset, count);
     position += count;
 }
 
@@ -92,7 +92,7 @@ int MemoryStream::InternalReadByte() {
 Array<uint8_t>* MemoryStream::ToArray() {
     Array<uint8_t>* data = new Array<uint8_t>(static_cast<int32_t>(buffer.size()));
     if (data->Length > 0 && data->Data != nullptr) {
-        std::memcpy(data->Data, buffer.data(), buffer.size());
+        he_cpp_memory::Copy(data->Data, buffer.data(), buffer.size());
     }
 
     return data;

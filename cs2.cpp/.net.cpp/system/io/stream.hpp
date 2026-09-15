@@ -2,11 +2,6 @@
 #define STREAM_HPP
 #include "../../runtime/native_runtime.hpp"
 
-#if !HE_CPP_USE_EXCEPTIONS
-#error "system/io/stream.hpp requires HE_CPP_USE_EXCEPTIONS=1; timeout operations still throw hosted exceptions."
-#endif
-
-
 #include <cstdint>  // For uint8_t
 
 #include "helcpp_config.hpp"
@@ -61,33 +56,33 @@ public:
 
     virtual size_t ReadTimeout() const {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw NotSupportedException();
+        return he_cpp_raise_value<size_t>(NotSupportedException());
 #else
-        throw NotSupportedException("Timeout not supported");
+        return he_cpp_raise_value<size_t>(NotSupportedException("Timeout not supported"));
 #endif
     }
 
     virtual void SetReadTimeout(size_t) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
 #else
-        throw NotSupportedException("Timeout not supported");
+        he_cpp_raise(NotSupportedException("Timeout not supported"));
 #endif
     }
 
     virtual size_t WriteTimeout() const {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw NotSupportedException();
+        return he_cpp_raise_value<size_t>(NotSupportedException());
 #else
-        throw NotSupportedException("Timeout not supported");
+        return he_cpp_raise_value<size_t>(NotSupportedException("Timeout not supported"));
 #endif
     }
 
     virtual void SetWriteTimeout(size_t) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
 #else
-        throw NotSupportedException("Timeout not supported");
+        he_cpp_raise(NotSupportedException("Timeout not supported"));
 #endif
     }
 

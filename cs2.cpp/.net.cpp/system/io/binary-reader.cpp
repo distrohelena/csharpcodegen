@@ -1,8 +1,9 @@
 #include "binary-reader.hpp"
 #include "helcpp_config.hpp"
+#include "../../runtime/native_allocation.hpp"
 #include "../../runtime/native_exceptions.hpp"
+#include "../../runtime/native_memory_ops.hpp"
 #include <algorithm>
-#include <cstring>  // For memcpy
 
 BinaryReader::BinaryReader(Stream& s, bool isLittleEndian)
     : stream(s), littleEndian(isLittleEndian) {
@@ -19,31 +20,31 @@ T BinaryReader::Read() {
 
     if (stream.Read(buffer, 0, sizeof(T)) != sizeof(T)) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw EndOfStreamException();
+        return he_cpp_raise_value<T>(EndOfStreamException());
 #else
-        throw EndOfStreamException("Failed to read expected bytes");
+        return he_cpp_raise_value<T>(EndOfStreamException("Failed to read expected bytes"));
 #endif
     }
 
     T value = 0;
     if (littleEndian) {
-        std::memcpy(&value, buffer, sizeof(T));
+        he_cpp_memory::Copy(&value, buffer, sizeof(T));
     }
     else {
         std::reverse(buffer, buffer + sizeof(T));
-        std::memcpy(&value, buffer, sizeof(T));
+        he_cpp_memory::Copy(&value, buffer, sizeof(T));
     }
 
     return value;
 }
 
-std::vector<uint8_t> BinaryReader::ReadBytes(size_t count) {
-    std::vector<uint8_t> buffer(count);
+HeCppVector<uint8_t> BinaryReader::ReadBytes(size_t count) {
+    HeCppVector<uint8_t> buffer(count);
     if (stream.Read(buffer.data(), 0, count) != count) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw EndOfStreamException();
+        return he_cpp_raise_value<HeCppVector<uint8_t>>(EndOfStreamException());
 #else
-        throw EndOfStreamException("Failed to read expected bytes");
+        return he_cpp_raise_value<HeCppVector<uint8_t>>(EndOfStreamException("Failed to read expected bytes"));
 #endif
     }
     return buffer;
@@ -64,20 +65,20 @@ double BinaryReader::ReadDouble() { return Read<double>(); }
 
 char* BinaryReader::ReadString() {
     uint32_t length = ReadUInt32();
-    char* buffer = static_cast<char*>(std::malloc(length + 1));
+    char* buffer = static_cast<char*>(he_cpp_memory::Allocate(length + 1));
     if (!buffer) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw InvalidOperationException();
+        return he_cpp_raise_value<char*>(InvalidOperationException());
 #else
-        throw InvalidOperationException("Memory allocation failed");
+        return he_cpp_raise_value<char*>(InvalidOperationException("Memory allocation failed"));
 #endif
     }
     if (stream.Read(reinterpret_cast<uint8_t*>(buffer), 0, length) != length) {
-        std::free(buffer);
+        he_cpp_memory::Free(buffer);
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw EndOfStreamException();
+        return he_cpp_raise_value<char*>(EndOfStreamException());
 #else
-        throw EndOfStreamException("Failed to read expected bytes");
+        return he_cpp_raise_value<char*>(EndOfStreamException("Failed to read expected bytes"));
 #endif
     }
     buffer[length] = '\0'; // Null-terminate the string

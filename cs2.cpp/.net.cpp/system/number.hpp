@@ -1,25 +1,20 @@
 #pragma once
 #include "../runtime/native_runtime.hpp"
-
-#if !HE_CPP_USE_STD_STRING
-#error "system/number.hpp requires HE_CPP_USE_STD_STRING=1; numeric parsing still accepts std::string."
-#endif
-
-#if !HE_CPP_USE_EXCEPTIONS
-#error "system/number.hpp requires HE_CPP_USE_EXCEPTIONS=1; checked arithmetic still throws hosted exceptions."
-#endif
-
-
 #include "../runtime/native_exceptions.hpp"
 
-#include <charconv>
-#include <cmath>
 #include <cstdint>
-#include <functional>
+#include <cstddef>
+#if HE_CPP_USE_STD_STRING
+#include <charconv>
+#endif
+#ifndef HE_CPP_USE_STD_MATH
+#define HE_CPP_USE_STD_MATH 1
+#endif
+#if HE_CPP_USE_STD_MATH
+#include <cmath>
+#endif
 #include <limits>
-#include <string>
 #include <type_traits>
-#include <utility>
 
 
 
@@ -36,11 +31,58 @@ public:
     /// <param name="text">Source text to parse.</param>
     /// <param name="value">Parsed value when the conversion succeeds.</param>
     /// <returns>True when parsing succeeds; otherwise false.</returns>
-    static bool TryParse(const std::string& text, int32_t& value) {
+    static bool TryParse(const HeCppString& text, int32_t& value) {
+#if HE_CPP_USE_STD_STRING
         const char* begin = text.data();
         const char* end = begin + text.size();
         std::from_chars_result result = std::from_chars(begin, end, value);
         return result.ec == std::errc() && result.ptr == end;
+#else
+        const std::size_t length = text.size();
+        const char* digits = text.data();
+        if (length == 0 || digits == nullptr) {
+            return false;
+        }
+
+        const bool negative = digits[0] == '-';
+        const std::size_t firstDigit = negative ? 1 : 0;
+        if (firstDigit == length) {
+            return false;
+        }
+
+        const uint32_t limit = negative ? 2147483648u : 2147483647u;
+        uint32_t magnitude = 0;
+        for (std::size_t index = firstDigit; index < length; ++index) {
+            const char character = digits[index];
+            if (character < '0' || character > '9') {
+                if (index == firstDigit) {
+                    return false;
+                }
+
+                value = negative
+                    ? (magnitude == 2147483648u ? std::numeric_limits<int32_t>::lowest() : -static_cast<int32_t>(magnitude))
+                    : static_cast<int32_t>(magnitude);
+                return false;
+            }
+
+            const uint32_t digit = static_cast<uint32_t>(character - '0');
+            if (magnitude > (limit - digit) / 10u) {
+                return false;
+            }
+
+            magnitude = magnitude * 10u + digit;
+        }
+
+        if (negative) {
+            value = magnitude == 2147483648u
+                ? std::numeric_limits<int32_t>::lowest()
+                : -static_cast<int32_t>(magnitude);
+        } else {
+            value = static_cast<int32_t>(magnitude);
+        }
+
+        return true;
+#endif
     }
 
     /// <summary>
@@ -49,7 +91,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is positive infinity; otherwise false.</returns>
     static bool IsPositiveInfinity(float value) {
+#if HE_CPP_USE_STD_MATH
         return std::isinf(value) && value > 0.0f;
+#else
+        return value == std::numeric_limits<float>::infinity();
+#endif
     }
 
     /// <summary>
@@ -58,7 +104,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is positive infinity; otherwise false.</returns>
     static bool IsPositiveInfinity(double value) {
+#if HE_CPP_USE_STD_MATH
         return std::isinf(value) && value > 0.0;
+#else
+        return value == std::numeric_limits<double>::infinity();
+#endif
     }
 
     /// <summary>
@@ -67,7 +117,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is NaN; otherwise false.</returns>
     static bool IsNaN(float value) {
+#if HE_CPP_USE_STD_MATH
         return std::isnan(value);
+#else
+        return value != value;
+#endif
     }
 
     /// <summary>
@@ -76,7 +130,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is NaN; otherwise false.</returns>
     static bool IsNaN(double value) {
+#if HE_CPP_USE_STD_MATH
         return std::isnan(value);
+#else
+        return value != value;
+#endif
     }
 
     /// <summary>
@@ -85,7 +143,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is infinite; otherwise false.</returns>
     static bool IsInfinity(float value) {
+#if HE_CPP_USE_STD_MATH
         return std::isinf(value);
+#else
+        return IsPositiveInfinity(value) || value == -std::numeric_limits<float>::infinity();
+#endif
     }
 
     /// <summary>
@@ -94,7 +156,11 @@ public:
     /// <param name="value">Value to inspect.</param>
     /// <returns>True when the value is infinite; otherwise false.</returns>
     static bool IsInfinity(double value) {
+#if HE_CPP_USE_STD_MATH
         return std::isinf(value);
+#else
+        return IsPositiveInfinity(value) || value == -std::numeric_limits<double>::infinity();
+#endif
     }
 
     /// <summary>
@@ -116,7 +182,7 @@ public:
     /// <param name="right">Right single-precision operand.</param>
     /// <returns>True when both values are equal or both are not-a-number; otherwise false.</returns>
     static bool Equals(float left, float right) {
-        return left == right || (std::isnan(left) && std::isnan(right));
+        return left == right || (IsNaN(left) && IsNaN(right));
     }
 
     /// <summary>
@@ -126,7 +192,7 @@ public:
     /// <param name="right">Right double-precision operand.</param>
     /// <returns>True when both values are equal or both are not-a-number; otherwise false.</returns>
     static bool Equals(double left, double right) {
-        return left == right || (std::isnan(left) && std::isnan(right));
+        return left == right || (IsNaN(left) && IsNaN(right));
     }
 
     /// <summary>
@@ -153,7 +219,7 @@ public:
     template <typename T>
     static T CheckedPreIncrement(T& value) {
         if (value == std::numeric_limits<T>::max()) {
-            throw OverflowException();
+            RaiseOverflow();
         }
 
         value = static_cast<T>(value + static_cast<T>(1));
@@ -169,7 +235,7 @@ public:
     template <typename T>
     static T CheckedPostIncrement(T& value) {
         if (value == std::numeric_limits<T>::max()) {
-            throw OverflowException();
+            RaiseOverflow();
         }
 
         T originalValue = value;
@@ -186,7 +252,7 @@ public:
     template <typename T>
     static T CheckedPreDecrement(T& value) {
         if (value == std::numeric_limits<T>::lowest()) {
-            throw OverflowException();
+            RaiseOverflow();
         }
 
         value = static_cast<T>(value - static_cast<T>(1));
@@ -202,7 +268,7 @@ public:
     template <typename T>
     static T CheckedPostDecrement(T& value) {
         if (value == std::numeric_limits<T>::lowest()) {
-            throw OverflowException();
+            RaiseOverflow();
         }
 
         T originalValue = value;
@@ -221,12 +287,12 @@ public:
     static T CheckedAdd(const T& left, const T& right) {
         if constexpr (std::is_unsigned_v<T>) {
             if (right > std::numeric_limits<T>::max() - left) {
-                throw OverflowException();
+                RaiseOverflow();
             }
         } else {
             if ((right > static_cast<T>(0) && left > std::numeric_limits<T>::max() - right) ||
                 (right < static_cast<T>(0) && left < std::numeric_limits<T>::lowest() - right)) {
-                throw OverflowException();
+                RaiseOverflow();
             }
         }
 
@@ -243,8 +309,8 @@ public:
     template <typename TTarget, typename TSource>
     static TTarget CheckedCast(const TSource& value) {
         static_assert(std::is_integral_v<TTarget> && std::is_integral_v<TSource>);
-        if (!std::in_range<TTarget>(value)) {
-            throw OverflowException();
+        if (!IsRepresentable<TTarget>(value)) {
+            RaiseOverflow();
         }
 
         return static_cast<TTarget>(value);
@@ -315,6 +381,32 @@ public:
     /// <returns>Signed 32-bit hash code for the supplied value.</returns>
     template <typename T>
     static int32_t GetHashCode(const T& value) {
-        return static_cast<int32_t>(std::hash<T>{}(value));
+        return static_cast<int32_t>(HeCppHash<T>{}(value));
+    }
+
+private:
+    /// <summary>
+    /// Checks integral representability without depending on hosted C++20 utility helpers.
+    /// </summary>
+    template <typename TTarget, typename TSource>
+    static bool IsRepresentable(TSource value) {
+        if constexpr (std::is_signed_v<TSource> && std::is_signed_v<TTarget>) {
+            return static_cast<intmax_t>(value) >= static_cast<intmax_t>(std::numeric_limits<TTarget>::lowest()) &&
+                static_cast<intmax_t>(value) <= static_cast<intmax_t>(std::numeric_limits<TTarget>::max());
+        } else if constexpr (std::is_signed_v<TSource>) {
+            return value >= 0 &&
+                static_cast<uintmax_t>(value) <= static_cast<uintmax_t>(std::numeric_limits<TTarget>::max());
+        } else if constexpr (std::is_signed_v<TTarget>) {
+            return value <= static_cast<uintmax_t>(std::numeric_limits<TTarget>::max());
+        } else {
+            return value <= static_cast<uintmax_t>(std::numeric_limits<TTarget>::max());
+        }
+    }
+
+    /// <summary>
+    /// Routes checked arithmetic overflow through the configured exception or fatal-failure policy.
+    /// </summary>
+    [[noreturn]] static void RaiseOverflow() {
+        he_cpp_raise(OverflowException());
     }
 };

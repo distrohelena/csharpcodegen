@@ -4,18 +4,18 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <string>
-#include <vector>
 
-#if defined(_WIN32)
+
+
+#if HE_CPP_PLATFORM_IS_WINDOWS_HOST && defined(_WIN32)
 #include <direct.h>
-#else
+#elif HE_CPP_PLATFORM_IS_WINDOWS_HOST
 #include <unistd.h>
 #endif
 
 #if HE_CPP_PLATFORM_PS2
 namespace {
-    bool IsPs2DevicePath(const std::string& path) {
+    bool IsPs2DevicePath(const HeCppString& path) {
         return path.rfind("cdrom0:", 0) == 0
             || path.rfind("host:", 0) == 0
             || path.rfind("mc0:", 0) == 0
@@ -23,25 +23,25 @@ namespace {
             || path.rfind("mass:", 0) == 0;
     }
 
-    std::string NormalizePs2Path(const std::string& path) {
+    HeCppString NormalizePs2Path(const HeCppString& path) {
         if (path.empty()) {
             return path;
         }
 
-        std::string normalized = path;
+        HeCppString normalized = path;
         std::replace(normalized.begin(), normalized.end(), '/', '\\');
         const std::size_t deviceSeparatorIndex = normalized.find(':');
-        if (deviceSeparatorIndex == std::string::npos) {
+        if (deviceSeparatorIndex == HeCppString::npos) {
             return normalized;
         }
 
-        std::string prefix = normalized.substr(0, deviceSeparatorIndex + 1);
-        std::string suffix = normalized.substr(deviceSeparatorIndex + 1);
+        HeCppString prefix = normalized.substr(0, deviceSeparatorIndex + 1);
+        HeCppString suffix = normalized.substr(deviceSeparatorIndex + 1);
         while (!suffix.empty() && suffix.front() == '\\') {
             suffix.erase(suffix.begin());
         }
 
-        std::string collapsedSuffix;
+        HeCppString collapsedSuffix;
         bool previousWasSeparator = false;
         for (char character : suffix) {
             if (character == '\\') {
@@ -64,7 +64,7 @@ namespace {
         return prefix + "\\" + collapsedSuffix;
     }
 
-    std::string CombinePs2Path(const std::string& left, const std::string& right) {
+    HeCppString CombinePs2Path(const HeCppString& left, const HeCppString& right) {
         if (left.empty()) {
             return NormalizePs2Path(right);
         }
@@ -77,8 +77,8 @@ namespace {
             return NormalizePs2Path(right);
         }
 
-        std::string normalizedLeft = NormalizePs2Path(left);
-        std::string normalizedRight = NormalizePs2Path(right);
+        HeCppString normalizedLeft = NormalizePs2Path(left);
+        HeCppString normalizedRight = NormalizePs2Path(right);
         while (!normalizedRight.empty() && normalizedRight.front() == '\\') {
             normalizedRight.erase(normalizedRight.begin());
         }
@@ -90,11 +90,11 @@ namespace {
         return normalizedLeft + normalizedRight;
     }
 
-    std::string GetPs2DirectoryName(const std::string& path) {
-        std::string normalized = NormalizePs2Path(path);
+    HeCppString GetPs2DirectoryName(const HeCppString& path) {
+        HeCppString normalized = NormalizePs2Path(path);
         std::size_t separatorIndex = normalized.find_last_of("\\/");
-        if (separatorIndex == std::string::npos) {
-            return std::string();
+        if (separatorIndex == HeCppString::npos) {
+            return HeCppString();
         }
 
         if (separatorIndex > 0 && normalized[separatorIndex - 1] == ':') {
@@ -104,12 +104,12 @@ namespace {
         return normalized.substr(0, separatorIndex);
     }
 
-    std::string GetPs2FileName(const std::string& path) {
-        std::string normalized = NormalizePs2Path(path);
+    HeCppString GetPs2FileName(const HeCppString& path) {
+        HeCppString normalized = NormalizePs2Path(path);
         std::size_t separatorIndex = normalized.find_last_of("\\/");
-        std::string fileName = separatorIndex == std::string::npos ? normalized : normalized.substr(separatorIndex + 1);
+        HeCppString fileName = separatorIndex == HeCppString::npos ? normalized : normalized.substr(separatorIndex + 1);
         std::size_t versionSeparatorIndex = fileName.find(';');
-        if (versionSeparatorIndex != std::string::npos) {
+        if (versionSeparatorIndex != HeCppString::npos) {
             fileName = fileName.substr(0, versionSeparatorIndex);
         }
 
@@ -120,7 +120,7 @@ namespace {
 
 #if HELENGINE_NINTENDO_DS_HAS_GENERATED_CORE
 namespace {
-    bool IsNintendoDsDevicePath(const std::string& path) {
+    bool IsNintendoDsDevicePath(const HeCppString& path) {
         return path.rfind("nitro:", 0) == 0;
     }
 }
@@ -131,7 +131,7 @@ namespace {
         return character == Path::DirectorySeparatorChar || character == Path::AltDirectorySeparatorChar;
     }
 
-    std::size_t GetRootLength(const std::string& path) {
+    std::size_t GetRootLength(const HeCppString& path) {
         if (path.empty()) {
             return 0;
         }
@@ -151,18 +151,18 @@ namespace {
         return 0;
     }
 
-    std::string NormalizeGenericPath(const std::string& path) {
+    HeCppString NormalizeGenericPath(const HeCppString& path) {
         if (path.empty()) {
-            return std::string();
+            return HeCppString();
         }
 
-        std::string normalized = path;
+        HeCppString normalized = path;
         std::replace(normalized.begin(), normalized.end(), Path::AltDirectorySeparatorChar, Path::DirectorySeparatorChar);
         const std::size_t rootLength = GetRootLength(normalized);
         const bool rooted = rootLength > 0;
-        std::string root = normalized.substr(0, rootLength);
-        std::vector<std::string> segments;
-        std::string segment;
+        HeCppString root = normalized.substr(0, rootLength);
+        HeCppVector<HeCppString> segments;
+        HeCppString segment;
 
         for (std::size_t index = rootLength; index <= normalized.size(); index++) {
             const bool endOfPath = index == normalized.size();
@@ -185,7 +185,7 @@ namespace {
             segment.clear();
         }
 
-        std::string result = root;
+        HeCppString result = root;
         for (std::size_t segmentIndex = 0; segmentIndex < segments.size(); segmentIndex++) {
             if (!result.empty() && result.back() != Path::DirectorySeparatorChar) {
                 result.push_back(Path::DirectorySeparatorChar);
@@ -195,28 +195,30 @@ namespace {
         }
 
         if (result.empty()) {
-            return rooted ? root : std::string(".");
+            return rooted ? root : HeCppString(".");
         }
 
         return result;
     }
 
-    std::string GetCurrentDirectoryPath() {
+#if HE_CPP_PLATFORM_IS_WINDOWS_HOST
+    HeCppString GetCurrentDirectoryPath() {
         char buffer[4096];
-#if defined(_WIN32)
+#if HE_CPP_PLATFORM_IS_WINDOWS_HOST && defined(_WIN32)
         if (_getcwd(buffer, static_cast<int>(sizeof(buffer))) == nullptr) {
-            return std::string(".");
+            return HeCppString(".");
         }
 #else
         if (getcwd(buffer, sizeof(buffer)) == nullptr) {
-            return std::string(".");
+            return HeCppString(".");
         }
 #endif
         return NormalizeGenericPath(buffer);
     }
+#endif
 }
 
-std::string Path::Combine(const std::string& left, const std::string& right) {
+HeCppString Path::Combine(const HeCppString& left, const HeCppString& right) {
 #if HE_CPP_PLATFORM_PS2
     if (IsPs2DevicePath(left) || IsPs2DevicePath(right)) {
         return CombinePs2Path(left, right);
@@ -247,7 +249,7 @@ std::string Path::Combine(const std::string& left, const std::string& right) {
         return GetFullPath(right);
     }
 
-    std::string combined = left;
+    HeCppString combined = left;
     if (!combined.empty() && !IsGenericDirectorySeparator(combined.back())) {
         combined.push_back(DirectorySeparatorChar);
     }
@@ -256,13 +258,13 @@ std::string Path::Combine(const std::string& left, const std::string& right) {
     return NormalizeGenericPath(combined);
 }
 
-std::string Path::Combine(const std::string& first, const std::string& second, const std::string& third) {
+HeCppString Path::Combine(const HeCppString& first, const HeCppString& second, const HeCppString& third) {
     return Combine(Combine(first, second), third);
 }
 
-std::string Path::GetDirectoryName(const std::string& path) {
+HeCppString Path::GetDirectoryName(const HeCppString& path) {
     if (path.empty()) {
-        return std::string();
+        return HeCppString();
     }
 
 #if HE_CPP_PLATFORM_PS2
@@ -271,11 +273,11 @@ std::string Path::GetDirectoryName(const std::string& path) {
     }
 #endif
 
-    std::string normalized = NormalizeGenericPath(path);
+    HeCppString normalized = NormalizeGenericPath(path);
     const std::size_t rootLength = GetRootLength(normalized);
     const std::size_t separatorIndex = normalized.find_last_of("\\/");
-    if (separatorIndex == std::string::npos) {
-        return std::string();
+    if (separatorIndex == HeCppString::npos) {
+        return HeCppString();
     }
 
     if (separatorIndex < rootLength) {
@@ -285,9 +287,9 @@ std::string Path::GetDirectoryName(const std::string& path) {
     return normalized.substr(0, separatorIndex);
 }
 
-std::string Path::GetFileName(const std::string& path) {
+HeCppString Path::GetFileName(const HeCppString& path) {
     if (path.empty()) {
-        return std::string();
+        return HeCppString();
     }
 
 #if HE_CPP_PLATFORM_PS2
@@ -296,16 +298,16 @@ std::string Path::GetFileName(const std::string& path) {
     }
 #endif
 
-    std::string normalized = NormalizeGenericPath(path);
+    HeCppString normalized = NormalizeGenericPath(path);
     const std::size_t separatorIndex = normalized.find_last_of("\\/");
-    if (separatorIndex == std::string::npos) {
+    if (separatorIndex == HeCppString::npos) {
         return normalized;
     }
 
     return normalized.substr(separatorIndex + 1);
 }
 
-std::string Path::GetFullPath(const std::string& path) {
+HeCppString Path::GetFullPath(const HeCppString& path) {
 #if HELENGINE_NINTENDO_DS_HAS_GENERATED_CORE
     if (IsNintendoDsDevicePath(path)) {
         return path;
@@ -313,7 +315,7 @@ std::string Path::GetFullPath(const std::string& path) {
 #endif
 #if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
     if (path.empty()) {
-        return std::string(".");
+        return HeCppString(".");
     }
 
 #if HE_CPP_PLATFORM_PS2
@@ -335,16 +337,16 @@ std::string Path::GetFullPath(const std::string& path) {
 #endif
 }
 
-std::string Path::ChangeExtension(const std::string& path, const std::string& extension) {
+HeCppString Path::ChangeExtension(const HeCppString& path, const HeCppString& extension) {
     if (path.empty()) {
-        return std::string();
+        return HeCppString();
     }
 
-    std::string normalized = NormalizeGenericPath(path);
+    HeCppString normalized = NormalizeGenericPath(path);
     const std::size_t separatorIndex = normalized.find_last_of("\\/");
     const std::size_t extensionIndex = normalized.find_last_of('.');
-    std::string updated = normalized;
-    if (extensionIndex != std::string::npos && (separatorIndex == std::string::npos || extensionIndex > separatorIndex)) {
+    HeCppString updated = normalized;
+    if (extensionIndex != HeCppString::npos && (separatorIndex == HeCppString::npos || extensionIndex > separatorIndex)) {
         updated.erase(extensionIndex);
     }
 
@@ -359,7 +361,7 @@ std::string Path::ChangeExtension(const std::string& path, const std::string& ex
     return updated;
 }
 
-bool Path::IsPathRooted(const std::string& path) {
+bool Path::IsPathRooted(const HeCppString& path) {
     if (path.empty()) {
         return false;
     }

@@ -2,16 +2,12 @@
 #define PATH_HPP
 #include "../../runtime/native_runtime.hpp"
 
-#if !HE_CPP_USE_STD_STRING
-#error "system/io/path.hpp requires HE_CPP_USE_STD_STRING=1; path operations have not been adapted to custom string storage."
-#endif
-
-#if !HE_CPP_USE_STD_VECTOR
-#error "system/io/path.hpp requires HE_CPP_USE_STD_VECTOR=1; path normalization still uses std::vector."
-#endif
 
 
-#include <string>
+
+
+
+
 #include "../../runtime/native_runtime.hpp"
 
 
@@ -26,19 +22,19 @@ public:
     static constexpr char AltDirectorySeparatorChar = '\\';
     #endif
 
-    static std::string Combine(const std::string& left, const std::string& right);
+    static HeCppString Combine(const HeCppString& left, const HeCppString& right);
 
-    static std::string Combine(const std::string& first, const std::string& second, const std::string& third);
+    static HeCppString Combine(const HeCppString& first, const HeCppString& second, const HeCppString& third);
 
-    static std::string GetDirectoryName(const std::string& path);
+    static HeCppString GetDirectoryName(const HeCppString& path);
 
-    static std::string GetFileName(const std::string& path);
+    static HeCppString GetFileName(const HeCppString& path);
 
-    static std::string GetFullPath(const std::string& path);
+    static HeCppString GetFullPath(const HeCppString& path);
 
-    static std::string ChangeExtension(const std::string& path, const std::string& extension);
+    static HeCppString ChangeExtension(const HeCppString& path, const HeCppString& extension);
 
-    static bool IsPathRooted(const std::string& path);
+    static bool IsPathRooted(const HeCppString& path);
 };
 
 #endif // PATH_HPP

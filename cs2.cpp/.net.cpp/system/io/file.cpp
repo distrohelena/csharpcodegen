@@ -1,3 +1,5 @@
+#include "../../helcpp_config.hpp"
+#if !defined(HE_CPP_GENERATED_CONFIG) || defined(HE_CPP_REQ_FILE)
 #include "file.hpp"
 
 #include "helcpp_config.hpp"
@@ -66,3 +68,5 @@ FileStream* File::OpenRead(const std::string& filePath)
 {
 	return OpenRead(filePath.c_str());
 }
+
+#endif

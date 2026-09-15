@@ -2,14 +2,12 @@
 #define APP_CONTEXT_HPP
 #include "../runtime/native_runtime.hpp"
 
-#if !HE_CPP_USE_STD_STRING
-#error "system/app_context.hpp requires HE_CPP_USE_STD_STRING=1; executable path services have not been adapted to custom string storage."
-#endif
+
 
 
 #include "helcpp_config.hpp"
 
-#include <string>
+
 #include "../runtime/native_runtime.hpp"
 #include "../runtime/native_exceptions.hpp"
 
@@ -25,9 +23,9 @@
 /// Resolves executable-relative application context values used by generated runtime initialization.
 class AppContext {
 public:
-    inline static std::string BaseDirectory = []() {
+    inline static HeCppString BaseDirectory = []() {
 #if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
-        return std::string(".");
+        return HeCppString(".");
 #elif defined(_WIN32)
         char buffer[MAX_PATH];
         DWORD length = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
@@ -39,15 +37,15 @@ public:
 #endif
         }
 
-        std::string executablePath(buffer, length);
+        HeCppString executablePath(buffer, length);
         std::size_t separatorIndex = executablePath.find_last_of("\\/");
-        if (separatorIndex == std::string::npos) {
-            return std::string(".");
+        if (separatorIndex == HeCppString::npos) {
+            return HeCppString(".");
         }
 
         return executablePath.substr(0, separatorIndex);
 #else
-        return std::string(".");
+        return HeCppString(".");
 #endif
     }();
 };

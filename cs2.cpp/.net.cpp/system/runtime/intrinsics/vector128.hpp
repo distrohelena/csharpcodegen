@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <type_traits>
 
 #include "system/numerics/vector.hpp"
@@ -14,7 +14,7 @@ class Vector128_1 {
         if constexpr (std::is_same_v<T, float>) {
             uint32_t bits = 0xFFFFFFFFu;
             T value;
-            std::memcpy(&value, &bits, sizeof(T));
+            he_cpp_memory::Copy(&value, &bits, sizeof(T));
             return value;
         } else if constexpr (std::is_integral_v<T>) {
             return static_cast<T>(~T());
@@ -45,7 +45,7 @@ public:
         static_assert(sizeof(TFrom) == sizeof(TTo), "Vector128 lane reinterpretation requires equal lane sizes.");
         Vector128_1<TTo> result;
         for (int32_t laneIndex = 0; laneIndex < LaneCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -77,7 +77,7 @@ public:
         Vector_1<TTo> result;
         int32_t copyCount = std::min(Vector_1<TTo>::get_Count(), LaneCount);
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-            std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
         }
         return result;
     }
@@ -137,7 +137,7 @@ Vector128_1<TTo> Vector_1<T>::AsVector128() const {
     Vector128_1<TTo> result;
     int32_t copyCount = std::min(Vector128_1<TTo>::LaneCount, get_Count());
     for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
-        std::memcpy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
+        he_cpp_memory::Copy(&result.Values[laneIndex], &Values[laneIndex], sizeof(TTo));
     }
     return result;
 }
@@ -147,7 +147,7 @@ class Vector128 {
     static TBits BitCast(const TValue& value) {
         static_assert(sizeof(TBits) == sizeof(TValue));
         TBits bits;
-        std::memcpy(&bits, &value, sizeof(TBits));
+        he_cpp_memory::Copy(&bits, &value, sizeof(TBits));
         return bits;
     }
 
@@ -155,7 +155,7 @@ class Vector128 {
     static TValue BitCastBack(const TBits& bits) {
         static_assert(sizeof(TValue) == sizeof(TBits));
         TValue value;
-        std::memcpy(&value, &bits, sizeof(TValue));
+        he_cpp_memory::Copy(&value, &bits, sizeof(TValue));
         return value;
     }
 
@@ -212,9 +212,9 @@ public:
     static Vector128_1<float> AsVector128(const TValue& value) {
         using RawValue = std::remove_cv_t<std::remove_reference_t<TValue>>;
         Vector128_1<float> result;
-        std::memset(result.Values, 0, sizeof(result.Values));
+        he_cpp_memory::Set(result.Values, 0, sizeof(result.Values));
         constexpr size_t CopySize = sizeof(RawValue) < sizeof(result.Values) ? sizeof(RawValue) : sizeof(result.Values);
-        std::memcpy(result.Values, &value, CopySize);
+        he_cpp_memory::Copy(result.Values, &value, CopySize);
         return result;
     }
 

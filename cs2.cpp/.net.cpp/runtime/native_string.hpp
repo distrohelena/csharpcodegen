@@ -461,6 +461,12 @@ public:
         return result;
     }
 
+    // Mirrors System.String.Split(char, StringSplitOptions): unlimited segments split on one separator.
+    static Array<HeCppString>* Split(const HeCppString& value, char separator, StringSplitOptions options) {
+        Array<char> separators{ separator };
+        return Split(value, &separators, 0, options);
+    }
+
     static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count, StringSplitOptions options) {
         HeCppVector<HeCppString> parts;
         size_t segmentStart = 0;

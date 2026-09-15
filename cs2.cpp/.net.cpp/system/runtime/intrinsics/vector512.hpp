@@ -2,7 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <type_traits>
 
 #include "system/numerics/vector.hpp"
@@ -18,7 +18,7 @@ class Vector512Runtime {
     static TBits BitCast(const TValue& value) {
         static_assert(sizeof(TBits) == sizeof(TValue));
         TBits bits;
-        std::memcpy(&bits, &value, sizeof(TBits));
+        he_cpp_memory::Copy(&bits, &value, sizeof(TBits));
         return bits;
     }
 
@@ -64,7 +64,7 @@ public:
             TBits leftBits = BitCast<TBits>(left.Values[laneIndex]);
             TBits rightBits = BitCast<TBits>(right.Values[laneIndex]);
             TBits resultBits = leftBits | rightBits;
-            std::memcpy(&result.Values[laneIndex], &resultBits, sizeof(T));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &resultBits, sizeof(T));
         }
         return result;
     }
@@ -77,7 +77,7 @@ public:
             TBits leftBits = BitCast<TBits>(left.Values[laneIndex]);
             TBits rightBits = BitCast<TBits>(right.Values[laneIndex]);
             TBits resultBits = leftBits ^ rightBits;
-            std::memcpy(&result.Values[laneIndex], &resultBits, sizeof(T));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &resultBits, sizeof(T));
         }
         return result;
     }
@@ -90,7 +90,7 @@ public:
             TBits leftBits = BitCast<TBits>(left.Values[laneIndex]);
             TBits rightBits = BitCast<TBits>(right.Values[laneIndex]);
             TBits resultBits = leftBits & (~rightBits);
-            std::memcpy(&result.Values[laneIndex], &resultBits, sizeof(T));
+            he_cpp_memory::Copy(&result.Values[laneIndex], &resultBits, sizeof(T));
         }
         return result;
     }

@@ -1,3 +1,5 @@
+#include "../../helcpp_config.hpp"
+#if !defined(HE_CPP_GENERATED_CONFIG) || defined(HE_CPP_REQ_DIRECTORY)
 #include "directory.hpp"
 
 #include "path.hpp"
@@ -80,3 +82,5 @@ void Directory::CreateDirectory(const std::string& path) {
         }
     }
 }
+
+#endif

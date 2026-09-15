@@ -1,13 +1,22 @@
 #include "file-stream.hpp"
 #include "helcpp_config.hpp"
+#include "../../runtime/native_memory_ops.hpp"
+#include "../../runtime/native_exceptions.hpp"
+
+#ifndef HE_CPP_USE_HOSTED_FILE_SYSTEM
+#define HE_CPP_USE_HOSTED_FILE_SYSTEM 1
+#endif
+
+#include <algorithm>
+
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
 #include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
 #endif
-#include "../../runtime/native_exceptions.hpp"
-#include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
 #include <memory>
-#include <algorithm>
+#include <string>
+#include <vector>
 #include <cerrno>
 #include <fcntl.h>
 #if defined(_WIN32)
@@ -15,8 +24,9 @@
 #else
 #include <unistd.h>
 #endif
+#endif
 
-#if HE_CPP_PLATFORM_PS2
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM && HE_CPP_PLATFORM_PS2
 namespace {
     bool FileStreamSupportStartsWithPs2CdromPrefix(const std::string& path) {
         return path.rfind("cdrom0:", 0) == 0;
@@ -109,6 +119,7 @@ namespace {
 }
 #endif
 
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
 // Helper function to get file mode as C-style string
 const char* GetFileMode(FileMode mode) {
     switch (mode) {
@@ -126,24 +137,28 @@ const char* GetFileMode(FileMode mode) {
 #endif
     }
 }
+#endif
 
 // Constructor
 FileStream::FileStream(const uint8_t* data, size_t dataLength)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(true), writable(false) {
     if (data == nullptr && dataLength > 0) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw InvalidOperationException();
+        he_cpp_raise(InvalidOperationException());
 #else
-        throw InvalidOperationException("Cannot create a memory-backed file stream from a null buffer.");
+        he_cpp_raise(InvalidOperationException("Cannot create a memory-backed file stream from a null buffer."));
 #endif
     }
 
-    memoryBuffer.assign(data, data + dataLength);
+    if (dataLength > 0) {
+        memoryBuffer.assign(data, data + dataLength);
+    }
     length = memoryBuffer.size();
 }
 
 FileStream::FileStream(const char* path, FileMode mode)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), writable(true) {
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
     if (path != nullptr && mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)) {
         std::unique_ptr<FileStream> customStream(HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(path));
@@ -179,17 +194,22 @@ FileStream::FileStream(const char* path, FileMode mode)
     }
 
     UpdateLength();
+#else
+    (void)path;
+    (void)mode;
+    he_cpp_raise(NotSupportedException("Path-backed FileStream is unavailable when hosted filesystem support is disabled."));
+#endif
 }
 
 FileStream::FileStream(const char* path, FileMode mode, FileAccess, FileShare)
     : FileStream(path, mode) {
 }
 
-FileStream::FileStream(const std::string& path, FileMode mode)
+FileStream::FileStream(const HeCppString& path, FileMode mode)
     : FileStream(path.c_str(), mode) {
 }
 
-FileStream::FileStream(const std::string& path, FileMode mode, FileAccess access, FileShare share)
+FileStream::FileStream(const HeCppString& path, FileMode mode, FileAccess access, FileShare share)
     : FileStream(path.c_str(), mode, access, share) {
 }
 
@@ -209,16 +229,20 @@ size_t FileStream::Read(uint8_t* buffer, size_t offset, size_t count) {
             return 0;
         }
 
-        std::memcpy(buffer + offset, memoryBuffer.data() + position, bytesRead);
+        he_cpp_memory::Copy(buffer + offset, memoryBuffer.data() + position, bytesRead);
         position += bytesRead;
         return bytesRead;
     }
 
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     std::fseek(file, position, SEEK_SET);
 
     size_t bytesRead = std::fread(buffer + offset, 1, count, file);
     position += bytesRead;
     return bytesRead;
+#else
+    he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
+#endif
 }
 
 // Writes data to file
@@ -231,17 +255,21 @@ void FileStream::Write(const uint8_t* buffer, size_t offset, size_t count) {
             memoryBuffer.resize(requiredLength);
         }
 
-        std::memcpy(memoryBuffer.data() + position, buffer + offset, count);
+        he_cpp_memory::Copy(memoryBuffer.data() + position, buffer + offset, count);
         position += count;
         length = memoryBuffer.size();
         return;
     }
 
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     std::fseek(file, position, SEEK_SET);
 
     size_t bytesWritten = std::fwrite(buffer + offset, 1, count, file);
     position += bytesWritten;
     UpdateLength();
+#else
+    he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
+#endif
 }
 
 // Seeks to a position in file
@@ -267,6 +295,7 @@ size_t FileStream::Seek(int64_t offset, SeekOrigin origin) {
         return position;
     }
 
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     int seekMode;
     switch (origin) {
     case SeekOrigin::Begin: seekMode = SEEK_SET; break;
@@ -277,6 +306,9 @@ size_t FileStream::Seek(int64_t offset, SeekOrigin origin) {
     std::fseek(file, offset, seekMode);
     position = std::ftell(file);
     return position;
+#else
+    he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
+#endif
 }
 
 // Truncates or extends the file
@@ -294,6 +326,7 @@ void FileStream::SetLength(size_t newLength) {
         return;
     }
 
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     std::fflush(file);
 #if defined(_WIN32)
     _chsize_s(fileno(file), newLength);
@@ -301,10 +334,14 @@ void FileStream::SetLength(size_t newLength) {
     ftruncate(fileno(file), newLength);
 #endif
     UpdateLength();
+#else
+    he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
+#endif
 }
 
 // Updates the stored file length
 void FileStream::UpdateLength() {
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     if (!file) {
         length = memoryBuffer.size();
         return;
@@ -314,6 +351,9 @@ void FileStream::UpdateLength() {
     if (fstat(fileno(file), &fileStat) == 0) {
         length = fileStat.st_size;
     }
+#else
+    length = memoryBuffer.size();
+#endif
 }
 
 // Properties
@@ -339,15 +379,19 @@ int FileStream::InternalReadByte() {
 
 // Flushes the file buffer
 void FileStream::Flush() {
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     if (file) std::fflush(file);
+#endif
 }
 
 // Closes the file
 void FileStream::Close() {
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     if (file) {
         std::fclose(file);
         file = nullptr;
     }
+#endif
 
     if (ownsMemoryBuffer) {
         memoryBuffer.clear();

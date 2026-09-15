@@ -1,3 +1,5 @@
+#include "../helcpp_config.hpp"
+#if !defined(HE_CPP_GENERATED_CONFIG) || defined(HE_CPP_REQ_CONSOLE)
 #include "console.hpp"
 #include <cstdio>
 
@@ -55,3 +57,5 @@ std::string Console::ReadLine()
 
     return line;
 }
+
+#endif

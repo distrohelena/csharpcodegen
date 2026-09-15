@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include "../runtime/array.hpp"
 
 /// <summary>
@@ -14,7 +14,7 @@ public:
     /// </summary>
     static float Int32BitsToSingle(int32_t value) {
         float result = 0.0f;
-        std::memcpy(&result, &value, sizeof(result));
+        he_cpp_memory::Copy(&result, &value, sizeof(result));
         return result;
     }
 
@@ -23,7 +23,7 @@ public:
     /// </summary>
     static double Int64BitsToDouble(int64_t value) {
         double result = 0.0;
-        std::memcpy(&result, &value, sizeof(result));
+        he_cpp_memory::Copy(&result, &value, sizeof(result));
         return result;
     }
 
@@ -32,7 +32,7 @@ public:
     /// </summary>
     static int64_t DoubleToInt64Bits(double value) {
         int64_t result = 0;
-        std::memcpy(&result, &value, sizeof(result));
+        he_cpp_memory::Copy(&result, &value, sizeof(result));
         return result;
     }
 
@@ -41,7 +41,7 @@ public:
     /// </summary>
     static int32_t SingleToInt32Bits(float value) {
         int32_t result = 0;
-        std::memcpy(&result, &value, sizeof(result));
+        he_cpp_memory::Copy(&result, &value, sizeof(result));
         return result;
     }
 
@@ -50,7 +50,7 @@ public:
     /// </summary>
     static Array<uint8_t>* GetBytes(float value) {
         Array<uint8_t>* bytes = new Array<uint8_t>(sizeof(value));
-        std::memcpy(bytes->Data, &value, sizeof(value));
+        he_cpp_memory::Copy(bytes->Data, &value, sizeof(value));
         return bytes;
     }
 };

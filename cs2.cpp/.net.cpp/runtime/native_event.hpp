@@ -1,11 +1,6 @@
 #pragma once
 #include "native_runtime.hpp"
 
-#if !HE_CPP_USE_STD_VECTOR
-#error "runtime/native_event.hpp requires HE_CPP_USE_STD_VECTOR=1; its hosted event storage still uses std::vector."
-#endif
-
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -13,10 +8,6 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
-#include <vector>
-
-#include "native_runtime.hpp"
-
 
 /// <summary>
 /// Represents a lightweight managed event bridge used by transpiled engine members during native execution.
@@ -211,17 +202,17 @@ private:
         /// <summary>
         /// Type-erased invocation thunk that reads arguments from the packed invocation array.
         /// </summary>
-        std::function<void(void**)> Invoke;
+        HeCppFunction<void(void**)> Invoke;
 
         /// <summary>
         /// Optional free-function matcher used by remove operations.
         /// </summary>
-        std::function<bool(const void*)> MatchesFunction;
+        HeCppFunction<bool(const void*)> MatchesFunction;
 
         /// <summary>
         /// Optional bound-subscriber matcher used by remove operations.
         /// </summary>
-        std::function<bool(const void*, const void*)> MatchesBound;
+        HeCppFunction<bool(const void*, const void*)> MatchesBound;
     };
 
     /// <summary>
@@ -253,5 +244,6 @@ private:
     /// <summary>
     /// Subscribers currently attached to this event.
     /// </summary>
-    std::vector<std::unique_ptr<Subscriber>> Subscribers;
+    HeCppVector<std::unique_ptr<Subscriber>> Subscribers;
 };
+

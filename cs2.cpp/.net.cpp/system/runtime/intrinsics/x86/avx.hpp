@@ -2,7 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <type_traits>
 
 #include "../vector128.hpp"
@@ -14,7 +14,7 @@ class Avx {
         if constexpr (std::is_same_v<T, float>) {
             uint32_t bits = 0xFFFFFFFFu;
             T value;
-            std::memcpy(&value, &bits, sizeof(T));
+            he_cpp_memory::Copy(&value, &bits, sizeof(T));
             return value;
         } else {
             return static_cast<T>(-1);

@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <string>
 #include <type_traits>
 #include "../../runtime/native_string.hpp"
@@ -361,7 +361,7 @@ class Vector {
     static TBits BitCast(const TValue& value) {
         static_assert(sizeof(TBits) == sizeof(TValue));
         TBits bits;
-        std::memcpy(&bits, &value, sizeof(TBits));
+        he_cpp_memory::Copy(&bits, &value, sizeof(TBits));
         return bits;
     }
 
@@ -369,7 +369,7 @@ class Vector {
     static TValue BitCastBack(const TBits& bits) {
         static_assert(sizeof(TValue) == sizeof(TBits));
         TValue value;
-        std::memcpy(&value, &bits, sizeof(TValue));
+        he_cpp_memory::Copy(&value, &bits, sizeof(TValue));
         return value;
     }
 

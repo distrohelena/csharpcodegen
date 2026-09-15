@@ -2,27 +2,20 @@
 #define STRING_READER_HPP
 #include "../../runtime/native_runtime.hpp"
 
-#if !HE_CPP_USE_STD_STRING
-#error "system/io/string-reader.hpp requires HE_CPP_USE_STD_STRING=1; its text storage has not been adapted to custom string storage."
-#endif
-
-
 #include <cstddef>
-#include <string>
-#include "../../runtime/native_runtime.hpp"
 
 
 class StringReaderLine {
 private:
     bool hasValue;
-    std::string value;
+    HeCppString value;
 
 public:
     StringReaderLine()
         : hasValue(false), value() {
     }
 
-    StringReaderLine(const std::string& lineValue, bool hasLine)
+    StringReaderLine(const HeCppString& lineValue, bool hasLine)
         : hasValue(hasLine), value(lineValue) {
     }
 
@@ -34,34 +27,34 @@ public:
         return hasValue;
     }
 
-    operator const std::string&() const {
+    operator const HeCppString&() const {
         return value;
     }
 };
 
 class StringReader {
 private:
-    std::string source;
+    HeCppString source;
     size_t position;
 
 public:
-    explicit StringReader(const std::string& text)
+    explicit StringReader(const HeCppString& text)
         : source(text), position(0) {
     }
 
     StringReaderLine ReadLine() {
         if (position >= source.size()) {
-            return StringReaderLine(std::string(), false);
+            return StringReaderLine(HeCppString(), false);
         }
 
         size_t lineEnd = source.find_first_of("\r\n", position);
-        if (lineEnd == std::string::npos) {
-            std::string line = source.substr(position);
+        if (lineEnd == HeCppString::npos) {
+            HeCppString line = source.substr(position);
             position = source.size();
             return StringReaderLine(line, true);
         }
 
-        std::string line = source.substr(position, lineEnd - position);
+        HeCppString line = source.substr(position, lineEnd - position);
         position = lineEnd + 1;
 
         if (position < source.size() &&

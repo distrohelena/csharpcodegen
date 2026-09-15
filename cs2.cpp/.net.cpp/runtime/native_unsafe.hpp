@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <type_traits>
 
 template <typename TTarget, typename TSource>
@@ -58,14 +58,14 @@ inline T& he_cpp_unsafe_add(T& source, int32_t index) {
 }
 
 inline void he_cpp_unsafe_init_block_unaligned(void* target, uint8_t value, uint32_t count) {
-    std::memset(target, value, count);
+    he_cpp_memory::Set(target, value, count);
 }
 
 inline void he_cpp_unsafe_copy_block_unaligned(void* target, const void* source, uint32_t count) {
-    std::memcpy(target, source, count);
+    he_cpp_memory::Copy(target, source, count);
 }
 
 template <typename TTarget, typename TSource>
 inline void he_cpp_unsafe_copy_block_unaligned(TTarget& target, TSource& source, uint32_t count) {
-    std::memcpy(&target, &source, count);
+    he_cpp_memory::Copy(&target, &source, count);
 }

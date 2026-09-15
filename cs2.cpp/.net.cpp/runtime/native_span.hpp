@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 #include <initializer_list>
 #include <memory>
 #include <type_traits>
@@ -51,7 +51,7 @@ TTo he_span_convert_value(const TFrom& value) {
                          std::is_trivially_copyable_v<TTo> &&
                          std::is_trivially_copyable_v<TFrom>) {
         TTo result;
-        std::memcpy(&result, &value, sizeof(TTo));
+        he_cpp_memory::Copy(&result, &value, sizeof(TTo));
         return result;
     } else {
         static_assert(sizeof(TTo) == 0, "Unsupported span element conversion.");
@@ -66,7 +66,7 @@ public:
 
     T* Data;
     size_t Length;
-    std::shared_ptr<void> Owner;
+    HeCppSharedPtr<void> Owner;
 
     Span()
         : Data(nullptr),
@@ -183,7 +183,7 @@ private:
         }
 
         T* ownedData = new T[length];
-        Owner = std::shared_ptr<void>(
+        Owner = HeCppSharedPtr<void>(
             ownedData,
             [](void* pointer) {
                 delete[] static_cast<T*>(pointer);
@@ -201,7 +201,7 @@ class ReadOnlySpan {
 public:
     const T* Data;
     size_t Length;
-    std::shared_ptr<void> Owner;
+    HeCppSharedPtr<void> Owner;
 
     ReadOnlySpan()
         : Data(nullptr),
@@ -329,7 +329,7 @@ private:
         }
 
         T* ownedData = new T[length];
-        Owner = std::shared_ptr<void>(
+        Owner = HeCppSharedPtr<void>(
             ownedData,
             [](void* pointer) {
                 delete[] static_cast<T*>(pointer);

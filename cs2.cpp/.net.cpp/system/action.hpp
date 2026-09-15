@@ -1,12 +1,12 @@
 #ifndef ACTION_HPP
 #define ACTION_HPP
 
-#include <functional>
+#include "../runtime/native_runtime.hpp"
 
 template<typename... TArgs>
 class Action {
 private:
-    using FuncType = std::function<void(TArgs...)>;
+    using FuncType = HeCppFunction<void(TArgs...)>;
     FuncType func{};
 
 public:

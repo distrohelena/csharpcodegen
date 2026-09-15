@@ -1,7 +1,7 @@
 #ifndef FUNC_HPP
 #define FUNC_HPP
 
-#include <functional>
+#include "../runtime/native_runtime.hpp"
 
 template <typename... TArgs>
 class Func {
@@ -10,7 +10,7 @@ class Func {
 template <typename TResult>
 class Func<TResult> {
 public:
-    using FuncType = std::function<TResult()>;
+    using FuncType = HeCppFunction<TResult()>;
 
     Func() = default;
 
@@ -30,7 +30,7 @@ private:
 template <typename TArg, typename TResult>
 class Func<TArg, TResult> {
 public:
-    using FuncType = std::function<TResult(TArg)>;
+    using FuncType = HeCppFunction<TResult(TArg)>;
 
     Func() = default;
 

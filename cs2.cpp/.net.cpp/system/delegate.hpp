@@ -1,13 +1,13 @@
 #ifndef HE_CPP_SYSTEM_DELEGATE_HPP
 #define HE_CPP_SYSTEM_DELEGATE_HPP
 
-#include <functional>
+#include "../runtime/native_runtime.hpp"
 #include <utility>
 
 template <typename TResult, typename... TArgs>
 class Delegate {
 public:
-    using FuncType = std::function<TResult(TArgs...)>;
+    using FuncType = HeCppFunction<TResult(TArgs...)>;
 
     Delegate() = default;
 

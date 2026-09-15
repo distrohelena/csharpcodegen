@@ -2,7 +2,7 @@
 #define HE_CPP_SYSTEM_BUFFER_HPP
 
 #include <cstddef>
-#include <cstring>
+#include "runtime/native_memory_ops.hpp"
 
 class Buffer {
 public:
@@ -16,7 +16,7 @@ public:
             clampedByteCount = destinationSizeInBytes;
         }
 
-        std::memmove(destination, source, clampedByteCount);
+        he_cpp_memory::Move(destination, source, clampedByteCount);
     }
 };
 

@@ -2,16 +2,8 @@
 #define FILE_STREAM_HPP
 #include "../../runtime/native_runtime.hpp"
 
-#if !HE_CPP_USE_STD_VECTOR
-#error "system/io/file-stream.hpp requires HE_CPP_USE_STD_VECTOR=1; memory-backed file buffers still use std::vector."
-#endif
-
-#if !HE_CPP_USE_STD_STRING
-#error "system/io/file-stream.hpp requires HE_CPP_USE_STD_STRING=1; file paths have not been adapted to custom string storage."
-#endif
-
-#if !HE_CPP_USE_EXCEPTIONS
-#error "system/io/file-stream.hpp requires HE_CPP_USE_EXCEPTIONS=1; file operations still throw hosted exceptions."
+#ifndef HE_CPP_USE_HOSTED_FILE_SYSTEM
+#define HE_CPP_USE_HOSTED_FILE_SYSTEM 1
 #endif
 
 
@@ -20,19 +12,18 @@
 #include "file-mode.hpp"
 #include "file-access.hpp"
 #include "file-share.hpp"
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #include <cstdio>  // For std::FILE*
-#include <vector>
-#include <string>
-#include "file-mode.hpp"
-#include "../../runtime/native_runtime.hpp"
-
-
-
+#endif
 
 class FileStream : public Stream {
 private:
+#if HE_CPP_USE_HOSTED_FILE_SYSTEM
     std::FILE* file;
-    std::vector<uint8_t> memoryBuffer;
+#else
+    void* file;
+#endif
+    HeCppVector<uint8_t> memoryBuffer;
     size_t position;
     size_t length;
     bool ownsMemoryBuffer;
@@ -44,8 +35,8 @@ public:
     FileStream(const uint8_t* data, size_t length);
     FileStream(const char* path, FileMode mode);
     FileStream(const char* path, FileMode mode, FileAccess access, FileShare share);
-    FileStream(const std::string& path, FileMode mode);
-    FileStream(const std::string& path, FileMode mode, FileAccess access, FileShare share);
+    FileStream(const HeCppString& path, FileMode mode);
+    FileStream(const HeCppString& path, FileMode mode, FileAccess access, FileShare share);
     ~FileStream() override;
 
     size_t Read(uint8_t* buffer, size_t offset, size_t count) override;

@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-#include <unordered_set>
 
 #include "native_hash.hpp"
 
@@ -32,9 +31,11 @@ public:
 };
 
 template<typename TValue>
-class HashSet : public std::unordered_set<TValue, NativeHashSetHash<TValue>, NativeHashSetEqual<TValue>> {
+class HashSet : public HeCppUnorderedSet<TValue, NativeHashSetHash<TValue>, NativeHashSetEqual<TValue>> {
+    using Base = HeCppUnorderedSet<TValue, NativeHashSetHash<TValue>, NativeHashSetEqual<TValue>>;
+
 public:
-    using std::unordered_set<TValue, NativeHashSetHash<TValue>, NativeHashSetEqual<TValue>>::unordered_set;
+    using Base::Base;
 
     explicit HashSet(const StringComparer&) {
     }
