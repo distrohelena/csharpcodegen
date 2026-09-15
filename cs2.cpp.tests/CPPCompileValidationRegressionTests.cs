@@ -229,6 +229,23 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures generated interface pointers can be deleted through their polymorphic ownership boundary.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInterface_EmitsVirtualDestructor() {
+            string source = """
+                public interface IAsset {
+                    void Reset();
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string header = File.ReadAllText(Path.Combine(output.OutputPath, "IAsset.hpp"));
+
+            Assert.Contains("virtual ~IAsset() = default;", header, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures delegate-typed properties invoke the delegate instance itself instead of incorrectly lowering to one nonexistent Invoke member on the owning class.
         /// </summary>
         [Fact]
@@ -6147,6 +6164,59 @@ namespace cs2.cpp.tests {
             Assert.Contains("__scopedArg", sourceOutput);
             Assert.Contains("delete __scopedArg", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("String::Split(value, new Array<char>({ ' ', '\\t' })", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures the common string.Split(char) overload lowers to the managed
+        /// runtime helper instead of a member call on std::string.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringSplitSingleCharacter_UsesRuntimeHelper() {
+            string source = """
+                public class Widget {
+                    public string[] Split(string value) {
+                        return value.Split('\\n');
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("String::Split(value,", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("StringSplitOptions::None", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("value.Split(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures character-separator overload resolution accepts variables, forwards explicit options, and does not capture string-separator overloads.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithStringSplitCharacterOverloads_PreservesTypesAndOptions() {
+            string source = """
+                public class Widget {
+                    public string[] SplitDefault(string value, char separator) {
+                        return value.Split(separator);
+                    }
+
+                    public string[] SplitRemovingEmpty(string value, char separator) {
+                        return value.Split(separator, System.StringSplitOptions.RemoveEmptyEntries);
+                    }
+
+                    public string[] SplitStringSeparator(string value, string separator) {
+                        return value.Split(separator);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("String::Split(value, separator, StringSplitOptions::None)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("String::Split(value, separator, StringSplitOptions::RemoveEmptyEntries)", sourceOutput, StringComparison.Ordinal);
+            Assert.Equal(
+                1,
+                sourceOutput.Split("String::Split(value, separator, StringSplitOptions::None)", StringSplitOptions.None).Length - 1);
         }
 
         /// <summary>

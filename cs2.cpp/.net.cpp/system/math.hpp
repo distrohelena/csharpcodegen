@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <type_traits>
 
 enum class MidpointRounding {
@@ -78,6 +79,20 @@ public:
     template <typename TValue>
     static double Acos(TValue value) {
         return std::acos(static_cast<double>(value));
+    }
+
+    template <typename TValue>
+    static int Sign(TValue value) {
+        if (std::isnan(static_cast<double>(value))) {
+            throw std::domain_error("Math::Sign does not accept NaN.");
+        }
+
+        return (value > static_cast<TValue>(0)) - (value < static_cast<TValue>(0));
+    }
+
+    template <typename TValue>
+    static double Asin(TValue value) {
+        return std::asin(static_cast<double>(value));
     }
 
     template <typename TValue>
@@ -185,6 +200,16 @@ public:
     template <typename TValue>
     static float Acos(TValue value) {
         return static_cast<float>(Math::Acos(value));
+    }
+
+    template <typename TValue>
+    static int Sign(TValue value) {
+        return Math::Sign(value);
+    }
+
+    template <typename TValue>
+    static float Asin(TValue value) {
+        return static_cast<float>(Math::Asin(value));
     }
 
     template <typename TValue>

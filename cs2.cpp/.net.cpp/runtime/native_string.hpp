@@ -422,6 +422,19 @@ public:
 
         return result;
     }
+
+    /// <summary>
+    /// Splits a string at one character using the managed two-argument overload.
+    /// The temporary separator array remains valid for the delegated call only.
+    /// </summary>
+    /// <param name="value">String to split.</param>
+    /// <param name="separator">Character that separates entries.</param>
+    /// <param name="options">Whether empty entries are removed.</param>
+    /// <returns>An owned array containing the split entries.</returns>
+    static Array<std::string>* Split(const std::string& value, char separator, StringSplitOptions options) {
+        Array<char> separators({ separator });
+        return Split(value, &separators, 0, options);
+    }
     static size_t FindNextSeparator(const std::string& value, const Array<char>* separators, size_t startIndex) {
         if (separators == nullptr || separators->Length <= 0) {
             return value.find_first_of(" \t\r\n", startIndex);

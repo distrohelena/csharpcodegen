@@ -2031,6 +2031,7 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives source definitions for computed members.</param>
         void WriteInterfaceSection(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
             headerWriter.WriteLine("public:");
+            headerWriter.WriteLine($"    virtual ~{conversionClass.GetEmittedTypeName()}() = default;");
 
             List<Action> writers = new List<Action>();
             HashSet<string> emittedFunctionKeys = new HashSet<string>(StringComparer.Ordinal);

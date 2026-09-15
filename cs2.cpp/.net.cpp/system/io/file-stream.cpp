@@ -294,6 +294,14 @@ void FileStream::SetLength(size_t newLength) {
         return;
     }
 
+#if HE_CPP_PLATFORM_DC
+    (void)newLength;
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    throw NotSupportedException();
+#else
+    throw NotSupportedException("Dreamcast FileStream cannot resize a file-backed stream.");
+#endif
+#else
     std::fflush(file);
 #if defined(_WIN32)
     _chsize_s(fileno(file), newLength);
@@ -301,6 +309,7 @@ void FileStream::SetLength(size_t newLength) {
     ftruncate(fileno(file), newLength);
 #endif
     UpdateLength();
+#endif
 }
 
 // Updates the stored file length
@@ -310,10 +319,18 @@ void FileStream::UpdateLength() {
         return;
     }
 
+#if HE_CPP_PLATFORM_DC
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    throw NotSupportedException();
+#else
+    throw NotSupportedException("Dreamcast FileStream cannot query a file-backed stream.");
+#endif
+#else
     struct stat fileStat;
     if (fstat(fileno(file), &fileStat) == 0) {
         length = fileStat.st_size;
     }
+#endif
 }
 
 // Properties

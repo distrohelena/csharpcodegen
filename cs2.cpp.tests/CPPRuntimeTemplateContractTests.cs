@@ -433,6 +433,27 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies the math runtime template exposes the authored native helpers and rejects NaN for managed Math.Sign semantics.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_math_declares_sign_and_asin_contract() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "math.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("static int Sign(TValue value)", source, StringComparison.Ordinal);
+        Assert.Contains("std::isnan(static_cast<double>(value))", source, StringComparison.Ordinal);
+        Assert.Contains("throw std::domain_error", source, StringComparison.Ordinal);
+        Assert.Contains("static double Asin(TValue value)", source, StringComparison.Ordinal);
+        Assert.Contains("static float Asin(TValue value)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the file-stream runtime template owns the PS2 `cdrom0:` direct-read path instead of requiring downstream generated-code rewrites.
     /// </summary>
     [Fact]
@@ -478,6 +499,27 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("memoryBuffer.swap(customStream->memoryBuffer);", source, StringComparison.Ordinal);
         Assert.Contains("customStream->file = nullptr;", source, StringComparison.Ordinal);
         Assert.Contains("customStream->ownsMemoryBuffer = false;", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the Dreamcast file-stream template avoids host-only file descriptor APIs for file-backed mutation.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_file_stream_guards_dreamcast_file_mutation_apis() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "file-stream.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#if HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
+        Assert.Contains("throw NotSupportedException", source, StringComparison.Ordinal);
+        Assert.Contains("(void)newLength;", source, StringComparison.Ordinal);
+        Assert.Contains("Dreamcast FileStream cannot query a file-backed stream.", source, StringComparison.Ordinal);
     }
 
     /// <summary>

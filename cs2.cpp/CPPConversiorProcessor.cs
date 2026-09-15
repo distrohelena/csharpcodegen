@@ -8511,6 +8511,27 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(memberName, "Split", StringComparison.Ordinal) &&
+                TryResolveStringSplitCharacterOverload(
+                    semantic,
+                    invocationExpression,
+                    out bool splitCharacterHasExplicitOptions)) {
+                lines.Add("String::Split(");
+                lines.Add(receiverText);
+                lines.Add(", ");
+                ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, lines);
+                lines.Add(", ");
+                if (splitCharacterHasExplicitOptions) {
+                    ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression, lines);
+                } else {
+                    lines.Add("StringSplitOptions::None");
+                }
+
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("string[]");
+                return true;
+            }
+
             if (string.Equals(memberName, "ToLowerInvariant", StringComparison.Ordinal) &&
                 invocationExpression.ArgumentList.Arguments.Count == 0) {
                 lines.Add("String::ToLowerInvariant(");
@@ -8534,6 +8555,67 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Resolves the managed character-separator string.Split overload without treating arbitrary literals as characters.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve argument and method types.</param>
+        /// <param name="invocationExpression">String.Split invocation to inspect.</param>
+        /// <param name="hasExplicitOptions">Receives whether the invocation supplies StringSplitOptions.</param>
+        /// <returns><c>true</c> when the selected overload takes a character separator; otherwise, <c>false</c>.</returns>
+        bool TryResolveStringSplitCharacterOverload(
+            SemanticModel semantic,
+            InvocationExpressionSyntax invocationExpression,
+            out bool hasExplicitOptions) {
+            hasExplicitOptions = false;
+            if (semantic == null || invocationExpression == null ||
+                invocationExpression.ArgumentList.Arguments.Count is < 1 or > 2) {
+                return false;
+            }
+
+            IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (methodSymbol == null ||
+                !string.Equals(methodSymbol.Name, "Split", StringComparison.Ordinal) ||
+                methodSymbol.ContainingType?.SpecialType != SpecialType.System_String ||
+                methodSymbol.Parameters.Length == 0 ||
+                methodSymbol.Parameters[0].Type.SpecialType != SpecialType.System_Char) {
+                return false;
+            }
+
+            ExpressionSyntax separatorExpression = invocationExpression.ArgumentList.Arguments[0].Expression;
+            if (!TryGetExpressionTypeSymbol(semantic, separatorExpression, out ITypeSymbol separatorType) ||
+                separatorType.SpecialType != SpecialType.System_Char) {
+                return false;
+            }
+
+            if (invocationExpression.ArgumentList.Arguments.Count == 1) {
+                return true;
+            }
+
+            if (methodSymbol.Parameters.Length < 2 ||
+                !IsStringSplitOptionsType(methodSymbol.Parameters[1].Type)) {
+                return false;
+            }
+
+            ExpressionSyntax optionsExpression = invocationExpression.ArgumentList.Arguments[1].Expression;
+            if (!TryGetExpressionTypeSymbol(semantic, optionsExpression, out ITypeSymbol optionsType) ||
+                !IsStringSplitOptionsType(optionsType)) {
+                return false;
+            }
+
+            hasExplicitOptions = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether a symbol is the managed StringSplitOptions enum.
+        /// </summary>
+        /// <param name="typeSymbol">Type symbol to inspect.</param>
+        /// <returns><c>true</c> when the symbol is System.StringSplitOptions; otherwise, <c>false</c>.</returns>
+        static bool IsStringSplitOptionsType(ITypeSymbol typeSymbol) {
+            return typeSymbol?.TypeKind == TypeKind.Enum &&
+                string.Equals(typeSymbol.ToDisplayString(), "System.StringSplitOptions", StringComparison.Ordinal);
         }
 
         bool TryProcessNativeFreeFunctionInvocation(
