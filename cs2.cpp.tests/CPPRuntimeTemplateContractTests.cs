@@ -502,7 +502,7 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
-    /// Verifies the Dreamcast file-stream template avoids host-only file descriptor APIs for file-backed mutation.
+    /// Verifies the file-stream template uses the generic limited-libc capability instead of a platform-specific branch.
     /// </summary>
     [Fact]
     public void RuntimeTemplates_file_stream_guards_dreamcast_file_mutation_apis() {
@@ -516,10 +516,15 @@ public sealed class CPPRuntimeTemplateContractTests {
 
         string source = File.ReadAllText(templatePath);
 
-        Assert.Contains("#if HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
+        Assert.Contains("#ifndef HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", source, StringComparison.Ordinal);
+        Assert.Contains("#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", source, StringComparison.Ordinal);
         Assert.Contains("throw NotSupportedException", source, StringComparison.Ordinal);
         Assert.Contains("(void)newLength;", source, StringComparison.Ordinal);
-        Assert.Contains("Dreamcast FileStream cannot query a file-backed stream.", source, StringComparison.Ordinal);
+        Assert.Contains("FileStream cannot query a file-backed stream on this target.", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
+        Assert.Contains("if (file == nullptr)", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer.resize(newLength)", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer.size()", source, StringComparison.Ordinal);
     }
 
     /// <summary>

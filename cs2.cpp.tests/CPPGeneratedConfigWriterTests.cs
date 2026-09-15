@@ -72,6 +72,7 @@ public class CPPGeneratedConfigWriterTests {
         Assert.Contains("#define HE_CPP_RUNTIME_STL_LITE 1", output);
         Assert.Contains("#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 0", output);
         Assert.Contains("#define HE_CPP_GENERATED_FUNCTION_PROFILING 0", output);
+        Assert.Contains("#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_STRING 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_LIST 1", output);
         Assert.Contains("#define HE_CPP_REQ_NATIVE_DICTIONARY 1", output);
@@ -95,6 +96,26 @@ public class CPPGeneratedConfigWriterTests {
         string output = File.ReadAllText(filePath);
 
         Assert.Contains("#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 1", output);
+    }
+
+    /// <summary>
+    /// Ensures a limited-libc target can opt out of descriptor APIs through a generic capability option.
+    /// </summary>
+    [Fact]
+    public void Write_WhenFileDescriptorApisAreUnavailable_WritesCapabilityDefineZero() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            ["native-file-stream-descriptor-apis"] = "false"
+        };
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
+        registrar.RegisterDefaults(options);
+
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar);
+        string output = File.ReadAllText(filePath);
+
+        Assert.Contains("#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS 0", output);
     }
 
     /// <summary>

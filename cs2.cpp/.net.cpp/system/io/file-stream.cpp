@@ -4,6 +4,11 @@
 #include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
 #endif
 #include "../../runtime/native_exceptions.hpp"
+#ifndef HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+// Keep hand-authored/runtime-template consumers compatible with config headers emitted before
+// this capability was introduced. Limited-libc profiles explicitly emit zero.
+#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS 1
+#endif
 #include <cstring>    // For std::memcpy
 #include <sys/stat.h> // For file size retrieval
 #include <memory>
@@ -294,12 +299,12 @@ void FileStream::SetLength(size_t newLength) {
         return;
     }
 
-#if HE_CPP_PLATFORM_DC
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
     (void)newLength;
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
     throw NotSupportedException();
 #else
-    throw NotSupportedException("Dreamcast FileStream cannot resize a file-backed stream.");
+    throw NotSupportedException("FileStream cannot resize a file-backed stream on this target.");
 #endif
 #else
     std::fflush(file);
@@ -319,11 +324,11 @@ void FileStream::UpdateLength() {
         return;
     }
 
-#if HE_CPP_PLATFORM_DC
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
     throw NotSupportedException();
 #else
-    throw NotSupportedException("Dreamcast FileStream cannot query a file-backed stream.");
+    throw NotSupportedException("FileStream cannot query a file-backed stream on this target.");
 #endif
 #else
     struct stat fileStat;
