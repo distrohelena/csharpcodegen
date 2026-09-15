@@ -186,6 +186,36 @@ public:
 };
 
 /// <summary>
+/// Represents an undefined managed arithmetic operation, such as taking the sign of NaN.
+/// </summary>
+class ArithmeticException : public Exception {
+public:
+    /// <summary>
+    /// Creates a compact arithmetic exception with the canonical runtime message.
+    /// </summary>
+    ArithmeticException() noexcept
+        : Exception() {
+        Message = "Arithmetic operation resulted in an exception.";
+    }
+
+    /// <summary>
+    /// Creates a compact arithmetic exception while discarding the supplied message payload.
+    /// </summary>
+    explicit ArithmeticException(const char* message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an exception.";
+    }
+
+    /// <summary>
+    /// Creates a compact arithmetic exception while discarding the supplied managed string payload.
+    /// </summary>
+    explicit ArithmeticException(const std::string& message) noexcept
+        : Exception(message) {
+        Message = "Arithmetic operation resulted in an exception.";
+    }
+};
+
+/// <summary>
 /// Represents a managed checked-arithmetic result that exceeds its destination type range.
 /// </summary>
 class OverflowException : public Exception {
@@ -442,6 +472,33 @@ public:
     }
 
     explicit DivideByZeroException(const std::string& message)
+        : Exception(message) {
+    }
+};
+
+/// <summary>
+/// Represents an undefined managed arithmetic operation, such as taking the sign of NaN.
+/// </summary>
+class ArithmeticException : public Exception {
+public:
+    /// <summary>
+    /// Creates an arithmetic exception with the canonical runtime message.
+    /// </summary>
+    ArithmeticException()
+        : Exception("Arithmetic operation resulted in an exception.") {
+    }
+
+    /// <summary>
+    /// Creates an arithmetic exception with an optional caller-provided message.
+    /// </summary>
+    explicit ArithmeticException(const char* message)
+        : Exception(message == nullptr ? "Arithmetic operation resulted in an exception." : message) {
+    }
+
+    /// <summary>
+    /// Creates an arithmetic exception with a caller-provided managed string message.
+    /// </summary>
+    explicit ArithmeticException(const std::string& message)
         : Exception(message) {
     }
 };

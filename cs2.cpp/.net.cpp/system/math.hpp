@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <type_traits>
+
+#include "../runtime/native_exceptions.hpp"
 
 enum class MidpointRounding {
     ToEven,
@@ -81,6 +84,11 @@ public:
     }
 
     template <typename TValue>
+    static double Asin(TValue value) {
+        return std::asin(static_cast<double>(value));
+    }
+
+    template <typename TValue>
     static double Round(TValue value) {
         return std::nearbyint(static_cast<double>(value));
     }
@@ -132,6 +140,17 @@ public:
     template <typename TY, typename TX>
     static double Atan2(TY y, TX x) {
         return std::atan2(static_cast<double>(y), static_cast<double>(x));
+    }
+
+    template <typename TValue>
+    static int32_t Sign(TValue value) {
+        if constexpr (std::is_floating_point_v<TValue>) {
+            if (std::isnan(value)) {
+                throw ArithmeticException();
+            }
+        }
+
+        return (value > static_cast<TValue>(0)) - (value < static_cast<TValue>(0));
     }
 };
 
@@ -188,6 +207,11 @@ public:
     }
 
     template <typename TValue>
+    static float Asin(TValue value) {
+        return static_cast<float>(Math::Asin(value));
+    }
+
+    template <typename TValue>
     static float Round(TValue value) {
         return static_cast<float>(Math::Round(value));
     }
@@ -230,6 +254,11 @@ public:
     template <typename TY, typename TX>
     static float Atan2(TY y, TX x) {
         return static_cast<float>(Math::Atan2(y, x));
+    }
+
+    template <typename TValue>
+    static int32_t Sign(TValue value) {
+        return Math::Sign(value);
     }
 };
 

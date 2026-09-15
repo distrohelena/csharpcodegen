@@ -5214,7 +5214,9 @@ namespace cs2.cpp {
                 lines.Add("Math::");
             }
             lines.Add(memberName);
-            resultType = receiverSpecialType switch {
+            resultType = string.Equals(memberName, "Sign", StringComparison.Ordinal)
+                ? VariableUtil.GetVarType("int")
+                : receiverSpecialType switch {
                 SpecialType.System_Int32 => VariableUtil.GetVarType("int"),
                 SpecialType.System_Single => VariableUtil.GetVarType("float"),
                 SpecialType.System_Double => VariableUtil.GetVarType("double"),
@@ -5233,6 +5235,7 @@ namespace cs2.cpp {
             return memberName switch {
                 "Abs" => true,
                 "Acos" => true,
+                "Asin" => true,
                 "Atan2" => true,
                 "Ceiling" => true,
                 "Clamp" => true,
@@ -5243,6 +5246,7 @@ namespace cs2.cpp {
                 "Min" => true,
                 "MinMagnitude" => true,
                 "Round" => true,
+                "Sign" => true,
                 "Sin" => true,
                 "Cos" => true,
                 "Sqrt" => true,

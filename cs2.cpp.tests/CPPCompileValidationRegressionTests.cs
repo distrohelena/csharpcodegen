@@ -10442,6 +10442,39 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures inverse sine and sign calls lower through the shared math runtime with the managed integer sign result.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithMathAsinAndSignCalls_UsesRuntimeMathSurface() {
+            string source = """
+                public class Fixture {
+                    public double Asin(double value) {
+                        return System.Math.Asin(value);
+                    }
+
+                    public int Sign(double value) {
+                        return System.Math.Sign(value);
+                    }
+
+                    public int SignInteger(int value) {
+                        return System.Math.Sign(value);
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeMath = File.ReadAllText(Path.Combine(output.OutputPath, "system", "math.hpp"));
+            string runtimeExceptions = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("Math::Asin(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("Math::Sign(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("static double Asin", runtimeMath, StringComparison.Ordinal);
+            Assert.Contains("static int32_t Sign", runtimeMath, StringComparison.Ordinal);
+            Assert.Contains("class ArithmeticException", runtimeExceptions, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures NativeMemory static allocation helpers lower to the portable runtime surface instead of unresolved managed symbols.
         /// </summary>
         [Fact]
