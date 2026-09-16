@@ -11883,5 +11883,27 @@ namespace cs2.cpp.tests {
         /// <param name="GeneratedText">Concatenated generated textual output.</param>
         /// <param name="Report">Parsed conversion report.</param>
         record ConversionOutput(string OutputPath, string GeneratedText, JsonDocument Report);
+
+    /// <summary>
+        /// Ensures inherited object hashes use portable identity hashing while explicit overrides remain ordinary calls.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithInheritedObjectHash_UsesNativeIdentityHash() {
+            string source = """
+                public class Entity { }
+                public class CustomEntity {
+                    public override int GetHashCode() { return 17; }
+                }
+                public class Fixture {
+                    public int Hash(Entity value) { return value.GetHashCode(); }
+                    public int CustomHash(CustomEntity value) { return value.GetHashCode(); }
+                }
+                """;
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            Assert.Contains("he_cpp_get_hash_code(value)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("value->GetHashCode()", sourceOutput, StringComparison.Ordinal);
+            Assert.True(File.Exists(Path.Combine(output.OutputPath, "runtime", "native_hash.hpp")));
+        }
     }
 }

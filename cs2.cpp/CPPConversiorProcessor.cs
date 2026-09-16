@@ -9034,7 +9034,10 @@ namespace cs2.cpp {
             }
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
-            if (receiverTypeSymbol is ITypeParameterSymbol) {
+            IMethodSymbol hashMethodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            bool usesObjectIdentityHash = receiverTypeSymbol.IsReferenceType &&
+                hashMethodSymbol?.ContainingType.SpecialType == SpecialType.System_Object;
+            if (receiverTypeSymbol is ITypeParameterSymbol || usesObjectIdentityHash) {
                 RegisterRuntimeRequirement("NativeHashCode");
                 lines.Add("he_cpp_get_hash_code(");
                 lines.Add(receiverText);
