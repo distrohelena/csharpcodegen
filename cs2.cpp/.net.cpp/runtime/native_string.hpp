@@ -461,19 +461,67 @@ public:
         return result;
     }
 
-    // Mirrors System.String.Split(char, StringSplitOptions): unlimited segments split on one separator.
-    static Array<HeCppString>* Split(const HeCppString& value, char separator, StringSplitOptions options) {
-        Array<char> separators{ separator };
-        return Split(value, &separators, 0, options);
+    /// <summary>
+    /// Splits a string on one character while preserving empty segments by default.
+    /// </summary>
+    static Array<HeCppString>* Split(const HeCppString& value, char separator, StringSplitOptions options = StringSplitOptions::None) {
+        Array<char> separators({ separator });
+        return Split(value, &separators, INT32_MAX, options);
     }
 
+    /// <summary>
+    /// Splits a string on the supplied character set while preserving empty segments by default.
+    /// </summary>
+    static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, StringSplitOptions options = StringSplitOptions::None) {
+        return Split(value, separators, INT32_MAX, options);
+    }
+
+    /// <summary>
+    /// Splits a string on one character with the requested maximum number of returned segments.
+    /// </summary>
+    static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count) {
+        Array<char> separators({ separator });
+        return Split(value, &separators, count, StringSplitOptions::None);
+    }
+
+    /// <summary>
+    /// Splits a string on one character with a segment count and empty-entry policy.
+    /// </summary>
+    static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count, StringSplitOptions options) {
+        Array<char> separators({ separator });
+        return Split(value, &separators, count, options);
+    }
+
+    /// <summary>
+    /// Splits a string on the supplied character set with the requested maximum segment count.
+    /// </summary>
+    static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count) {
+        return Split(value, separators, count, StringSplitOptions::None);
+    }
+
+    /// <summary>
+    /// Implements the shared count and empty-entry rules for all character-based string splits.
+    /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count, StringSplitOptions options) {
+        if (count == 0) {
+            return new Array<HeCppString>(0);
+        }
+        if (count < 0) {
+            return he_cpp_raise_value<Array<HeCppString>*>(ArgumentOutOfRangeException("count"));
+        }
         HeCppVector<HeCppString> parts;
         size_t segmentStart = 0;
-        int32_t remainingParts = count <= 0 ? INT32_MAX : count;
+        int32_t remainingParts = count;
 
         while (segmentStart <= value.size()) {
             if (remainingParts == 1) {
+                if (options == StringSplitOptions::RemoveEmptyEntries) {
+                    // .NET skips empty entries before capturing the remainder as the final segment.
+                    while (segmentStart < value.size() && FindNextSeparator(value, separators, segmentStart) == segmentStart) {
+                        segmentStart++;
+                    }
+                }
+
                 HeCppString finalPart = value.substr(segmentStart);
                 if (!(options == StringSplitOptions::RemoveEmptyEntries && finalPart.empty())) {
                     parts.push_back(finalPart);

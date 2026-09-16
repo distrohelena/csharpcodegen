@@ -5238,7 +5238,9 @@ namespace cs2.cpp {
                 lines.Add("Math::");
             }
             lines.Add(memberName);
-            resultType = receiverSpecialType switch {
+            resultType = string.Equals(memberName, "Sign", StringComparison.Ordinal)
+                ? VariableUtil.GetVarType("int")
+                : receiverSpecialType switch {
                 SpecialType.System_Int32 => VariableUtil.GetVarType("int"),
                 SpecialType.System_Single => VariableUtil.GetVarType("float"),
                 SpecialType.System_Double => VariableUtil.GetVarType("double"),
@@ -5257,6 +5259,7 @@ namespace cs2.cpp {
             return memberName switch {
                 "Abs" => true,
                 "Acos" => true,
+                "Asin" => true,
                 "Atan2" => true,
                 "Ceiling" => true,
                 "Clamp" => true,
@@ -5267,6 +5270,7 @@ namespace cs2.cpp {
                 "Min" => true,
                 "MinMagnitude" => true,
                 "Round" => true,
+                "Sign" => true,
                 "Sin" => true,
                 "Cos" => true,
                 "Sqrt" => true,
@@ -8145,22 +8149,29 @@ namespace cs2.cpp {
             }
 
             if (parameterSymbol.Type?.TypeKind == TypeKind.Enum) {
-                // Roslyn reports enum defaults as their underlying constant; emit the named member so the
-                // C++ enum class scope resolves instead of an invalid "Type::0" token.
-                IFieldSymbol enumMember = parameterSymbol.Type.GetMembers()
-                    .OfType<IFieldSymbol>()
-                    .FirstOrDefault(field => field.HasConstantValue && Equals(field.ConstantValue, explicitDefaultValue));
-                if (enumMember != null) {
-                    argumentLines.Add($"{parameterSymbol.Type.Name}::{enumMember.Name}");
-                    return;
-                }
-
-                string enumConstantText = Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture);
-                argumentLines.Add($"static_cast<{parameterSymbol.Type.Name}>({enumConstantText})");
+                argumentLines.Add(FormatEnumDefaultArgument(parameterSymbol.Type, explicitDefaultValue));
                 return;
             }
 
             argumentLines.Add(Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
+        /// Formats an optional enum parameter default as a scoped member reference so generated C++ names the enum member
+        /// instead of the raw underlying constant Roslyn reports for the default value.
+        /// </summary>
+        /// <param name="enumType">Enum type declared by the optional parameter.</param>
+        /// <param name="explicitDefaultValue">Underlying constant of the parameter default.</param>
+        /// <returns>The enum member reference, or an explicit cast when no declared member carries the constant.</returns>
+        static string FormatEnumDefaultArgument(ITypeSymbol enumType, object explicitDefaultValue) {
+            foreach (IFieldSymbol enumMember in enumType.GetMembers().OfType<IFieldSymbol>()) {
+                if (enumMember.HasConstantValue && Equals(enumMember.ConstantValue, explicitDefaultValue)) {
+                    return $"{enumType.Name}::{enumMember.Name}";
+                }
+            }
+
+            string constantText = Convert.ToString(explicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture);
+            return $"static_cast<{enumType.Name}>({constantText})";
         }
 
         static ArgumentSyntax[] AlignInvocationArguments(
@@ -8583,7 +8594,7 @@ namespace cs2.cpp {
             }
 
             if (string.Equals(memberName, "Split", StringComparison.Ordinal) &&
-                invocationExpression.ArgumentList.Arguments.Count == 3) {
+                invocationExpression.ArgumentList.Arguments.Count is >= 1 and <= 3) {
                 ArgumentSyntax separatorArgument = invocationExpression.ArgumentList.Arguments[0];
                 List<string> separatorLines = new List<string>();
                 int separatorStart = context.DepthClass;
@@ -8608,8 +8619,10 @@ namespace cs2.cpp {
                     lines.Add(receiverText);
                     lines.Add(", ");
                     lines.Add(temporaryName);
-                    lines.Add(", ");
-                    AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments.Skip(1), lines);
+                    if (invocationExpression.ArgumentList.Arguments.Count > 1) {
+                        lines.Add(", ");
+                        AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments.Skip(1), lines);
+                    }
                     lines.Add(");\n");
                     lines.Add("})()");
                 } else {

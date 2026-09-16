@@ -23,8 +23,9 @@ public sealed class CPPOwnershipConversionTestWorkspace {
     /// </summary>
     /// <param name="testId">Human-readable identifier included in the scratch directory name.</param>
     /// <param name="source">Complete C# source compiled and converted by the production pipeline.</param>
+    /// <param name="platformOptionValues">Optional codegen capability overrides, such as enabling C++ exception unwinding.</param>
     /// <returns>The completed conversion output and its generated artifacts.</returns>
-    public CPPOwnershipConversionOutput Convert(string testId, string source) {
+    public CPPOwnershipConversionOutput Convert(string testId, string source, IReadOnlyDictionary<string, string> platformOptionValues = null) {
         if (string.IsNullOrWhiteSpace(testId)) {
             throw new ArgumentException("An ownership conversion test identifier is required.", nameof(testId));
         }
@@ -44,6 +45,14 @@ public sealed class CPPOwnershipConversionTestWorkspace {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = false;
             options.WriteConversionReport = true;
+            if (platformOptionValues != null) {
+                Dictionary<string, string> mergedOptionValues = new Dictionary<string, string>(options.PlatformOptionValues, StringComparer.OrdinalIgnoreCase);
+                foreach (KeyValuePair<string, string> optionValue in platformOptionValues) {
+                    mergedOptionValues[optionValue.Key] = optionValue.Value;
+                }
+
+                options.PlatformOptionValues = mergedOptionValues;
+            }
             CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
             converter.AddCsproj(projectPath);
             converter.WriteOutput(outputPath);
