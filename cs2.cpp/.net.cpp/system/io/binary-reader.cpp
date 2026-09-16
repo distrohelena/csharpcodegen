@@ -2,8 +2,8 @@
 #include "helcpp_config.hpp"
 #include "../../runtime/native_allocation.hpp"
 #include "../../runtime/native_exceptions.hpp"
+#include "../../runtime/native_endian.hpp"
 #include "../../runtime/native_memory_ops.hpp"
-#include <algorithm>
 
 BinaryReader::BinaryReader(Stream& s, bool isLittleEndian)
     : stream(s), littleEndian(isLittleEndian) {
@@ -26,15 +26,16 @@ T BinaryReader::Read() {
 #endif
     }
 
+    // The buffer holds the value in the wire byte order. Swap it into the
+    // host's order only when the two disagree: reversing whenever the wire is
+    // big-endian is correct on a little-endian CPU alone, and byte-swaps every
+    // multi-byte value on a big-endian one.
     T value = 0;
-    if (littleEndian) {
-        he_cpp_memory::Copy(&value, buffer, sizeof(T));
-    }
-    else {
-        std::reverse(buffer, buffer + sizeof(T));
-        he_cpp_memory::Copy(&value, buffer, sizeof(T));
+    if (he_cpp_endian::NeedsSwap(littleEndian)) {
+        he_cpp_endian::ReverseBytes(buffer, sizeof(T));
     }
 
+    he_cpp_memory::Copy(&value, buffer, sizeof(T));
     return value;
 }
 

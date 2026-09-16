@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "runtime/native_endian.hpp"
 #include "runtime/native_memory_ops.hpp"
 #include "../runtime/array.hpp"
 
@@ -9,6 +10,15 @@
 /// </summary>
 class BitConverter {
 public:
+    /// <summary>
+    /// True when this CPU stores the least significant byte first, matching
+    /// System.BitConverter.IsLittleEndian. The conversions below reinterpret
+    /// the bits of a value already in host order, so they need no swapping;
+    /// callers that hand the bytes to a wire format are the ones that must
+    /// know the order, and this is how they ask.
+    /// </summary>
+    static constexpr bool IsLittleEndian = he_cpp_endian::HostIsLittleEndian;
+
     /// <summary>
     /// Reinterprets the supplied integer bits as a single-precision floating point value.
     /// </summary>

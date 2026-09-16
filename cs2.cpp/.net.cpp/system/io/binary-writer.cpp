@@ -1,6 +1,6 @@
 #include "binary-writer.hpp"
+#include "../../runtime/native_endian.hpp"
 #include "../../runtime/native_memory_ops.hpp"
-#include <algorithm>
 
 BinaryWriter::BinaryWriter(Stream& s, bool isLittleEndian)
     : stream(s), littleEndian(isLittleEndian) {
@@ -15,9 +15,12 @@ void BinaryWriter::Write(T value) {
     static_assert(std::is_arithmetic_v<T>, "Only arithmetic types are supported.");
     uint8_t buffer[sizeof(T)];
 
+    // The copy produces the host's byte order. Swap it into the wire order
+    // only when the two disagree; swapping whenever the wire is big-endian is
+    // correct on a little-endian CPU alone.
     he_cpp_memory::Copy(buffer, &value, sizeof(T));
-    if (!littleEndian) {
-        std::reverse(buffer, buffer + sizeof(T));
+    if (he_cpp_endian::NeedsSwap(littleEndian)) {
+        he_cpp_endian::ReverseBytes(buffer, sizeof(T));
     }
 
     stream.Write(buffer, 0, sizeof(T));
