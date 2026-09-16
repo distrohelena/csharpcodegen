@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "helcpp_config.hpp"
-
 /// <summary>
 /// Host byte order and the byte-order decision binary serialization depends on.
 /// </summary>
@@ -13,7 +11,14 @@
 /// its own. Converting between them means swapping exactly when the two
 /// disagree. Code that assumes the host is little-endian reads and writes
 /// byte-swapped values on a big-endian target, silently and only there, which
-/// is why the decision lives in one place with its truth table asserted.
+/// is why the decision lives in one place.
+///
+/// The two orders are independent and must not be conflated.
+/// HE_CPP_PLATFORM_IS_LITTLE_ENDIAN describes the byte order of serialized
+/// data, from the platform's PlatformSerializationEndianness, and says nothing
+/// about the CPU: the Nintendo 64 is a big-endian machine whose cooked data is
+/// declared little-endian, which is a legitimate configuration. Only the
+/// compiler can answer what the CPU is, so only the compiler is asked.
 /// </remarks>
 namespace he_cpp_endian {
 
@@ -24,17 +29,8 @@ inline constexpr bool HostIsLittleEndian =
 #elif defined(_MSC_VER)
 // MSVC targets x86, x64 and ARM in little-endian mode only.
 inline constexpr bool HostIsLittleEndian = true;
-#elif defined(HE_CPP_PLATFORM_IS_LITTLE_ENDIAN)
-inline constexpr bool HostIsLittleEndian = HE_CPP_PLATFORM_IS_LITTLE_ENDIAN != 0;
 #else
-#error "Cannot determine host byte order: define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN."
-#endif
-
-#if defined(HE_CPP_PLATFORM_IS_LITTLE_ENDIAN) && defined(__BYTE_ORDER__) && \
-    defined(__ORDER_LITTLE_ENDIAN__)
-static_assert(HostIsLittleEndian == (HE_CPP_PLATFORM_IS_LITTLE_ENDIAN != 0),
-              "The platform profile's endianness does not match the compiler's "
-              "target. Regenerate with the correct --endianness.");
+#error "Cannot determine the CPU byte order: this compiler defines neither __BYTE_ORDER__ nor _MSC_VER."
 #endif
 
 /// <summary>
