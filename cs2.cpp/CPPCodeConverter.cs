@@ -1,5 +1,6 @@
 using cs2.core;
 using cs2.core.Pipeline;
+using cs2.core.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.CSharp;
@@ -18,6 +19,10 @@ namespace cs2.cpp {
         CPPProgram tsProgram;
         readonly CPPClassEmitter classEmitter;
         readonly CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest;
+        /// <summary>
+        /// Background thread loading doxygen-derived native runtime metadata while the caller opens the Roslyn workspace.
+        /// </summary>
+        readonly BackgroundWork NativeRuntimeMetadataLoad;
         readonly HashSet<string> EmittedFilePaths = new HashSet<string>(StringComparer.Ordinal);
         public CPPConversionRules CPPRules { get; private set; }
         public CPPConversionOptions Options { get; private set; }
@@ -25,7 +30,12 @@ namespace cs2.cpp {
         public CPPBuildUsageReport BuildUsageReport { get; private set; }
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
-        internal ConversionProgram Program => program;
+        internal ConversionProgram Program {
+            get {
+                EnsureNativeRuntimeMetadataLoaded();
+                return program;
+            }
+        }
         /// <summary>
         /// Gets the validated semantic ownership plan for the active conversion run.
         /// </summary>
@@ -71,7 +81,7 @@ namespace cs2.cpp {
             classEmitter = new CPPClassEmitter(conversion, tsProgram, generatedFunctionProfilingManifest);
 
             if (Options.LoadNativeRuntimeMetadata) {
-                tsProgram.AddDotNet();
+                NativeRuntimeMetadataLoad = new BackgroundWork("cs2-native-runtime-metadata", tsProgram.AddDotNet);
             }
 
             assemblyName = "";
@@ -195,6 +205,7 @@ namespace cs2.cpp {
         }
 
         public void WriteOutput(string outputFolder) {
+            EnsureNativeRuntimeMetadataLoaded();
             bool generatedFunctionProfilingEnabled = CPPGeneratedFunctionProfilingOptionResolver.Resolve(Options);
             var replacements = new Dictionary<string, string>() {
                 { "ASSEMBLY_NAME", assemblyName },
@@ -459,6 +470,20 @@ namespace cs2.cpp {
             diagnostic.FilePath = filePath ?? string.Empty;
             SynchronizeRunState();
             throw new NotSupportedException($"CPP1001 {diagnostic.FilePath}: {diagnostic.SourceTypeName}.{diagnostic.SourceMemberName}: {message}");
+        }
+
+        /// <summary>
+        /// Blocks until the native runtime metadata thread has populated the program, rethrowing its failure.
+        /// </summary>
+        void EnsureNativeRuntimeMetadataLoaded() {
+            NativeRuntimeMetadataLoad?.Wait();
+        }
+
+        /// <summary>
+        /// Joins the metadata load once the workspace is open so the pipeline sees every native runtime class.
+        /// </summary>
+        protected override void OnProjectOpened() {
+            EnsureNativeRuntimeMetadataLoaded();
         }
 
         /// <summary>
