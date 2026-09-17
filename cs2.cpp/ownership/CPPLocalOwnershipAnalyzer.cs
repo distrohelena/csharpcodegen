@@ -1,3 +1,4 @@
+using cs2.core.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
@@ -46,6 +47,20 @@ public sealed class CPPLocalOwnershipAnalyzer {
     public CPPOwnershipAnalysisResult Analyze(
         IReadOnlyList<Compilation> compilations,
         CPPMethodOwnershipSummaryResolution summaries) {
+        return Analyze(compilations, summaries, 1);
+    }
+
+    /// <summary>
+    /// Analyzes all source method bodies and owned members, running each syntax tree on a pool worker and merging in tree order.
+    /// </summary>
+    /// <param name="compilations">Roslyn compilations participating in one generated native program.</param>
+    /// <param name="summaries">Previously resolved method return and parameter ownership contracts.</param>
+    /// <param name="workerCount">Dedicated threads used for per-tree analysis.</param>
+    /// <returns>Local plans, ownership transitions, and all hard semantic errors.</returns>
+    public CPPOwnershipAnalysisResult Analyze(
+        IReadOnlyList<Compilation> compilations,
+        CPPMethodOwnershipSummaryResolution summaries,
+        int workerCount) {
         if (compilations == null) {
             throw new ArgumentNullException(nameof(compilations));
         }
@@ -53,11 +68,36 @@ public sealed class CPPLocalOwnershipAnalyzer {
             throw new ArgumentNullException(nameof(summaries));
         }
 
+        List<Compilation> treeCompilations = [];
+        List<SyntaxTree> trees = [];
+        foreach (Compilation compilation in compilations) {
+            if (compilation == null) {
+                throw new ArgumentException("Ownership analysis cannot contain a null compilation.", nameof(compilations));
+            }
+
+            foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
+                treeCompilations.Add(compilation);
+                trees.Add(syntaxTree);
+            }
+        }
+
+        CPPOwnershipTreeAnalysis[] analyses = new CPPOwnershipTreeAnalysis[trees.Count];
+        ConversionWorkerPool pool = new ConversionWorkerPool(workerCount);
+        pool.Run(trees.Count, (workerIndex, itemIndex) => {
+            analyses[itemIndex] = AnalyzeTree(treeCompilations[itemIndex], trees[itemIndex], summaries);
+        });
+
         Dictionary<VariableDeclaratorSyntax, CPPLocalOwnershipPlan> localPlans = [];
         List<CPPOwnershipTransition> transitions = [];
         List<CPPConversionDiagnostic> diagnostics = [];
-        foreach (Compilation compilation in compilations) {
-            AnalyzeCompilation(compilation, summaries, localPlans, transitions, diagnostics);
+        for (int index = 0; index < analyses.Length; index++) {
+            CPPOwnershipTreeAnalysis analysis = analyses[index];
+            foreach (KeyValuePair<VariableDeclaratorSyntax, CPPLocalOwnershipPlan> localPlan in analysis.LocalPlans) {
+                localPlans[localPlan.Key] = localPlan.Value;
+            }
+
+            transitions.AddRange(analysis.Transitions);
+            diagnostics.AddRange(analysis.Diagnostics);
         }
 
         CPPOwnershipAnalysisResult localResult = new CPPOwnershipAnalysisResult(
@@ -75,36 +115,24 @@ public sealed class CPPLocalOwnershipAnalyzer {
     }
 
     /// <summary>
-    /// Analyzes every executable method declaration in one compilation.
+    /// Analyzes every executable declaration in one syntax tree into a private aggregate.
     /// </summary>
-    /// <param name="compilation">Compilation containing the source methods.</param>
+    /// <param name="compilation">Compilation that owns the tree.</param>
+    /// <param name="syntaxTree">Tree to analyze.</param>
     /// <param name="summaries">Resolved ownership contracts.</param>
-    /// <param name="localPlans">Mutable aggregate of local emission plans.</param>
-    /// <param name="transitions">Mutable aggregate of ownership transitions.</param>
-    /// <param name="diagnostics">Mutable aggregate of hard ownership errors.</param>
-    void AnalyzeCompilation(
-        Compilation compilation,
-        CPPMethodOwnershipSummaryResolution summaries,
-        IDictionary<VariableDeclaratorSyntax, CPPLocalOwnershipPlan> localPlans,
-        ICollection<CPPOwnershipTransition> transitions,
-        ICollection<CPPConversionDiagnostic> diagnostics) {
-        if (compilation == null) {
-            throw new ArgumentException("Ownership analysis cannot contain a null compilation.", nameof(compilation));
+    /// <returns>Plans, transitions and diagnostics for this tree only.</returns>
+    CPPOwnershipTreeAnalysis AnalyzeTree(Compilation compilation, SyntaxTree syntaxTree, CPPMethodOwnershipSummaryResolution summaries) {
+        CPPOwnershipTreeAnalysis analysis = new CPPOwnershipTreeAnalysis();
+        SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
+        SyntaxNode root = syntaxTree.GetRoot();
+        foreach (BaseMethodDeclarationSyntax methodDeclaration in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>()) {
+            AnalyzeExecutable(methodDeclaration, semanticModel, summaries, analysis.LocalPlans, analysis.Transitions, analysis.Diagnostics);
+        }
+        foreach (AccessorDeclarationSyntax accessorDeclaration in root.DescendantNodes().OfType<AccessorDeclarationSyntax>()) {
+            AnalyzeExecutable(accessorDeclaration, semanticModel, summaries, analysis.LocalPlans, analysis.Transitions, analysis.Diagnostics);
         }
 
-        foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
-            SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
-            foreach (BaseMethodDeclarationSyntax methodDeclaration in syntaxTree.GetRoot()
-                .DescendantNodes()
-                .OfType<BaseMethodDeclarationSyntax>()) {
-                AnalyzeExecutable(methodDeclaration, semanticModel, summaries, localPlans, transitions, diagnostics);
-            }
-            foreach (AccessorDeclarationSyntax accessorDeclaration in syntaxTree.GetRoot()
-                .DescendantNodes()
-                .OfType<AccessorDeclarationSyntax>()) {
-                AnalyzeExecutable(accessorDeclaration, semanticModel, summaries, localPlans, transitions, diagnostics);
-            }
-        }
+        return analysis;
     }
 
     /// <summary>
