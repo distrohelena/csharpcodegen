@@ -17113,7 +17113,7 @@ namespace cs2.cpp {
             }
 
             if (context.Program is CPPProgram cppProgram && cppProgram.EmittedTypeNameIndex != null) {
-                return CPPGeneratedTypeNameQualifier.Qualify(renderedTypeName, cppProgram.EmittedTypeNameIndex.EmittedTypeNames);
+                return CPPGeneratedTypeNameQualifier.Qualify(renderedTypeName, cppProgram.EmittedTypeNameIndex);
             }
 
             string qualifiedTypeName = renderedTypeName;

@@ -1,21 +1,65 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
     /// <summary>
-    /// Prefixes generated type identifiers inside rendered C++ type strings with the global scope operator in one left-to-right pass.
+    /// Prefixes generated type identifiers inside rendered C++ type strings with the global scope operator, using a single
+    /// left-to-right pass when every emitted name is a pure identifier and falling back to the original per-name regex
+    /// replacement otherwise, so behavior stays byte-identical to the loop this class replaces.
     /// </summary>
     public static class CPPGeneratedTypeNameQualifier {
         /// <summary>
-        /// Inserts <c>::</c> before every maximal identifier run that names an emitted type and is not already preceded by a colon.
+        /// Inserts <c>::</c> before every emitted type name found in a rendered C++ type string that is not already
+        /// preceded by a colon, matching the reference regex loop exactly.
+        /// </summary>
+        /// <param name="renderedTypeName">Rendered C++ type string.</param>
+        /// <param name="index">Emitted type name snapshot that requires global qualification.</param>
+        /// <returns>The qualified type string, or the original instance when nothing changed.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="index"/> is null.</exception>
+        public static string Qualify(string renderedTypeName, CPPEmittedTypeNameIndex index) {
+            if (index == null) {
+                throw new ArgumentNullException(nameof(index));
+            }
+
+            if (string.IsNullOrWhiteSpace(renderedTypeName) || index.EmittedTypeNames.Count == 0) {
+                return renderedTypeName;
+            }
+
+            if (!index.AllEmittedTypeNamesAreIdentifiers) {
+                return QualifyWithRegexFallback(renderedTypeName, index.OrderedEmittedTypeNames);
+            }
+
+            return QualifyIdentifierRun(renderedTypeName, index.EmittedTypeNames);
+        }
+
+        /// <summary>
+        /// Replays the original per-name regex replacement loop verbatim, for the rare case where an emitted type name
+        /// contains characters outside the identifier character set and so cannot be matched by a maximal identifier scan.
+        /// </summary>
+        /// <param name="renderedTypeName">Rendered C++ type string.</param>
+        /// <param name="orderedEmittedTypeNames">Emitted type names in first-occurrence program order.</param>
+        /// <returns>The qualified type string produced by applying each name's replacement in order.</returns>
+        static string QualifyWithRegexFallback(string renderedTypeName, IReadOnlyList<string> orderedEmittedTypeNames) {
+            string qualifiedTypeName = renderedTypeName;
+            for (int nameIndex = 0; nameIndex < orderedEmittedTypeNames.Count; nameIndex++) {
+                string generatedTypeName = orderedEmittedTypeNames[nameIndex];
+                qualifiedTypeName = Regex.Replace(
+                    qualifiedTypeName,
+                    $@"(?<!:)\b{Regex.Escape(generatedTypeName)}\b",
+                    $"::{generatedTypeName}");
+            }
+
+            return qualifiedTypeName;
+        }
+
+        /// <summary>
+        /// Inserts <c>::</c> before every maximal identifier run that names an emitted type and is not already preceded
+        /// by a colon, in a single left-to-right pass. Valid only when every emitted name is a pure identifier.
         /// </summary>
         /// <param name="renderedTypeName">Rendered C++ type string.</param>
         /// <param name="emittedTypeNames">Emitted type names that require global qualification.</param>
         /// <returns>The qualified type string, or the original instance when nothing changed.</returns>
-        public static string Qualify(string renderedTypeName, IReadOnlySet<string> emittedTypeNames) {
-            if (string.IsNullOrWhiteSpace(renderedTypeName) || emittedTypeNames == null || emittedTypeNames.Count == 0) {
-                return renderedTypeName;
-            }
-
+        static string QualifyIdentifierRun(string renderedTypeName, IReadOnlySet<string> emittedTypeNames) {
             StringBuilder builder = null;
             int copiedUpTo = 0;
             int length = renderedTypeName.Length;
@@ -55,11 +99,13 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Mirrors the regex word-character class for C++ identifiers: letters, digits and underscore.
+        /// Mirrors the regex word-character class for C++ identifiers: letters, digits and underscore. Shared with
+        /// <see cref="CPPEmittedTypeNameIndex"/> so the index can classify emitted names using the same rule the
+        /// single-pass scan relies on.
         /// </summary>
         /// <param name="character">Character to classify.</param>
         /// <returns>True when the character continues an identifier run.</returns>
-        static bool IsIdentifierCharacter(char character) {
+        internal static bool IsIdentifierCharacter(char character) {
             return char.IsLetterOrDigit(character) || character == '_';
         }
     }

@@ -21,24 +21,53 @@ namespace cs2.cpp {
         readonly HashSet<string> AllEmittedTypeNames;
 
         /// <summary>
+        /// Every distinct non-empty emitted type name in the snapshot, in first-occurrence program order.
+        /// </summary>
+        readonly List<string> OrderedEmittedTypeNameList;
+
+        /// <summary>
+        /// Whether every emitted type name in the snapshot consists solely of identifier characters (letters, digits, underscore).
+        /// </summary>
+        readonly bool AllNamesAreIdentifiers;
+
+        /// <summary>
         /// Initializes an index from prebuilt lookups.
         /// </summary>
         /// <param name="emittedTypeNamesByClass">Emitted names keyed by class identity.</param>
         /// <param name="generatedClassesByEmittedName">First generated class per emitted name.</param>
         /// <param name="allEmittedTypeNames">Every emitted name in the snapshot.</param>
+        /// <param name="orderedEmittedTypeNameList">Every distinct emitted name in first-occurrence program order.</param>
+        /// <param name="allNamesAreIdentifiers">Whether every emitted name is composed solely of identifier characters.</param>
         CPPEmittedTypeNameIndex(
             Dictionary<ConversionClass, string> emittedTypeNamesByClass,
             Dictionary<string, ConversionClass> generatedClassesByEmittedName,
-            HashSet<string> allEmittedTypeNames) {
+            HashSet<string> allEmittedTypeNames,
+            List<string> orderedEmittedTypeNameList,
+            bool allNamesAreIdentifiers) {
             EmittedTypeNamesByClass = emittedTypeNamesByClass;
             GeneratedClassesByEmittedName = generatedClassesByEmittedName;
             AllEmittedTypeNames = allEmittedTypeNames;
+            OrderedEmittedTypeNameList = orderedEmittedTypeNameList;
+            AllNamesAreIdentifiers = allNamesAreIdentifiers;
         }
 
         /// <summary>
         /// Gets every non-empty emitted type name in the snapshot.
         /// </summary>
         public IReadOnlySet<string> EmittedTypeNames => AllEmittedTypeNames;
+
+        /// <summary>
+        /// Gets every distinct non-empty emitted type name in the snapshot, in first-occurrence program order.
+        /// Used to replay the exact regex-based qualification order when an emitted name is not a pure identifier.
+        /// </summary>
+        public IReadOnlyList<string> OrderedEmittedTypeNames => OrderedEmittedTypeNameList;
+
+        /// <summary>
+        /// Gets whether every emitted type name in the snapshot consists solely of identifier characters
+        /// (letters, digits, underscore). When false, at least one emitted name can only be matched with the
+        /// original word-boundary regex, since it contains characters a maximal identifier scan cannot span.
+        /// </summary>
+        public bool AllEmittedTypeNamesAreIdentifiers => AllNamesAreIdentifiers;
 
         /// <summary>
         /// Builds the index by computing each class's emitted name exactly once in program order.
@@ -53,6 +82,8 @@ namespace cs2.cpp {
             Dictionary<ConversionClass, string> emittedTypeNamesByClass = new Dictionary<ConversionClass, string>(ReferenceEqualityComparer.Instance);
             Dictionary<string, ConversionClass> generatedClassesByEmittedName = new Dictionary<string, ConversionClass>(StringComparer.Ordinal);
             HashSet<string> allEmittedTypeNames = new HashSet<string>(StringComparer.Ordinal);
+            List<string> orderedEmittedTypeNameList = new List<string>();
+            bool allNamesAreIdentifiers = true;
 
             for (int index = 0; index < classes.Count; index++) {
                 ConversionClass conversionClass = classes[index];
@@ -66,13 +97,39 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                allEmittedTypeNames.Add(emittedTypeName);
+                if (allEmittedTypeNames.Add(emittedTypeName)) {
+                    orderedEmittedTypeNameList.Add(emittedTypeName);
+                    if (allNamesAreIdentifiers && !IsIdentifierName(emittedTypeName)) {
+                        allNamesAreIdentifiers = false;
+                    }
+                }
+
                 if (!conversionClass.IsNative && CPPGeneratedTypeEmissionPolicy.ShouldEmit(conversionClass)) {
                     generatedClassesByEmittedName.TryAdd(emittedTypeName, conversionClass);
                 }
             }
 
-            return new CPPEmittedTypeNameIndex(emittedTypeNamesByClass, generatedClassesByEmittedName, allEmittedTypeNames);
+            return new CPPEmittedTypeNameIndex(
+                emittedTypeNamesByClass,
+                generatedClassesByEmittedName,
+                allEmittedTypeNames,
+                orderedEmittedTypeNameList,
+                allNamesAreIdentifiers);
+        }
+
+        /// <summary>
+        /// Determines whether an emitted type name consists solely of identifier characters.
+        /// </summary>
+        /// <param name="emittedTypeName">Emitted type name to classify.</param>
+        /// <returns>True when every character in the name is an identifier character.</returns>
+        static bool IsIdentifierName(string emittedTypeName) {
+            for (int characterIndex = 0; characterIndex < emittedTypeName.Length; characterIndex++) {
+                if (!CPPGeneratedTypeNameQualifier.IsIdentifierCharacter(emittedTypeName[characterIndex])) {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
