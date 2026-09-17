@@ -17,7 +17,9 @@ namespace cs2.cpp {
 
         CPPConversiorProcessor conversion;
         CPPProgram tsProgram;
-        readonly CPPClassEmitter classEmitter;
+        /// <summary>
+        /// Merged profiling manifest for the whole run; emission workers fill their own manifests and the main-thread merge folds them in here.
+        /// </summary>
         readonly CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest;
         /// <summary>
         /// Background thread loading doxygen-derived native runtime metadata while the caller opens the Roslyn workspace.
@@ -103,7 +105,6 @@ namespace cs2.cpp {
 
             conversion = new CPPConversiorProcessor(this);
             generatedFunctionProfilingManifest = new CPPGeneratedFunctionProfilingManifest();
-            classEmitter = new CPPClassEmitter(conversion, tsProgram, generatedFunctionProfilingManifest);
 
             if (Options.LoadNativeRuntimeMetadata) {
                 NativeRuntimeMetadataLoad = new BackgroundWork("cs2-native-runtime-metadata", tsProgram.AddDotNet);
@@ -745,8 +746,9 @@ namespace cs2.cpp {
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
             tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
             tsProgram.BuildEmittedTypeNameIndex();
+            CPPVariableType.WarmGeneratedClassLookups(program);
 
-            List<CPPClassEmissionResult> results = new List<CPPClassEmissionResult>();
+            List<ConversionClass> classes = new List<ConversionClass>();
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];
                 if (cl.IsNative || !ShouldEmitGeneratedSourceClass(cl)) {
@@ -755,16 +757,87 @@ namespace cs2.cpp {
 
                 SortVariables(cl);
                 SortFunctions(cl);
-                string fileStem = cl.GetEmittedFileStem(program);
-                using (StringWriter headerWriter = new StringWriter()) {
-                    using (StringWriter sourceWriter = new StringWriter()) {
-                        classEmitter.Emit(cl, headerWriter, sourceWriter);
-                        results.Add(new CPPClassEmissionResult(cl, fileStem, headerWriter.ToString(), sourceWriter.ToString()));
+                classes.Add(cl);
+            }
+
+            string[] fileStems = new string[classes.Count];
+            for (int i = 0; i < classes.Count; i++) {
+                fileStems[i] = classes[i].GetEmittedFileStem(program);
+            }
+
+            int workerCount = CPPWorkerThreadOptionResolver.Resolve(Options);
+            ConversionWorkerPool pool = new ConversionWorkerPool(workerCount);
+            CPPEmissionWorker[] workers = new CPPEmissionWorker[Math.Min(workerCount, Math.Max(classes.Count, 1))];
+            CPPClassEmissionResult[] results = new CPPClassEmissionResult[classes.Count];
+            try {
+                pool.Run(classes.Count, (workerIndex, itemIndex) => {
+                    workers[workerIndex] ??= new CPPEmissionWorker(this, tsProgram);
+                    results[itemIndex] = workers[workerIndex].Lower(classes[itemIndex], fileStems[itemIndex]);
+                });
+            } catch {
+                MergeAbortedEmissionDiagnostics(results, workers);
+                throw;
+            }
+
+            MergeEmissionResults(results);
+            return results;
+        }
+
+        /// <summary>
+        /// Folds the diagnostics of an aborted emission pass into the converter's report so a run that throws still explains why, matching the single-threaded behaviour where the reporting worker wrote straight into this report.
+        /// </summary>
+        /// <param name="results">Result slots of the aborted pass; classes that never completed are null.</param>
+        /// <param name="workers">Worker slots of the aborted pass; unused slots are null, and every started thread has been joined before this runs.</param>
+        void MergeAbortedEmissionDiagnostics(IReadOnlyList<CPPClassEmissionResult> results, CPPEmissionWorker[] workers) {
+            HashSet<CPPConversionDiagnostic> mergedDiagnostics = new HashSet<CPPConversionDiagnostic>();
+            for (int i = 0; i < results.Count; i++) {
+                if (results[i] == null) {
+                    continue;
+                }
+
+                foreach (CPPConversionDiagnostic diagnostic in results[i].Diagnostics) {
+                    if (mergedDiagnostics.Add(diagnostic)) {
+                        Report.Diagnostics.Add(diagnostic);
                     }
                 }
             }
 
-            return results;
+            for (int i = 0; i < workers.Length; i++) {
+                if (workers[i] == null) {
+                    continue;
+                }
+
+                foreach (CPPConversionDiagnostic diagnostic in workers[i].Report.Diagnostics) {
+                    if (mergedDiagnostics.Add(diagnostic)) {
+                        Report.Diagnostics.Add(diagnostic);
+                    }
+                }
+            }
+
+            SynchronizeRunState();
+        }
+
+        /// <summary>
+        /// Folds per-class side effects into the converter's run state in reachability order so the outcome never depends on scheduling.
+        /// </summary>
+        /// <param name="results">Lowered classes in reachability order.</param>
+        void MergeEmissionResults(IReadOnlyList<CPPClassEmissionResult> results) {
+            for (int i = 0; i < results.Count; i++) {
+                CPPClassEmissionResult result = results[i];
+                foreach (string requirementName in result.RuntimeRequirements) {
+                    RuntimeRequirementRegistrar.RegisterEmitted(requirementName);
+                }
+
+                foreach (CPPConversionDiagnostic diagnostic in result.Diagnostics) {
+                    Report.Diagnostics.Add(diagnostic);
+                }
+
+                foreach (CPPGeneratedFunctionProfilingScope scope in result.ProfilingScopes) {
+                    generatedFunctionProfilingManifest.Add(scope.GeneratedFilePath, scope.SourceLocation);
+                }
+            }
+
+            SynchronizeRunState();
         }
 
         /// <summary>

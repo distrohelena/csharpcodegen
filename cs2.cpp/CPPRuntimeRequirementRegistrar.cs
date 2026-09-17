@@ -109,6 +109,22 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Records a requirement that an emission worker already accepted inside a type scope, bypassing the feature gate exactly as the in-scope registration did.
+        /// </summary>
+        /// <param name="name">Stable runtime requirement name.</param>
+        public void RegisterEmitted(string name) {
+            if (string.IsNullOrWhiteSpace(name)) {
+                throw new ArgumentException("Runtime requirement name must not be empty.", nameof(name));
+            }
+
+            if (!catalog.TryGet(name, out CPPRuntimeRequirementDefinition definition)) {
+                return;
+            }
+
+            registeredRequirements.TryAdd(definition.Name, definition);
+        }
+
+        /// <summary>
         /// Determines whether a named runtime requirement has already been registered.
         /// </summary>
         /// <param name="name">The stable runtime requirement name.</param>

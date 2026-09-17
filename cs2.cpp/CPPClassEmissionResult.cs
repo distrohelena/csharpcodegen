@@ -12,7 +12,17 @@ namespace cs2.cpp {
         /// <param name="fileStem">Generated file stem without extension.</param>
         /// <param name="headerText">Complete header file contents.</param>
         /// <param name="sourceText">Complete source file contents.</param>
-        public CPPClassEmissionResult(ConversionClass conversionClass, string fileStem, string headerText, string sourceText) {
+        /// <param name="runtimeRequirements">Runtime requirement names registered while lowering this class.</param>
+        /// <param name="diagnostics">Diagnostics recorded while lowering this class.</param>
+        /// <param name="profilingScopes">Generated function profiling scopes emitted for this class.</param>
+        public CPPClassEmissionResult(
+            ConversionClass conversionClass,
+            string fileStem,
+            string headerText,
+            string sourceText,
+            IReadOnlyList<string> runtimeRequirements,
+            IReadOnlyList<CPPConversionDiagnostic> diagnostics,
+            IReadOnlyList<CPPGeneratedFunctionProfilingScope> profilingScopes) {
             Class = conversionClass ?? throw new ArgumentNullException(nameof(conversionClass));
             if (string.IsNullOrWhiteSpace(fileStem)) {
                 throw new ArgumentException("A lowered class requires a file stem.", nameof(fileStem));
@@ -21,7 +31,25 @@ namespace cs2.cpp {
             FileStem = fileStem;
             HeaderText = headerText ?? throw new ArgumentNullException(nameof(headerText));
             SourceText = sourceText ?? throw new ArgumentNullException(nameof(sourceText));
+            RuntimeRequirements = runtimeRequirements ?? throw new ArgumentNullException(nameof(runtimeRequirements));
+            Diagnostics = diagnostics ?? throw new ArgumentNullException(nameof(diagnostics));
+            ProfilingScopes = profilingScopes ?? throw new ArgumentNullException(nameof(profilingScopes));
         }
+
+        /// <summary>
+        /// Gets the runtime requirement names registered while lowering this class.
+        /// </summary>
+        public IReadOnlyList<string> RuntimeRequirements { get; }
+
+        /// <summary>
+        /// Gets the diagnostics recorded while lowering this class.
+        /// </summary>
+        public IReadOnlyList<CPPConversionDiagnostic> Diagnostics { get; }
+
+        /// <summary>
+        /// Gets the generated function profiling scopes emitted for this class.
+        /// </summary>
+        public IReadOnlyList<CPPGeneratedFunctionProfilingScope> ProfilingScopes { get; }
 
         /// <summary>
         /// Gets the class that was lowered.

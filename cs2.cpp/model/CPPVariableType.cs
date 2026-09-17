@@ -118,6 +118,20 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Builds every lazily cached generated-class lookup on the main thread so emission workers only read them.
+        /// </summary>
+        /// <param name="program">Program whose lookups should be materialized.</param>
+        internal static void WarmGeneratedClassLookups(ConversionProgram program) {
+            if (program == null) {
+                throw new ArgumentNullException(nameof(program));
+            }
+
+            program.GetGeneratedClassLookupByNameAndArity(GetNameAndArityLookupKey);
+            program.GetQualifiedGeneratedClassLookup(GetNormalizedQualifiedGenericDefinitionTypeName);
+            program.GetBaseEmittedTypeNameCollisions(GetBaseEmittedTypeName);
+        }
+
+        /// <summary>
         /// Finds a generated converted class by qualified source type identity when Roslyn metadata is available, falling back to leaf-name lookup otherwise.
         /// </summary>
         /// <param name="program">Program model that contains generated classes.</param>
