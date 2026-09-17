@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
+using cs2.core.Threading;
 
 namespace cs2.core.Pipeline {
     public interface IConversionStage {
@@ -109,33 +110,62 @@ namespace cs2.core.Pipeline {
 
     public sealed class DocumentPreprocessingStage : IConversionStage {
         /// <summary>
-        /// Preprocesses each document in the active project and its project-reference closure.
+        /// Dedicated threads used to resolve and warm semantic models before the sequential walk.
+        /// </summary>
+        readonly int WorkerCount;
+
+        /// <summary>
+        /// Initializes a stage that prepares documents on the calling thread.
+        /// </summary>
+        public DocumentPreprocessingStage()
+            : this(1) {
+        }
+
+        /// <summary>
+        /// Initializes a stage that prepares documents on the supplied number of worker threads.
+        /// </summary>
+        /// <param name="workerCount">Positive worker thread count.</param>
+        public DocumentPreprocessingStage(int workerCount) {
+            if (workerCount < 1) {
+                throw new ArgumentOutOfRangeException(nameof(workerCount), workerCount, "Document preprocessing needs at least one worker.");
+            }
+
+            WorkerCount = workerCount;
+        }
+
+        /// <summary>
+        /// Prepares every document in the project closure on the worker pool, then preprocesses them sequentially in project and document order.
         /// </summary>
         /// <param name="session">The active conversion session.</param>
         public void Execute(ConversionSession session) {
+            List<Document> documents = new List<Document>();
             foreach (Project project in EnumerateProjects(session.Project)) {
                 foreach (Document document in project.Documents) {
-                Console.WriteLine($"-- Processing: {document.Name}");
-
-                SyntaxTree? syntaxTree = AsyncUtil.RunSync(() => document.GetSyntaxTreeAsync());
-                if (syntaxTree == null) {
-                    continue;
-                }
-
-                SemanticModel? semanticModel = AsyncUtil.RunSync(() => document.GetSemanticModelAsync());
-                if (semanticModel == null) {
-                    continue;
-                }
-
-                CompilationUnitSyntax? root = AsyncUtil.RunSync(() => syntaxTree.GetRootAsync()) as CompilationUnitSyntax;
-                if (root == null) {
-                    continue;
-                }
-
-                foreach (MemberDeclarationSyntax member in root.Members) {
-                    session.Converter.RunPreProcess(semanticModel, member, session.Context);
+                    documents.Add(document);
                 }
             }
+
+            PreparedDocument[] prepared = new PreparedDocument[documents.Count];
+            ConversionWorkerPool pool = new ConversionWorkerPool(WorkerCount);
+            pool.Run(documents.Count, (workerIndex, itemIndex) => {
+                PreparedDocument preparedDocument = SemanticModelWarmup.Prepare(documents[itemIndex]);
+                if (preparedDocument != null && WorkerCount > 1) {
+                    SemanticModelWarmup.Warm(preparedDocument);
+                }
+
+                prepared[itemIndex] = preparedDocument;
+            });
+
+            for (int index = 0; index < prepared.Length; index++) {
+                PreparedDocument preparedDocument = prepared[index];
+                Console.WriteLine($"-- Processing: {documents[index].Name}");
+                if (preparedDocument == null) {
+                    continue;
+                }
+
+                foreach (MemberDeclarationSyntax member in preparedDocument.Root.Members) {
+                    session.Converter.RunPreProcess(preparedDocument.SemanticModel, member, session.Context);
+                }
             }
         }
 
