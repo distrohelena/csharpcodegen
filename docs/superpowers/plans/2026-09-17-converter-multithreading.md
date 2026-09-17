@@ -2619,7 +2619,10 @@ public sealed class CPPParallelOwnershipAnalysisTests {
             bool fourHasPlan = four.EmissionPlan.TryGetLocalPlan(declarator, out CPPLocalOwnershipPlan fourPlan);
             Assert.Equal(oneHasPlan, fourHasPlan);
             if (oneHasPlan) {
-                Assert.Equal(onePlan.ToString(), fourPlan.ToString());
+                Assert.Equal(onePlan.InitialOwnership, fourPlan.InitialOwnership);
+                Assert.Equal(onePlan.OwnershipFlagName, fourPlan.OwnershipFlagName);
+                Assert.Equal(onePlan.RequiresScopeGuard, fourPlan.RequiresScopeGuard);
+                Assert.Equal(onePlan.InitiallyOwnsValue, fourPlan.InitiallyOwnsValue);
             }
         }
     }
@@ -2634,7 +2637,7 @@ public sealed class CPPParallelOwnershipAnalysisTests {
 }
 ```
 
-`CPPOwnershipEmissionPlan` exposes `Transitions` (ordered list) and `TryGetLocalPlan(VariableDeclaratorSyntax, out CPPLocalOwnershipPlan)`; `CPPOwnershipTransition` exposes `Syntax`, `LocalDeclaration`, `Kind`, `ResultingOwnership` and `ResultingLifecycle`. Add `using Microsoft.CodeAnalysis.CSharp.Syntax;` to the test file. If `CPPLocalOwnershipPlan` does not override `ToString`, compare its public properties one by one instead of the rendered string.
+`CPPOwnershipEmissionPlan` exposes `Transitions` (ordered list) and `TryGetLocalPlan(VariableDeclaratorSyntax, out CPPLocalOwnershipPlan)`; `CPPOwnershipTransition` exposes `Syntax`, `LocalDeclaration`, `Kind`, `ResultingOwnership` and `ResultingLifecycle`. Add `using Microsoft.CodeAnalysis.CSharp.Syntax;` to the test file. `CPPLocalOwnershipPlan` exposes `InitialOwnership`, `OwnershipFlagName`, `RequiresScopeGuard` and `InitiallyOwnsValue`, which together define the plan.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
