@@ -3124,7 +3124,17 @@ namespace cs2.cpp {
             string staticKeyword = variable.IsStatic ? "static " : string.Empty;
             string returnTypeName = GetPropertyGetterReturnType(conversionClass, variable);
             SemanticModel variableSemantic = variable.Semantic ?? conversionClass.Semantic;
-            headerWriter.WriteLine($"    {staticKeyword}{returnTypeName} get_{variable.Name}();");
+            // An expression-bodied getter carries the same modifiers as any
+            // other member, so it is asked the same question the normal
+            // function path asks. Without this, a property declared virtual in
+            // C# lowers to a non-virtual accessor and no subclass outside the
+            // generated program can override it. No pure-virtual suffix is
+            // emitted here: this path always writes a definition, which is the
+            // correct lowering for an interface member that has a body.
+            string virtualKeyword = ShouldEmitVirtualKeyword(conversionClass, CreateGetter(variable))
+                ? "virtual "
+                : string.Empty;
+            headerWriter.WriteLine($"    {virtualKeyword}{staticKeyword}{returnTypeName} get_{variable.Name}();");
 
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{returnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
