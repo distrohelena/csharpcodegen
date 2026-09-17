@@ -59,9 +59,10 @@ namespace cs2.cpp {
         public bool UseExceptions { get; set; }
 
         /// <summary>
-        /// Gets or sets whether generated code may depend on RTTI.
+        /// Gets or sets whether generated code may depend on RTTI. Generated dispatch has always assumed RTTI, so a
+        /// target that compiles without it must opt out explicitly through the generic option.
         /// </summary>
-        public bool UseRtti { get; set; }
+        public bool UseRtti { get; set; } = true;
 
         /// <summary>
         /// Creates the default STL-lite runtime profile.
@@ -77,7 +78,7 @@ namespace cs2.cpp {
                 UseStdUnorderedMap = true,
                 UseStdUnorderedSet = true,
                 UseExceptions = false,
-                UseRtti = false
+                UseRtti = true
             };
         }
 
@@ -95,7 +96,7 @@ namespace cs2.cpp {
                 UseStdUnorderedMap = false,
                 UseStdUnorderedSet = false,
                 UseExceptions = false,
-                UseRtti = false
+                UseRtti = true
             };
         }
     }
