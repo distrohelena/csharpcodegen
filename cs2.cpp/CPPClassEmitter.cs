@@ -62,6 +62,8 @@ namespace cs2.cpp {
                 throw new ArgumentNullException(nameof(sourceWriter));
             }
 
+            processor?.BeginClassEmission();
+
             WriteHeaderPreamble(conversionClass, headerWriter);
             CPPTypeRuntimeRequirementScope typeScope = processor?.BeginTypeRuntimeRequirementScope() ?? new CPPTypeRuntimeRequirementScope();
 

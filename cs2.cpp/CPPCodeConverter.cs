@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 using System.Reflection;
 
 namespace cs2.cpp {
-    public class CPPCodeConverter : CodeConverter {
+    public class CPPCodeConverter : CodeConverter, ICPPConversionHost {
         string assemblyName;
         string version;
         string targetFramework;
@@ -40,8 +40,33 @@ namespace cs2.cpp {
         /// Gets the validated semantic ownership plan for the active conversion run.
         /// </summary>
         internal CPPOwnershipAnalysisResult OwnershipAnalysisResult { get; private set; }
+
+        /// <summary>
+        /// Exposes the program model to lowering processors through the host seam.
+        /// </summary>
+        ConversionProgram ICPPConversionHost.Program => Program;
+
+        /// <summary>
+        /// Exposes the ownership plan to lowering processors through the host seam.
+        /// </summary>
+        CPPOwnershipAnalysisResult ICPPConversionHost.OwnershipAnalysisResult => OwnershipAnalysisResult;
+
+        /// <summary>
+        /// Exposes instantiated generated types to lowering processors through the host seam.
+        /// </summary>
+        /// <param name="compilation">Compilation to scan.</param>
+        /// <returns>Distinct instantiated generated types.</returns>
+        IReadOnlyList<INamedTypeSymbol> ICPPConversionHost.GetInstantiatedGeneratedTypes(Compilation compilation) {
+            return GetInstantiatedGeneratedTypes(compilation);
+        }
+
         Compilation instantiatedGeneratedTypeCompilation;
         IReadOnlyList<INamedTypeSymbol> instantiatedGeneratedTypes;
+
+        /// <summary>
+        /// Guards the lazily built instantiated-type cache shared by emission workers.
+        /// </summary>
+        readonly object InstantiatedGeneratedTypeLock = new object();
 
         protected override string[] PreProcessorSymbols { get { return preprocessorSymbols; } }
         internal bool IncludeProjectPreprocessorSymbols => includeProjectPreprocessorSymbols;
@@ -561,29 +586,31 @@ namespace cs2.cpp {
                 return Array.Empty<INamedTypeSymbol>();
             }
 
-            if (ReferenceEquals(instantiatedGeneratedTypeCompilation, compilation) && instantiatedGeneratedTypes != null) {
+            lock (InstantiatedGeneratedTypeLock) {
+                if (ReferenceEquals(instantiatedGeneratedTypeCompilation, compilation) && instantiatedGeneratedTypes != null) {
+                    return instantiatedGeneratedTypes;
+                }
+
+                List<INamedTypeSymbol> resolvedTypes = new List<INamedTypeSymbol>();
+                HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
+
+                foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
+                    SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
+                    SyntaxNode root = syntaxTree.GetRoot();
+
+                    foreach (ObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()) {
+                        AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                    }
+
+                    foreach (ImplicitObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>()) {
+                        AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                    }
+                }
+
+                instantiatedGeneratedTypeCompilation = compilation;
+                instantiatedGeneratedTypes = resolvedTypes;
                 return instantiatedGeneratedTypes;
             }
-
-            List<INamedTypeSymbol> resolvedTypes = new List<INamedTypeSymbol>();
-            HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
-                SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
-                SyntaxNode root = syntaxTree.GetRoot();
-
-                foreach (ObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()) {
-                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
-                }
-
-                foreach (ImplicitObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>()) {
-                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
-                }
-            }
-
-            instantiatedGeneratedTypeCompilation = compilation;
-            instantiatedGeneratedTypes = resolvedTypes;
-            return instantiatedGeneratedTypes;
         }
 
         void AddInstantiatedGeneratedType(ITypeSymbol typeSymbol, List<INamedTypeSymbol> resolvedTypes, HashSet<string> seenTypeNames) {

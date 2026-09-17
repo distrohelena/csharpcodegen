@@ -8,11 +8,29 @@ using System.Text.RegularExpressions;
 
 namespace cs2.cpp {
     public class CPPConversiorProcessor : ConversionProcessor {
-        private CPPCodeConverter codeConverter;
-        private int temporaryNameCounter;
+        /// <summary>
+        /// Run state and reporting host; the converter on the main thread or an emission worker on a pool thread.
+        /// </summary>
+        ICPPConversionHost codeConverter;
 
-        public CPPConversiorProcessor(CPPCodeConverter converter) {
-            codeConverter = converter;
+        /// <summary>
+        /// Counter behind <see cref="CreateTemporaryName"/>; reset per emitted class so names depend only on the class.
+        /// </summary>
+        int temporaryNameCounter;
+
+        /// <summary>
+        /// Initializes a processor bound to one host, or an unbound processor for focused syntax tests.
+        /// </summary>
+        /// <param name="host">Host supplying options, program and reporting; may be null in tests.</param>
+        public CPPConversiorProcessor(ICPPConversionHost host) {
+            codeConverter = host;
+        }
+
+        /// <summary>
+        /// Resets per-class lowering state so temporary names restart at zero for every emitted class.
+        /// </summary>
+        public void BeginClassEmission() {
+            temporaryNameCounter = 0;
         }
 
         /// <summary>
@@ -17098,7 +17116,7 @@ namespace cs2.cpp {
                 return;
             }
 
-            ConversionClass currentClass = context.GetCurrentClass();
+            ConversionClass currentClass = GetOwningEmissionClass(context);
             string emittedTypeName = generatedClass.GetEmittedTypeName();
             if (currentClass == null || currentClass.ReferencedClasses.Contains(emittedTypeName)) {
                 return;
