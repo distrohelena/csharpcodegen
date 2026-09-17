@@ -17112,6 +17112,10 @@ namespace cs2.cpp {
                 return renderedTypeName;
             }
 
+            if (context.Program is CPPProgram cppProgram && cppProgram.EmittedTypeNameIndex != null) {
+                return CPPGeneratedTypeNameQualifier.Qualify(renderedTypeName, cppProgram.EmittedTypeNameIndex.EmittedTypeNames);
+            }
+
             string qualifiedTypeName = renderedTypeName;
             foreach (ConversionClass generatedClass in context.Program.Classes) {
                 string generatedTypeName = generatedClass.GetEmittedTypeName();
