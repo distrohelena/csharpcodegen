@@ -3973,7 +3973,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            lines.Add("std::bind_front(");
+            lines.Add("he_cpp_bind_front(");
             lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
             lines.Add(", ");
             lines.Add(receiverText);
@@ -15071,7 +15071,7 @@ namespace cs2.cpp {
             if (methodGroupSymbol.IsStatic) {
                 delegateConstructionLines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
             } else if (TryResolveBoundDelegateReceiverText(semantic, context, methodGroupExpression, methodGroupSymbol, out string receiverText)) {
-                delegateConstructionLines.Add("std::bind_front(");
+                delegateConstructionLines.Add("he_cpp_bind_front(");
                 delegateConstructionLines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
                 delegateConstructionLines.Add(", ");
                 delegateConstructionLines.Add(receiverText);

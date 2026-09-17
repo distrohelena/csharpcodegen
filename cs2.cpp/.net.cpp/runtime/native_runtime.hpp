@@ -232,4 +232,30 @@ template <typename TResult, typename TException>
     he_cpp_runtime_detail::Raise(exception);
 }
 
+/// <summary>
+/// Binds one leading argument to a callable, matching the single-receiver form generated delegate
+/// construction uses. std::bind_front is a C++20 library addition, so targets whose standard library
+/// predates it, or ships an incomplete C++20 library, would otherwise fail to compile generated code
+/// that is otherwise valid. The fallback reproduces the same shape through std::invoke, which keeps
+/// pointer and reference receivers working identically.
+/// </summary>
+/// <typeparam name="TCallable">Callable bound ahead of its trailing arguments.</typeparam>
+/// <typeparam name="TBound">Leading argument bound to the callable.</typeparam>
+/// <param name="callable">Callable invoked with the bound argument first.</param>
+/// <param name="bound">Leading argument forwarded as the callable's first parameter.</param>
+/// <returns>A callable accepting the callable's remaining arguments.</returns>
+#if defined(__cpp_lib_bind_front) && __cpp_lib_bind_front >= 201907L
+template <typename TCallable, typename TBound>
+inline auto he_cpp_bind_front(TCallable&& callable, TBound&& bound) {
+    return std::bind_front(std::forward<TCallable>(callable), std::forward<TBound>(bound));
+}
+#else
+template <typename TCallable, typename TBound>
+inline auto he_cpp_bind_front(TCallable callable, TBound bound) {
+    return [callable, bound](auto&&... arguments) -> decltype(auto) {
+        return std::invoke(callable, bound, std::forward<decltype(arguments)>(arguments)...);
+    };
+}
+#endif
+
 
