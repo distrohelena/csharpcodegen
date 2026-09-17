@@ -1213,7 +1213,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("Action<int32_t>* handler;", headerOutput);
-            Assert.Contains("this->handler = new Action<int32_t>(std::bind_front(&Widget::Handle, this));", sourceOutput);
+            Assert.Contains(
+                "this->handler = new Action<int32_t>(he_cpp_bind_front(static_cast<void (Widget::*)(int32_t)>(&Widget::Handle), this));",
+                sourceOutput);
             Assert.DoesNotContain("this->handler = &Widget::Handle;", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -3545,7 +3547,8 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("#include \"system/threading/thread.hpp\"", headerOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("#include \"Thread.hpp\"", headerOutput, StringComparison.Ordinal);
-            Assert.Contains("new Thread(new Action<void*>(std::bind_front(&Dispatcher::WorkerLoop, this)))", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("new Thread(new Action<void*>(he_cpp_bind_front(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("&Dispatcher::WorkerLoop", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("new Thread(&Dispatcher::WorkerLoop)", sourceOutput, StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(output.OutputPath, "system", "threading", "thread.hpp")));
         }
@@ -9861,7 +9864,7 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures overloaded instance method groups assigned to delegates emit one typed method-pointer cast so std::bind_front selects the intended overload.
+        /// Ensures overloaded instance method groups assigned to delegates emit one typed method-pointer cast so the runtime binder selects the intended overload.
         /// </summary>
         [Fact]
         public void WriteOutput_WithOverloadedDelegateMethodGroup_EmitsTypedMethodPointerCast() {
@@ -9887,7 +9890,38 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
 
             Assert.Contains("static_cast<void (Fixture::*)(int32_t)>(&Fixture::Work)", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("std::bind_front(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("he_cpp_bind_front(", sourceOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures bound delegate construction never names std::bind_front directly. That function is a C++20
+        /// library addition, so targets whose standard library predates it, such as toolchains shipping an older
+        /// libc++, cannot compile output that depends on it. Routing through the runtime binder keeps generated
+        /// code portable across every supported target rather than only the hosted ones.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithBoundDelegateConstruction_RoutesThroughRuntimeBinderRatherThanStandardBindFront() {
+            string source = """
+                using System;
+
+                public class Widget {
+                    Action<int> handler;
+
+                    public void Handle(int value) {
+                    }
+
+                    public void Wire() {
+                        handler = Handle;
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
+
+            Assert.Contains("he_cpp_bind_front(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("&Widget::Handle", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("std::bind_front", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
