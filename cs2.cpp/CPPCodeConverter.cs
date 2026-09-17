@@ -18,6 +18,7 @@ namespace cs2.cpp {
         CPPProgram tsProgram;
         readonly CPPClassEmitter classEmitter;
         readonly CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest;
+        readonly HashSet<string> EmittedFilePaths = new HashSet<string>(StringComparer.Ordinal);
         public CPPConversionRules CPPRules { get; private set; }
         public CPPConversionOptions Options { get; private set; }
         public CPPConversionReport Report { get; private set; }
@@ -404,8 +405,11 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="name">The stable runtime requirement name.</param>
         public void RegisterRuntimeRequirement(string name) {
+            bool wasRegistered = RuntimeRequirementRegistrar.IsRegistered(name);
             RuntimeRequirementRegistrar.Register(name);
-            SynchronizeRunState();
+            if (!wasRegistered) {
+                SynchronizeRunState();
+            }
         }
 
         /// <summary>
@@ -467,8 +471,10 @@ namespace cs2.cpp {
             instantiatedGeneratedTypeCompilation = null;
             instantiatedGeneratedTypes = null;
             OwnershipAnalysisResult = null;
+            tsProgram.ClearEmittedTypeNameIndex();
 
             Report.Reset();
+            EmittedFilePaths.Clear();
             BuildUsageReport = new CPPBuildUsageReport();
             Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.Reset();
@@ -667,6 +673,7 @@ namespace cs2.cpp {
             SortProgram();
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
             tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
+            tsProgram.BuildEmittedTypeNameIndex();
 
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];
@@ -742,7 +749,7 @@ namespace cs2.cpp {
                 throw new ArgumentException("Generated file path must not be empty.", nameof(filePath));
             }
 
-            if (!Report.EmittedFiles.Contains(filePath, StringComparer.Ordinal)) {
+            if (EmittedFilePaths.Add(filePath)) {
                 Report.EmittedFiles.Add(filePath);
             }
 
