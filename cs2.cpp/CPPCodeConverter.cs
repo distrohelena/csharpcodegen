@@ -230,9 +230,20 @@ namespace cs2.cpp {
             }
 
             string rootPath = ResolveRuntimeTemplateDirectory();
-            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
+            BackgroundWork runtimeCopy = new BackgroundWork(
+                "cs2-runtime-template-copy",
+                () => CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements));
 
-            writeClasses(outputFolder, BuildUsageReport);
+            IReadOnlyList<CPPClassEmissionResult> loweredClasses;
+            try {
+                loweredClasses = LowerClasses(BuildUsageReport);
+            } catch {
+                runtimeCopy.Join();
+                throw;
+            }
+
+            runtimeCopy.Wait();
+            WriteClassFiles(outputFolder, loweredClasses);
             PruneDisabledFeatureRuntimeFiles(outputFolder);
             foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(outputFolder)) {
                 TrackEmittedFile(supportFile);
@@ -694,35 +705,52 @@ namespace cs2.cpp {
             }
         }
 
-        private void writeClasses(string folder, CPPBuildUsageReport buildUsageReport) {
+        /// <summary>
+        /// Lowers every reachable generated class into in-memory header and source text in reachability order.
+        /// </summary>
+        /// <param name="buildUsageReport">Resolved feature decisions that select reachable types.</param>
+        /// <returns>Lowered classes in the order their files must be written.</returns>
+        IReadOnlyList<CPPClassEmissionResult> LowerClasses(CPPBuildUsageReport buildUsageReport) {
             SortProgram();
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
             tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
             tsProgram.BuildEmittedTypeNameIndex();
 
+            List<CPPClassEmissionResult> results = new List<CPPClassEmissionResult>();
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];
-                if (cl.IsNative) {
-                    continue;
-                }
-                if (!ShouldEmitGeneratedSourceClass(cl)) {
+                if (cl.IsNative || !ShouldEmitGeneratedSourceClass(cl)) {
                     continue;
                 }
 
-                string filePath = Path.Combine(folder, cl.GetEmittedFileStem(program));
+                SortVariables(cl);
+                SortFunctions(cl);
+                string fileStem = cl.GetEmittedFileStem(program);
+                using (StringWriter headerWriter = new StringWriter()) {
+                    using (StringWriter sourceWriter = new StringWriter()) {
+                        classEmitter.Emit(cl, headerWriter, sourceWriter);
+                        results.Add(new CPPClassEmissionResult(cl, fileStem, headerWriter.ToString(), sourceWriter.ToString()));
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Writes lowered class text to disk and records each generated file in order.
+        /// </summary>
+        /// <param name="folder">Generated output folder.</param>
+        /// <param name="results">Lowered classes in write order.</param>
+        void WriteClassFiles(string folder, IReadOnlyList<CPPClassEmissionResult> results) {
+            for (int i = 0; i < results.Count; i++) {
+                CPPClassEmissionResult result = results[i];
+                string filePath = Path.Combine(folder, result.FileStem);
                 string headerPath = filePath + ".hpp";
                 string codePath = filePath + ".cpp";
 
-                using (StreamWriter writerHeader = new StreamWriter(headerPath)) {
-                    using (StreamWriter writerCode = new StreamWriter(codePath)) {
-                        SortVariables(cl);
-                        SortFunctions(cl);
-                        classEmitter.Emit(cl, writerHeader, writerCode);
-
-                        writerCode.Flush();
-                        writerHeader.Flush();
-                    }
-                }
+                File.WriteAllText(headerPath, result.HeaderText);
+                File.WriteAllText(codePath, result.SourceText);
 
                 TrackEmittedFile(headerPath);
                 TrackEmittedFile(codePath);
