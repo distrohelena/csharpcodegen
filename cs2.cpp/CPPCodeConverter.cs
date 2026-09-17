@@ -529,8 +529,11 @@ namespace cs2.cpp {
             assemblyName = string.Empty;
             version = string.Empty;
             targetFramework = string.Empty;
-            instantiatedGeneratedTypeCompilation = null;
-            instantiatedGeneratedTypes = null;
+            lock (InstantiatedGeneratedTypeLock) {
+                instantiatedGeneratedTypeCompilation = null;
+                instantiatedGeneratedTypes = null;
+            }
+
             OwnershipAnalysisResult = null;
             tsProgram.ClearEmittedTypeNameIndex();
 

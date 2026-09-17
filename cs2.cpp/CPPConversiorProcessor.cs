@@ -11,7 +11,7 @@ namespace cs2.cpp {
         /// <summary>
         /// Run state and reporting host; the converter on the main thread or an emission worker on a pool thread.
         /// </summary>
-        ICPPConversionHost codeConverter;
+        readonly ICPPConversionHost codeConverter;
 
         /// <summary>
         /// Counter behind <see cref="CreateTemporaryName"/>; reset per emitted class so names depend only on the class.
@@ -116,8 +116,11 @@ namespace cs2.cpp {
         /// <summary>
         /// Generates a stable, compiler-safe temporary name for lowered expressions.
         /// </summary>
+        /// <remarks>
+        /// The counter restarts in <see cref="BeginClassEmission"/>, so a generated name is unique only within the class currently being emitted, not across a whole conversion run.
+        /// </remarks>
         /// <param name="prefix">Prefix used to describe the temporary.</param>
-        /// <returns>A unique identifier that stays within valid C++ identifier syntax.</returns>
+        /// <returns>An identifier that is unique within the class being emitted and stays within valid C++ identifier syntax.</returns>
         string CreateTemporaryName(string prefix) {
             int uniqueIndex = temporaryNameCounter++;
             return $"{prefix}_{uniqueIndex:X8}";
@@ -5708,8 +5711,13 @@ namespace cs2.cpp {
             }
         }
 
+        /// <summary>
+        /// Records one generated type dependency on the class currently being emitted so later include resolution can reach the referenced type.
+        /// </summary>
+        /// <param name="context">Active conversion layer context.</param>
+        /// <param name="referencedTypeName">Fully qualified source name of the referenced type.</param>
         void RegisterGeneratedTypeDependency(LayerContext context, string referencedTypeName) {
-            ConversionClass currentClass = context?.GetCurrentClass();
+            ConversionClass currentClass = GetOwningEmissionClass(context);
             if (currentClass == null || string.IsNullOrWhiteSpace(referencedTypeName)) {
                 return;
             }
@@ -6671,11 +6679,11 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Ensures the current generated type includes the Unsafe shim so native helper declarations are available wherever Unsafe intrinsics were lowered.
+        /// Ensures the generated type being emitted includes the Unsafe shim so native helper declarations are available wherever Unsafe intrinsics were lowered.
         /// </summary>
         /// <param name="context">Current lowering context.</param>
         void EnsureUnsafeShimInclude(LayerContext context) {
-            ConversionClass currentClass = context.GetCurrentClass();
+            ConversionClass currentClass = GetOwningEmissionClass(context);
             if (currentClass == null || currentClass.SourceIncludes.Contains("runtime/native_unsafe.hpp", StringComparer.Ordinal)) {
                 return;
             }
@@ -8692,7 +8700,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            ConversionClass currentClass = context.GetCurrentClass();
+            ConversionClass currentClass = GetOwningEmissionClass(context);
             if (currentClass != null && !string.IsNullOrWhiteSpace(includePath)) {
                 currentClass.SourceIncludes.Add(includePath);
             }
@@ -17106,6 +17114,12 @@ namespace cs2.cpp {
             }
         }
 
+        /// <summary>
+        /// Records a reference to one generated type on the class being emitted so its header is included by the owning emission file.
+        /// </summary>
+        /// <param name="context">Active conversion layer context.</param>
+        /// <param name="typeName">Source name of the candidate generated type.</param>
+        /// <param name="genericArgCount">Generic argument count used to disambiguate overloaded generated names.</param>
         void RegisterGeneratedTypeReference(LayerContext context, string typeName, int genericArgCount) {
             if (string.IsNullOrWhiteSpace(typeName)) {
                 return;
