@@ -375,28 +375,32 @@ public sealed class CPPEmittedTypeNameIndexTests {
     }
 
     /// <summary>
-    /// Every class in the program gets an indexed name, and lookups by emitted name return the first generated class.
+    /// Every class in the program gets an indexed name; generated-class lookups skip native classes that share the name.
     /// </summary>
     [Fact]
-    public void Build_IndexesEveryClassAndPrefersFirstGeneratedMatch() {
+    public void Build_IndexesEveryClassAndResolvesGeneratedClassesOnly() {
         CPPProgram program = new CPPProgram(new CPPConversionRules());
-        ConversionClass native = CreateGeneratedClass(program, "List", isNative: true);
-        ConversionClass first = CreateGeneratedClass(program, "Widget");
-        ConversionClass second = CreateGeneratedClass(program, "Widget");
+        ConversionClass nativeList = CreateGeneratedClass(program, "List", isNative: true);
+        ConversionClass nativeWidget = CreateGeneratedClass(program, "Widget", isNative: true);
+        ConversionClass widget = CreateGeneratedClass(program, "Widget");
+        ConversionClass gadget = CreateGeneratedClass(program, "Gadget");
 
         CPPEmittedTypeNameIndex index = CPPEmittedTypeNameIndex.Build(program.Classes);
 
-        Assert.True(index.TryGetEmittedTypeName(first, out string firstName));
-        Assert.Equal("Widget", firstName);
-        Assert.True(index.TryGetEmittedTypeName(native, out string nativeName));
+        Assert.True(index.TryGetEmittedTypeName(widget, out string widgetName));
+        Assert.Equal("Widget", widgetName);
+        Assert.True(index.TryGetEmittedTypeName(nativeList, out string nativeName));
         Assert.Equal("List", nativeName);
-        Assert.True(index.TryGetGeneratedClass("Widget", out ConversionClass resolved));
-        Assert.Same(first, resolved);
+        Assert.True(index.TryGetGeneratedClass("Widget", out ConversionClass resolvedWidget));
+        Assert.Same(widget, resolvedWidget);
+        Assert.NotSame(nativeWidget, resolvedWidget);
+        Assert.True(index.TryGetGeneratedClass("Gadget", out ConversionClass resolvedGadget));
+        Assert.Same(gadget, resolvedGadget);
         Assert.False(index.TryGetGeneratedClass("List", out _));
         Assert.Contains("Widget", index.EmittedTypeNames);
         Assert.Contains("List", index.EmittedTypeNames);
+        Assert.Contains("Gadget", index.EmittedTypeNames);
         Assert.False(index.TryGetGeneratedClass("Missing", out _));
-        Assert.NotSame(first, second);
     }
 
     /// <summary>
