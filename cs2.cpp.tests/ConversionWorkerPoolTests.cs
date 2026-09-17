@@ -92,6 +92,78 @@ public sealed class ConversionWorkerPoolTests {
     }
 
     /// <summary>
+    /// Bodies run on the pool's own named threads, never on the calling thread.
+    /// </summary>
+    [Fact]
+    public void Run_ExecutesBodiesOnNamedWorkerThreads() {
+        int callerThread = Environment.CurrentManagedThreadId;
+        int violations = 0;
+        ConversionWorkerPool pool = new ConversionWorkerPool(3);
+
+        pool.Run(90, (workerIndex, itemIndex) => {
+            if (Thread.CurrentThread.Name != $"cs2-worker-{workerIndex}") {
+                Interlocked.Increment(ref violations);
+            }
+            if (Environment.CurrentManagedThreadId == callerThread) {
+                Interlocked.Increment(ref violations);
+            }
+        });
+
+        Assert.Equal(0, violations);
+    }
+
+    /// <summary>
+    /// A run never starts more threads than there are items.
+    /// </summary>
+    [Fact]
+    public void Run_CapsThreadsAtItemCount() {
+        int[] workerHits = new int[4];
+        ConversionWorkerPool pool = new ConversionWorkerPool(4);
+
+        pool.Run(2, (workerIndex, itemIndex) => Interlocked.Increment(ref workerHits[workerIndex]));
+
+        Assert.Equal(2, workerHits[0] + workerHits[1]);
+        Assert.Equal(0, workerHits[2]);
+        Assert.Equal(0, workerHits[3]);
+    }
+
+    /// <summary>
+    /// Starting a run while one is in progress on the same pool is rejected instead of corrupting it.
+    /// </summary>
+    [Fact]
+    public void Run_WhileRunning_Throws() {
+        ConversionWorkerPool pool = new ConversionWorkerPool(1);
+
+        InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() => pool.Run(1, (workerIndex, itemIndex) => pool.Run(1, (innerWorkerIndex, innerItemIndex) => { })));
+
+        Assert.Contains("not reentrant", failure.Message);
+    }
+
+    /// <summary>
+    /// The reentrancy guard is released whether the previous run succeeded or threw.
+    /// </summary>
+    [Fact]
+    public void Run_AfterCompletedRun_CanRunAgain() {
+        int[] hits = new int[6];
+        ConversionWorkerPool pool = new ConversionWorkerPool(2);
+
+        pool.Run(hits.Length, (workerIndex, itemIndex) => Interlocked.Increment(ref hits[itemIndex]));
+        Assert.Throws<InvalidOperationException>(() => pool.Run(hits.Length, (workerIndex, itemIndex) => throw new InvalidOperationException("boom")));
+        pool.Run(hits.Length, (workerIndex, itemIndex) => Interlocked.Increment(ref hits[itemIndex]));
+
+        Assert.All(hits, hit => Assert.Equal(2, hit));
+    }
+
+    /// <summary>
+    /// The configured worker count is reported back unchanged.
+    /// </summary>
+    [Fact]
+    public void WorkerCount_ReturnsConfiguredValue() {
+        Assert.Equal(1, new ConversionWorkerPool(1).WorkerCount);
+        Assert.Equal(7, new ConversionWorkerPool(7).WorkerCount);
+    }
+
+    /// <summary>
     /// Invalid sizes and bodies are rejected up front, and zero items is a no-op.
     /// </summary>
     [Fact]
