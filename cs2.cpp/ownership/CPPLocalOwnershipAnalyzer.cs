@@ -39,7 +39,7 @@ public sealed class CPPLocalOwnershipAnalyzer {
     }
 
     /// <summary>
-    /// Analyzes all source method bodies and owned members in the supplied compilations.
+    /// Analyzes all source method bodies and owned members in the supplied compilations, running local analysis on the calling thread only (<c>workerCount: 1</c>).
     /// </summary>
     /// <param name="compilations">Roslyn compilations participating in one generated native program.</param>
     /// <param name="summaries">Previously resolved method return and parameter ownership contracts.</param>
@@ -90,6 +90,14 @@ public sealed class CPPLocalOwnershipAnalyzer {
         Dictionary<VariableDeclaratorSyntax, CPPLocalOwnershipPlan> localPlans = [];
         List<CPPOwnershipTransition> transitions = [];
         List<CPPConversionDiagnostic> diagnostics = [];
+
+        // Sequential analysis shared one diagnostic aggregate across every tree, so
+        // CPPMethodControlFlowOwnershipAnalyzer.AddDiagnostic suppressed a repeat of the same code at the same
+        // source coordinates run-wide. Per-tree aggregates only suppress within their own tree, so two trees that
+        // share a source path - a linked or shared source file included by more than one project in the closure -
+        // would each report it. This filter re-applies that suppression during the tree-order merge using exactly
+        // AddDiagnostic's equality: ordinal code, ordinal file path, line and column.
+        HashSet<string> reportedDiagnosticKeys = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < analyses.Length; index++) {
             CPPOwnershipTreeAnalysis analysis = analyses[index];
             foreach (KeyValuePair<VariableDeclaratorSyntax, CPPLocalOwnershipPlan> localPlan in analysis.LocalPlans) {
@@ -97,7 +105,11 @@ public sealed class CPPLocalOwnershipAnalyzer {
             }
 
             transitions.AddRange(analysis.Transitions);
-            diagnostics.AddRange(analysis.Diagnostics);
+            foreach (CPPConversionDiagnostic diagnostic in analysis.Diagnostics) {
+                if (reportedDiagnosticKeys.Add(CreateDiagnosticKey(diagnostic))) {
+                    diagnostics.Add(diagnostic);
+                }
+            }
         }
 
         CPPOwnershipAnalysisResult localResult = new CPPOwnershipAnalysisResult(
@@ -112,6 +124,15 @@ public sealed class CPPLocalOwnershipAnalyzer {
             summaries,
             localResult.EmissionPlan,
             diagnostics.Concat(memberDiagnostics).ToArray());
+    }
+
+    /// <summary>
+    /// Builds the merge identity of one diagnostic from the same fields <see cref="CPPMethodControlFlowOwnershipAnalyzer"/> compares when it suppresses a repeat.
+    /// </summary>
+    /// <param name="diagnostic">Diagnostic produced while analyzing one tree.</param>
+    /// <returns>An ordinal key combining the diagnostic code and its exact source coordinates.</returns>
+    static string CreateDiagnosticKey(CPPConversionDiagnostic diagnostic) {
+        return $"{diagnostic.Code}|{diagnostic.FilePath}|{diagnostic.LineNumber}|{diagnostic.ColumnNumber}";
     }
 
     /// <summary>

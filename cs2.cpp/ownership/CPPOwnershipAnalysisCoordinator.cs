@@ -7,7 +7,7 @@ namespace cs2.cpp;
 /// </summary>
 public sealed class CPPOwnershipAnalysisCoordinator {
     /// <summary>
-    /// Resolves native ownership contracts and the lowering plan for every supplied source compilation.
+    /// Resolves native ownership contracts and the lowering plan for every supplied source compilation, running local analysis on the calling thread only (<c>workerCount: 1</c>).
     /// </summary>
     /// <param name="compilations">Root and transitively referenced compilations participating in one conversion.</param>
     /// <returns>The immutable semantic ownership result consumed by later C++ lowering stages.</returns>

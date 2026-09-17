@@ -110,6 +110,53 @@ public sealed class CPPParallelOwnershipAnalysisTests {
         """;
 
     /// <summary>
+    /// Two trees that share one source path report their identical diagnostic once, exactly as the sequential walk did.
+    /// </summary>
+    [Fact]
+    public void Analyze_WithSharedFilePathAcrossTrees_ReportsEachDiagnosticOnce() {
+        CSharpCompilation shared = CreateSharedPathCompilation(2);
+        CSharpCompilation single = CreateSharedPathCompilation(1);
+        CPPOwnershipAnalysisCoordinator coordinator = new CPPOwnershipAnalysisCoordinator();
+
+        int singleCount = coordinator.Analyze(new Compilation[] { single }, 1).Diagnostics.Count;
+        int sharedOneWorkerCount = coordinator.Analyze(new Compilation[] { shared }, 1).Diagnostics.Count;
+        int sharedFourWorkerCount = coordinator.Analyze(new Compilation[] { shared }, 4).Diagnostics.Count;
+
+        Assert.True(singleCount > 0, "The shared-path fixture must produce at least one ownership diagnostic.");
+        Assert.Equal(singleCount, sharedOneWorkerCount);
+        Assert.Equal(singleCount, sharedFourWorkerCount);
+    }
+
+    /// <summary>
+    /// Builds one compilation whose consumer trees all carry the same source path and the same diagnostic coordinates.
+    /// </summary>
+    /// <param name="treeCount">Number of identically pathed consumer trees appended after the shared prelude tree.</param>
+    /// <returns>A compilation whose consumer trees are indistinguishable by diagnostic identity.</returns>
+    static CSharpCompilation CreateSharedPathCompilation(int treeCount) {
+        CSharpParseOptions parseOptions = new CSharpParseOptions(LanguageVersion.Preview, DocumentationMode.Parse, SourceCodeKind.Regular);
+        CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(PreludeSource, "SharedPathOwnershipFixture", filePath: "Prelude.cs");
+        List<SyntaxTree> sharedTrees = [];
+        for (int index = 0; index < treeCount; index++) {
+            string sharedSource = $$"""
+                using System.Collections.Generic;
+
+                public static class Shared{{(char)('A' + index)}} {
+                    public static void Run(Sink sink) {
+                        List<int> values = new List<int>();
+                        Combine(sink.TakeAndReturn(values), values.Count);
+                    }
+
+                    static void Combine(int first, int second) {
+                    }
+                }
+                """;
+            sharedTrees.Add(CSharpSyntaxTree.ParseText(sharedSource, parseOptions, "Shared.cs"));
+        }
+
+        return compilation.AddSyntaxTrees(sharedTrees);
+    }
+
+    /// <summary>
     /// Builds one compilation whose consumer trees each declare an owned local and use it after transfer.
     /// </summary>
     /// <param name="consumerTreeCount">Number of consumer trees appended after the shared prelude tree.</param>
@@ -150,6 +197,8 @@ public sealed class CPPParallelOwnershipAnalysisTests {
     /// <summary>
     /// Renders every transition's identity and outcome in plan order so two runs can be compared as sequences.
     /// </summary>
+    /// <param name="result">Analysis result whose ordered transitions are rendered.</param>
+    /// <returns>One comparable string per transition in plan order.</returns>
     static IEnumerable<string> DescribeTransitions(CPPOwnershipAnalysisResult result) {
         return result.EmissionPlan.Transitions.Select(transition =>
             $"{transition.Syntax.SpanStart}:{transition.LocalDeclaration?.Identifier.ValueText}:{transition.Kind}:{transition.ResultingOwnership}:{transition.ResultingLifecycle}");
