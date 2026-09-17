@@ -80,5 +80,10 @@ namespace cs2.cpp {
         /// Gets the generic option name containing semicolon-delimited maintained-symbol prefixes selected for generated function profiling.
         /// </summary>
         public const string GeneratedFunctionProfilingMaintainedSymbolPrefixes = "codegen-generated-function-profiling-maintained-symbol-prefixes";
+
+        /// <summary>
+        /// Gets the generic option name that sets how many dedicated threads the converter uses for parallel phases.
+        /// </summary>
+        public const string WorkerThreads = "codegen-worker-threads";
     }
 }
