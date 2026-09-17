@@ -42,6 +42,22 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Computes the base emitted type name from source metadata without running the emitted-name collision
+        /// assertion. Used for classes the real emission path never resolves an emitted name for (native classes
+        /// and classes excluded by the generated-type emission policy), so recording their name for lookup
+        /// purposes never raises a collision that production emission would never have checked in the first place.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose unasserted base emitted name is needed.</param>
+        /// <returns>The base emitted type name, without any collision check.</returns>
+        internal static string ComputeBaseEmittedTypeName(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return string.Empty;
+            }
+
+            return GetBaseEmittedTypeName(conversionClass);
+        }
+
+        /// <summary>
         /// Resolves the generated file stem for one converted class, using a qualified collision-safe stem when another emitted type collides on case-insensitive filesystems.
         /// </summary>
         /// <param name="conversionClass">The converted class whose generated file stem is needed.</param>
@@ -890,7 +906,10 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Throws when two generated classes would emit the same C++ type identifier.
+        /// Throws when two generated classes would emit the same C++ type identifier. Only classes the generated-type
+        /// emission policy would actually emit (non-native, not excluded as conversion-time-only metadata) can be the
+        /// colliding candidate, since a class that never emits standalone runtime source can never really collide
+        /// with anything.
         /// </summary>
         /// <param name="conversionClass">Converted class whose emitted type name is being validated.</param>
         /// <param name="emittedTypeName">Resolved emitted type name before emission.</param>
@@ -908,6 +927,7 @@ namespace cs2.cpp {
                 candidate != null &&
                 !ReferenceEquals(candidate, conversionClass) &&
                 !candidate.IsNative &&
+                CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&
                 string.Equals(GetBaseEmittedTypeName(candidate), emittedTypeName, StringComparison.Ordinal));
             if (collidingClass == null) {
                 return;

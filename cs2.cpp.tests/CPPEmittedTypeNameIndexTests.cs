@@ -1,5 +1,8 @@
 using cs2.core;
 using cs2.cpp;
+using cs2.cpp.tests.TestHelpers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace cs2.cpp.tests;
 
@@ -64,6 +67,35 @@ public sealed class CPPEmittedTypeNameIndexTests {
         program.ClearEmittedTypeNameIndex();
         Assert.Null(program.EmittedTypeNameIndex);
         Assert.Equal("Widget", widget.GetEmittedTypeName());
+    }
+
+    /// <summary>
+    /// Building the index never asserts a collision against a class the real emission path would never emit.
+    /// </summary>
+    [Fact]
+    public void Build_DoesNotAssertCollisionsForNonEmittableClasses() {
+        CPPProgram program = new CPPProgram(new CPPConversionRules());
+        CSharpCompilation compilation = RoslynTestHelper.CreateCompilation(
+            "namespace cs2.attributes { public class NativeOwnedMemberAttribute : System.Attribute { } }");
+        INamedTypeSymbol excludedSymbol = compilation.GetTypeByMetadataName("cs2.attributes.NativeOwnedMemberAttribute");
+
+        ConversionClass excludedClass = new ConversionClass {
+            Name = "NativeOwnedMemberAttribute",
+            IsNative = false,
+            Program = program,
+            TypeSymbol = excludedSymbol
+        };
+        program.Classes.Add(excludedClass);
+        ConversionClass plainClass = CreateGeneratedClass(program, "NativeOwnedMemberAttribute");
+
+        CPPEmittedTypeNameIndex index = CPPEmittedTypeNameIndex.Build(program.Classes);
+
+        Assert.True(index.TryGetGeneratedClass("NativeOwnedMemberAttribute", out ConversionClass resolvedClass));
+        Assert.Same(plainClass, resolvedClass);
+        Assert.True(index.TryGetEmittedTypeName(excludedClass, out string excludedName));
+        Assert.Equal("NativeOwnedMemberAttribute", excludedName);
+        Assert.True(index.TryGetEmittedTypeName(plainClass, out string plainName));
+        Assert.Equal("NativeOwnedMemberAttribute", plainName);
     }
 
     /// <summary>

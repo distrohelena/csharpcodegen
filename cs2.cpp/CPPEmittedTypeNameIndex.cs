@@ -70,7 +70,11 @@ namespace cs2.cpp {
         public bool AllEmittedTypeNamesAreIdentifiers => AllNamesAreIdentifiers;
 
         /// <summary>
-        /// Builds the index by computing each class's emitted name exactly once in program order.
+        /// Builds the index by computing each class's emitted name exactly once in program order. The collision
+        /// assertion only runs for emittable classes (non-native classes the generated-type emission policy
+        /// would actually emit) — the same set the real emission path resolves emitted names for. Every other
+        /// class records its unasserted base emitted name so lookups still resolve without ever raising a
+        /// collision the emitter itself would never have checked.
         /// </summary>
         /// <param name="classes">Program classes to snapshot.</param>
         /// <returns>The completed index.</returns>
@@ -91,7 +95,10 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                string emittedTypeName = CPPVariableType.ComputeEmittedTypeName(conversionClass);
+                bool emittable = !conversionClass.IsNative && CPPGeneratedTypeEmissionPolicy.ShouldEmit(conversionClass);
+                string emittedTypeName = emittable
+                    ? CPPVariableType.ComputeEmittedTypeName(conversionClass)
+                    : CPPVariableType.ComputeBaseEmittedTypeName(conversionClass);
                 emittedTypeNamesByClass[conversionClass] = emittedTypeName;
                 if (string.IsNullOrWhiteSpace(emittedTypeName)) {
                     continue;
@@ -104,7 +111,7 @@ namespace cs2.cpp {
                     }
                 }
 
-                if (!conversionClass.IsNative && CPPGeneratedTypeEmissionPolicy.ShouldEmit(conversionClass)) {
+                if (emittable) {
                     generatedClassesByEmittedName.TryAdd(emittedTypeName, conversionClass);
                 }
             }
