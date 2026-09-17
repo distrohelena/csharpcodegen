@@ -17,6 +17,25 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
+            if (conversionClass.Program is CPPProgram cppProgram &&
+                cppProgram.EmittedTypeNameIndex != null &&
+                cppProgram.EmittedTypeNameIndex.TryGetEmittedTypeName(conversionClass, out string indexedTypeName)) {
+                return indexedTypeName;
+            }
+
+            return ComputeEmittedTypeName(conversionClass);
+        }
+
+        /// <summary>
+        /// Computes the emitted type name from source metadata without consulting the emit-pass index.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose emitted name is needed.</param>
+        /// <returns>The collision-checked emitted type name.</returns>
+        internal static string ComputeEmittedTypeName(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return string.Empty;
+            }
+
             string emittedTypeName = GetBaseEmittedTypeName(conversionClass);
             AssertNoEmittedTypeNameCollision(conversionClass, emittedTypeName);
             return emittedTypeName;
