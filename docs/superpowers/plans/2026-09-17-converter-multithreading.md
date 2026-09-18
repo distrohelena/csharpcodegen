@@ -108,6 +108,10 @@ for ($i = 0; $i -lt $a.Count; $i++) { if ((Get-FileHash $a[$i].FullName).Hash -n
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="proj*/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\cs2.core\cs2.core.csproj" />
     <ProjectReference Include="..\..\cs2.cpp\cs2.cpp.csproj" />
     <ProjectReference Include="..\..\codegen\codegen.csproj" />
@@ -638,7 +642,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `CPPEmittedTypeNameIndex` from Task 1.
-- Produces: `public static class CPPGeneratedTypeNameQualifier` with `static string Qualify(string renderedTypeName, IReadOnlySet<string> emittedTypeNames)`.
+- Produces: `public static class CPPGeneratedTypeNameQualifier` with `static string Qualify(string renderedTypeName, CPPEmittedTypeNameIndex index)`.
+
+Fix round 1 changed the signature to take the index so the qualifier can fall back to the original ordered regex loop when any emitted name is not a pure identifier run; the index exposes `OrderedEmittedTypeNames` and `AllEmittedTypeNamesAreIdentifiers` for that.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3127,13 +3133,15 @@ Fill in as tasks complete (800-class synthetic project unless stated; ms).
 | Row | DocumentPreprocessingStage | CPPOwnershipAnalysisStage | WriteOutput | TOTAL | Byte-identical to previous row? |
 |---|---|---|---|---|---|
 | Before (2026-09-17 baseline) | 4750 | 3108 | 48284 | 59477 | n/a |
-| After commit 1 (Task 3) | | | | | must be yes |
-| After task 5 | | | | | must be yes |
-| After commit 2 (Task 6) | | | | | must be yes |
-| After commit 3, one worker (Task 10) | | | | | temporary names only |
-| After commit 3, all workers (Task 10) | | | | | yes vs one worker |
-| After task 11 | | | | | yes |
-| After task 12 | | | | | yes |
+| After commit 1 (Task 3) | 4101 | 3606 | 6258 | 17045 | must be yes |
+| After task 5 | 4233 | 2739 | 5422 | 14152 | must be yes |
+| After commit 2 (Task 6) | 4338 | 3084 | 5590 | 14878 | must be yes |
+| After commit 3, one worker (Task 10) | 4553 | 2410 | 4644 | 13286 | temporary names only |
+| After commit 3, all workers (Task 10) | 3595 | 2410 | 1909 | 9361 | yes vs one worker |
+| After task 11 | 4449 | 1602 | 2903 | 10903 | yes |
+| After task 12 | 3323 | 2269 | 3797 | 11009 | REVERTED |
 
-Gate outcomes: Task 11 kept / reverted: ____ (drop ___ %). Task 12 kept / reverted: ____ (drop ___ %).
+Note: this machine reports `Environment.ProcessorCount` = 16 (measured in Task 10), so every "all workers" row above ran with 16 workers.
+
+Gate outcomes: Task 11 kept (drop 46.4 %). Task 12 reverted (stage drop 26.1 % but TOTAL flat, ownership stage +51 %).
 
