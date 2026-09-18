@@ -110,19 +110,19 @@ namespace cs2.core.Pipeline {
 
     public sealed class DocumentPreprocessingStage : IConversionStage {
         /// <summary>
-        /// Dedicated threads used to resolve and warm semantic models before the sequential walk; one means the resolve runs inline on the calling thread and nothing is warmed.
+        /// Dedicated threads used to resolve and warm semantic models before the sequential walk.
         /// </summary>
         readonly int WorkerCount;
 
         /// <summary>
-        /// Initializes a stage that resolves every document inline on the calling thread, exactly as the stage did before warm-up existed.
+        /// Initializes a stage that prepares documents on the calling thread.
         /// </summary>
         public DocumentPreprocessingStage()
             : this(1) {
         }
 
         /// <summary>
-        /// Initializes a stage that prepares documents on the supplied number of worker threads, or inline on the calling thread when that number is one.
+        /// Initializes a stage that prepares documents on the supplied number of worker threads.
         /// </summary>
         /// <param name="workerCount">Positive worker thread count.</param>
         public DocumentPreprocessingStage(int workerCount) {
@@ -134,7 +134,7 @@ namespace cs2.core.Pipeline {
         }
 
         /// <summary>
-        /// Prepares every document in the project closure - warmed on the worker pool for several workers, resolved inline for one - then preprocesses them sequentially in project and document order, releasing each prepared document as the walk passes it.
+        /// Prepares every document in the project closure on the worker pool, then preprocesses them sequentially in project and document order.
         /// </summary>
         /// <param name="session">The active conversion session.</param>
         public void Execute(ConversionSession session) {
@@ -146,21 +146,15 @@ namespace cs2.core.Pipeline {
             }
 
             PreparedDocument[] prepared = new PreparedDocument[documents.Count];
-            if (WorkerCount > 1) {
-                ConversionWorkerPool pool = new ConversionWorkerPool(WorkerCount);
-                pool.Run(documents.Count, (workerIndex, itemIndex) => {
-                    PreparedDocument preparedDocument = SemanticModelWarmup.Prepare(documents[itemIndex]);
-                    if (preparedDocument != null) {
-                        SemanticModelWarmup.Warm(preparedDocument);
-                    }
-
-                    prepared[itemIndex] = preparedDocument;
-                });
-            } else {
-                for (int index = 0; index < documents.Count; index++) {
-                    prepared[index] = SemanticModelWarmup.Prepare(documents[index]);
+            ConversionWorkerPool pool = new ConversionWorkerPool(WorkerCount);
+            pool.Run(documents.Count, (workerIndex, itemIndex) => {
+                PreparedDocument preparedDocument = SemanticModelWarmup.Prepare(documents[itemIndex]);
+                if (preparedDocument != null && WorkerCount > 1) {
+                    SemanticModelWarmup.Warm(preparedDocument);
                 }
-            }
+
+                prepared[itemIndex] = preparedDocument;
+            });
 
             for (int index = 0; index < prepared.Length; index++) {
                 PreparedDocument preparedDocument = prepared[index];
@@ -172,9 +166,6 @@ namespace cs2.core.Pipeline {
                 foreach (MemberDeclarationSyntax member in preparedDocument.Root.Members) {
                     session.Converter.RunPreProcess(preparedDocument.SemanticModel, member, session.Context);
                 }
-
-                // Drop the walked document here so its bound semantic model becomes collectable immediately, keeping peak memory at the pre-warm-up level instead of retaining every model for the whole stage.
-                prepared[index] = null;
             }
         }
 
