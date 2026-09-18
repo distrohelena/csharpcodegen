@@ -17,9 +17,44 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
+            if (conversionClass.Program is CPPProgram cppProgram &&
+                cppProgram.EmittedTypeNameIndex != null &&
+                cppProgram.EmittedTypeNameIndex.TryGetEmittedTypeName(conversionClass, out string indexedTypeName)) {
+                return indexedTypeName;
+            }
+
+            return ComputeEmittedTypeName(conversionClass);
+        }
+
+        /// <summary>
+        /// Computes the emitted type name from source metadata without consulting the emit-pass index.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose emitted name is needed.</param>
+        /// <returns>The collision-checked emitted type name.</returns>
+        internal static string ComputeEmittedTypeName(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return string.Empty;
+            }
+
             string emittedTypeName = GetBaseEmittedTypeName(conversionClass);
             AssertNoEmittedTypeNameCollision(conversionClass, emittedTypeName);
             return emittedTypeName;
+        }
+
+        /// <summary>
+        /// Computes the base emitted type name from source metadata without running the emitted-name collision
+        /// assertion. Used for classes the real emission path never resolves an emitted name for (native classes
+        /// and classes excluded by the generated-type emission policy), so recording their name for lookup
+        /// purposes never raises a collision that production emission would never have checked in the first place.
+        /// </summary>
+        /// <param name="conversionClass">Converted class whose unasserted base emitted name is needed.</param>
+        /// <returns>The base emitted type name, without any collision check.</returns>
+        internal static string ComputeBaseEmittedTypeName(ConversionClass conversionClass) {
+            if (conversionClass == null) {
+                return string.Empty;
+            }
+
+            return GetBaseEmittedTypeName(conversionClass);
         }
 
         /// <summary>
@@ -80,6 +115,20 @@ namespace cs2.cpp {
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Builds every lazily cached generated-class lookup on the main thread so emission workers only read them.
+        /// </summary>
+        /// <param name="program">Program whose lookups should be materialized.</param>
+        internal static void WarmGeneratedClassLookups(ConversionProgram program) {
+            if (program == null) {
+                throw new ArgumentNullException(nameof(program));
+            }
+
+            program.GetGeneratedClassLookupByNameAndArity(GetNameAndArityLookupKey);
+            program.GetQualifiedGeneratedClassLookup(GetNormalizedQualifiedGenericDefinitionTypeName);
+            program.GetBaseEmittedTypeNameCollisions(GetBaseEmittedTypeName);
         }
 
         /// <summary>
@@ -871,7 +920,10 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Throws when two generated classes would emit the same C++ type identifier.
+        /// Throws when two generated classes would emit the same C++ type identifier. Only classes the generated-type
+        /// emission policy would actually emit (non-native, not excluded as conversion-time-only metadata) can be the
+        /// colliding candidate, since a class that never emits standalone runtime source can never really collide
+        /// with anything.
         /// </summary>
         /// <param name="conversionClass">Converted class whose emitted type name is being validated.</param>
         /// <param name="emittedTypeName">Resolved emitted type name before emission.</param>
@@ -889,6 +941,7 @@ namespace cs2.cpp {
                 candidate != null &&
                 !ReferenceEquals(candidate, conversionClass) &&
                 !candidate.IsNative &&
+                CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&
                 string.Equals(GetBaseEmittedTypeName(candidate), emittedTypeName, StringComparison.Ordinal));
             if (collidingClass == null) {
                 return;

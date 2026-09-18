@@ -78,3 +78,8 @@ The CLI resolves doxygen in this order:
 - common Windows install locations
 
 If none of those exist, the conversion run will fail with a clear error telling you what to set.
+
+#### Worker threads
+The converter lowers classes and analyzes ownership on dedicated worker threads.
+
+`--set codegen-worker-threads=N` sets the count (default: logical processor count; `1` forces sequential; output is byte-identical at any count).

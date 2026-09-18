@@ -22,6 +22,25 @@ public class CPPProgram : ConversionProgram {
     public Dictionary<string, List<ConversionClass>> ReachableGeneratedTypesByFileStem { get; } = new Dictionary<string, List<ConversionClass>>(StringComparer.OrdinalIgnoreCase);
     public List<string> RuntimeRequirements { get; } = new List<string>();
 
+    /// <summary>
+    /// Gets the emitted type name snapshot for the active emit pass, or null before an emit pass has started.
+    /// </summary>
+    public CPPEmittedTypeNameIndex EmittedTypeNameIndex { get; private set; }
+
+    /// <summary>
+    /// Snapshots every class's emitted type name so emission lookups no longer rescan the program.
+    /// </summary>
+    public void BuildEmittedTypeNameIndex() {
+        EmittedTypeNameIndex = CPPEmittedTypeNameIndex.Build(Classes);
+    }
+
+    /// <summary>
+    /// Discards the emit-pass snapshot so a later run recomputes names from fresh metadata.
+    /// </summary>
+    public void ClearEmittedTypeNameIndex() {
+        EmittedTypeNameIndex = null;
+    }
+
     public CPPProgram(ConversionRules rules)
         : base(rules) {
         Requirements = new List<CPPKnownClass>();

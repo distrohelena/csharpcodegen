@@ -46,7 +46,8 @@ internal sealed class CPPOwnershipAnalysisStage : IConversionStage {
         }
 
         IReadOnlyList<Compilation> compilations = CollectCompilations(session.Project);
-        CPPOwnershipAnalysisResult result = Coordinator.Analyze(compilations);
+        int workerCount = CPPWorkerThreadOptionResolver.Resolve(Owner.Options);
+        CPPOwnershipAnalysisResult result = Coordinator.Analyze(compilations, workerCount);
         AppendDiagnostics(result.MethodSummaries.Diagnostics);
         AppendDiagnostics(result.Diagnostics);
 

@@ -132,7 +132,10 @@ Document preprocessing: a parallel warm-up stage resolves each document's
 syntax tree, root and semantic model on the pool and binds declared symbols,
 then hands those exact instances to the existing sequential
 `DocumentPreprocessingStage` walk, which keeps `ConversionContext` single
-threaded.
+threaded. Measured on 2026-09-17: the warm-up cut the preprocessing stage by 26
+percent but moved the same binding cost into ownership analysis (+51 percent)
+with a flat total, so it was reverted; the per-tree ownership parallelism was
+kept (-46 percent).
 
 Each half is kept only if the harness shows at least a 20 percent drop in that
 stage at 800 classes; otherwise it is reverted before merge.

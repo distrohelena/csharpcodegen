@@ -27,6 +27,14 @@ namespace cs2.cpp {
         public IReadOnlyCollection<CPPRuntimeRequirementDefinition> RegisteredRequirements => registeredRequirements.Values.ToList();
 
         /// <summary>
+        /// Gets how many requirements are registered for the active conversion run, without materializing the set.
+        /// </summary>
+        /// <remarks>
+        /// Callers that only need to know whether a registration added anything read this instead of <see cref="RegisteredRequirements"/>, which allocates a fresh list on every access. A single <see cref="Register"/> call can add more than one requirement, because some requirements imply others.
+        /// </remarks>
+        public int RegisteredCount => registeredRequirements.Count;
+
+        /// <summary>
         /// Begins runtime-helper tracking for a single emitted type.
         /// </summary>
         /// <returns>The new per-type runtime requirement scope.</returns>
@@ -106,6 +114,25 @@ namespace cs2.cpp {
                 Register("NativeExceptions");
             }
             return true;
+        }
+
+        /// <summary>
+        /// Records a requirement that an emission worker already accepted inside a type scope, bypassing the feature gate exactly as the in-scope registration did.
+        /// </summary>
+        /// <param name="name">Stable runtime requirement name.</param>
+        /// <remarks>
+        /// A name the catalog does not know is skipped silently and no CPPREQ001 diagnostic is raised, because the emission worker that produced this name already reported CPPREQ001 against its own report when it first registered the name; reporting again here would duplicate the diagnostic in the merged report.
+        /// </remarks>
+        public void RegisterEmitted(string name) {
+            if (string.IsNullOrWhiteSpace(name)) {
+                throw new ArgumentException("Runtime requirement name must not be empty.", nameof(name));
+            }
+
+            if (!catalog.TryGet(name, out CPPRuntimeRequirementDefinition definition)) {
+                return;
+            }
+
+            registeredRequirements.TryAdd(definition.Name, definition);
         }
 
         /// <summary>

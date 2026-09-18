@@ -62,6 +62,8 @@ namespace cs2.cpp {
                 throw new ArgumentNullException(nameof(sourceWriter));
             }
 
+            processor?.BeginClassEmission();
+
             WriteHeaderPreamble(conversionClass, headerWriter);
             CPPTypeRuntimeRequirementScope typeScope = processor?.BeginTypeRuntimeRequirementScope() ?? new CPPTypeRuntimeRequirementScope();
 
@@ -542,6 +544,15 @@ namespace cs2.cpp {
             }
 
             string normalizedReferencedClass = NormalizeReferencedClassName(normalizedIncludeCandidate);
+            CPPEmittedTypeNameIndex index = program.EmittedTypeNameIndex;
+            if (index != null) {
+                if (index.TryGetGeneratedClass(normalizedIncludeCandidate, out generatedClass)) {
+                    return true;
+                }
+
+                return index.TryGetGeneratedClass(normalizedReferencedClass, out generatedClass);
+            }
+
             generatedClass = program.Classes.FirstOrDefault(candidate =>
                 !candidate.IsNative &&
                 CPPGeneratedTypeEmissionPolicy.ShouldEmit(candidate) &&

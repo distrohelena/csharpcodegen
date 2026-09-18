@@ -1,5 +1,6 @@
 using cs2.core;
 using cs2.core.Pipeline;
+using cs2.core.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.CSharp;
@@ -7,7 +8,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 using System.Reflection;
 
 namespace cs2.cpp {
-    public class CPPCodeConverter : CodeConverter {
+    public class CPPCodeConverter : CodeConverter, ICPPConversionHost {
         string assemblyName;
         string version;
         string targetFramework;
@@ -16,21 +17,58 @@ namespace cs2.cpp {
 
         CPPConversiorProcessor conversion;
         CPPProgram tsProgram;
-        readonly CPPClassEmitter classEmitter;
+        /// <summary>
+        /// Merged profiling manifest for the whole run; emission workers fill their own manifests and the main-thread merge folds them in here.
+        /// </summary>
         readonly CPPGeneratedFunctionProfilingManifest generatedFunctionProfilingManifest;
+        /// <summary>
+        /// Background thread loading doxygen-derived native runtime metadata while the caller opens the Roslyn workspace.
+        /// </summary>
+        readonly BackgroundWork NativeRuntimeMetadataLoad;
+        readonly HashSet<string> EmittedFilePaths = new HashSet<string>(StringComparer.Ordinal);
         public CPPConversionRules CPPRules { get; private set; }
         public CPPConversionOptions Options { get; private set; }
         public CPPConversionReport Report { get; private set; }
         public CPPBuildUsageReport BuildUsageReport { get; private set; }
         public CPPRuntimeRequirementCatalog RuntimeRequirementCatalog { get; private set; }
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; private set; }
-        internal ConversionProgram Program => program;
+        internal ConversionProgram Program {
+            get {
+                EnsureNativeRuntimeMetadataLoaded();
+                return program;
+            }
+        }
         /// <summary>
         /// Gets the validated semantic ownership plan for the active conversion run.
         /// </summary>
         internal CPPOwnershipAnalysisResult OwnershipAnalysisResult { get; private set; }
+
+        /// <summary>
+        /// Exposes the program model to lowering processors through the host seam.
+        /// </summary>
+        ConversionProgram ICPPConversionHost.Program => Program;
+
+        /// <summary>
+        /// Exposes the ownership plan to lowering processors through the host seam.
+        /// </summary>
+        CPPOwnershipAnalysisResult ICPPConversionHost.OwnershipAnalysisResult => OwnershipAnalysisResult;
+
+        /// <summary>
+        /// Exposes instantiated generated types to lowering processors through the host seam.
+        /// </summary>
+        /// <param name="compilation">Compilation to scan.</param>
+        /// <returns>Distinct instantiated generated types.</returns>
+        IReadOnlyList<INamedTypeSymbol> ICPPConversionHost.GetInstantiatedGeneratedTypes(Compilation compilation) {
+            return GetInstantiatedGeneratedTypes(compilation);
+        }
+
         Compilation instantiatedGeneratedTypeCompilation;
         IReadOnlyList<INamedTypeSymbol> instantiatedGeneratedTypes;
+
+        /// <summary>
+        /// Guards the lazily built instantiated-type cache shared by emission workers.
+        /// </summary>
+        readonly object InstantiatedGeneratedTypeLock = new object();
 
         protected override string[] PreProcessorSymbols { get { return preprocessorSymbols; } }
         internal bool IncludeProjectPreprocessorSymbols => includeProjectPreprocessorSymbols;
@@ -67,17 +105,18 @@ namespace cs2.cpp {
 
             conversion = new CPPConversiorProcessor(this);
             generatedFunctionProfilingManifest = new CPPGeneratedFunctionProfilingManifest();
-            classEmitter = new CPPClassEmitter(conversion, tsProgram, generatedFunctionProfilingManifest);
-
-            if (Options.LoadNativeRuntimeMetadata) {
-                tsProgram.AddDotNet();
-            }
 
             assemblyName = "";
             version = "";
             targetFramework = "";
 
+            // ResetRunState mutates tsProgram, so it must complete before the metadata thread starts writing to the
+            // same program; otherwise the main thread and the background load would touch it at the same time.
             ResetRunState();
+
+            if (Options.LoadNativeRuntimeMetadata) {
+                NativeRuntimeMetadataLoad = new BackgroundWork("cs2-native-runtime-metadata", tsProgram.AddDotNet);
+            }
         }
 
         /// <summary>
@@ -194,6 +233,7 @@ namespace cs2.cpp {
         }
 
         public void WriteOutput(string outputFolder) {
+            EnsureNativeRuntimeMetadataLoaded();
             bool generatedFunctionProfilingEnabled = CPPGeneratedFunctionProfilingOptionResolver.Resolve(Options);
             var replacements = new Dictionary<string, string>() {
                 { "ASSEMBLY_NAME", assemblyName },
@@ -218,9 +258,20 @@ namespace cs2.cpp {
             }
 
             string rootPath = ResolveRuntimeTemplateDirectory();
-            CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements);
+            BackgroundWork runtimeCopy = new BackgroundWork(
+                "cs2-runtime-template-copy",
+                () => CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements));
 
-            writeClasses(outputFolder, BuildUsageReport);
+            IReadOnlyList<CPPClassEmissionResult> loweredClasses;
+            try {
+                loweredClasses = LowerClasses(BuildUsageReport);
+            } catch {
+                runtimeCopy.Join();
+                throw;
+            }
+
+            runtimeCopy.Wait();
+            WriteClassFiles(outputFolder, loweredClasses);
             PruneDisabledFeatureRuntimeFiles(outputFolder);
             foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(outputFolder)) {
                 TrackEmittedFile(supportFile);
@@ -403,9 +454,15 @@ namespace cs2.cpp {
         /// Registers a named runtime requirement for the active conversion run.
         /// </summary>
         /// <param name="name">The stable runtime requirement name.</param>
+        /// <remarks>
+        /// The run state is re-synchronized whenever the registrar grew rather than whenever this exact name was new, because one registration can imply further requirements that would otherwise never reach the program model.
+        /// </remarks>
         public void RegisterRuntimeRequirement(string name) {
+            int registeredCountBefore = RuntimeRequirementRegistrar.RegisteredCount;
             RuntimeRequirementRegistrar.Register(name);
-            SynchronizeRunState();
+            if (RuntimeRequirementRegistrar.RegisteredCount != registeredCountBefore) {
+                SynchronizeRunState();
+            }
         }
 
         /// <summary>
@@ -458,17 +515,36 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Blocks until the native runtime metadata thread has populated the program, rethrowing its failure.
+        /// </summary>
+        void EnsureNativeRuntimeMetadataLoaded() {
+            NativeRuntimeMetadataLoad?.Wait();
+        }
+
+        /// <summary>
+        /// Joins the metadata load once the workspace is open so the pipeline sees every native runtime class.
+        /// </summary>
+        protected override void OnProjectOpened() {
+            EnsureNativeRuntimeMetadataLoaded();
+        }
+
+        /// <summary>
         /// Resets all per-run converter state so repeated conversions start from a deterministic baseline.
         /// </summary>
         public void ResetRunState() {
             assemblyName = string.Empty;
             version = string.Empty;
             targetFramework = string.Empty;
-            instantiatedGeneratedTypeCompilation = null;
-            instantiatedGeneratedTypes = null;
+            lock (InstantiatedGeneratedTypeLock) {
+                instantiatedGeneratedTypeCompilation = null;
+                instantiatedGeneratedTypes = null;
+            }
+
             OwnershipAnalysisResult = null;
+            tsProgram.ClearEmittedTypeNameIndex();
 
             Report.Reset();
+            EmittedFilePaths.Clear();
             BuildUsageReport = new CPPBuildUsageReport();
             Report.BuildUsageReport = BuildUsageReport;
             RuntimeRequirementRegistrar.Reset();
@@ -519,29 +595,31 @@ namespace cs2.cpp {
                 return Array.Empty<INamedTypeSymbol>();
             }
 
-            if (ReferenceEquals(instantiatedGeneratedTypeCompilation, compilation) && instantiatedGeneratedTypes != null) {
+            lock (InstantiatedGeneratedTypeLock) {
+                if (ReferenceEquals(instantiatedGeneratedTypeCompilation, compilation) && instantiatedGeneratedTypes != null) {
+                    return instantiatedGeneratedTypes;
+                }
+
+                List<INamedTypeSymbol> resolvedTypes = new List<INamedTypeSymbol>();
+                HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
+
+                foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
+                    SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
+                    SyntaxNode root = syntaxTree.GetRoot();
+
+                    foreach (ObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()) {
+                        AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                    }
+
+                    foreach (ImplicitObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>()) {
+                        AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
+                    }
+                }
+
+                instantiatedGeneratedTypeCompilation = compilation;
+                instantiatedGeneratedTypes = resolvedTypes;
                 return instantiatedGeneratedTypes;
             }
-
-            List<INamedTypeSymbol> resolvedTypes = new List<INamedTypeSymbol>();
-            HashSet<string> seenTypeNames = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
-                SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
-                SyntaxNode root = syntaxTree.GetRoot();
-
-                foreach (ObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>()) {
-                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
-                }
-
-                foreach (ImplicitObjectCreationExpressionSyntax objectCreation in root.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>()) {
-                    AddInstantiatedGeneratedType(semanticModel.GetTypeInfo(objectCreation).Type, resolvedTypes, seenTypeNames);
-                }
-            }
-
-            instantiatedGeneratedTypeCompilation = compilation;
-            instantiatedGeneratedTypes = resolvedTypes;
-            return instantiatedGeneratedTypes;
         }
 
         void AddInstantiatedGeneratedType(ITypeSymbol typeSymbol, List<INamedTypeSymbol> resolvedTypes, HashSet<string> seenTypeNames) {
@@ -663,34 +741,140 @@ namespace cs2.cpp {
             }
         }
 
-        private void writeClasses(string folder, CPPBuildUsageReport buildUsageReport) {
+        /// <summary>
+        /// Lowers every reachable generated class into in-memory header and source text in reachability order.
+        /// </summary>
+        /// <param name="buildUsageReport">Resolved feature decisions that select reachable types.</param>
+        /// <returns>Lowered classes in the order their files must be written.</returns>
+        /// <remarks>
+        /// The emitted type name index is built before the reachable type set so the file-stem grouping reads this pass's names rather than a previous pass's index, and the generated class lookups are warmed and then frozen for the whole parallel pass so a rebuild raced by workers fails loudly; the thaw runs on every exit path, including an aborted pass.
+        /// </remarks>
+        IReadOnlyList<CPPClassEmissionResult> LowerClasses(CPPBuildUsageReport buildUsageReport) {
             SortProgram();
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
+            tsProgram.BuildEmittedTypeNameIndex();
             tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
+            CPPVariableType.WarmGeneratedClassLookups(program);
+            program.FreezeGeneratedClassLookups();
 
+            List<ConversionClass> classes = new List<ConversionClass>();
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
                 ConversionClass cl = reachabilityPlan.Types[i];
-                if (cl.IsNative) {
-                    continue;
-                }
-                if (!ShouldEmitGeneratedSourceClass(cl)) {
+                if (cl.IsNative || !ShouldEmitGeneratedSourceClass(cl)) {
                     continue;
                 }
 
-                string filePath = Path.Combine(folder, cl.GetEmittedFileStem(program));
+                SortVariables(cl);
+                SortFunctions(cl);
+                classes.Add(cl);
+            }
+
+            string[] fileStems = new string[classes.Count];
+            for (int i = 0; i < classes.Count; i++) {
+                fileStems[i] = classes[i].GetEmittedFileStem(program);
+            }
+
+            int workerCount = CPPWorkerThreadOptionResolver.Resolve(Options);
+            ConversionWorkerPool pool = new ConversionWorkerPool(workerCount);
+            CPPEmissionWorker[] workers = new CPPEmissionWorker[Math.Min(workerCount, Math.Max(classes.Count, 1))];
+            CPPClassEmissionResult[] results = new CPPClassEmissionResult[classes.Count];
+            try {
+                try {
+                    pool.Run(classes.Count, (workerIndex, itemIndex) => {
+                        workers[workerIndex] ??= new CPPEmissionWorker(this, tsProgram);
+                        results[itemIndex] = workers[workerIndex].Lower(classes[itemIndex], fileStems[itemIndex]);
+                    });
+                } finally {
+                    program.ThawGeneratedClassLookups();
+                }
+            } catch {
+                MergeAbortedEmissionDiagnostics(results, workers);
+                throw;
+            }
+
+            MergeEmissionResults(results);
+            return results;
+        }
+
+        /// <summary>
+        /// Folds the diagnostics of an aborted emission pass into the converter's report so a run that throws still explains why, matching the single-threaded behaviour where the reporting worker wrote straight into this report.
+        /// </summary>
+        /// <param name="results">Result slots of the aborted pass; classes that never completed are null.</param>
+        /// <param name="workers">Worker slots of the aborted pass; unused slots are null, and every started thread has been joined before this runs.</param>
+        /// <remarks>
+        /// The diagnostic set of an aborted run depends on the worker count: the stop after a failure is cooperative, so classes later in reachability order may already have completed on other workers and contribute their diagnostics, while a single worker stops at the first failure. Only the thrown exception is worker-count independent, because the pool always rethrows the failure of the lowest reachability index.
+        /// </remarks>
+        void MergeAbortedEmissionDiagnostics(IReadOnlyList<CPPClassEmissionResult> results, CPPEmissionWorker[] workers) {
+            // A secondary failure while salvaging diagnostics must never replace the worker's original exception,
+            // which the caller is about to rethrow, so every fault in this best-effort merge is swallowed.
+            try {
+                HashSet<CPPConversionDiagnostic> mergedDiagnostics = new HashSet<CPPConversionDiagnostic>();
+                for (int i = 0; i < results.Count; i++) {
+                    if (results[i] == null) {
+                        continue;
+                    }
+
+                    foreach (CPPConversionDiagnostic diagnostic in results[i].Diagnostics) {
+                        if (mergedDiagnostics.Add(diagnostic)) {
+                            Report.Diagnostics.Add(diagnostic);
+                        }
+                    }
+                }
+
+                for (int i = 0; i < workers.Length; i++) {
+                    if (workers[i] == null) {
+                        continue;
+                    }
+
+                    foreach (CPPConversionDiagnostic diagnostic in workers[i].Report.Diagnostics) {
+                        if (mergedDiagnostics.Add(diagnostic)) {
+                            Report.Diagnostics.Add(diagnostic);
+                        }
+                    }
+                }
+
+                SynchronizeRunState();
+            } catch (Exception) {
+            }
+        }
+
+        /// <summary>
+        /// Folds per-class side effects into the converter's run state in reachability order so the outcome never depends on scheduling.
+        /// </summary>
+        /// <param name="results">Lowered classes in reachability order.</param>
+        void MergeEmissionResults(IReadOnlyList<CPPClassEmissionResult> results) {
+            for (int i = 0; i < results.Count; i++) {
+                CPPClassEmissionResult result = results[i];
+                foreach (string requirementName in result.RuntimeRequirements) {
+                    RuntimeRequirementRegistrar.RegisterEmitted(requirementName);
+                }
+
+                foreach (CPPConversionDiagnostic diagnostic in result.Diagnostics) {
+                    Report.Diagnostics.Add(diagnostic);
+                }
+
+                foreach (CPPGeneratedFunctionProfilingScope scope in result.ProfilingScopes) {
+                    generatedFunctionProfilingManifest.Add(scope.GeneratedFilePath, scope.SourceLocation);
+                }
+            }
+
+            SynchronizeRunState();
+        }
+
+        /// <summary>
+        /// Writes lowered class text to disk and records each generated file in order.
+        /// </summary>
+        /// <param name="folder">Generated output folder.</param>
+        /// <param name="results">Lowered classes in write order.</param>
+        void WriteClassFiles(string folder, IReadOnlyList<CPPClassEmissionResult> results) {
+            for (int i = 0; i < results.Count; i++) {
+                CPPClassEmissionResult result = results[i];
+                string filePath = Path.Combine(folder, result.FileStem);
                 string headerPath = filePath + ".hpp";
                 string codePath = filePath + ".cpp";
 
-                using (StreamWriter writerHeader = new StreamWriter(headerPath)) {
-                    using (StreamWriter writerCode = new StreamWriter(codePath)) {
-                        SortVariables(cl);
-                        SortFunctions(cl);
-                        classEmitter.Emit(cl, writerHeader, writerCode);
-
-                        writerCode.Flush();
-                        writerHeader.Flush();
-                    }
-                }
+                File.WriteAllText(headerPath, result.HeaderText);
+                File.WriteAllText(codePath, result.SourceText);
 
                 TrackEmittedFile(headerPath);
                 TrackEmittedFile(codePath);
@@ -742,7 +926,7 @@ namespace cs2.cpp {
                 throw new ArgumentException("Generated file path must not be empty.", nameof(filePath));
             }
 
-            if (!Report.EmittedFiles.Contains(filePath, StringComparer.Ordinal)) {
+            if (EmittedFilePaths.Add(filePath)) {
                 Report.EmittedFiles.Add(filePath);
             }
 

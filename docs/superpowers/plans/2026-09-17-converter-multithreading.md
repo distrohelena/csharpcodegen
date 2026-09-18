@@ -34,8 +34,8 @@ Created:
 - `cs2.cpp/CPPClassEmissionResult.cs` — per-class lowering result: file stem, header text, source text, registered requirement names, diagnostics, profiling scopes.
 - `cs2.cpp/CPPEmissionWorker.cs` — per-thread processor + emitter + registrar + report + manifest implementing `ICPPConversionHost`; lowers one class into a `CPPClassEmissionResult`.
 - `cs2.cpp/ownership/CPPOwnershipTreeAnalysis.cs` — per-syntax-tree aggregate for parallel local ownership analysis.
-- `cs2.core/pipeline/PreparedDocument.cs` — document, syntax tree, root and semantic model resolved on a worker before the sequential preprocessing walk.
-- `cs2.core/pipeline/SemanticModelWarmup.cs` — forces declaration and body binding for one prepared document.
+- `cs2.core/pipeline/PreparedDocument.cs` — document, syntax tree, root and semantic model resolved on a worker before the sequential preprocessing walk. (Task 12, implemented then reverted — not on the branch)
+- `cs2.core/pipeline/SemanticModelWarmup.cs` — forces declaration and body binding for one prepared document. (Task 12, implemented then reverted — not on the branch)
 - Tests: `cs2.cpp.tests/CPPEmittedTypeNameIndexTests.cs`, `cs2.cpp.tests/CPPGeneratedTypeNameQualifierTests.cs`, `cs2.cpp.tests/BackgroundWorkTests.cs`, `cs2.cpp.tests/ConversionWorkerPoolTests.cs`, `cs2.cpp.tests/CPPWorkerThreadOptionResolverTests.cs`, `cs2.cpp.tests/CPPParallelEmissionDeterminismTests.cs`, `cs2.cpp.tests/CPPParallelOwnershipAnalysisTests.cs`.
 
 Modified:
@@ -47,7 +47,7 @@ Modified:
 - `cs2.cpp/CPPRuntimeRequirementRegistrar.cs` — `RegisterEmitted` for gate-free merge registration.
 - `cs2.cpp/CPPCodegenOptionNames.cs` — `WorkerThreads` constant.
 - `cs2.core/CodeConverter.cs` — `OnProjectOpened` hook.
-- `cs2.core/pipeline/ConversionPipeline.cs` — `DocumentPreprocessingStage` worker count and warm-up.
+- `cs2.core/pipeline/ConversionPipeline.cs` — `DocumentPreprocessingStage` worker count and warm-up. (Task 12, implemented then reverted — not on the branch)
 - `cs2.cpp/ownership/CPPLocalOwnershipAnalyzer.cs`, `cs2.cpp/ownership/CPPOwnershipAnalysisCoordinator.cs`, `cs2.cpp/CPPOwnershipAnalysisStage.cs` — per-tree parallel local analysis.
 - `cs2.cpp.tests/CPPCompileValidationRegressionTests.cs`, `cs2.cpp.tests/CPPUncheckedStatementAuditTests.cs` — pinned temporary names updated once in Commit 3.
 
@@ -106,6 +106,10 @@ for ($i = 0; $i -lt $a.Count; $i++) { if ((Get-FileHash $a[$i].FullName).Hash -n
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <NoWarn>$(NoWarn);CS8632</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="proj*/**" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\cs2.core\cs2.core.csproj" />
@@ -375,28 +379,32 @@ public sealed class CPPEmittedTypeNameIndexTests {
     }
 
     /// <summary>
-    /// Every class in the program gets an indexed name, and lookups by emitted name return the first generated class.
+    /// Every class in the program gets an indexed name; generated-class lookups skip native classes that share the name.
     /// </summary>
     [Fact]
-    public void Build_IndexesEveryClassAndPrefersFirstGeneratedMatch() {
+    public void Build_IndexesEveryClassAndResolvesGeneratedClassesOnly() {
         CPPProgram program = new CPPProgram(new CPPConversionRules());
-        ConversionClass native = CreateGeneratedClass(program, "List", isNative: true);
-        ConversionClass first = CreateGeneratedClass(program, "Widget");
-        ConversionClass second = CreateGeneratedClass(program, "Widget");
+        ConversionClass nativeList = CreateGeneratedClass(program, "List", isNative: true);
+        ConversionClass nativeWidget = CreateGeneratedClass(program, "Widget", isNative: true);
+        ConversionClass widget = CreateGeneratedClass(program, "Widget");
+        ConversionClass gadget = CreateGeneratedClass(program, "Gadget");
 
         CPPEmittedTypeNameIndex index = CPPEmittedTypeNameIndex.Build(program.Classes);
 
-        Assert.True(index.TryGetEmittedTypeName(first, out string firstName));
-        Assert.Equal("Widget", firstName);
-        Assert.True(index.TryGetEmittedTypeName(native, out string nativeName));
+        Assert.True(index.TryGetEmittedTypeName(widget, out string widgetName));
+        Assert.Equal("Widget", widgetName);
+        Assert.True(index.TryGetEmittedTypeName(nativeList, out string nativeName));
         Assert.Equal("List", nativeName);
-        Assert.True(index.TryGetGeneratedClass("Widget", out ConversionClass resolved));
-        Assert.Same(first, resolved);
+        Assert.True(index.TryGetGeneratedClass("Widget", out ConversionClass resolvedWidget));
+        Assert.Same(widget, resolvedWidget);
+        Assert.NotSame(nativeWidget, resolvedWidget);
+        Assert.True(index.TryGetGeneratedClass("Gadget", out ConversionClass resolvedGadget));
+        Assert.Same(gadget, resolvedGadget);
         Assert.False(index.TryGetGeneratedClass("List", out _));
         Assert.Contains("Widget", index.EmittedTypeNames);
         Assert.Contains("List", index.EmittedTypeNames);
+        Assert.Contains("Gadget", index.EmittedTypeNames);
         Assert.False(index.TryGetGeneratedClass("Missing", out _));
-        Assert.NotSame(first, second);
     }
 
     /// <summary>
@@ -634,7 +642,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `CPPEmittedTypeNameIndex` from Task 1.
-- Produces: `public static class CPPGeneratedTypeNameQualifier` with `static string Qualify(string renderedTypeName, IReadOnlySet<string> emittedTypeNames)`.
+- Produces: `public static class CPPGeneratedTypeNameQualifier` with `static string Qualify(string renderedTypeName, CPPEmittedTypeNameIndex index)`.
+
+Fix round 1 changed the signature to take the index so the qualifier can fall back to the original ordered regex loop when any emitted name is not a pure identifier run; the index exposes `OrderedEmittedTypeNames` and `AllEmittedTypeNamesAreIdentifiers` for that.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3123,13 +3133,15 @@ Fill in as tasks complete (800-class synthetic project unless stated; ms).
 | Row | DocumentPreprocessingStage | CPPOwnershipAnalysisStage | WriteOutput | TOTAL | Byte-identical to previous row? |
 |---|---|---|---|---|---|
 | Before (2026-09-17 baseline) | 4750 | 3108 | 48284 | 59477 | n/a |
-| After commit 1 (Task 3) | | | | | must be yes |
-| After task 5 | | | | | must be yes |
-| After commit 2 (Task 6) | | | | | must be yes |
-| After commit 3, one worker (Task 10) | | | | | temporary names only |
-| After commit 3, all workers (Task 10) | | | | | yes vs one worker |
-| After task 11 | | | | | yes |
-| After task 12 | | | | | yes |
+| After commit 1 (Task 3) | 4101 | 3606 | 6258 | 17045 | must be yes |
+| After task 5 | 4233 | 2739 | 5422 | 14152 | must be yes |
+| After commit 2 (Task 6) | 4338 | 3084 | 5590 | 14878 | must be yes |
+| After commit 3, one worker (Task 10) | 4553 | 2410 | 4644 | 13286 | temporary names only |
+| After commit 3, all workers (Task 10) | 3595 | 2410 | 1909 | 9361 | yes vs one worker |
+| After task 11 | 4449 | 1602 | 2903 | 10903 | yes |
+| After task 12 | 3323 | 2269 | 3797 | 11009 | REVERTED |
 
-Gate outcomes: Task 11 kept / reverted: ____ (drop ___ %). Task 12 kept / reverted: ____ (drop ___ %).
+Note: this machine reports `Environment.ProcessorCount` = 16 (measured in Task 10), so every "all workers" row above ran with 16 workers.
+
+Gate outcomes: Task 11 kept (drop 46.4 %). Task 12 reverted (stage drop 26.1 % but TOTAL flat, ownership stage +51 %).
 

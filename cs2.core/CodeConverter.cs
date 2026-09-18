@@ -34,6 +34,7 @@ namespace cs2.core {
             context ??= new ConversionContext(program);
 
             project = AsyncUtil.RunSync(() => workspace.OpenProjectAsync(csprojPath));
+            OnProjectOpened();
 
             ConversionSession session = new ConversionSession(project, workspace, program, context, rules, this);
             ConversionPipeline pipeline = BuildPipeline();
@@ -54,6 +55,12 @@ namespace cs2.core {
                    .AddStage(new DocumentPreprocessingStage())
                    .AddStage(new ClassProcessingStage())
                    .AddStage(new ProgramSortingStage());
+        }
+
+        /// <summary>
+        /// Runs after the Roslyn project is open and before the pipeline executes, so backends can join startup work that overlapped the workspace load.
+        /// </summary>
+        protected virtual void OnProjectOpened() {
         }
 
         protected virtual void SortProgram() {
