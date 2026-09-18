@@ -1,4 +1,5 @@
 using cs2.core.Threading;
+using System.Globalization;
 
 namespace cs2.cpp.tests;
 
@@ -161,6 +162,33 @@ public sealed class ConversionWorkerPoolTests {
     public void WorkerCount_ReturnsConfiguredValue() {
         Assert.Equal(1, new ConversionWorkerPool(1).WorkerCount);
         Assert.Equal(7, new ConversionWorkerPool(7).WorkerCount);
+    }
+
+    /// <summary>
+    /// Every worker thread adopts the calling thread's culture, so culture-sensitive formatting inside a work item never falls back to the process-wide default thread culture.
+    /// </summary>
+    [Fact]
+    public void Run_CopiesCallingThreadCultureToEveryWorker() {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        CultureInfo originalUiCulture = CultureInfo.CurrentUICulture;
+        string[] observedCultureNames = new string[64];
+        string[] observedUiCultureNames = new string[64];
+        try {
+            Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
+            Thread.CurrentThread.CurrentUICulture = new CultureInfo("de-DE");
+            ConversionWorkerPool pool = new ConversionWorkerPool(4);
+
+            pool.Run(observedCultureNames.Length, (workerIndex, itemIndex) => {
+                observedCultureNames[itemIndex] = Thread.CurrentThread.CurrentCulture.Name;
+                observedUiCultureNames[itemIndex] = Thread.CurrentThread.CurrentUICulture.Name;
+            });
+        } finally {
+            Thread.CurrentThread.CurrentCulture = originalCulture;
+            Thread.CurrentThread.CurrentUICulture = originalUiCulture;
+        }
+
+        Assert.All(observedCultureNames, cultureName => Assert.Equal("de-DE", cultureName));
+        Assert.All(observedUiCultureNames, cultureName => Assert.Equal("de-DE", cultureName));
     }
 
     /// <summary>

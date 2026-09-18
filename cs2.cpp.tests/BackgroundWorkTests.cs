@@ -1,4 +1,5 @@
 using cs2.core.Threading;
+using System.Globalization;
 
 namespace cs2.cpp.tests;
 
@@ -50,6 +51,32 @@ public sealed class BackgroundWorkTests {
         work.Join();
 
         Assert.True(work.IsCompleted);
+    }
+
+    /// <summary>
+    /// The worker thread adopts the creating thread's culture, so culture-sensitive formatting inside the body never falls back to the process-wide default thread culture.
+    /// </summary>
+    [Fact]
+    public void Wait_CopiesCreatingThreadCultureToWorker() {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        CultureInfo originalUiCulture = CultureInfo.CurrentUICulture;
+        string observedCultureName = null;
+        string observedUiCultureName = null;
+        try {
+            Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
+            Thread.CurrentThread.CurrentUICulture = new CultureInfo("de-DE");
+            BackgroundWork work = new BackgroundWork("cs2-test-culture", () => {
+                observedCultureName = Thread.CurrentThread.CurrentCulture.Name;
+                observedUiCultureName = Thread.CurrentThread.CurrentUICulture.Name;
+            });
+            work.Wait();
+        } finally {
+            Thread.CurrentThread.CurrentCulture = originalCulture;
+            Thread.CurrentThread.CurrentUICulture = originalUiCulture;
+        }
+
+        Assert.Equal("de-DE", observedCultureName);
+        Assert.Equal("de-DE", observedUiCultureName);
     }
 
     /// <summary>

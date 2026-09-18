@@ -101,7 +101,7 @@ public sealed class CPPParallelEmissionDeterminismTests {
     }
 
     /// <summary>
-    /// One worker, four workers, and four workers again produce identical generated text and report state.
+    /// One worker, four workers, four workers again, and sixteen workers produce identical generated text and report state; sixteen exceeds the class count, so the pool caps the threads it starts.
     /// </summary>
     [Fact]
     public void WriteOutput_WithOneAndFourWorkers_ProducesIdenticalOutput() {
@@ -109,17 +109,152 @@ public sealed class CPPParallelEmissionDeterminismTests {
         using CPPOwnershipConversionOutput one = workspace.Convert("emission-determinism-one", Source, Workers("1"));
         using CPPOwnershipConversionOutput four = workspace.Convert("emission-determinism-four", Source, Workers("4"));
         using CPPOwnershipConversionOutput fourAgain = workspace.Convert("emission-determinism-four-again", Source, Workers("4"));
+        using CPPOwnershipConversionOutput sixteen = workspace.Convert("emission-determinism-sixteen", Source, Workers("16"));
 
         Assert.False(one.Report.HasErrors);
         Assert.Equal(4, one.Report.EmittedTypeCount);
         Assert.Equal(one.GeneratedText, four.GeneratedText);
         Assert.Equal(four.GeneratedText, fourAgain.GeneratedText);
+        Assert.Equal(one.GeneratedText, sixteen.GeneratedText);
         Assert.Equal(one.Report.RegisteredRuntimeRequirements, four.Report.RegisteredRuntimeRequirements);
         Assert.Equal(one.Report.Diagnostics.Count, four.Report.Diagnostics.Count);
         Assert.Equal(one.Report.EmittedTypeCount, four.Report.EmittedTypeCount);
         Assert.Equal(
             one.Report.EmittedFiles.Select(Path.GetFileName),
             four.Report.EmittedFiles.Select(Path.GetFileName));
+    }
+
+    /// <summary>
+    /// Fixture whose middle class trips a CPP1001 runtime capability violation, with reachable classes ordered before and after it so an abort leaves later classes in flight on other workers.
+    /// </summary>
+    const string AbortSource = """
+        /// <summary>First reachable class, lowered before the failing one.</summary>
+        public class Aardvark {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 1;
+            }
+        }
+
+        /// <summary>Second reachable class, lowered before the failing one.</summary>
+        public class Beacon {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 2;
+            }
+        }
+
+        /// <summary>Third reachable class, lowered before the failing one.</summary>
+        public class Cobalt {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 3;
+            }
+        }
+
+        /// <summary>Failing class whose try/catch needs exception unwinding.</summary>
+        public class Dynamo {
+            /// <summary>Uses a construct the disabled exception capability cannot lower.</summary>
+            public void Run() {
+                try {
+                    throw new System.Exception();
+                } catch (System.Exception) {
+                }
+            }
+        }
+
+        /// <summary>First reachable class after the failing one.</summary>
+        public class Emerald {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 5;
+            }
+        }
+
+        /// <summary>Second reachable class after the failing one.</summary>
+        public class Fathom {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 6;
+            }
+        }
+
+        /// <summary>Third reachable class after the failing one.</summary>
+        public class Granite {
+            /// <summary>Returns a constant.</summary>
+            public int Value() {
+                return 7;
+            }
+        }
+        """;
+
+    /// <summary>
+    /// An aborted emission pass throws the same runtime capability violation and reports errors at one and four workers, because the pool always rethrows the failure of the lowest reachability index.
+    /// </summary>
+    /// <remarks>
+    /// Both conversions share one source file so the diagnostic file path embedded in the message is identical; only the output directory and the worker count differ. The diagnostic count is deliberately not compared, because a cooperative abort lets later classes complete on other workers and contribute diagnostics a single worker never reaches.
+    /// </remarks>
+    [Fact]
+    public void WriteOutput_WithAbortingClass_ThrowsTheSameFailureAtOneAndFourWorkers() {
+        string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-parallel-abort-tests", Guid.NewGuid().ToString("N"));
+        string projectPath = Path.Combine(rootPath, "Fixture.csproj");
+        Directory.CreateDirectory(rootPath);
+        try {
+            File.WriteAllText(projectPath, CreateAbortProjectFile());
+            File.WriteAllText(Path.Combine(rootPath, "Fixture.cs"), AbortSource);
+
+            NotSupportedException oneWorkerFailure = ConvertExpectingAbort(projectPath, Path.Combine(rootPath, "out-one"), "1", out bool oneWorkerHasErrors);
+            NotSupportedException fourWorkerFailure = ConvertExpectingAbort(projectPath, Path.Combine(rootPath, "out-four"), "4", out bool fourWorkerHasErrors);
+
+            Assert.StartsWith("CPP1001 ", oneWorkerFailure.Message);
+            Assert.Contains("Dynamo.Run", oneWorkerFailure.Message);
+            Assert.Equal(oneWorkerFailure.Message, fourWorkerFailure.Message);
+            Assert.True(oneWorkerHasErrors);
+            Assert.True(fourWorkerHasErrors);
+        } finally {
+            Directory.Delete(rootPath, true);
+        }
+    }
+
+    /// <summary>
+    /// Converts the abort fixture with a fixed worker count and returns the runtime capability violation it must raise.
+    /// </summary>
+    /// <param name="projectPath">Project file shared by every worker count so diagnostic paths match.</param>
+    /// <param name="outputPath">Directory that receives the partial generated output.</param>
+    /// <param name="workerCount">Worker thread count written into the codegen option table.</param>
+    /// <param name="hasErrors">Receives whether the converter report ended up holding errors.</param>
+    /// <returns>The runtime capability violation raised by the aborted pass.</returns>
+    static NotSupportedException ConvertExpectingAbort(string projectPath, string outputPath, string workerCount, out bool hasErrors) {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.LoadNativeRuntimeMetadata = false;
+        options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            [CPPCodegenOptionNames.UseExceptions] = bool.FalseString,
+            [CPPCodegenOptionNames.UseRtti] = bool.TrueString,
+            [CPPCodegenOptionNames.WorkerThreads] = workerCount
+        };
+
+        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
+        converter.AddCsproj(projectPath);
+        NotSupportedException failure = Assert.Throws<NotSupportedException>(() => converter.WriteOutput(outputPath));
+        hasErrors = converter.Report.HasErrors;
+        return failure;
+    }
+
+    /// <summary>
+    /// Creates the minimal SDK project used by the abort fixture.
+    /// </summary>
+    /// <returns>Complete SDK project XML.</returns>
+    static string CreateAbortProjectFile() {
+        return """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <LangVersion>preview</LangVersion>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>disable</Nullable>
+              </PropertyGroup>
+            </Project>
+            """;
     }
 
     /// <summary>
