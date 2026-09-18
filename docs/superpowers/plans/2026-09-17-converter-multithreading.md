@@ -34,8 +34,8 @@ Created:
 - `cs2.cpp/CPPClassEmissionResult.cs` — per-class lowering result: file stem, header text, source text, registered requirement names, diagnostics, profiling scopes.
 - `cs2.cpp/CPPEmissionWorker.cs` — per-thread processor + emitter + registrar + report + manifest implementing `ICPPConversionHost`; lowers one class into a `CPPClassEmissionResult`.
 - `cs2.cpp/ownership/CPPOwnershipTreeAnalysis.cs` — per-syntax-tree aggregate for parallel local ownership analysis.
-- `cs2.core/pipeline/PreparedDocument.cs` — document, syntax tree, root and semantic model resolved on a worker before the sequential preprocessing walk.
-- `cs2.core/pipeline/SemanticModelWarmup.cs` — forces declaration and body binding for one prepared document.
+- `cs2.core/pipeline/PreparedDocument.cs` — document, syntax tree, root and semantic model resolved on a worker before the sequential preprocessing walk. (Task 12, implemented then reverted — not on the branch)
+- `cs2.core/pipeline/SemanticModelWarmup.cs` — forces declaration and body binding for one prepared document. (Task 12, implemented then reverted — not on the branch)
 - Tests: `cs2.cpp.tests/CPPEmittedTypeNameIndexTests.cs`, `cs2.cpp.tests/CPPGeneratedTypeNameQualifierTests.cs`, `cs2.cpp.tests/BackgroundWorkTests.cs`, `cs2.cpp.tests/ConversionWorkerPoolTests.cs`, `cs2.cpp.tests/CPPWorkerThreadOptionResolverTests.cs`, `cs2.cpp.tests/CPPParallelEmissionDeterminismTests.cs`, `cs2.cpp.tests/CPPParallelOwnershipAnalysisTests.cs`.
 
 Modified:
@@ -47,7 +47,7 @@ Modified:
 - `cs2.cpp/CPPRuntimeRequirementRegistrar.cs` — `RegisterEmitted` for gate-free merge registration.
 - `cs2.cpp/CPPCodegenOptionNames.cs` — `WorkerThreads` constant.
 - `cs2.core/CodeConverter.cs` — `OnProjectOpened` hook.
-- `cs2.core/pipeline/ConversionPipeline.cs` — `DocumentPreprocessingStage` worker count and warm-up.
+- `cs2.core/pipeline/ConversionPipeline.cs` — `DocumentPreprocessingStage` worker count and warm-up. (Task 12, implemented then reverted — not on the branch)
 - `cs2.cpp/ownership/CPPLocalOwnershipAnalyzer.cs`, `cs2.cpp/ownership/CPPOwnershipAnalysisCoordinator.cs`, `cs2.cpp/CPPOwnershipAnalysisStage.cs` — per-tree parallel local analysis.
 - `cs2.cpp.tests/CPPCompileValidationRegressionTests.cs`, `cs2.cpp.tests/CPPUncheckedStatementAuditTests.cs` — pinned temporary names updated once in Commit 3.
 
