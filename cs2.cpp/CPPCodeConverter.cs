@@ -224,7 +224,7 @@ namespace cs2.cpp {
                    .AddStage(new ApplyPreprocessorSymbolsStage(PreProcessorSymbols))
                    .AddStage(new CPPPreprocessorFilterStage(this))
                    .AddStage(new CPPAssemblyMetadataStage(this))
-                   .AddStage(new DocumentPreprocessingStage(CPPWorkerThreadOptionResolver.Resolve(Options)))
+                   .AddStage(new DocumentPreprocessingStage())
                    .AddStage(new CPPOwnershipAnalysisStage(this))
                    .AddStage(new ClassProcessingStage())
                    .AddStage(new ProgramSortingStage());
