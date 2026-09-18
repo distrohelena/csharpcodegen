@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 
 namespace cs2.core.Threading {
@@ -45,6 +46,16 @@ namespace cs2.core.Threading {
         Exception Failure;
 
         /// <summary>
+        /// Culture the calling thread had when the active run started; copied onto every worker thread.
+        /// </summary>
+        CultureInfo RunCulture;
+
+        /// <summary>
+        /// UI culture the calling thread had when the active run started; copied onto every worker thread.
+        /// </summary>
+        CultureInfo RunUiCulture;
+
+        /// <summary>
         /// Initializes a pool that runs at most the supplied number of threads per run.
         /// </summary>
         /// <param name="workerCount">Maximum threads per run; at least one.</param>
@@ -71,6 +82,7 @@ namespace cs2.core.Threading {
         /// <exception cref="InvalidOperationException">A run is already in progress on this pool, because runs are not reentrant.</exception>
         /// <remarks>
         /// A run that throws leaves the phase incomplete: the stop after a failure is cooperative, so up to <see cref="WorkerCount"/> minus one items beyond the failing one may already have started, and every remaining item is skipped.
+        /// The calling thread's <see cref="CultureInfo.CurrentCulture"/> and <see cref="CultureInfo.CurrentUICulture"/> are captured here and assigned on every worker thread, because a fresh thread otherwise starts from <see cref="CultureInfo.DefaultThreadCurrentCulture"/>: without the copy, the culture-sensitive formatting inside a work item would differ between the main thread and the workers, and byte-identical output must never depend on which thread lowered a class.
         /// </remarks>
         public void Run(int itemCount, Action<int, int> body) {
             if (itemCount < 0) {
@@ -93,6 +105,8 @@ namespace cs2.core.Threading {
                 StopRequested = false;
                 FailedItemIndex = int.MaxValue;
                 Failure = null;
+                RunCulture = CultureInfo.CurrentCulture;
+                RunUiCulture = CultureInfo.CurrentUICulture;
 
                 int threadCount = Math.Min(WorkerCount, itemCount);
                 Thread[] threads = new Thread[threadCount];
@@ -135,7 +149,13 @@ namespace cs2.core.Threading {
         /// </summary>
         /// <param name="workerIndex">Index owned by this thread for the whole run.</param>
         /// <param name="body">Work for one item.</param>
+        /// <remarks>
+        /// Adopts the culture captured from the calling thread before touching any work item, so culture-sensitive formatting produces the same bytes on a worker as it would on the main thread.
+        /// </remarks>
         void RunWorker(int workerIndex, Action<int, int> body) {
+            Thread.CurrentThread.CurrentCulture = RunCulture;
+            Thread.CurrentThread.CurrentUICulture = RunUiCulture;
+
             while (!Volatile.Read(ref StopRequested)) {
                 int itemIndex = Interlocked.Increment(ref NextItemIndex);
                 if (itemIndex >= ItemCount) {

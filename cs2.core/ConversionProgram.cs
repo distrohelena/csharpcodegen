@@ -10,6 +10,12 @@ namespace cs2.core {
         int GeneratedClassLookupByNameAndArityCount;
         HashSet<string> BaseEmittedTypeNameCollisions;
         int BaseEmittedTypeNameCollisionCount;
+
+        /// <summary>
+        /// True while parallel emission reads the generated class lookups, so a rebuild triggered from a worker thread is a bug instead of a cache miss; written by the main thread only and read by every worker, hence volatile.
+        /// </summary>
+        volatile bool LookupsFrozen;
+
         public ConversionProgram(ConversionRules rules) {
             Classes = new List<ConversionClass>();
             TypeMap = new Dictionary<string, string>();
@@ -22,6 +28,26 @@ namespace cs2.core {
             BaseEmittedTypeNameCollisionCount = -1;
         }
 
+        /// <summary>
+        /// Marks the generated class lookups read-only for the duration of a parallel emission pass, so any rebuild attempt fails loudly instead of racing the workers that read them.
+        /// </summary>
+        /// <remarks>
+        /// The lookups are lazily rebuilt whenever <see cref="Classes"/> grows. During parallel emission every worker reads them without a lock, which is only safe while the dictionaries are immutable, so the freeze converts a silent data race into an <see cref="InvalidOperationException"/>. Callers must warm every lookup before freezing.
+        /// </remarks>
+        public void FreezeGeneratedClassLookups() {
+            LookupsFrozen = true;
+        }
+
+        /// <summary>
+        /// Allows the generated class lookups to be rebuilt again once a parallel emission pass has finished.
+        /// </summary>
+        /// <remarks>
+        /// Must run on every exit path of the pass, including aborts, or later single-threaded phases would fail to rebuild a stale lookup.
+        /// </remarks>
+        public void ThawGeneratedClassLookups() {
+            LookupsFrozen = false;
+        }
+
         public Dictionary<string, ConversionClass> GetQualifiedGeneratedClassLookup(Func<ConversionClass, string> keySelector) {
             if (keySelector == null) {
                 throw new ArgumentNullException(nameof(keySelector));
@@ -30,6 +56,8 @@ namespace cs2.core {
             if (QualifiedGeneratedClassLookupCount == Classes.Count) {
                 return QualifiedGeneratedClassLookup;
             }
+
+            ThrowIfLookupsFrozen();
 
             QualifiedGeneratedClassLookup = new Dictionary<string, ConversionClass>(StringComparer.Ordinal);
             foreach (ConversionClass conversionClass in Classes) {
@@ -58,6 +86,8 @@ namespace cs2.core {
                 return GeneratedClassLookupByNameAndArity;
             }
 
+            ThrowIfLookupsFrozen();
+
             GeneratedClassLookupByNameAndArity = new Dictionary<string, ConversionClass>(StringComparer.Ordinal);
             foreach (ConversionClass conversionClass in Classes) {
                 if (conversionClass == null || conversionClass.IsNative) {
@@ -85,6 +115,8 @@ namespace cs2.core {
                 return BaseEmittedTypeNameCollisions;
             }
 
+            ThrowIfLookupsFrozen();
+
             BaseEmittedTypeNameCollisions = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (ConversionClass conversionClass in Classes) {
@@ -104,6 +136,16 @@ namespace cs2.core {
 
             BaseEmittedTypeNameCollisionCount = Classes.Count;
             return BaseEmittedTypeNameCollisions;
+        }
+
+        /// <summary>
+        /// Rejects a lookup rebuild while the lookups are frozen for parallel emission.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The class list changed after the lookups were warmed and frozen.</exception>
+        void ThrowIfLookupsFrozen() {
+            if (LookupsFrozen) {
+                throw new InvalidOperationException("Generated class lookups cannot be rebuilt while parallel emission is running; the class list changed after the lookups were warmed.");
+            }
         }
     }
 }

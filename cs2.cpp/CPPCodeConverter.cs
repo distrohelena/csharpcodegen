@@ -106,15 +106,17 @@ namespace cs2.cpp {
             conversion = new CPPConversiorProcessor(this);
             generatedFunctionProfilingManifest = new CPPGeneratedFunctionProfilingManifest();
 
-            if (Options.LoadNativeRuntimeMetadata) {
-                NativeRuntimeMetadataLoad = new BackgroundWork("cs2-native-runtime-metadata", tsProgram.AddDotNet);
-            }
-
             assemblyName = "";
             version = "";
             targetFramework = "";
 
+            // ResetRunState mutates tsProgram, so it must complete before the metadata thread starts writing to the
+            // same program; otherwise the main thread and the background load would touch it at the same time.
             ResetRunState();
+
+            if (Options.LoadNativeRuntimeMetadata) {
+                NativeRuntimeMetadataLoad = new BackgroundWork("cs2-native-runtime-metadata", tsProgram.AddDotNet);
+            }
         }
 
         /// <summary>
@@ -452,10 +454,13 @@ namespace cs2.cpp {
         /// Registers a named runtime requirement for the active conversion run.
         /// </summary>
         /// <param name="name">The stable runtime requirement name.</param>
+        /// <remarks>
+        /// The run state is re-synchronized whenever the registrar grew rather than whenever this exact name was new, because one registration can imply further requirements that would otherwise never reach the program model.
+        /// </remarks>
         public void RegisterRuntimeRequirement(string name) {
-            bool wasRegistered = RuntimeRequirementRegistrar.IsRegistered(name);
+            int registeredCountBefore = RuntimeRequirementRegistrar.RegisteredCount;
             RuntimeRequirementRegistrar.Register(name);
-            if (!wasRegistered) {
+            if (RuntimeRequirementRegistrar.RegisteredCount != registeredCountBefore) {
                 SynchronizeRunState();
             }
         }
@@ -741,12 +746,16 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="buildUsageReport">Resolved feature decisions that select reachable types.</param>
         /// <returns>Lowered classes in the order their files must be written.</returns>
+        /// <remarks>
+        /// The emitted type name index is built before the reachable type set so the file-stem grouping reads this pass's names rather than a previous pass's index, and the generated class lookups are warmed and then frozen for the whole parallel pass so a rebuild raced by workers fails loudly; the thaw runs on every exit path, including an aborted pass.
+        /// </remarks>
         IReadOnlyList<CPPClassEmissionResult> LowerClasses(CPPBuildUsageReport buildUsageReport) {
             SortProgram();
             CPPReachabilityPlan reachabilityPlan = CPPReachabilityPlanner.Build(program, buildUsageReport, Options.FeatureCatalog);
-            tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
             tsProgram.BuildEmittedTypeNameIndex();
+            tsProgram.SetReachableGeneratedTypes(reachabilityPlan.Types);
             CPPVariableType.WarmGeneratedClassLookups(program);
+            program.FreezeGeneratedClassLookups();
 
             List<ConversionClass> classes = new List<ConversionClass>();
             for (int i = 0; i < reachabilityPlan.Types.Count; i++) {
@@ -770,10 +779,14 @@ namespace cs2.cpp {
             CPPEmissionWorker[] workers = new CPPEmissionWorker[Math.Min(workerCount, Math.Max(classes.Count, 1))];
             CPPClassEmissionResult[] results = new CPPClassEmissionResult[classes.Count];
             try {
-                pool.Run(classes.Count, (workerIndex, itemIndex) => {
-                    workers[workerIndex] ??= new CPPEmissionWorker(this, tsProgram);
-                    results[itemIndex] = workers[workerIndex].Lower(classes[itemIndex], fileStems[itemIndex]);
-                });
+                try {
+                    pool.Run(classes.Count, (workerIndex, itemIndex) => {
+                        workers[workerIndex] ??= new CPPEmissionWorker(this, tsProgram);
+                        results[itemIndex] = workers[workerIndex].Lower(classes[itemIndex], fileStems[itemIndex]);
+                    });
+                } finally {
+                    program.ThawGeneratedClassLookups();
+                }
             } catch {
                 MergeAbortedEmissionDiagnostics(results, workers);
                 throw;
@@ -788,33 +801,41 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="results">Result slots of the aborted pass; classes that never completed are null.</param>
         /// <param name="workers">Worker slots of the aborted pass; unused slots are null, and every started thread has been joined before this runs.</param>
+        /// <remarks>
+        /// The diagnostic set of an aborted run depends on the worker count: the stop after a failure is cooperative, so classes later in reachability order may already have completed on other workers and contribute their diagnostics, while a single worker stops at the first failure. Only the thrown exception is worker-count independent, because the pool always rethrows the failure of the lowest reachability index.
+        /// </remarks>
         void MergeAbortedEmissionDiagnostics(IReadOnlyList<CPPClassEmissionResult> results, CPPEmissionWorker[] workers) {
-            HashSet<CPPConversionDiagnostic> mergedDiagnostics = new HashSet<CPPConversionDiagnostic>();
-            for (int i = 0; i < results.Count; i++) {
-                if (results[i] == null) {
-                    continue;
-                }
+            // A secondary failure while salvaging diagnostics must never replace the worker's original exception,
+            // which the caller is about to rethrow, so every fault in this best-effort merge is swallowed.
+            try {
+                HashSet<CPPConversionDiagnostic> mergedDiagnostics = new HashSet<CPPConversionDiagnostic>();
+                for (int i = 0; i < results.Count; i++) {
+                    if (results[i] == null) {
+                        continue;
+                    }
 
-                foreach (CPPConversionDiagnostic diagnostic in results[i].Diagnostics) {
-                    if (mergedDiagnostics.Add(diagnostic)) {
-                        Report.Diagnostics.Add(diagnostic);
+                    foreach (CPPConversionDiagnostic diagnostic in results[i].Diagnostics) {
+                        if (mergedDiagnostics.Add(diagnostic)) {
+                            Report.Diagnostics.Add(diagnostic);
+                        }
                     }
                 }
-            }
 
-            for (int i = 0; i < workers.Length; i++) {
-                if (workers[i] == null) {
-                    continue;
-                }
+                for (int i = 0; i < workers.Length; i++) {
+                    if (workers[i] == null) {
+                        continue;
+                    }
 
-                foreach (CPPConversionDiagnostic diagnostic in workers[i].Report.Diagnostics) {
-                    if (mergedDiagnostics.Add(diagnostic)) {
-                        Report.Diagnostics.Add(diagnostic);
+                    foreach (CPPConversionDiagnostic diagnostic in workers[i].Report.Diagnostics) {
+                        if (mergedDiagnostics.Add(diagnostic)) {
+                            Report.Diagnostics.Add(diagnostic);
+                        }
                     }
                 }
-            }
 
-            SynchronizeRunState();
+                SynchronizeRunState();
+            } catch (Exception) {
+            }
         }
 
         /// <summary>

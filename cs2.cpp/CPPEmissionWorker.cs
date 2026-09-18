@@ -79,7 +79,7 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="conversionClass">Class to lower.</param>
         /// <param name="fileStem">Generated file stem resolved on the main thread.</param>
-        /// <returns>The lowered class and its side effects.</returns>
+        /// <returns>The lowered class and its side effects; the runtime requirement names are sorted ordinally so the merge order never depends on the order in which the emitter happened to register them.</returns>
         public CPPClassEmissionResult Lower(ConversionClass conversionClass, string fileStem) {
             if (conversionClass == null) {
                 throw new ArgumentNullException(nameof(conversionClass));

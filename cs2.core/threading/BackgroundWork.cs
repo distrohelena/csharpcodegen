@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 
 namespace cs2.core.Threading {
@@ -16,10 +17,23 @@ namespace cs2.core.Threading {
         Exception Failure;
 
         /// <summary>
+        /// Culture of the thread that created this work item; copied onto the worker thread.
+        /// </summary>
+        readonly CultureInfo StartCulture;
+
+        /// <summary>
+        /// UI culture of the thread that created this work item; copied onto the worker thread.
+        /// </summary>
+        readonly CultureInfo StartUiCulture;
+
+        /// <summary>
         /// Starts the body immediately on a background thread with the supplied name.
         /// </summary>
         /// <param name="name">Thread name shown in debuggers and dumps.</param>
         /// <param name="body">Work to execute exactly once.</param>
+        /// <remarks>
+        /// The creating thread's <see cref="CultureInfo.CurrentCulture"/> and <see cref="CultureInfo.CurrentUICulture"/> are captured here and assigned on the worker, because a fresh thread otherwise starts from <see cref="CultureInfo.DefaultThreadCurrentCulture"/>: byte-identical converter output must not depend on that process-wide default.
+        /// </remarks>
         public BackgroundWork(string name, Action body) {
             if (string.IsNullOrWhiteSpace(name)) {
                 throw new ArgumentException("Background work requires a thread name.", nameof(name));
@@ -28,6 +42,8 @@ namespace cs2.core.Threading {
                 throw new ArgumentNullException(nameof(body));
             }
 
+            StartCulture = CultureInfo.CurrentCulture;
+            StartUiCulture = CultureInfo.CurrentUICulture;
             Worker = new Thread(() => Execute(body)) {
                 Name = name,
                 IsBackground = true
@@ -61,7 +77,13 @@ namespace cs2.core.Threading {
         /// Runs the body and records any exception for the waiting thread.
         /// </summary>
         /// <param name="body">Work to execute.</param>
+        /// <remarks>
+        /// Adopts the culture captured from the creating thread before running the body, so culture-sensitive formatting matches what the creating thread would have produced.
+        /// </remarks>
         void Execute(Action body) {
+            Thread.CurrentThread.CurrentCulture = StartCulture;
+            Thread.CurrentThread.CurrentUICulture = StartUiCulture;
+
             try {
                 body();
             } catch (Exception exception) {

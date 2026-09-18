@@ -8,7 +8,7 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPParallelEmissionDeterminismTests {
     /// <summary>
-    /// Fixture with cross-class references, temporaries from coalesce-throw and checked math, string switches, and a generic.
+    /// Fixture with cross-class references, string switches, a generic, and per-class lowering temporaries minted by the <c>Scoped()</c> methods, whose local <c>new Box&lt;int&gt;</c> is what forces a temporary in both <c>Alpha</c> and <c>Beta</c>.
     /// </summary>
     const string Source = """
         /// <summary>Holds a name and exercises temporaries.</summary>

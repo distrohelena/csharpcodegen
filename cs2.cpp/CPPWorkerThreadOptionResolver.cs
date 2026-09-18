@@ -10,6 +10,9 @@ namespace cs2.cpp {
         /// </summary>
         /// <param name="options">Active conversion options.</param>
         /// <returns>A positive worker thread count.</returns>
+        /// <remarks>
+        /// There is no upper bound on the configured value: any positive integer is accepted, and the worker pool caps the threads it actually starts at the number of work items, so a count above the item count costs nothing.
+        /// </remarks>
         public static int Resolve(CPPConversionOptions options) {
             if (options == null) {
                 throw new ArgumentNullException(nameof(options));
