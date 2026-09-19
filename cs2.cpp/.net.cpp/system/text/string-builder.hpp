@@ -165,6 +165,14 @@ public:
     }
 
     /// <summary>
+    /// Gets the number of characters currently in the builder.
+    /// </summary>
+    /// <returns>The accumulated content length.</returns>
+    int32_t get_Length() const {
+        return Length;
+    }
+
+    /// <summary>
     /// Truncates the builder to the specified length.
     /// </summary>
     void set_Length(int32_t value) {
