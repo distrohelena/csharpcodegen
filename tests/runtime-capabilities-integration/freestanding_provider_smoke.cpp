@@ -123,6 +123,10 @@ int vector_smoke() {
     if (aliasedInts.size() != 6 || aliasedInts[4] != 10 || aliasedInts[5] != 10) return 47;
     aliasedInts.resize(9, aliasedInts[1]);
     if (aliasedInts[8] != 20) return 48;
+    FreestandingVector<int> w{1, 2, 3, 4};
+    w.emplace_back(w[0]);
+    w.emplace_back(w.back());
+    if (w.size() != 6 || w[4] != 1 || w[5] != 1) return 50;
     return 0;
 }
 

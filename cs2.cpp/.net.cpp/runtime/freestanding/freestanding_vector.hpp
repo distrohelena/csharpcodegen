@@ -106,10 +106,14 @@ public:
         }
         ++Length;
     }
+    // args may alias one of our own elements (v.emplace_back(v[0])); Grow can free our storage to
+    // reallocate, so construct into a temporary before growing, then move it into place. One extra
+    // move per call.
     template <typename... TArgs>
     T& emplace_back(TArgs&&... args) {
+        T value(he_cpp_alg::Forward<TArgs>(args)...);
         Grow(Length + 1);
-        new (Data + Length) T(he_cpp_alg::Forward<TArgs>(args)...);
+        new (Data + Length) T(he_cpp_alg::Move(value));
         return Data[Length++];
     }
     void pop_back() { if (Length != 0) { --Length; Data[Length].~T(); } }
