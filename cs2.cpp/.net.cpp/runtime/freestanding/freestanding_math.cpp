@@ -42,17 +42,24 @@ constexpr double TwoOverPi = 0.6366197723675814;
 
 // pi / 2 in three pieces for Cody-Waite argument reduction, in the shape of the medium path of
 // fdlibm's __ieee754_rem_pio2. The first two pieces carry only 27 and 28 significant bits, the rest
-// of their mantissas being zero, so multiplying either by an integer below 2^25 needs at most 53
-// bits and is exact: the multiple of pi / 2 that gets subtracted is then exact too, and the error
-// of the reduction stops growing with the size of the angle. One rounded pi / 2 plus a single
-// correction term cannot do that, because the product with the multiplier rounds away about one
-// more bit for every power of two in that multiplier.
+// of their mantissas being zero, so each is exact up to its own multiplier bound, and the two
+// bounds are not the same: the 27-bit HalfPiPart1 times an integer below 2^26 still needs at most
+// 53 bits, while the 28-bit HalfPiPart2 only stays inside 53 bits for a multiplier below 2^25.
+// IsReducibleAngle below gates angles at 2^26 radians, which is multipliers up to about 2^25.35, so
+// the Part1 product is exact everywhere the gate admits while the Part2 product may round, by at
+// most half an ulp of that product, over the top third of a binade. That product is of order
+// 2^25.35 times 9.9e-10, about 0.042, so the half ulp is about 3.5e-18 of absolute error on the
+// remainder -- well inside the 2.2e-16 the reduction is claimed to cost in ReduceAngle below, which
+// therefore still holds at the gate. What matters for both pieces is that the error of the
+// reduction stops growing with the size of the angle. One rounded pi / 2 plus a single correction
+// term cannot do that, because the product with the multiplier rounds away about one more bit for
+// every power of two in that multiplier.
 //
 // Derived with exact rational arithmetic from pi computed by Machin's formula (the derivation is
 // recorded in the task 6 report): Part1 is pi / 2 rounded to a multiple of 2^-28, Part2 is the
 // remainder rounded to a multiple of 2^-58, Part3 is what is left rounded to a double. The three
 // sum to the correctly rounded pi / 2, and pi / 2 - (Part1 + Part2 + Part3) is 4.3e-35, which even
-// at the largest multiplier this file accepts contributes about 7e-28.
+// at the largest multiplier this file accepts (about 4.27e7) contributes about 1.8e-27.
 constexpr double HalfPiPart1 = 1.570796325802803;         // 0x3FF921FB54000000
 constexpr double HalfPiPart2 = 9.9209358089824562e-10;    // 0x3E110B4612000000
 constexpr double HalfPiPart3 = -1.2177051777973966e-18;   // 0xBC3676733AE8FE48
@@ -286,8 +293,10 @@ ReducedAngle ReduceAngle(double value) {
 
 /// <summary>
 /// Reports whether an angle is small enough for the reduction above to keep its accuracy. The
-/// multiplier it hands to the two exact pieces of pi / 2 is value * 2 / pi, so a multiplier below
-/// 2^26 - which is what keeps the product with the 27-bit HalfPiPart1 inside 53 bits - allows any
+/// multiplier it hands to the split pieces of pi / 2 is value * 2 / pi, so a multiplier below
+/// 2^26 - which is what keeps the product with the 27-bit HalfPiPart1 exact in 53 bits, the binding
+/// bound, the 28-bit HalfPiPart2 being exact only below 2^25 and rounding by at most half an ulp of
+/// its own small product above that (see the split's comment) - allows any
 /// angle below 2^26 * pi / 2, about 1.05e8. The gate is the largest power of two inside that,
 /// 2^26 radians. Measured against the host libm over a log-uniform sweep of 40000 points per
 /// decade with both signs, the relative error (the accuracy smoke's measure, the scale floored at
@@ -339,6 +348,12 @@ double Sin(double value) {
     if (Finite(value) == 0 || !IsReducibleAngle(value)) {
         return QuietNan();
     }
+    // IEEE 754 requires sin(-0.0) to be -0.0, and the reduction below would hand back a plain +0.0:
+    // Floor(-0.0 * TwoOverPi + 0.5) is 0.0, so the remainder comes out of -0.0 - 0.0, which is +0.0.
+    // Return the argument itself, which carries the right sign for both zeroes.
+    if (value == 0.0) {
+        return value;
+    }
     const ReducedAngle reduced = ReduceAngle(value);
     switch (reduced.quadrant) {
         case 0: return SineCore(reduced.remainder);
@@ -366,6 +381,12 @@ double Cos(double value) {
 double Tan(double value) {
     if (Finite(value) == 0 || !IsReducibleAngle(value)) {
         return QuietNan();
+    }
+    // tan(-0.0) is -0.0 in IEEE 754, but the quotient below would divide the signed zero Sin now
+    // returns by Cos(-0.0), which is +1.0, and then round: take the shortcut so the sign survives
+    // without depending on how the division treats a zero numerator.
+    if (value == 0.0) {
+        return value;
     }
     return Sin(value) / Cos(value);
 }

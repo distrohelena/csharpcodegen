@@ -18,6 +18,12 @@ static int Check(const char* name, double actual, double expected, double tolera
     return 0;
 }
 
+// The freestanding library has no std::signbit, so read the sign of a zero off its reciprocal:
+// 1.0 / -0.0 is negative infinity while 1.0 / 0.0 is positive infinity.
+static int IsNegativeZero(double value) {
+    return value == 0.0 && 1.0 / value < 0.0;
+}
+
 int main() {
     int failures = 0;
     for (int index = -200; index <= 200; ++index) {
@@ -58,5 +64,11 @@ int main() {
     if (soft::Finite(soft::Sqrt(-1.0)) != 0 || soft::Finite(1.0) != 1) { puts("finite"); ++failures; }
     if (soft::Log(0.0) > -1.0e300) { puts("log(0) must be -inf"); ++failures; }
     if (::fmod(5.0, 0.0) == ::fmod(5.0, 0.0) || soft::Fmod(5.0, 0.0) == soft::Fmod(5.0, 0.0)) { puts("fmod by zero must be NaN"); ++failures; }
+    // IEEE 754 keeps the sign of zero through sine and tangent. Cos(-0.0) is 1.0 and needs nothing.
+    if (!IsNegativeZero(soft::Sin(-0.0))) { puts("sin(-0.0) must be -0.0"); ++failures; }
+    if (!IsNegativeZero(soft::Tan(-0.0))) { puts("tan(-0.0) must be -0.0"); ++failures; }
+    if (soft::Sin(0.0) != 0.0 || IsNegativeZero(soft::Sin(0.0))) { puts("sin(0.0) must be +0.0"); ++failures; }
+    if (soft::Tan(0.0) != 0.0 || IsNegativeZero(soft::Tan(0.0))) { puts("tan(0.0) must be +0.0"); ++failures; }
+    if (soft::Cos(-0.0) != 1.0) { puts("cos(-0.0) must be 1.0"); ++failures; }
     return failures == 0 ? 0 : 1;
 }
