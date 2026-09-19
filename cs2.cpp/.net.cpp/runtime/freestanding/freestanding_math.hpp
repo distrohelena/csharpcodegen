@@ -5,10 +5,26 @@
 // on a freestanding target the software versions below are exported with C
 // linkage. HE_CPP_FREESTANDING_MATH_SOFTWARE forces the software versions and
 // exposes them in he_cpp_freestanding_math for accuracy tests.
+//
+// The hosted path is only for a hosted profile. A freestanding profile built on
+// a host - a generated freestanding tree compiled with the host compiler, which
+// is how the C# compile tests and the generated-output fixture build it - must
+// take the software path too, or it would silently link the platform libm and
+// measure numbers the real target never produces. HE_CPP_RUNTIME_FREESTANDING
+// therefore vetoes the hosted path; the config that defines it is probed here
+// the same way native_runtime.hpp and freestanding_math.cpp probe it, so the
+// macro is in scope however this header is reached.
+
+#if defined(__has_include)
+#if __has_include("helcpp_config.hpp")
+#include "helcpp_config.hpp"
+#endif
+#endif
 
 #if !defined(HE_CPP_FREESTANDING_MATH_SOFTWARE)
 #if defined(__has_include)
-#if __has_include(<math.h>) && !defined(__mos__)
+#if __has_include(<math.h>) && !defined(__mos__) \
+    && !(defined(HE_CPP_RUNTIME_FREESTANDING) && HE_CPP_RUNTIME_FREESTANDING)
 #define HE_CPP_FREESTANDING_MATH_HOSTED 1
 #endif
 #endif

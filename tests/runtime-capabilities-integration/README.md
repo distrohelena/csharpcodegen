@@ -73,6 +73,11 @@ add `-I"$fixture/freestanding"`; the generated config is the one in effect.
 The runner builds `StringGate.cpp` with `generated-smoke.cpp` and
 `freestanding_hooks_default.cpp` behind the `poison/` directory, executes
 normal behavior and both fatal paths, and cross-compiles the generated class
-when `TARGET_CXX` is supplied. `freestanding_math.cpp` is not linked here
-because this fixture never reaches `system/math.hpp`.
+when `TARGET_CXX` is supplied. `freestanding_math.cpp` is linked here even
+though this fixture never reaches `system/math.hpp`: the generated
+`helcpp_config.hpp` sets `HE_CPP_RUNTIME_FREESTANDING`, so
+`freestanding_math.hpp` selects the software path on the host as well and the
+file supplies the C math names itself instead of deferring to a platform libm
+the target does not have. Any generated freestanding tree that does reach
+`system/math.hpp` must put it on the link line for the same reason.
 

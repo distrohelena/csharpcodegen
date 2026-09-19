@@ -353,15 +353,16 @@ if [ -n "${GENERATED_FREESTANDING_OUTPUT:-}" ]; then
     # -Wall -Wextra -Werror, the same as $freestanding_flags above: the generated StringGate.cpp and
     # every runtime header it drags in must build warning-free under the freestanding runtime, so a
     # new warning in either fails the run instead of being buried in the log. freestanding_math.cpp is
-    # intentionally not linked here:
-    # StringGate never reaches system/math.hpp, and linking it anyway on this host (a usable <math.h>
-    # without HE_CPP_FREESTANDING_MATH_SOFTWARE=1) fails because libstdc++'s C++ <math.h> wrapper
-    # includes <cmath>, which the poison directory stubs out, so "'sqrt' has not been declared in
-    # 'std'" and friends follow.
+    # linked here even though this fixture never reaches system/math.hpp: the generated
+    # helcpp_config.hpp sets HE_CPP_RUNTIME_FREESTANDING, so freestanding_math.hpp now takes the
+    # software path on this host too and the file defines the C math names itself rather than
+    # deferring to a platform libm it would never have on the target. Any generated freestanding tree
+    # that does reach system/math.hpp needs it on the link line for exactly that reason.
     "$cxx" -std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST \
         -I"$fixture/poison" -I"$fixture" -I"$GENERATED_FREESTANDING_OUTPUT" -I"$runtime" \
         "$fixture/generated-smoke.cpp" "$GENERATED_FREESTANDING_OUTPUT/StringGate.cpp" \
         "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+        "$runtime/runtime/freestanding/freestanding_math.cpp" \
         -o "$output/generated-freestanding"
     "$output/generated-freestanding"
     for failure in fail null; do
