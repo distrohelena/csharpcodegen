@@ -68,6 +68,13 @@ int string_smoke() {
     ranged.append("yy");
     if (ranged != "zzyy" || ranged.at(1) != 'z') return 24;
     if (strcmp(ranged.data(), "zzyy") != 0) return 25;
+    FreestandingString aliased("abcdefgh");
+    aliased += aliased;
+    aliased.insert(0, aliased.c_str());
+    if (aliased != "abcdefghabcdefghabcdefghabcdefgh") return 26;
+    if (FreestandingString("hello world").find("world", FreestandingString::npos) != FreestandingString::npos) return 27;
+    if (FreestandingString("hello world").find("world", 7) != FreestandingString::npos ||
+        FreestandingString("hello world").find("world", 6) != 6) return 28;
     return 0;
 }
 
@@ -84,6 +91,8 @@ int vector_smoke() {
         if (items.size() != 17 || items[0].Id != 3) return 33;
         items.insert(items.begin() + 1, Tracked(99));
         if (items[1].Id != 99 || items[2].Id != 4) return 34;
+        auto zeroErase = items.erase(items.begin() + 1, items.begin() + 1);
+        if (zeroErase != items.begin() + 1 || items[1].Id != 99 || Tracked::Alive != 18) return 49;
         items.pop_back();
         if (items.size() != 17) return 35;
         items.resize(5);
@@ -108,6 +117,12 @@ int vector_smoke() {
     if (Tracked::Alive != 0) return 45;
     FreestandingVector<int> numbers{1, 2, 3};
     if (numbers.size() != 3 || numbers[2] != 3) return 46;
+    FreestandingVector<int> aliasedInts{10, 20, 30, 40};
+    aliasedInts.push_back(aliasedInts[0]);
+    aliasedInts.push_back(aliasedInts.back());
+    if (aliasedInts.size() != 6 || aliasedInts[4] != 10 || aliasedInts[5] != 10) return 47;
+    aliasedInts.resize(9, aliasedInts[1]);
+    if (aliasedInts[8] != 20) return 48;
     return 0;
 }
 
@@ -138,5 +153,12 @@ namespace he_cpp_custom {
 [[noreturn]] void Fail(const char* message) { fputs(message, stderr); exit(73); }
 uint64_t MonotonicMicroseconds() { return 0; }
 }
-int main() { return freestanding_provider_smoke(); }
+int main(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "fail") == 0) {
+        FreestandingVector<int> overflow;
+        overflow.reserve(static_cast<size_t>(-1) / sizeof(int) + 1);
+        return 0;
+    }
+    return freestanding_provider_smoke();
+}
 #endif

@@ -6,7 +6,6 @@
 #include <initializer_list>
 #include <new>
 #include <stddef.h>
-#include <string.h>
 #include <type_traits>
 
 namespace he_cpp_freestanding {
@@ -73,6 +72,7 @@ public:
 
     void reserve(size_t newCapacity) {
         if (newCapacity <= Capacity) return;
+        if (newCapacity > static_cast<size_t>(-1) / sizeof(T)) he_cpp_custom::Fail("Container allocation size overflow");
         T* buffer = static_cast<T*>(he_cpp_custom::Allocate(newCapacity * sizeof(T)));
         for (size_t index = 0; index < Length; ++index) {
             new (buffer + index) T(he_cpp_alg::Move(Data[index]));
@@ -82,8 +82,30 @@ public:
         Data = buffer;
         Capacity = newCapacity;
     }
-    void push_back(const T& value) { Grow(Length + 1); new (Data + Length) T(value); ++Length; }
-    void push_back(T&& value) { Grow(Length + 1); new (Data + Length) T(he_cpp_alg::Move(value)); ++Length; }
+    // value may alias one of our own elements (v.push_back(v[0]), v.push_back(v.back())); Grow can
+    // free our storage to reallocate, so take an independent copy/move first whenever it does.
+    void push_back(const T& value) {
+        if (&value >= Data && &value < Data + Length) {
+            T copy(value);
+            Grow(Length + 1);
+            new (Data + Length) T(he_cpp_alg::Move(copy));
+        } else {
+            Grow(Length + 1);
+            new (Data + Length) T(value);
+        }
+        ++Length;
+    }
+    void push_back(T&& value) {
+        if (&value >= Data && &value < Data + Length) {
+            T copy(he_cpp_alg::Move(value));
+            Grow(Length + 1);
+            new (Data + Length) T(he_cpp_alg::Move(copy));
+        } else {
+            Grow(Length + 1);
+            new (Data + Length) T(he_cpp_alg::Move(value));
+        }
+        ++Length;
+    }
     template <typename... TArgs>
     T& emplace_back(TArgs&&... args) {
         Grow(Length + 1);
@@ -107,14 +129,28 @@ public:
         }
     }
     void resize(size_t newLength, const T& fill) {
-        if (newLength < Length) { for (size_t index = newLength; index < Length; ++index) Data[index].~T(); }
-        else { Grow(newLength); for (size_t index = Length; index < newLength; ++index) new (Data + index) T(fill); }
+        if (newLength < Length) {
+            for (size_t index = newLength; index < Length; ++index) Data[index].~T();
+            Length = newLength;
+            return;
+        }
+        // fill may alias one of our own elements (v.resize(n, v[1])); Grow can free our storage to
+        // reallocate, so take an independent copy first whenever it does.
+        if (&fill >= Data && &fill < Data + Length) {
+            T copy(fill);
+            Grow(newLength);
+            for (size_t index = Length; index < newLength; ++index) new (Data + index) T(copy);
+        } else {
+            Grow(newLength);
+            for (size_t index = Length; index < newLength; ++index) new (Data + index) T(fill);
+        }
         Length = newLength;
     }
     iterator erase(const_iterator position) { return erase(position, position + 1); }
     iterator erase(const_iterator first, const_iterator last) {
         size_t start = static_cast<size_t>(first - Data);
         size_t count = static_cast<size_t>(last - first);
+        if (count == 0) return Data + start;
         for (size_t index = start; index + count < Length; ++index) Data[index] = he_cpp_alg::Move(Data[index + count]);
         for (size_t index = Length - count; index < Length; ++index) Data[index].~T();
         Length -= count;
@@ -148,7 +184,10 @@ private:
     void Grow(size_t required) {
         if (required <= Capacity) return;
         size_t next = Capacity < 4 ? 4 : Capacity;
-        while (next < required) next = next * 2;
+        while (next < required) {
+            if (next > static_cast<size_t>(-1) / 2) he_cpp_custom::Fail("Container capacity overflow");
+            next = next * 2;
+        }
         reserve(next);
     }
 };

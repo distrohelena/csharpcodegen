@@ -270,5 +270,8 @@ grep -q 'hosted threading or OS facilities' "$output/hosted-services-guard.log"
     "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
     -o "$output/freestanding-provider-smoke"
 "$output/freestanding-provider-smoke"
+result=0
+"$output/freestanding-provider-smoke" fail || result=$?
+test "$result" -eq 73
 echo 'Runtime capability fixtures passed.'
 

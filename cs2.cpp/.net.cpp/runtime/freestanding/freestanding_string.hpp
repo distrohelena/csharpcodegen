@@ -5,7 +5,6 @@
 #include "freestanding_hooks.hpp"
 
 #include <stddef.h>
-#include <stdint.h>
 #include <string.h>
 
 namespace he_cpp_freestanding {
@@ -75,6 +74,7 @@ public:
 
     void reserve(size_t newCapacity) {
         if (newCapacity <= Capacity) return;
+        if (newCapacity == npos) he_cpp_custom::Fail("Container allocation size overflow");
         char* buffer = static_cast<char*>(he_cpp_custom::Allocate(newCapacity + 1));
         memcpy(buffer, Data, Length + 1);
         if (Capacity != 0) he_cpp_custom::Free(Data);
@@ -102,8 +102,17 @@ public:
     }
     FreestandingString& append(const char* text) { return append(text, text == nullptr ? 0 : strlen(text)); }
     FreestandingString& append(const char* text, size_t count) {
-        Grow(Length + count);
-        if (count != 0) memcpy(Data + Length, text, count);
+        if (text == nullptr || count == 0) return *this;
+        // text may point inside our own storage (s += s, s.append(s)); Grow can free that storage to
+        // reallocate, so take an independent copy first whenever the source aliases the live range.
+        if (text >= Data && text < Data + Length) {
+            FreestandingString source(text, count);
+            Grow(Length + count);
+            memcpy(Data + Length, source.Data, count);
+        } else {
+            Grow(Length + count);
+            memcpy(Data + Length, text, count);
+        }
         Length += count;
         Data[Length] = '\0';
         return *this;
@@ -125,9 +134,10 @@ public:
         return npos;
     }
     size_t find(const char* text, size_t position = 0) const {
-        size_t needle = strlen(text);
-        if (needle == 0) return position <= Length ? position : npos;
-        if (needle > Length) return npos;
+        if (position > Length) return npos;
+        size_t needle = text == nullptr ? 0 : strlen(text);
+        if (needle == 0) return position;
+        if (needle > Length - position) return npos;
         for (size_t index = position; index + needle <= Length; ++index) {
             if (memcmp(Data + index, text, needle) == 0) return index;
         }
@@ -148,10 +158,21 @@ public:
     }
     FreestandingString& insert(size_t position, const char* text) {
         if (position > Length) he_cpp_custom::Fail("String insert position out of range");
+        if (text == nullptr) return *this;
         size_t count = strlen(text);
-        Grow(Length + count);
-        memmove(Data + position + count, Data + position, Length - position + 1);
-        memcpy(Data + position, text, count);
+        if (count == 0) return *this;
+        // text may point inside our own storage (s.insert(0, s.c_str())); take an independent copy
+        // before Grow/the tail shift can relocate or overwrite the bytes it points at.
+        if (text >= Data && text < Data + Length) {
+            FreestandingString source(text, count);
+            Grow(Length + count);
+            memmove(Data + position + count, Data + position, Length - position + 1);
+            memcpy(Data + position, source.Data, count);
+        } else {
+            Grow(Length + count);
+            memmove(Data + position + count, Data + position, Length - position + 1);
+            memcpy(Data + position, text, count);
+        }
         Length += count;
         return *this;
     }
@@ -165,7 +186,7 @@ public:
         he_cpp_alg::Swap(Capacity, other.Capacity);
     }
     int compare(const FreestandingString& other) const { return compare(other.Data, other.Length); }
-    int compare(const char* text) const { return compare(text, strlen(text)); }
+    int compare(const char* text) const { return compare(text, text == nullptr ? 0 : strlen(text)); }
 
 private:
     char* Data;
@@ -185,7 +206,10 @@ private:
     void Grow(size_t required) {
         if (required <= Capacity) return;
         size_t next = Capacity < 8 ? 8 : Capacity;
-        while (next < required) next = next * 2;
+        while (next < required) {
+            if (next > npos / 2) he_cpp_custom::Fail("Container capacity overflow");
+            next = next * 2;
+        }
         reserve(next);
     }
     int compare(const char* text, size_t count) const {
