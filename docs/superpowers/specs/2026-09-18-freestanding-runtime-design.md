@@ -154,8 +154,6 @@ before inserting for that reason.
   integration fixture's `SingleThreadSharedPtr`, moved into the library and
   renamed; same member set (`get`, `use_count`, `reset`, `swap`, conversion
   from derived, custom deleter).
-- `FreestandingOwnedPtr<T>`: `get`, `release`, `reset`, `operator->`,
-  `operator*`, `explicit operator bool`, move only.
 
 `freestanding_hooks.hpp` declares, in `he_cpp_custom`: `void* Allocate(size_t)`,
 `void Free(void*)`, `[[noreturn]] void Fail(const char*)`,
@@ -207,8 +205,9 @@ except `freestanding`. Files marked hosted-services-only begin with:
 #endif
 ```
 
-`HeCppOwnedPtr<T>` is added to `native_runtime.hpp`: `std::unique_ptr<T>` when
-`HE_CPP_USE_STD_SHARED_PTR` is on, otherwise `he_cpp_custom::OwnedPtr<T>`.
+`HeCppOwnedPtr<T>` is the runtime's own move-only owning pointer,
+`he_cpp_runtime_detail::OwnedPtr<T>` in `runtime/native_owned_ptr.hpp`, on every
+profile; it replaces `std::unique_ptr` in events and spans.
 
 `guid.hpp` under the freestanding runtime keeps parsing and formatting and
 loses only generation, which needed the atomic counter; generation calls
@@ -269,8 +268,7 @@ this sub-project.
 - `dotnet test` for `cs2.cpp.tests` passes with the new tests.
 - `run.sh` hosted, custom and freestanding variants pass on the host.
 - The freestanding fixture objects compile with the SNES toolchain.
-- Existing PS1 and EASTL configurations keep building unchanged apart from the
-  one-line `OwnedPtr` alias.
+- Existing PS1 and EASTL configurations keep building unchanged.
 - The measurement report exists.
 
 ## Process

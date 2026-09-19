@@ -54,6 +54,20 @@ public sealed class CPPFreestandingRuntimeProfileTests {
         Assert.Equal("platform/snes/SnesRuntimeProvider.hpp", CPPRuntimeOptionResolver.GetProviderHeader(options));
     }
 
+    /// <summary>A caller-supplied math header wins over the freestanding default.</summary>
+    [Fact]
+    public void Resolve_FreestandingKeepsCallerMathHeader() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.RuntimeProfile = CPPRuntimeProfile.CreateFreestanding();
+        options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            [CPPCodegenOptionNames.RuntimeMathHeader] = "platform/snes/SnesMath.hpp"
+        };
+
+        CPPRuntimeOptionResolver.Resolve(options);
+
+        Assert.Equal("platform/snes/SnesMath.hpp", options.PlatformOptionValues[CPPCodegenOptionNames.RuntimeMathHeader]);
+    }
+
     /// <summary>The generated config announces the freestanding runtime and the absence of hosted services.</summary>
     [Fact]
     public void Write_FreestandingEmitsRuntimeAndHostedServiceDefines() {
