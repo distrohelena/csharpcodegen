@@ -14,6 +14,11 @@ namespace he_cpp_freestanding {
 /// Open-addressing hash table with linear probing and tombstones. TEntry
 /// carries the stored object; TKeyOf extracts the key to hash and compare.
 /// Rehashes at three quarters load; capacity is a power of two from 8.
+/// Any insertion may rehash the table, which reallocates Entries and States: every iterator,
+/// pointer and reference into the table obtained before that insertion (from Find, begin/end,
+/// operator*/operator->, or a stored TEntry&) is invalidated by it, even one the caller never
+/// gave back to the table (map[k] = map[j] with a class-typed value reads through such a
+/// reference; see FreestandingHashMap::operator[]).
 /// </summary>
 template <typename TEntry, typename TKey, typename TKeyOf, typename THash, typename TEqual>
 class FreestandingHashTable {
@@ -77,13 +82,19 @@ public:
         size_t index;
         return FindSlot(key, index) ? Iterator(const_cast<FreestandingHashTable*>(this), index) : end();
     }
+    // build() runs before EnsureRoom, while the table is still exactly as the caller last saw it:
+    // build (and the key/value expressions its closure captured) may freely read through references
+    // into this table's own storage -- nothing here rehashes until after build() has already produced
+    // an independent, stack-local TEntry. EnsureRoom (and the Rehash it may trigger) only ever moves
+    // already-built entries and staged; it never re-reads the caller's original key/value expressions.
     template <typename TBuild>
     InsertResult Emplace(const TKey& key, TBuild build) {
         size_t index;
         if (FindSlot(key, index)) return InsertResult{ Iterator(this, index), false };
+        TEntry staged(build());
         EnsureRoom();
-        index = ProbeForInsert(key);
-        new (Entries + index) TEntry(build());
+        index = ProbeForInsert(TKeyOf{}(staged));
+        new (Entries + index) TEntry(he_cpp_alg::Move(staged));
         States[index] = SlotState::Occupied;
         ++Count;
         return InsertResult{ Iterator(this, index), true };
@@ -96,6 +107,7 @@ public:
     }
     Iterator Erase(Iterator position) {
         size_t index = position.SlotIndex();
+        if (Entries == nullptr || index >= Capacity) he_cpp_custom::Fail("Hash table erase of an invalid iterator");
         EraseSlot(index);
         return Iterator(this, index + 1);
     }
@@ -107,6 +119,10 @@ public:
         Count = 0;
         Tombstones = 0;
     }
+    // On a 16-bit size_t target (the SNES 65816 toolchain this runtime also targets), Rehash fails
+    // once Capacity * sizeof(TEntry) would exceed 65535 bytes, so the practical ceiling on the number
+    // of entries this table can hold is roughly (65535 / sizeof(TEntry)) * 3 / 4 -- e.g. for an 8-byte
+    // entry, capacity tops out at 8192 slots, so about 6144 entries before reserve/EnsureRoom fails.
     void reserve(size_t expected) {
         size_t needed = 8;
         while (needed * 3 / 4 < expected) needed = CheckedDouble(needed);
@@ -160,7 +176,10 @@ private:
     }
     void EnsureRoom() {
         if (Capacity == 0) { Rehash(8); return; }
-        if ((Count + Tombstones + 1) * 4 > Capacity * 3) Rehash(Count * 2 < 8 ? 8 : NextPowerOfTwo(Count * 2 + 1));
+        // Capacity / 4 * 3 rather than Capacity * 3: Capacity is always a power of two divisible by
+        // four, so this is exact, and it keeps the multiplication from wrapping a 16-bit size_t at
+        // large capacities (Capacity * 3 can overflow long before Capacity / 4 * 3 would).
+        if (Count + Tombstones + 1 > Capacity / 4 * 3) Rehash(Count * 2 < 8 ? 8 : NextPowerOfTwo(Count * 2 + 1));
     }
     static size_t NextPowerOfTwo(size_t value) {
         size_t result = 8;

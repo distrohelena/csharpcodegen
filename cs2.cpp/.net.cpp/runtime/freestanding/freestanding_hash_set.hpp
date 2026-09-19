@@ -4,7 +4,11 @@
 
 namespace he_cpp_freestanding {
 
-/// <summary>Unordered set front over the open-addressing table.</summary>
+/// <summary>
+/// Unordered set front over the open-addressing table. Any insertion (insert or emplace) may
+/// rehash the underlying table, invalidating every iterator, pointer and reference into the set
+/// obtained before that call. See FreestandingHashTable's class comment for the mechanism.
+/// </summary>
 template <typename TValue, typename THash, typename TEqual>
 class FreestandingHashSet {
     struct KeyOf { const TValue& operator()(const TValue& entry) const { return entry; } };
@@ -26,18 +30,12 @@ public:
     const_iterator find(const TValue& value) const { return Storage.Find(value); }
     size_t count(const TValue& value) const { return Storage.Find(value) != Storage.end() ? 1 : 0; }
     bool contains(const TValue& value) const { return count(value) != 0; }
-    // value is copied up front, before Storage.Emplace is called: it may alias this table's own
-    // storage (set.insert(*set.begin())), and Storage.Emplace's EnsureRoom can rehash -- freeing the
-    // old Entries array -- before the build lambda below would otherwise read the original reference.
-    InsertResult insert(const TValue& value) {
-        TValue copy(value);
-        return Storage.Emplace(copy, [&]() { return he_cpp_alg::Move(copy); });
-    }
+    // value may alias this table's own storage (set.insert(*set.begin())): Storage.Emplace calls
+    // build() before it does anything that could rehash the table (see its comment), so the copy the
+    // build lambda makes below always reads valid memory regardless of any later rehash.
+    InsertResult insert(const TValue& value) { return Storage.Emplace(value, [&]() { return value; }); }
     template <typename... TArgs>
-    InsertResult emplace(TArgs&&... args) {
-        TValue value(he_cpp_alg::Forward<TArgs>(args)...);
-        return Storage.Emplace(value, [&]() { return he_cpp_alg::Move(value); });
-    }
+    InsertResult emplace(TArgs&&... args) { TValue value(he_cpp_alg::Forward<TArgs>(args)...); return insert(value); }
     size_t erase(const TValue& value) { return Storage.Erase(value); }
     iterator erase(iterator position) { return Storage.Erase(position); }
     void clear() { Storage.clear(); }

@@ -29,6 +29,18 @@ struct StringEqual {
     bool operator()(const FreestandingString& a, const FreestandingString& b) const { return a == b; }
 };
 
+// Tracked::Alive is a live-count gauge: an eager construct-then-destroy pair (build a TValue that
+// then gets thrown away because the key already existed) nets to zero and would slip past it. This
+// counts constructions and never decrements, so it can actually catch try_emplace's laziness.
+struct CountingValue {
+    inline static int Constructions = 0;
+    int Value;
+    explicit CountingValue(int value) : Value(value) { ++Constructions; }
+    CountingValue(const CountingValue& other) : Value(other.Value) { ++Constructions; }
+    CountingValue(CountingValue&& other) noexcept : Value(other.Value) { ++Constructions; }
+    CountingValue& operator=(const CountingValue&) = default;
+};
+
 int string_smoke() {
     FreestandingString empty;
     if (!empty.empty() || empty.size() != 0 || empty.c_str()[0] != '\0') return 1;
@@ -193,6 +205,44 @@ int map_smoke() {
             dense.reserve(dense.size());
             auto emplaced = dense.emplace(dense.find(3)->first + 1000, Tracked(1));
             if (!emplaced.second || emplaced.first->first != 1003 || emplaced.first->second.Id != 1 || dense.size() != 7) return 76;
+        }
+        {
+            using StrMap = he_cpp_freestanding::FreestandingHashMap<int, FreestandingString, FreestandingHash<int>, IntEqual>;
+            const char* labels[6] = { "val0", "val1", "val2", "val3", "val4", "val5" };
+            // Class-typed alias across a forced rehash: 6 entries at capacity 8 sit exactly at the
+            // three-quarters threshold, so the next insertion below forces EnsureRoom to rehash while
+            // the value argument still aliases the table's own storage (the string stored at key 3).
+            // Emplace must read that aliased value while building the new entry, before the rehash
+            // that Storage.Emplace's EnsureRoom performs afterwards runs.
+            StrMap strings;
+            for (int index = 0; index < 6; ++index) strings.emplace(index, FreestandingString(labels[index]));
+            auto aliasedInsert = strings.emplace(9999, strings.find(3)->second);
+            if (!aliasedInsert.second || aliasedInsert.first->second != FreestandingString("val3")) return 77;
+            if (strings.size() != 7 || strings.find(3)->second != FreestandingString("val3")) return 77;
+        }
+        {
+            // try_emplace must be lazy: when the key already exists, it must not construct a TValue
+            // from args at all. CountingValue::Constructions never decrements, so it catches an eager
+            // construct-then-discard pair that a live-count gauge like Tracked::Alive would miss (the
+            // discarded temporary's construction and destruction would cancel out on that kind of
+            // gauge, net zero, even though the wasted construction happened).
+            using CountMap = he_cpp_freestanding::FreestandingHashMap<int, CountingValue, FreestandingHash<int>, IntEqual>;
+            CountMap probe;
+            probe.emplace(1, CountingValue(10));
+            int before = CountingValue::Constructions;
+            auto result = probe.try_emplace(1, 999);
+            if (result.second || CountingValue::Constructions != before || result.first->second.Value != 10) return 78;
+        }
+        {
+            using StrMap = he_cpp_freestanding::FreestandingHashMap<int, FreestandingString, FreestandingHash<int>, IntEqual>;
+            const char* labels[6] = { "val0", "val1", "val2", "val3", "val4", "val5" };
+            StrMap strings;
+            for (int index = 0; index < 6; ++index) strings[index] = FreestandingString(labels[index]);
+            // The safe idiom for a class-typed value: map[k] = TValue(map[j]) copies through an
+            // independent temporary before the left-hand map[k] runs its own (possibly rehashing)
+            // insertion, so it stays correct even though this insertion of key 42 forces a rehash.
+            strings[42] = FreestandingString(strings[3]);
+            if (strings[42] != FreestandingString("val3") || strings.size() != 7) return 79;
         }
         Map copy = map;
         if (copy.size() != 50 || copy.find(3) == copy.end()) return 72;
