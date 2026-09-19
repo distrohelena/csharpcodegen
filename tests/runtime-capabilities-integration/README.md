@@ -51,3 +51,28 @@ With `TARGET_CXX` set to the SNES toolchain driver
 `helengine-snes-toolchain` Docker image) the same sources are cross-compiled
 to objects as freestanding compile evidence.
 
+### Generated-code check under the freestanding runtime
+
+Generate the same authored `fixture/Fixture.csproj` a second time, now with
+`--runtime freestanding` instead of `--runtime custom-retro` (no
+`codegen-runtime-provider-header` or storage overrides: the freestanding
+resolver injects the provider and math header defaults itself):
+
+```text
+--cpp --project <fixture/Fixture.csproj> --output <generated-freestanding-output>
+--compiler gcc --platform generic --runtime freestanding
+--set generated-math-convention=engine-row-vector --set pointer-size-bytes=4
+--set load-native-runtime-metadata=false
+```
+
+Set `GENERATED_FREESTANDING_OUTPUT` to that generated directory when running
+`run.sh`. The generated output ships its own `helcpp_config.hpp`
+(`HE_CPP_RUNTIME_FREESTANDING 1`, `HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 0`, and
+the two default `runtime/freestanding/...` headers), so this check does not
+add `-I"$fixture/freestanding"`; the generated config is the one in effect.
+The runner builds `StringGate.cpp` with `generated-smoke.cpp` and
+`freestanding_hooks_default.cpp` behind the `poison/` directory, executes
+normal behavior and both fatal paths, and cross-compiles the generated class
+when `TARGET_CXX` is supplied. `freestanding_math.cpp` is not linked here
+because this fixture never reaches `system/math.hpp`.
+

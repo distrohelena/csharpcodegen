@@ -11,9 +11,11 @@ int generated_runtime_smoke() {
 }
 
 #ifdef HE_CPP_TEST_HOST
+#include <cstdint>
 #include <cstdlib>
 namespace he_cpp_custom {
 [[noreturn]] void Fail(const char*) { std::exit(73); }
+std::uint64_t MonotonicMicroseconds() { return 0; }
 }
 int main(int argc, char** argv) {
     if (argc > 1) {

@@ -349,5 +349,30 @@ if [ -n "${TARGET_CXX:-}" ]; then
         -c "$fixture/math_extensions.cpp" -o "$output/math-extensions-freestanding-target.o"
 fi
 
+if [ -n "${GENERATED_FREESTANDING_OUTPUT:-}" ]; then
+    # No -Wall/-Wextra/-Werror here, unlike $freestanding_flags above: the generated StringGate.cpp
+    # and generated-smoke.cpp are compiled for behavior, the same way the GENERATED_OUTPUT block
+    # above is, not for warning cleanliness. freestanding_math.cpp is intentionally not linked here:
+    # StringGate never reaches system/math.hpp, and linking it anyway on this host (a usable <math.h>
+    # without HE_CPP_FREESTANDING_MATH_SOFTWARE=1) hits a MinGW libstdc++ ordering issue where
+    # <math.h> included on its own, before any <cmath>, fails with "'sqrt' has not been declared in
+    # 'std'" and friends.
+    "$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST \
+        -I"$fixture/poison" -I"$fixture" -I"$GENERATED_FREESTANDING_OUTPUT" -I"$runtime" \
+        "$fixture/generated-smoke.cpp" "$GENERATED_FREESTANDING_OUTPUT/StringGate.cpp" \
+        "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+        -o "$output/generated-freestanding"
+    "$output/generated-freestanding"
+    for failure in fail null; do
+        result=0
+        "$output/generated-freestanding" "$failure" || result=$?
+        test "$result" -eq 73
+    done
+    if [ -n "${TARGET_CXX:-}" ]; then
+        "$TARGET_CXX" $target_freestanding_flags -I"$fixture/poison" -I"$fixture" -I"$GENERATED_FREESTANDING_OUTPUT" -I"$runtime" \
+            -c "$GENERATED_FREESTANDING_OUTPUT/StringGate.cpp" -o "$output/generated-freestanding-target.o"
+    fi
+fi
+
 echo 'Runtime capability fixtures passed.'
 
