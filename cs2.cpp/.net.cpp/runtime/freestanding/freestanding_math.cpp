@@ -20,7 +20,7 @@
 #if !defined(HE_CPP_FREESTANDING_MATH_HOSTED) || defined(HE_CPP_FREESTANDING_MATH_SOFTWARE)
 
 #include <stdint.h>
-#include <string.h>
+#include "../native_memory_ops.hpp"
 
 namespace he_cpp_freestanding_math {
 namespace {
@@ -80,14 +80,14 @@ constexpr double TwoPowerMinus1000 = 9.332636185032189e-302;
 /// <summary>Reads the IEEE 754 bit pattern of one double.</summary>
 uint64_t ToBits(double value) {
     uint64_t bits = 0;
-    memcpy(&bits, &value, sizeof bits);
+    he_cpp_memory::Copy(&bits, &value, sizeof bits);
     return bits;
 }
 
 /// <summary>Rebuilds one double from an IEEE 754 bit pattern.</summary>
 double FromBits(uint64_t bits) {
     double value = 0.0;
-    memcpy(&value, &bits, sizeof value);
+    he_cpp_memory::Copy(&value, &bits, sizeof value);
     return value;
 }
 
