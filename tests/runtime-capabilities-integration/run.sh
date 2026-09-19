@@ -322,6 +322,15 @@ test "$result" -eq 73
 test -s "$output/freestanding-debug-fail.stderr"
 grep -qx 'Exception' "$output/freestanding-debug-fail.stderr"
 
+# HE_CPP_FREESTANDING_MATH_SOFTWARE has to reach both translation units, not just the fixture that
+# defines it at the top of its own source: freestanding_math.cpp is compiled separately and would
+# otherwise see this host's usable <math.h>, select the hosted path and define nothing to link with.
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST \
+    -DHE_CPP_FREESTANDING_MATH_SOFTWARE=1 \
+    -I"$runtime" "$fixture/freestanding_math_smoke.cpp" "$runtime/runtime/freestanding/freestanding_math.cpp" \
+    -o "$output/freestanding-math-smoke" -lm
+"$output/freestanding-math-smoke"
+
 if [ -n "${TARGET_CXX:-}" ]; then
     target_freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Os"
     for source in smoke services streams number_parse_smoke debug_fail freestanding_provider_smoke algorithm_smoke; do
@@ -334,6 +343,10 @@ if [ -n "${TARGET_CXX:-}" ]; then
     done
     "$TARGET_CXX" $target_freestanding_flags $freestanding_includes \
         -c "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" -o "$output/hooks-default-freestanding-target.o"
+    "$TARGET_CXX" $target_freestanding_flags -I"$runtime" \
+        -c "$runtime/runtime/freestanding/freestanding_math.cpp" -o "$output/freestanding-math-target.o"
+    "$TARGET_CXX" $target_freestanding_flags $freestanding_includes \
+        -c "$fixture/math_extensions.cpp" -o "$output/math-extensions-freestanding-target.o"
 fi
 
 echo 'Runtime capability fixtures passed.'
