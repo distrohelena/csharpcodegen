@@ -1,11 +1,11 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 #include <type_traits>
 
 #include "array.hpp"
+#include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
 #include "native_runtime.hpp"
 #include "native_read_only_list.hpp"
@@ -175,12 +175,12 @@ public:
 
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
-        return std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); }) != this->end();
+        return he_cpp_alg::FindIf(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); }) != this->end();
     }
 
     int32_t IndexOf(const T& value) const {
         NativeListEqual<T> equal;
-        typename HeCppVector<T>::const_iterator iterator = std::find_if(
+        typename HeCppVector<T>::const_iterator iterator = he_cpp_alg::FindIf(
             HeCppVector<T>::begin(),
             HeCppVector<T>::end(),
             [&](const T& candidate) { return equal(candidate, value); });
@@ -188,12 +188,12 @@ public:
             return -1;
         }
 
-        return static_cast<int32_t>(std::distance(HeCppVector<T>::begin(), iterator));
+        return static_cast<int32_t>(he_cpp_alg::Distance(HeCppVector<T>::begin(), iterator));
     }
 
     bool Remove(const T& value) {
         NativeListEqual<T> equal;
-        typename HeCppVector<T>::iterator iterator = std::find_if(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); });
+        typename HeCppVector<T>::iterator iterator = he_cpp_alg::FindIf(this->begin(), this->end(), [&](const T& candidate) { return equal(candidate, value); });
         if (iterator == this->end()) {
             return false;
         }
@@ -360,7 +360,7 @@ public:
     /// </summary>
     bool Contains(const T& value) const {
         NativeListEqual<T> equal;
-        return std::find_if(Source->begin(), Source->end(), [&](const T& candidate) { return equal(candidate, value); }) != Source->end();
+        return he_cpp_alg::FindIf(Source->begin(), Source->end(), [&](const T& candidate) { return equal(candidate, value); }) != Source->end();
     }
 
     /// <summary>
@@ -368,7 +368,7 @@ public:
     /// </summary>
     int32_t IndexOf(const T& value) const {
         NativeListEqual<T> equal;
-        typename HeCppVector<T>::const_iterator iterator = std::find_if(
+        typename HeCppVector<T>::const_iterator iterator = he_cpp_alg::FindIf(
             Source->begin(),
             Source->end(),
             [&](const T& candidate) { return equal(candidate, value); });
@@ -376,7 +376,7 @@ public:
             return -1;
         }
 
-        return static_cast<int32_t>(std::distance(Source->begin(), iterator));
+        return static_cast<int32_t>(he_cpp_alg::Distance(Source->begin(), iterator));
     }
 
     /// <summary>

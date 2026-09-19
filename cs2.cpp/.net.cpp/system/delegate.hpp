@@ -1,8 +1,8 @@
 #ifndef HE_CPP_SYSTEM_DELEGATE_HPP
 #define HE_CPP_SYSTEM_DELEGATE_HPP
 
+#include "../runtime/native_algorithm.hpp"
 #include "../runtime/native_runtime.hpp"
-#include <utility>
 
 template <typename TResult, typename... TArgs>
 class Delegate {
@@ -12,16 +12,16 @@ public:
     Delegate() = default;
 
     explicit Delegate(FuncType value)
-        : func(std::move(value)) {
+        : func(he_cpp_alg::Move(value)) {
     }
 
     template <typename TCallable>
     explicit Delegate(TCallable value)
-        : func(std::move(value)) {
+        : func(he_cpp_alg::Move(value)) {
     }
 
     TResult operator()(TArgs... args) const {
-        return func(std::forward<TArgs>(args)...);
+        return func(he_cpp_alg::Forward<TArgs>(args)...);
     }
 
     explicit operator bool() const {

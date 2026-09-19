@@ -1,6 +1,6 @@
 #pragma once
 
-#include <utility>
+#include "native_algorithm.hpp"
 
 /// <summary>
 /// Executes a captured callback when the surrounding scope exits.
@@ -14,7 +14,7 @@ public:
     /// </summary>
     /// <param name="callback">Callback invoked on scope exit while the guard remains active.</param>
     explicit he_cpp_scope_exit(TCallback callback)
-        : callback_(std::move(callback)), active_(true) {
+        : callback_(he_cpp_alg::Move(callback)), active_(true) {
     }
 
     he_cpp_scope_exit(const he_cpp_scope_exit&) = delete;
@@ -25,7 +25,7 @@ public:
     /// </summary>
     /// <param name="other">Guard transferring callback ownership.</param>
     he_cpp_scope_exit(he_cpp_scope_exit&& other) noexcept
-        : callback_(std::move(other.callback_)), active_(other.active_) {
+        : callback_(he_cpp_alg::Move(other.callback_)), active_(other.active_) {
         other.active_ = false;
     }
 
@@ -51,5 +51,5 @@ private:
 /// <returns>A movable scope-exit guard that owns the callback.</returns>
 template <typename TCallback>
 he_cpp_scope_exit<TCallback> he_cpp_make_scope_exit(TCallback callback) {
-    return he_cpp_scope_exit<TCallback>(std::move(callback));
+    return he_cpp_scope_exit<TCallback>(he_cpp_alg::Move(callback));
 }

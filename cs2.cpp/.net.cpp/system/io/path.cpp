@@ -2,8 +2,8 @@
 
 #include "helcpp_config.hpp"
 
-#include <algorithm>
-#include <cstdlib>
+#include "../../runtime/native_algorithm.hpp"
+#include <stdlib.h>
 
 
 
@@ -29,7 +29,7 @@ namespace {
         }
 
         HeCppString normalized = path;
-        std::replace(normalized.begin(), normalized.end(), '/', '\\');
+        he_cpp_alg::Replace(normalized.begin(), normalized.end(), '/', '\\');
         const std::size_t deviceSeparatorIndex = normalized.find(':');
         if (deviceSeparatorIndex == HeCppString::npos) {
             return normalized;
@@ -157,7 +157,7 @@ namespace {
         }
 
         HeCppString normalized = path;
-        std::replace(normalized.begin(), normalized.end(), Path::AltDirectorySeparatorChar, Path::DirectorySeparatorChar);
+        he_cpp_alg::Replace(normalized.begin(), normalized.end(), Path::AltDirectorySeparatorChar, Path::DirectorySeparatorChar);
         const std::size_t rootLength = GetRootLength(normalized);
         const bool rooted = rootLength > 0;
         HeCppString root = normalized.substr(0, rootLength);

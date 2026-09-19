@@ -1,13 +1,11 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include "native_algorithm.hpp"
 #include "runtime/native_memory_ops.hpp"
 #include <initializer_list>
-#include <memory>
 #include <type_traits>
-#include <utility>
 #include "array.hpp"
 
 template <typename T, typename = void>
@@ -153,11 +151,11 @@ public:
     }
 
     void CopyTo(Span<T> target) const {
-        std::copy_n(Data, std::min(Length, target.Length), target.Data);
+        he_cpp_alg::CopyN(Data, he_cpp_alg::Min(Length, target.Length), target.Data);
     }
 
     void Fill(const T& value) const {
-        std::fill_n(Data, Length, value);
+        he_cpp_alg::FillN(Data, Length, value);
     }
 
     int32_t get_Length() const {
@@ -294,7 +292,7 @@ public:
     }
 
     void CopyTo(Span<T> target) const {
-        std::copy_n(Data, std::min(Length, target.Length), target.Data);
+        he_cpp_alg::CopyN(Data, he_cpp_alg::Min(Length, target.Length), target.Data);
     }
 
     Array<T>* ToArray() const {

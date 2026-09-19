@@ -6,8 +6,8 @@
 
 template <typename TTarget, typename TSource>
 inline TTarget& he_cpp_unsafe_as(TSource* source) {
-    using TargetStorage = std::remove_const_t<TTarget>;
-    using SourceStorage = std::remove_const_t<TSource>;
+    using TargetStorage = std::remove_cv_t<TTarget>;
+    using SourceStorage = std::remove_cv_t<TSource>;
     return *reinterpret_cast<TargetStorage*>(const_cast<SourceStorage*>(source));
 }
 
@@ -18,8 +18,8 @@ inline TTarget& he_cpp_unsafe_as(TSource& source) {
 
 template <typename TTarget, typename TSource>
 inline TTarget& he_cpp_unsafe_as_ref(TSource* source) {
-    using TargetStorage = std::remove_const_t<TTarget>;
-    using SourceStorage = std::remove_const_t<TSource>;
+    using TargetStorage = std::remove_cv_t<TTarget>;
+    using SourceStorage = std::remove_cv_t<TSource>;
     return *reinterpret_cast<TargetStorage*>(const_cast<SourceStorage*>(source));
 }
 

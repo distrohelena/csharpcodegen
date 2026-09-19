@@ -1,6 +1,6 @@
 #include "memory-stream.hpp"
+#include "../../runtime/native_algorithm.hpp"
 #include "../../runtime/native_memory_ops.hpp"
-#include <algorithm>  // For std::min
 
 // Constructor
 MemoryStream::MemoryStream() : buffer(), position(0), writable(true) {}
@@ -16,7 +16,7 @@ MemoryStream::MemoryStream(Array<uint8_t>* data, bool writable)
 size_t MemoryStream::Read(uint8_t* outBuffer, size_t offset, size_t count) {
     if (!CanRead() || !outBuffer) return 0;
 
-    size_t readable = std::min(count, buffer.size() - position);
+    size_t readable = he_cpp_alg::Min(count, buffer.size() - position);
     he_cpp_memory::Copy(outBuffer + offset, buffer.data() + position, readable);
     position += readable;
     return readable;
@@ -50,7 +50,7 @@ size_t MemoryStream::Seek(int64_t offset, SeekOrigin origin) {
         break;
     }
 
-    position = std::min(position, buffer.size());  // Ensure position is valid
+    position = he_cpp_alg::Min(position, buffer.size());  // Ensure position is valid
     return position;
 }
 
@@ -68,7 +68,7 @@ bool MemoryStream::CanSeek() const { return true; }
 size_t MemoryStream::Length() const { return buffer.size(); }
 size_t MemoryStream::Position() const { return position; }
 void MemoryStream::SetPosition(size_t value) {
-    position = std::min(value, buffer.size());
+    position = he_cpp_alg::Min(value, buffer.size());
 }
 
 // Internal reserve function

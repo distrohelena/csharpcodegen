@@ -1,9 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 
+#include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
 #include "native_read_only_list.hpp"
 
@@ -45,7 +45,7 @@ public:
             return;
         }
 
-        int32_t copyLength = std::min(length, std::min(source->Length, destination->Length));
+        int32_t copyLength = he_cpp_alg::Min(length, he_cpp_alg::Min(source->Length, destination->Length));
         for (int32_t index = 0; index < copyLength; index++) {
             (*destination)[index] = (*source)[index];
         }
@@ -70,7 +70,7 @@ public:
 
         int32_t sourceAvailable = source->Length - sourceIndex;
         int32_t destinationAvailable = destination->Length - destinationIndex;
-        int32_t copyLength = std::min(length, std::min(sourceAvailable, destinationAvailable));
+        int32_t copyLength = he_cpp_alg::Min(length, he_cpp_alg::Min(sourceAvailable, destinationAvailable));
         if (copyLength <= 0) {
             return;
         }
@@ -94,7 +94,7 @@ public:
 
         Array<T>* resized = new Array<T>(newLength);
         if (array != nullptr) {
-            Copy(array, resized, std::min(array->Length, newLength));
+            Copy(array, resized, he_cpp_alg::Min(array->Length, newLength));
         }
 
         if (array != nullptr && array != Empty()) {
@@ -117,7 +117,7 @@ public:
             return;
         }
 
-        int32_t clearLength = std::min(length, array->Length - index);
+        int32_t clearLength = he_cpp_alg::Min(length, array->Length - index);
         for (int32_t elementIndex = 0; elementIndex < clearLength; ++elementIndex) {
             array->Data[index + elementIndex] = T();
         }

@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <memory>
 
+#include "native_algorithm.hpp"
+
 // The generated configuration is optional for direct hosted consumers.  When it
 // is present, its capability values remain the single source of truth.
 #if defined(__has_include)
@@ -244,18 +246,11 @@ template <typename TResult, typename TException>
 /// <param name="callable">Callable invoked with the bound argument first.</param>
 /// <param name="bound">Leading argument forwarded as the callable's first parameter.</param>
 /// <returns>A callable accepting the callable's remaining arguments.</returns>
-#if defined(__cpp_lib_bind_front) && __cpp_lib_bind_front >= 201907L
-template <typename TCallable, typename TBound>
-inline auto he_cpp_bind_front(TCallable&& callable, TBound&& bound) {
-    return std::bind_front(std::forward<TCallable>(callable), std::forward<TBound>(bound));
-}
-#else
 template <typename TCallable, typename TBound>
 inline auto he_cpp_bind_front(TCallable callable, TBound bound) {
     return [callable, bound](auto&&... arguments) -> decltype(auto) {
-        return std::invoke(callable, bound, std::forward<decltype(arguments)>(arguments)...);
+        return he_cpp_alg::Invoke(callable, bound, he_cpp_alg::Forward<decltype(arguments)>(arguments)...);
     };
 }
-#endif
 
 

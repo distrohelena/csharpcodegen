@@ -2,7 +2,8 @@
 #define HE_CPP_RUNTIME_FUNCTION_POINTER_HPP
 
 #include <cstddef>
-#include <utility>
+
+#include "native_algorithm.hpp"
 
 template <typename TReturn, typename... TArgs>
 class FunctionPointer {
@@ -44,7 +45,7 @@ public:
     }
 
     TReturn operator()(TArgs... args) const {
-        return pointer(std::forward<TArgs>(args)...);
+        return pointer(he_cpp_alg::Forward<TArgs>(args)...);
     }
 private:
     PointerType pointer = nullptr;

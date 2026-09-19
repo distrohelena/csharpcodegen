@@ -6,9 +6,9 @@
 #endif
 
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include "../../runtime/native_algorithm.hpp"
 #include "runtime/native_memory_ops.hpp"
 #include <string>
 #include <type_traits>
@@ -43,7 +43,7 @@ public:
 
     explicit Vector_1(Span<T> values)
         : Vector_1() {
-        int32_t copyCount = std::min(get_Count(), values.get_Length());
+        int32_t copyCount = he_cpp_alg::Min(get_Count(), values.get_Length());
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
             Values[laneIndex] = values[static_cast<size_t>(laneIndex)];
         }
@@ -51,7 +51,7 @@ public:
 
     explicit Vector_1(ReadOnlySpan<T> values)
         : Vector_1() {
-        int32_t copyCount = std::min(get_Count(), values.get_Length());
+        int32_t copyCount = he_cpp_alg::Min(get_Count(), values.get_Length());
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
             Values[laneIndex] = values[static_cast<size_t>(laneIndex)];
         }
@@ -60,7 +60,7 @@ public:
     template <typename U, typename = std::enable_if_t<!std::is_same_v<T, U>>>
     Vector_1(const Vector_1<U>& values)
         : Vector_1() {
-        int32_t copyCount = std::min(get_Count(), Vector_1<U>::get_Count());
+        int32_t copyCount = he_cpp_alg::Min(get_Count(), Vector_1<U>::get_Count());
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
             Values[laneIndex] = static_cast<T>(values.Values[laneIndex]);
         }
@@ -69,7 +69,7 @@ public:
     template <size_t N>
     explicit Vector_1(T (&values)[N])
         : Vector_1() {
-        int32_t copyCount = std::min(get_Count(), static_cast<int32_t>(N));
+        int32_t copyCount = he_cpp_alg::Min(get_Count(), static_cast<int32_t>(N));
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
             Values[laneIndex] = values[laneIndex];
         }
@@ -78,7 +78,7 @@ public:
     template <size_t N>
     explicit Vector_1(const T (&values)[N])
         : Vector_1() {
-        int32_t copyCount = std::min(get_Count(), static_cast<int32_t>(N));
+        int32_t copyCount = he_cpp_alg::Min(get_Count(), static_cast<int32_t>(N));
         for (int32_t laneIndex = 0; laneIndex < copyCount; ++laneIndex) {
             Values[laneIndex] = values[laneIndex];
         }
@@ -634,7 +634,7 @@ public:
     static Vector_1<T> Max(const Vector_1<T>& left, const Vector_1<T>& right) {
         Vector_1<T> result;
         for (int32_t laneIndex = 0; laneIndex < Vector_1<T>::get_Count(); ++laneIndex) {
-            result.Values[laneIndex] = std::max(left.Values[laneIndex], right.Values[laneIndex]);
+            result.Values[laneIndex] = he_cpp_alg::Max(left.Values[laneIndex], right.Values[laneIndex]);
         }
         return result;
     }
@@ -648,7 +648,7 @@ public:
     static Vector_1<T> Min(const Vector_1<T>& left, const Vector_1<T>& right) {
         Vector_1<T> result;
         for (int32_t laneIndex = 0; laneIndex < Vector_1<T>::get_Count(); ++laneIndex) {
-            result.Values[laneIndex] = std::min(left.Values[laneIndex], right.Values[laneIndex]);
+            result.Values[laneIndex] = he_cpp_alg::Min(left.Values[laneIndex], right.Values[laneIndex]);
         }
         return result;
     }

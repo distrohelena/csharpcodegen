@@ -1,8 +1,7 @@
 #pragma once
+#include "native_algorithm.hpp"
 #include "native_runtime.hpp"
 
-#include <algorithm>
-#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -53,7 +52,7 @@ public:
         Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
-                InvokeFunctionPointer(handler, arguments, std::index_sequence_for<TArgs...> {});
+                InvokeFunctionPointer(handler, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
             },
             [handler](const void* candidateHandler) {
                 return candidateHandler != nullptr &&
@@ -80,7 +79,7 @@ public:
         Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
-                InvokeBoundMethod(handler.Instance, handler.Method, arguments, std::index_sequence_for<TArgs...> {});
+                InvokeBoundMethod(handler.Instance, handler.Method, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
             },
             nullptr,
             [handler](const void* candidateInstance, const void* candidateMethod) {
@@ -132,7 +131,7 @@ public:
         }
 
         Subscribers.erase(
-            std::remove_if(
+            he_cpp_alg::RemoveIf(
                 Subscribers.begin(),
                 Subscribers.end(),
                 [handler](const std::unique_ptr<Subscriber>& subscriber) {
@@ -160,7 +159,7 @@ public:
         }
 
         Subscribers.erase(
-            std::remove_if(
+            he_cpp_alg::RemoveIf(
                 Subscribers.begin(),
                 Subscribers.end(),
                 [handler](const std::unique_ptr<Subscriber>& subscriber) {
@@ -181,10 +180,10 @@ public:
     /// <param name="args">Arguments supplied by the transpiled call site.</param>
     template <typename... TArgs>
     void Invoke(TArgs... args) {
-        std::array<void*, sizeof...(TArgs)> argumentPointers { const_cast<void*>(static_cast<const void*>(std::addressof(args)))... };
+        void* argumentPointers[sizeof...(TArgs) == 0 ? 1 : sizeof...(TArgs)] = { const_cast<void*>(static_cast<const void*>(he_cpp_alg::AddressOf(args)))... };
         for (std::unique_ptr<Subscriber>& subscriber : Subscribers) {
             if (subscriber->ArgumentCount == sizeof...(TArgs)) {
-                subscriber->Invoke(argumentPointers.data());
+                subscriber->Invoke(argumentPointers);
             }
         }
     }
@@ -223,7 +222,7 @@ private:
     /// <param name="handler">Free or static function subscriber.</param>
     /// <param name="arguments">Packed addresses of the invocation arguments.</param>
     template <typename... TArgs, std::size_t... TIndexes>
-    static void InvokeFunctionPointer(void (*handler)(TArgs...), void** arguments, std::index_sequence<TIndexes...>) {
+    static void InvokeFunctionPointer(void (*handler)(TArgs...), void** arguments, he_cpp_alg::IndexSequence<TIndexes...>) {
         handler((*static_cast<std::remove_reference_t<TArgs>*>(arguments[TIndexes]))...);
     }
 
@@ -237,7 +236,7 @@ private:
     /// <param name="method">Bound member method receiving the callback.</param>
     /// <param name="arguments">Packed addresses of the invocation arguments.</param>
     template <typename TInstance, typename... TArgs, std::size_t... TIndexes>
-    static void InvokeBoundMethod(TInstance* instance, void (TInstance::*method)(TArgs...), void** arguments, std::index_sequence<TIndexes...>) {
+    static void InvokeBoundMethod(TInstance* instance, void (TInstance::*method)(TArgs...), void** arguments, he_cpp_alg::IndexSequence<TIndexes...>) {
         (instance->*method)((*static_cast<std::remove_reference_t<TArgs>*>(arguments[TIndexes]))...);
     }
 

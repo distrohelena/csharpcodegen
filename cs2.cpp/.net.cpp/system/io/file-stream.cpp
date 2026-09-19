@@ -1,13 +1,12 @@
 #include "file-stream.hpp"
 #include "helcpp_config.hpp"
+#include "../../runtime/native_algorithm.hpp"
 #include "../../runtime/native_memory_ops.hpp"
 #include "../../runtime/native_exceptions.hpp"
 
 #ifndef HE_CPP_USE_HOSTED_FILE_SYSTEM
 #define HE_CPP_USE_HOSTED_FILE_SYSTEM 1
 #endif
-
-#include <algorithm>
 
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
@@ -38,7 +37,7 @@ namespace {
         }
 
         std::string normalizedPath = path;
-        std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+        he_cpp_alg::Replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
         return normalizedPath;
     }
 
@@ -224,7 +223,7 @@ size_t FileStream::Read(uint8_t* buffer, size_t offset, size_t count) {
 
     if (file == nullptr) {
         size_t available = position >= memoryBuffer.size() ? 0 : memoryBuffer.size() - position;
-        size_t bytesRead = std::min(count, available);
+        size_t bytesRead = he_cpp_alg::Min(count, available);
         if (bytesRead == 0) {
             return 0;
         }
@@ -363,7 +362,7 @@ bool FileStream::CanSeek() const { return file != nullptr || ownsMemoryBuffer; }
 
 size_t FileStream::Length() const { return length; }
 size_t FileStream::Position() const { return position; }
-void FileStream::SetPosition(size_t value) { position = std::min(value, length); }
+void FileStream::SetPosition(size_t value) { position = he_cpp_alg::Min(value, length); }
 
 // Internal byte-level operations
 void FileStream::InternalReserve(size_t count) { /* Not needed for file streams */ }

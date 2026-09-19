@@ -1,11 +1,10 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 
+#include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
 #include "native_runtime.hpp"
 #include "array.hpp"
@@ -300,7 +299,7 @@ public:
     /// <returns>Lowercase string copy.</returns>
     static HeCppString ToLowerInvariant(const HeCppString& value) {
         HeCppString lowered = value;
-        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
+        he_cpp_alg::Transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
             return ToLowerAscii(character);
         });
         return lowered;
@@ -343,7 +342,7 @@ public:
 
     static HeCppString Replace(const HeCppString& value, char oldValue, char newValue) {
         HeCppString updatedValue = value;
-        std::replace(updatedValue.begin(), updatedValue.end(), oldValue, newValue);
+        he_cpp_alg::Replace(updatedValue.begin(), updatedValue.end(), oldValue, newValue);
         return updatedValue;
     }
 

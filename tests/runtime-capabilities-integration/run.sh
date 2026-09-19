@@ -245,5 +245,9 @@ for math_mode in hosted custom; do
     "$output/math-extensions-$math_mode" nan || result=$?
     test "$result" -eq 73
 done
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST \
+    -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/algorithm_smoke.cpp" -o "$output/algorithm-smoke"
+"$output/algorithm-smoke"
 echo 'Runtime capability fixtures passed.'
 
