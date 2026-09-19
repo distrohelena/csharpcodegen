@@ -1,20 +1,32 @@
 #include "runtime/freestanding/freestanding_string.hpp"
 #include "runtime/freestanding/freestanding_vector.hpp"
 #include "runtime/freestanding/freestanding_hash.hpp"
+#include "runtime/freestanding/freestanding_hash_map.hpp"
+#include "runtime/freestanding/freestanding_hash_set.hpp"
 #include <string.h>
 
 using he_cpp_freestanding::FreestandingString;
 using he_cpp_freestanding::FreestandingVector;
 using he_cpp_freestanding::FreestandingHash;
 
+// Tracked gained a default constructor for FreestandingHashMap::operator[]'s value-initialising
+// insert (map_smoke's `map[500];`); every other test here still exercises the explicit-id constructor.
 struct Tracked {
     inline static int Alive = 0;
     int Id;
+    Tracked() : Id(0) { ++Alive; }
     explicit Tracked(int id) : Id(id) { ++Alive; }
     Tracked(const Tracked& other) : Id(other.Id) { ++Alive; }
     Tracked(Tracked&& other) noexcept : Id(other.Id) { other.Id = -1; ++Alive; }
     Tracked& operator=(const Tracked&) = default;
     ~Tracked() { --Alive; }
+};
+
+struct IntEqual {
+    bool operator()(int a, int b) const { return a == b; }
+};
+struct StringEqual {
+    bool operator()(const FreestandingString& a, const FreestandingString& b) const { return a == b; }
 };
 
 int string_smoke() {
@@ -142,12 +154,83 @@ int hash_smoke() {
     return 0;
 }
 
+int map_smoke() {
+    using Map = he_cpp_freestanding::FreestandingHashMap<int, Tracked, FreestandingHash<int>, IntEqual>;
+    {
+        Map map;
+        for (int index = 0; index < 100; ++index) {
+            auto result = map.emplace(index, Tracked(index * 10));
+            if (!result.second || result.first->first != index) return 60;
+        }
+        if (map.size() != 100 || Tracked::Alive != 100) return 61;
+        if (map.emplace(5, Tracked(0)).second) return 62;
+        auto found = map.find(42);
+        if (found == map.end() || found->second.Id != 420) return 63;
+        if (map.find(1000) != map.end() || map.count(1000) != 0 || !map.contains(42)) return 64;
+        if (map.erase(42) != 1 || map.erase(42) != 0 || map.size() != 99 || map.find(42) != map.end()) return 65;
+        map.insert_or_assign(7, Tracked(777));
+        if (map[7].Id != 777) return 66;
+        map[500];
+        if (map.size() != 100 || map.find(500) == map.end()) return 67;
+        int visited = 0, sum = 0;
+        for (const auto& entry : map) { ++visited; sum += entry.first; }
+        if (visited != 100 || sum != (99 * 100 / 2) - 42 + 500) return 68;
+        for (auto iterator = map.begin(); iterator != map.end();) {
+            if (iterator->first % 2 == 0) iterator = map.erase(iterator); else ++iterator;
+        }
+        if (map.size() != 50) return 69;
+        for (const auto& entry : map) if (entry.first % 2 == 0) return 70;
+        map.reserve(4096);
+        if (map.size() != 50 || map.find(1) == map.end()) return 71;
+        {
+            // Emplace(key, build) takes key by const reference; if a rehash inside EnsureRoom ran
+            // between reading the key and building the entry, a key that referenced the table's own
+            // storage would dangle. Force a rehash on insertion (reserve() just barely covers the
+            // current entries, so EnsureRoom's three-quarters-load check trips on the next insert) and
+            // have the key expression read straight out of the table to exercise that path.
+            Map dense;
+            for (int index = 0; index < 6; ++index) dense.emplace(index, Tracked(index * 10));
+            dense.reserve(dense.size());
+            auto emplaced = dense.emplace(dense.find(3)->first + 1000, Tracked(1));
+            if (!emplaced.second || emplaced.first->first != 1003 || emplaced.first->second.Id != 1 || dense.size() != 7) return 76;
+        }
+        Map copy = map;
+        if (copy.size() != 50 || copy.find(3) == copy.end()) return 72;
+        map.clear();
+        if (!map.empty() || copy.size() != 50) return 73;
+    }
+    if (Tracked::Alive != 0) return 74;
+    he_cpp_freestanding::FreestandingHashMap<FreestandingString, int, FreestandingHash<FreestandingString>, StringEqual> names;
+    names.emplace(FreestandingString("alpha"), 1);
+    names[FreestandingString("beta")] = 2;
+    if (names.find(FreestandingString("alpha"))->second != 1 || names[FreestandingString("beta")] != 2) return 75;
+    return 0;
+}
+
+int set_smoke() {
+    he_cpp_freestanding::FreestandingHashSet<int, FreestandingHash<int>, IntEqual> set;
+    for (int index = 0; index < 50; ++index) if (!set.insert(index).second) return 80;
+    if (set.insert(10).second || set.size() != 50) return 81;
+    if (!set.contains(10) || set.count(10) != 1 || set.find(99) != set.end()) return 82;
+    if (set.erase(10) != 1 || set.contains(10)) return 83;
+    int sum = 0;
+    for (int value : set) sum += value;
+    if (sum != (49 * 50 / 2) - 10) return 84;
+    set.clear();
+    if (!set.empty()) return 85;
+    return 0;
+}
+
 int freestanding_provider_smoke() {
     int result = string_smoke();
     if (result != 0) return result;
     result = vector_smoke();
     if (result != 0) return result;
-    return hash_smoke();
+    result = hash_smoke();
+    if (result != 0) return result;
+    result = map_smoke();
+    if (result != 0) return result;
+    return set_smoke();
 }
 
 #if defined(HE_CPP_TEST_HOST)
