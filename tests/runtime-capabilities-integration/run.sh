@@ -264,5 +264,11 @@ grep -q 'hosted threading or OS facilities' "$output/hosted-services-guard.log"
 "$cxx" $freestanding_flags $freestanding_includes \
     "$fixture/algorithm_smoke.cpp" -o "$output/freestanding-algorithm-smoke"
 "$output/freestanding-algorithm-smoke"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/freestanding_provider_smoke.cpp" \
+    "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-provider-smoke"
+"$output/freestanding-provider-smoke"
 echo 'Runtime capability fixtures passed.'
 
