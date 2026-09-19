@@ -349,8 +349,9 @@ double Sin(double value) {
         return QuietNan();
     }
     // IEEE 754 requires sin(-0.0) to be -0.0, and the reduction below would hand back a plain +0.0:
-    // Floor(-0.0 * TwoOverPi + 0.5) is 0.0, so the remainder comes out of -0.0 - 0.0, which is +0.0.
-    // Return the argument itself, which carries the right sign for both zeroes.
+    // the quarter count is +0.0, so the third reduction step subtracts +0.0 * HalfPiPart3, which is
+    // -0.0 because HalfPiPart3 is negative, and -0.0 - -0.0 rounds to +0.0. Return the argument
+    // itself, which carries the right sign for both zeroes.
     if (value == 0.0) {
         return value;
     }
@@ -382,9 +383,8 @@ double Tan(double value) {
     if (Finite(value) == 0 || !IsReducibleAngle(value)) {
         return QuietNan();
     }
-    // tan(-0.0) is -0.0 in IEEE 754, but the quotient below would divide the signed zero Sin now
-    // returns by Cos(-0.0), which is +1.0, and then round: take the shortcut so the sign survives
-    // without depending on how the division treats a zero numerator.
+    // tan(-0.0) is -0.0 in IEEE 754. Sin already preserves the signed zero and -0.0 / 1.0 is -0.0,
+    // so this shortcut only skips the reduction and the division for the two zeroes.
     if (value == 0.0) {
         return value;
     }
