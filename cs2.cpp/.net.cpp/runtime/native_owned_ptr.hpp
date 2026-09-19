@@ -1,7 +1,5 @@
 #pragma once
 
-#include "native_algorithm.hpp"
-
 namespace he_cpp_runtime_detail {
 
 /// <summary>

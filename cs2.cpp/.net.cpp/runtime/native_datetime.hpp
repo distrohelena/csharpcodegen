@@ -11,6 +11,8 @@
 
 /// <summary>
 /// Represents a lightweight managed-style point in time expressed as Unix milliseconds.
+/// When the standard clock is disabled this is milliseconds since the provider's monotonic
+/// origin, not the Unix epoch; use it for elapsed time only.
 /// </summary>
 class DateTime {
 public:
@@ -24,10 +26,20 @@ public:
         : UnixMilliseconds(unixMilliseconds) {
     }
 
+    /// <summary>
+    /// Returns the current point in time.
+    /// When the standard clock is disabled this is milliseconds since the provider's monotonic
+    /// origin, not the Unix epoch; use it for elapsed time only.
+    /// </summary>
     static DateTime Now() {
         return DateTime(CurrentUnixMilliseconds());
     }
 
+    /// <summary>
+    /// Returns the current point in time.
+    /// When the standard clock is disabled this is milliseconds since the provider's monotonic
+    /// origin, not the Unix epoch; use it for elapsed time only.
+    /// </summary>
     static DateTime UtcNow() {
         return DateTime(CurrentUnixMilliseconds());
     }

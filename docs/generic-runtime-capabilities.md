@@ -64,7 +64,9 @@ atomics, an OS random device and x86 intrinsics. The `freestanding` runtime
 sets it to 0, and including `system/threading/*`, `system/random.hpp`,
 `system/guid.hpp`, `system/runtime/intrinsics/*` or the regex runtime then
 fails with a clear `#error`. The runtime owns `HeCppOwnedPtr<T>` for its own
-move-only ownership; providers do not supply it.
+move-only ownership; providers do not supply it. When `HE_CPP_USE_STD_CHRONO`
+is disabled, `DateTime::Now`/`UtcNow` return milliseconds since the provider's
+monotonic origin, not the Unix epoch; use them for elapsed time only.
 
 ## Compatibility
 

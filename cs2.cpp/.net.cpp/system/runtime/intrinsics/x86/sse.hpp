@@ -1,9 +1,7 @@
 #pragma once
 
-// Probe the optional generated configuration directly so this header fails with its own
-// diagnostic even when the freestanding runtime has not wired up a custom provider yet:
-// otherwise native_runtime.hpp's unconditional provider-header include would abort the
-// translation unit first with a "file not found" error instead of this one.
+// Probe the generated configuration first so this header reports its own diagnostic
+// before the provider chain is pulled in.
 #if defined(__has_include)
 #if __has_include("helcpp_config.hpp")
 #include "helcpp_config.hpp"
