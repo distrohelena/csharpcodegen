@@ -77,7 +77,9 @@ existing precedence rule (caller options over preset defaults).
 The CLI maps `--runtime freestanding` to this profile. The generated config
 writer emits `#define HE_CPP_RUNTIME_FREESTANDING 1` and the capability
 defines as it does for the other profiles. The conversion report records the
-profile name. No new preset is added in this sub-project.
+profile name. A `native-core-boot-freestanding` preset is added because a
+named preset overwrites the CLI runtime profile and the measurement task
+needs both.
 
 ## Restriction: hosted services
 
@@ -110,8 +112,9 @@ requires and includes the implementation headers:
 | `Hash<T>` | `FreestandingHash<T>` in `freestanding_hash.hpp` |
 | `Function<Signature>` | `FreestandingFunction<Signature>` in `freestanding_function.hpp` |
 | `SharedPtr<T>` | `FreestandingSharedPtr<T>` in `freestanding_shared_ptr.hpp` |
-| `OwnedPtr<T>` | `FreestandingOwnedPtr<T>` in `freestanding_owned_ptr.hpp` |
 | `Allocate`, `Free`, `Fail`, `MonotonicMicroseconds` | declared in `freestanding_hooks.hpp` |
+
+The runtime owns `HeCppOwnedPtr` itself; providers do not supply an owned pointer.
 
 Member sets, derived from what the shared templates and `system/` layer call:
 
@@ -136,6 +139,11 @@ Member sets, derived from what the shared templates and `system/` layer call:
   `->second` through a `KeyValue` node. Load factor rehash at 3/4; initial
   capacity 8.
 - `FreestandingHashSet<T,H,E>`: the same table specialised for keys only.
+
+Any insertion into the hash map or set may rehash and invalidate all iterators,
+pointers and references into it; the shared Dictionary wrapper copies values
+before inserting for that reason.
+
 - `FreestandingHash<T>`: FNV-1a 32-bit over the object bytes for integral,
   enum and pointer types; over the characters for `FreestandingString`. Hash
   and equality agree for every key type the templates use.
@@ -201,8 +209,6 @@ except `freestanding`. Files marked hosted-services-only begin with:
 
 `HeCppOwnedPtr<T>` is added to `native_runtime.hpp`: `std::unique_ptr<T>` when
 `HE_CPP_USE_STD_SHARED_PTR` is on, otherwise `he_cpp_custom::OwnedPtr<T>`.
-The `runtime-capabilities` documentation gains `OwnedPtr` as a contract name;
-the PS1 and EASTL fixtures gain a one-line alias so they keep building.
 
 `guid.hpp` under the freestanding runtime keeps parsing and formatting and
 loses only generation, which needed the atomic counter; generation calls

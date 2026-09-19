@@ -16,6 +16,11 @@ namespace cs2.cpp {
         /// <summary>
         /// Runtime is backed by a custom portability layer for retro targets.
         /// </summary>
-        CustomRetro
+        CustomRetro,
+
+        /// <summary>
+        /// Codegen-owned provider and math for targets without a hosted C++ library.
+        /// </summary>
+        Freestanding
     }
 }

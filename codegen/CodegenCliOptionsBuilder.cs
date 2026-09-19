@@ -185,6 +185,8 @@ public static class CodegenCliOptionsBuilder {
             return CPPRuntimeProfile.CreateStlLite();
         } else if (string.Equals(runtimeProfileName, "custom-retro", StringComparison.OrdinalIgnoreCase)) {
             return CPPRuntimeProfile.CreateCustomRetro();
+        } else if (string.Equals(runtimeProfileName, "freestanding", StringComparison.OrdinalIgnoreCase)) {
+            return CPPRuntimeProfile.CreateFreestanding();
         }
 
         throw new NotSupportedException($"Unsupported runtime profile '{runtimeProfileName}'.");

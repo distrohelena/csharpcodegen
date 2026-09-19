@@ -29,7 +29,7 @@ internal static class Program {
         try {
             if (!CodegenCliArgumentParser.TryParseArguments(args, out CodegenCliParsedArguments parsedArguments, out string errorMessage)) {
                 Console.Error.WriteLine(errorMessage);
-                Console.Error.WriteLine("Usage: --cpp --project <project.csproj> --output <output-folder> [--runtime-root <folder>] [--platform <platform-id>] [--language cpp] [--endianness little|big] [--preset <preset-id>] [--set key=value ...]");
+                Console.Error.WriteLine("Usage: --cpp --project <project.csproj> --output <output-folder> [--runtime-root <folder>] [--platform <platform-id>] [--runtime stl-lite|custom-retro|freestanding] [--language cpp] [--endianness little|big] [--preset <preset-id>] [--set key=value ...]");
                 return 1;
             }
 

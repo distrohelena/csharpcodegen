@@ -34,6 +34,11 @@ namespace cs2.cpp {
         public bool ForbidDebugOnlySystems { get; set; }
 
         /// <summary>
+        /// Rejects runtime helpers that need threads, atomics, an OS random device or x86 intrinsics.
+        /// </summary>
+        public bool ForbidHostedServices { get; set; }
+
+        /// <summary>
         /// Creates a permissive restriction profile that allows all currently modeled runtime systems.
         /// </summary>
         /// <param name="name">Stable profile name to assign to the permissive restriction set.</param>

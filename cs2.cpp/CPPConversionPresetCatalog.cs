@@ -151,6 +151,10 @@ namespace cs2.cpp {
                 return CreateNativeCoreBootPreset();
             }
 
+            if (string.Equals(presetId, "native-core-boot-freestanding", StringComparison.OrdinalIgnoreCase)) {
+                return CreateNativeCoreBootFreestandingPreset();
+            }
+
             if (string.Equals(presetId, "n64-minimal", StringComparison.OrdinalIgnoreCase)) {
                 return CreateNintendo64MinimalPreset();
             }
@@ -264,6 +268,37 @@ namespace cs2.cpp {
                     ForbidRuntimeJson = true,
                     ForbidReflectionLikeRuntime = true,
                     ForbidDebugOnlySystems = true
+                },
+                IncludeProjectDefinedPreprocessorSymbols = false,
+                AdditionalPreprocessorSymbols = new[] {
+                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
+                    "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
+                },
+                PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+                    [CPPCodegenOptionNames.ForcedDisabledFeatures] = "shaders;debug_overlay"
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates the freestanding variant of the stripped native core-boot preset, pairing the same stripped
+        /// restrictions and platform with the codegen-owned freestanding runtime and its hosted-services restriction.
+        /// </summary>
+        /// <returns>The resolved freestanding native core-boot preset.</returns>
+        static CPPConversionPreset CreateNativeCoreBootFreestandingPreset() {
+            return new CPPConversionPreset {
+                Id = "native-core-boot-freestanding",
+                CompilerProfile = CPPCompilerProfile.CreateGcc(),
+                PlatformProfile = CPPPlatformProfile.CreateCustomHeadless("retroppc", false, CPPGeneratedMathConventionKind.NativeColumnVector, 4),
+                RuntimeProfile = CPPRuntimeProfile.CreateFreestanding(),
+                RestrictionProfile = new CPPRestrictionProfile {
+                    Name = "native-core-boot-freestanding",
+                    ForbidShaders = true,
+                    ForbidRuntimeJson = true,
+                    ForbidReflectionLikeRuntime = true,
+                    ForbidRegex = true,
+                    ForbidDebugOnlySystems = true,
+                    ForbidHostedServices = true
                 },
                 IncludeProjectDefinedPreprocessorSymbols = false,
                 AdditionalPreprocessorSymbols = new[] {

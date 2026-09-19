@@ -53,4 +53,40 @@ public class CPPRestrictionValidatorTests {
         Assert.False(result.IsValid);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("Regex", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// Ensures hosted-service runtime helpers are rejected when the restriction profile forbids them.
+    /// </summary>
+    [Theory]
+    [InlineData("Interlocked")]
+    [InlineData("Thread")]
+    [InlineData("Random")]
+    [InlineData("NativeVector128")]
+    public void Validate_WhenHostedServicesAreForbiddenAndRegistered_ReturnsDiagnostic(string requirementName) {
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+        Assert.True(catalog.TryGet(requirementName, out CPPRuntimeRequirementDefinition definition));
+        CPPRestrictionProfile profile = new CPPRestrictionProfile {
+            Name = "freestanding-boot",
+            ForbidHostedServices = true
+        };
+
+        CPPRestrictionValidationResult result = CPPRestrictionValidator.Validate(new CPPBuildUsageReport(), [definition], profile);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("freestanding-boot", StringComparison.Ordinal) && diagnostic.Contains(requirementName, StringComparison.Ordinal) && diagnostic.Contains("hosted services", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures ordinary runtime helpers pass when only hosted services are forbidden.
+    /// </summary>
+    [Fact]
+    public void Validate_WhenHostedServicesAreForbiddenAndOnlyStringIsRegistered_IsValid() {
+        CPPRuntimeRequirementCatalog catalog = new CPPRuntimeRequirementCatalog();
+        Assert.True(catalog.TryGet("NativeString", out CPPRuntimeRequirementDefinition definition));
+        CPPRestrictionProfile profile = new CPPRestrictionProfile { Name = "freestanding-boot", ForbidHostedServices = true };
+
+        CPPRestrictionValidationResult result = CPPRestrictionValidator.Validate(new CPPBuildUsageReport(), [definition], profile);
+
+        Assert.True(result.IsValid);
+    }
 }

@@ -4,6 +4,14 @@ namespace cs2.cpp {
     /// </summary>
     public static class CPPRestrictionValidator {
         /// <summary>
+        /// Runtime requirement names that need hosted threading, OS or x86 facilities.
+        /// </summary>
+        public static readonly string[] HostedServiceRequirementNames = [
+            "Interlocked", "Volatile", "SpinLock", "SpinWait", "AutoResetEvent", "Thread",
+            "Random", "Guid", "NativeVector128", "NativeVector256", "NativeVector512", "Sse", "Sse41", "Avx", "Avx2"
+        ];
+
+        /// <summary>
         /// Validates a build usage report and runtime requirement set against the supplied restrictions.
         /// </summary>
         /// <param name="buildUsageReport">Resolved feature usage report for the active build.</param>
@@ -24,6 +32,14 @@ namespace cs2.cpp {
                 foreach (CPPRuntimeRequirementDefinition definition in registeredRequirements ?? Array.Empty<CPPRuntimeRequirementDefinition>()) {
                     if (string.Equals(definition.Name, "Regex", StringComparison.Ordinal)) {
                         result.Diagnostics.Add($"Restriction profile '{profile.Name}' forbids regex support, but runtime requirement '{definition.Name}' was registered.");
+                    }
+                }
+            }
+
+            if (profile.ForbidHostedServices) {
+                foreach (CPPRuntimeRequirementDefinition definition in registeredRequirements ?? Array.Empty<CPPRuntimeRequirementDefinition>()) {
+                    if (HostedServiceRequirementNames.Contains(definition.Name, StringComparer.Ordinal)) {
+                        result.Diagnostics.Add($"Restriction profile '{profile.Name}' forbids hosted services, but runtime requirement '{definition.Name}' was registered.");
                     }
                 }
             }

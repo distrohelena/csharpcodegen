@@ -6,6 +6,16 @@ namespace cs2.cpp {
     /// </summary>
     public static class CPPRuntimeOptionResolver {
         /// <summary>
+        /// Gets the codegen-owned provider header default supplied for the freestanding runtime profile.
+        /// </summary>
+        public const string FreestandingProviderHeader = "runtime/freestanding/freestanding_provider.hpp";
+
+        /// <summary>
+        /// Gets the codegen-owned math header default supplied for the freestanding runtime profile.
+        /// </summary>
+        public const string FreestandingMathHeader = "runtime/freestanding/freestanding_math.hpp";
+
+        /// <summary>
         /// Applies supported caller overrides to the active runtime profile and validates restricted storage requirements.
         /// </summary>
         /// <param name="options">Conversion options whose runtime profile should be resolved.</param>
@@ -19,6 +29,19 @@ namespace cs2.cpp {
             }
 
             IReadOnlyDictionary<string, string> values = options.PlatformOptionValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (options.RuntimeProfile.Kind == CPPRuntimeKind.Freestanding) {
+                Dictionary<string, string> defaulted = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+                if (!defaulted.TryGetValue(CPPCodegenOptionNames.RuntimeProviderHeader, out string providerHeader) || string.IsNullOrWhiteSpace(providerHeader)) {
+                    defaulted[CPPCodegenOptionNames.RuntimeProviderHeader] = FreestandingProviderHeader;
+                }
+                if (!defaulted.TryGetValue(CPPCodegenOptionNames.RuntimeMathHeader, out string defaultedMathHeader) || string.IsNullOrWhiteSpace(defaultedMathHeader)) {
+                    defaulted[CPPCodegenOptionNames.RuntimeMathHeader] = FreestandingMathHeader;
+                }
+                options.PlatformOptionValues = defaulted;
+                values = defaulted;
+            }
+
             options.RuntimeProfile.UseStdString = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdString, options.RuntimeProfile.UseStdString);
             options.RuntimeProfile.UseStdVector = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdVector, options.RuntimeProfile.UseStdVector);
             options.RuntimeProfile.UseStdUnorderedMap = ResolveBooleanOverride(values, CPPCodegenOptionNames.UseStdUnorderedMap, options.RuntimeProfile.UseStdUnorderedMap);

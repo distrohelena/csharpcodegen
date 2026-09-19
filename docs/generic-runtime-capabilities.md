@@ -19,6 +19,12 @@ Use `CPPConversionOptions.PlatformOptionValues` to override preset defaults:
 | `codegen-use-rtti` | `true` / `false` | Compiler runtime type information |
 | `codegen-runtime-provider-header` | C++ include path | Consumer-owned provider declarations |
 
+`--runtime freestanding` selects `CPPRuntimeProfile.CreateFreestanding()`: every
+hosted facility off, the codegen-owned provider `runtime/freestanding/freestanding_provider.hpp`
+and math `runtime/freestanding/freestanding_math.hpp` as defaults, both overridable
+with the usual options. The `native-core-boot-freestanding` preset pairs it with
+the stripped core restrictions plus `ForbidHostedServices`.
+
 Boolean values are validated. The existing `CPPRuntimeProfile` properties remain
 the defaults when no override is supplied. Caller options take precedence over
 named presets. A provider header is required when any standard storage facility

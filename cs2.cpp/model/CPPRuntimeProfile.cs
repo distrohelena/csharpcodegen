@@ -99,5 +99,28 @@ namespace cs2.cpp {
                 UseRtti = true
             };
         }
+
+        /// <summary>
+        /// Creates the freestanding runtime profile: no hosted standard library facilities at all, served by the codegen-owned provider.
+        /// </summary>
+        /// <returns>The freestanding runtime profile.</returns>
+        public static CPPRuntimeProfile CreateFreestanding() {
+            return new CPPRuntimeProfile {
+                Kind = CPPRuntimeKind.Freestanding,
+                Name = "freestanding",
+                DefineName = "HE_CPP_RUNTIME_FREESTANDING",
+                UseStdString = false,
+                UseStdVector = false,
+                UseStdUnorderedMap = false,
+                UseStdUnorderedSet = false,
+                UseStdFunction = false,
+                UseStdChrono = false,
+                UseStdSharedPtr = false,
+                UseStdMath = false,
+                UseHostedFileSystem = false,
+                UseExceptions = false,
+                UseRtti = false
+            };
+        }
     }
 }
