@@ -1,3 +1,16 @@
+// The runner and the generated-output build both copy this file into every output tree, hosted
+// builds included, so it must compile to nothing unless the freestanding runtime profile is actually
+// selected: Allocate's Fail(...) call has no definition on a hosted build (Fail is supplied by
+// smoke/services/etc. under HE_CPP_TEST_HOST, or by std::function/std::shared_ptr's own machinery
+// otherwise), which fails hosted linking (see system/console.cpp for the same guarded-TU shape).
+#if defined(__has_include)
+#if __has_include("helcpp_config.hpp")
+#include "helcpp_config.hpp"
+#endif
+#endif
+
+#if defined(HE_CPP_RUNTIME_FREESTANDING) && HE_CPP_RUNTIME_FREESTANDING
+
 #include "freestanding_hooks.hpp"
 
 #include <stdlib.h>
@@ -32,3 +45,5 @@ HE_CPP_FREESTANDING_WEAK void Free(void* memory) {
 }
 
 }
+
+#endif

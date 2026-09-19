@@ -152,7 +152,7 @@ public:
     /// </summary>
     // Declared (and therefore constructed) after the plain data members above: LiveTimeSpan's
     // constructor stores this Stopwatch's address for later use through get_Elapsed()/Start()/Stop(),
-    // and constructing it before IsRunningValue/StartTimestamp/TotalElapsedMilliseconds existed a
+    // and constructing it before IsRunningValue/StartTimestamp/TotalElapsedMilliseconds existed produced a
     // false-positive -Wmaybe-uninitialized under -Werror (GCC 16 cannot prove the escaped pointer isn't
     // dereferenced during construction). Member construction order always follows declaration order
     // regardless of the constructor's initializer-list order, so this field is placed, and initialized,

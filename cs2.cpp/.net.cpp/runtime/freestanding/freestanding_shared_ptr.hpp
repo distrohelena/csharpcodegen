@@ -67,12 +67,12 @@ public:
     }
 
     /// <summary>Creates an empty owner from null.</summary>
-    FreestandingSharedPtr(std::nullptr_t)
+    FreestandingSharedPtr(decltype(nullptr))
         : Value(nullptr),
           Control(nullptr) {
     }
 
-    /// <summary>Creates one owner over a raw pointer with the default deleter (plain `delete`).</summary>
+    /// <summary>Creates one owner over a raw pointer with the default deleter (plain delete).</summary>
     template <typename U, typename std::enable_if<std::is_convertible<U*, T*>::value, int>::type = 0>
     explicit FreestandingSharedPtr(U* value)
         : FreestandingSharedPtr(value, [](U* pointer) { delete pointer; }) {

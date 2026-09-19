@@ -102,6 +102,21 @@ int string_smoke() {
     if (FreestandingString("hello world").find("world", FreestandingString::npos) != FreestandingString::npos) return 27;
     if (FreestandingString("hello world").find("world", 7) != FreestandingString::npos ||
         FreestandingString("hello world").find("world", 6) != 6) return 28;
+    // replace(pos, count, text) must stay correct when text aliases *this: erase() would otherwise
+    // shift or overwrite text's bytes before insert() ever reads them.
+    FreestandingString r("abcdef");
+    r.replace(1, 2, r);
+    if (r != "aabcdefdef") return 29;
+    // r is now "aabcdefdef" (10 chars: a a b c d e f d e f). r.c_str() + 2 aliases the middle of r's
+    // own storage ("bcdefdef", 8 chars). Hand-computed expected result of an alias-safe replace (copy
+    // the aliased source before erase() mutates anything, matching the algorithm above): erase(0, 1)
+    // removes the leading 'a', leaving "abcdefdef" (9 chars), then inserting the copied "bcdefdef" (8
+    // chars) at position 0 gives "bcdefdef" + "abcdefdef" = "bcdefdefabcdefdef" (17 chars). (A real
+    // std::string::replace(pos, count, const char*) call with a pointer aliasing *this is documented
+    // undefined behavior, so this is derived by hand from the alias-safe semantics implemented above,
+    // not from a runnable std::string comparison.)
+    r.replace(0, 1, r.c_str() + 2);
+    if (r != "bcdefdefabcdefdef") return 29;
     return 0;
 }
 

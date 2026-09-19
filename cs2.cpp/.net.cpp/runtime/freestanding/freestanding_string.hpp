@@ -176,11 +176,27 @@ public:
         Length += count;
         return *this;
     }
+    // text may point inside our own storage (r.replace(pos, count, r.c_str() + n)): erase() runs a
+    // memmove before insert() ever reads text, so insert()'s own alias guard checks text against
+    // [Data, Data + Length) *after* that memmove has already shifted or overwritten whatever text
+    // pointed at -- too late. Detect the alias here, before erase() touches anything, and take an
+    // independent copy of the source text up front.
     FreestandingString& replace(size_t position, size_t count, const char* text) {
+        if (text != nullptr && text >= Data && text < Data + Length) {
+            FreestandingString source(text);
+            erase(position, count);
+            return insert(position, source.Data);
+        }
         erase(position, count);
         return insert(position, text);
     }
-    FreestandingString& replace(size_t position, size_t count, const FreestandingString& text) { return replace(position, count, text.Data); }
+    // text may be *this (r.replace(pos, count, r)): check identity explicitly before forwarding to
+    // the const char* overload above, which only ever sees a raw pointer and cannot tell it apart from
+    // an unrelated string that merely happens to share the same address.
+    FreestandingString& replace(size_t position, size_t count, const FreestandingString& text) {
+        if (&text == this) return replace(position, count, Data);
+        return replace(position, count, text.Data);
+    }
     void swap(FreestandingString& other) noexcept {
         he_cpp_alg::Swap(Data, other.Data);
         he_cpp_alg::Swap(Length, other.Length);

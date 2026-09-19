@@ -171,6 +171,12 @@ public:
     template <typename TIterator>
     void assign(TIterator first, TIterator last) {
         clear();
+        // Pointer iterators (the only kind this runtime passes: raw arrays and other
+        // FreestandingVector's begin()/end()) know their distance up front, so reserve once instead of
+        // letting push_back's doubling growth reallocate repeatedly.
+        if constexpr (std::is_pointer_v<TIterator>) {
+            reserve(static_cast<size_t>(last - first));
+        }
         for (; first != last; ++first) push_back(*first);
     }
     iterator insert(const_iterator position, const T& value) {

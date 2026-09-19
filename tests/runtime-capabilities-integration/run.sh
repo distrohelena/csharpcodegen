@@ -284,8 +284,11 @@ test "$result" -eq 73
 # freestanding/helcpp_config.hpp sets HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES=1: every exception's
 # what() collapses to the fixed literal "Exception" regardless of subtype or caller message, so the
 # custom message this fixture raises never reaches stderr here (see native_exceptions.hpp's compact
-# Exception constructors). Check for that canonical text instead of the caller's own message.
-grep -q 'Exception' "$output/freestanding-fatal.stderr"
+# Exception constructors). Check for that canonical text instead of the caller's own message, and that
+# something was actually written (an empty file would also fail to match "expected runtime failure",
+# which this replaces, so require non-empty output too).
+test -s "$output/freestanding-fatal.stderr"
+grep -qx 'Exception' "$output/freestanding-fatal.stderr"
 
 "$cxx" $freestanding_flags $freestanding_includes \
     "$fixture/services.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
@@ -316,7 +319,8 @@ test "$result" -eq 73
 # Same compact-message collapse as the freestanding-smoke check above: System::Diagnostics::Debug::Fail
 # discards its message under HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES=1 (see debug.hpp) and raises a
 # default-constructed InvalidOperationException, whose what() is also the canonical "Exception" literal.
-grep -q 'Exception' "$output/freestanding-debug-fail.stderr"
+test -s "$output/freestanding-debug-fail.stderr"
+grep -qx 'Exception' "$output/freestanding-debug-fail.stderr"
 
 if [ -n "${TARGET_CXX:-}" ]; then
     target_freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Os"

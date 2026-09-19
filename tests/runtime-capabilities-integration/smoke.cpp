@@ -124,6 +124,7 @@ int runtime_capability_smoke() {
 }
 
 #ifdef HE_CPP_TEST_HOST
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 namespace he_cpp_custom {

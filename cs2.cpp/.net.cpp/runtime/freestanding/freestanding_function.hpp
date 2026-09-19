@@ -26,7 +26,6 @@ class FreestandingFunction<TResult(TArgs...)> {
         void (*CopyTo)(const void* source, void* destination);
         void (*MoveTo)(void* source, void* destination);
         void (*Destroy)(void* storage);
-        bool Heap;
     };
 
     template <typename TCallable, bool Inline>
@@ -39,7 +38,7 @@ class FreestandingFunction<TResult(TArgs...)> {
         static void CopyTo(const void* source, void* destination) { new (destination) TCallable(*static_cast<const TCallable*>(source)); }
         static void MoveTo(void* source, void* destination) { new (destination) TCallable(he_cpp_alg::Move(*static_cast<TCallable*>(source))); static_cast<TCallable*>(source)->~TCallable(); }
         static void Destroy(void* storage) { Get(storage)->~TCallable(); }
-        static const Operations* Table() { static const Operations table{ &Invoke, &CopyTo, &MoveTo, &Destroy, false }; return &table; }
+        static const Operations* Table() { static const Operations table{ &Invoke, &CopyTo, &MoveTo, &Destroy }; return &table; }
     };
 
     template <typename TCallable>
@@ -53,15 +52,15 @@ class FreestandingFunction<TResult(TArgs...)> {
         }
         static void MoveTo(void* source, void* destination) { *static_cast<TCallable**>(destination) = *static_cast<TCallable**>(source); *static_cast<TCallable**>(source) = nullptr; }
         static void Destroy(void* storage) { TCallable* callable = Get(storage); if (callable != nullptr) { callable->~TCallable(); he_cpp_custom::Free(callable); } }
-        static const Operations* Table() { static const Operations table{ &Invoke, &CopyTo, &MoveTo, &Destroy, true }; return &table; }
+        static const Operations* Table() { static const Operations table{ &Invoke, &CopyTo, &MoveTo, &Destroy }; return &table; }
     };
 
 public:
     FreestandingFunction() : Table(nullptr) {}
-    FreestandingFunction(std::nullptr_t) noexcept : Table(nullptr) {}
+    FreestandingFunction(decltype(nullptr)) noexcept : Table(nullptr) {}
     template <typename TCallable,
               std::enable_if_t<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<TCallable>>, FreestandingFunction> &&
-                                    !std::is_same_v<std::remove_cv_t<std::remove_reference_t<TCallable>>, std::nullptr_t>,
+                                    !std::is_same_v<std::remove_cv_t<std::remove_reference_t<TCallable>>, decltype(nullptr)>,
                                 int> = 0>
     FreestandingFunction(TCallable callable) : Table(nullptr) {
         using Stored = std::remove_cv_t<std::remove_reference_t<TCallable>>;
@@ -86,10 +85,15 @@ public:
         return *this;
     }
     FreestandingFunction& operator=(FreestandingFunction&& other) noexcept { if (this != &other) { Reset(); Table = other.Table; if (Table != nullptr) { Table->MoveTo(other.Storage, Storage); other.Table = nullptr; } } return *this; }
-    FreestandingFunction& operator=(std::nullptr_t) noexcept { Reset(); return *this; }
+    FreestandingFunction& operator=(decltype(nullptr)) noexcept { Reset(); return *this; }
 
     explicit operator bool() const { return Table != nullptr; }
-    bool operator==(std::nullptr_t) const noexcept { return Table == nullptr; }
+    bool operator==(decltype(nullptr)) const noexcept { return Table == nullptr; }
+    // operator() is const so a mutable-capture lambda can still be invoked through it, matching
+    // std::function: the const_cast below only strips the constness this const member function itself
+    // imposes on Storage, not any constness the whole object may actually have. As with std::function,
+    // invoking a mutable callable through a FreestandingFunction that is itself declared const (not
+    // merely accessed through a const reference to a non-const one) is undefined behavior.
     TResult operator()(TArgs... args) const {
         if (Table == nullptr) he_cpp_custom::Fail("Invoked an empty function");
         return Table->Invoke(const_cast<unsigned char*>(Storage), he_cpp_alg::Forward<TArgs>(args)...);
