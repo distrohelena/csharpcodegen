@@ -57,6 +57,15 @@ there is no stack unwinding or recovery. Catch/rethrow and operations requiring
 unavailable RTTI are unsupported and must be reported explicitly. Ordinary
 scope cleanup for `finally` remains separate from exception unwinding.
 
+## Hosted services
+
+`HE_CPP_RUNTIME_HAS_HOSTED_SERVICES` (default 1) marks targets with threads,
+atomics, an OS random device and x86 intrinsics. The `freestanding` runtime
+sets it to 0, and including `system/threading/*`, `system/random.hpp`,
+`system/guid.hpp`, `system/runtime/intrinsics/*` or the regex runtime then
+fails with a clear `#error`. The runtime owns `HeCppOwnedPtr<T>` for its own
+move-only ownership; providers do not supply it.
+
 ## Compatibility
 
 Enabled standard string output retains the `std::string` spelling. Restricted

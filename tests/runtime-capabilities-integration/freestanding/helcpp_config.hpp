@@ -1,0 +1,17 @@
+#pragma once
+#define HE_CPP_RUNTIME_FREESTANDING 1
+#define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 0
+#define HE_CPP_USE_STD_STRING 0
+#define HE_CPP_USE_STD_VECTOR 0
+#define HE_CPP_USE_STD_UNORDERED_MAP 0
+#define HE_CPP_USE_STD_UNORDERED_SET 0
+#define HE_CPP_USE_STD_FUNCTION 0
+#define HE_CPP_USE_STD_SHARED_PTR 0
+#define HE_CPP_USE_STD_CHRONO 0
+#define HE_CPP_USE_STD_MATH 0
+#define HE_CPP_USE_HOSTED_FILE_SYSTEM 0
+#define HE_CPP_USE_EXCEPTIONS 0
+#define HE_CPP_USE_RTTI 0
+#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 1
+#define HE_CPP_RUNTIME_PROVIDER_HEADER "runtime/freestanding/freestanding_provider.hpp"
+#define HE_CPP_RUNTIME_MATH_HEADER "runtime/freestanding/freestanding_math.hpp"

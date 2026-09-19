@@ -3,8 +3,6 @@
 #include "native_runtime.hpp"
 
 #include <cstddef>
-#include <functional>
-#include <memory>
 #include <type_traits>
 
 /// <summary>
@@ -48,7 +46,7 @@ public:
             return *this;
         }
 
-        Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
+        Subscribers.push_back(HeCppOwnedPtr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
                 InvokeFunctionPointer(handler, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
@@ -75,7 +73,7 @@ public:
             return *this;
         }
 
-        Subscribers.push_back(std::unique_ptr<Subscriber>(new Subscriber {
+        Subscribers.push_back(HeCppOwnedPtr<Subscriber>(new Subscriber {
             sizeof...(TArgs),
             [handler](void** arguments) {
                 InvokeBoundMethod(handler.Instance, handler.Method, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
@@ -133,7 +131,7 @@ public:
             he_cpp_alg::RemoveIf(
                 Subscribers.begin(),
                 Subscribers.end(),
-                [handler](const std::unique_ptr<Subscriber>& subscriber) {
+                [handler](const HeCppOwnedPtr<Subscriber>& subscriber) {
                     if (subscriber->ArgumentCount != sizeof...(TArgs) || subscriber->MatchesFunction == nullptr) {
                         return false;
                     }
@@ -161,7 +159,7 @@ public:
             he_cpp_alg::RemoveIf(
                 Subscribers.begin(),
                 Subscribers.end(),
-                [handler](const std::unique_ptr<Subscriber>& subscriber) {
+                [handler](const HeCppOwnedPtr<Subscriber>& subscriber) {
                     if (subscriber->ArgumentCount != sizeof...(TArgs) || subscriber->MatchesBound == nullptr) {
                         return false;
                     }
@@ -180,7 +178,7 @@ public:
     template <typename... TArgs>
     void Invoke(TArgs... args) {
         void* argumentPointers[sizeof...(TArgs) == 0 ? 1 : sizeof...(TArgs)] = { const_cast<void*>(static_cast<const void*>(he_cpp_alg::AddressOf(args)))... };
-        for (std::unique_ptr<Subscriber>& subscriber : Subscribers) {
+        for (HeCppOwnedPtr<Subscriber>& subscriber : Subscribers) {
             if (subscriber->ArgumentCount == sizeof...(TArgs)) {
                 subscriber->Invoke(argumentPointers);
             }
@@ -242,6 +240,6 @@ private:
     /// <summary>
     /// Subscribers currently attached to this event.
     /// </summary>
-    HeCppVector<std::unique_ptr<Subscriber>> Subscribers;
+    HeCppVector<HeCppOwnedPtr<Subscriber>> Subscribers;
 };
 

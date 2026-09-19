@@ -1,9 +1,13 @@
 #pragma once
 
-#include <chrono>
 #include <cstdint>
 
+#include "native_runtime.hpp"
 #include "native_timespan.hpp"
+
+#if HE_CPP_USE_STD_CHRONO
+#include <chrono>
+#endif
 
 /// <summary>
 /// Represents a lightweight managed-style point in time expressed as Unix milliseconds.
@@ -30,8 +34,13 @@ public:
 
 private:
     static int64_t CurrentUnixMilliseconds() {
+#if HE_CPP_USE_STD_CHRONO
         using namespace std::chrono;
         return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+#else
+        // Providers expose a monotonic clock only; DateTime::Now measures elapsed time, not wall time.
+        return static_cast<int64_t>(he_cpp_custom::MonotonicMicroseconds() / 1000u);
+#endif
     }
 };
 

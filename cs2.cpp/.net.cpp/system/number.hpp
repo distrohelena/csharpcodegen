@@ -1,6 +1,7 @@
 #pragma once
 #include "../runtime/native_runtime.hpp"
 #include "../runtime/native_exceptions.hpp"
+#include "../runtime/native_algorithm.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -94,7 +95,7 @@ public:
 #if HE_CPP_USE_STD_MATH
         return std::isinf(value) && value > 0.0f;
 #else
-        return value == std::numeric_limits<float>::infinity();
+        return value == he_cpp_alg::Infinity<float>();
 #endif
     }
 
@@ -107,7 +108,7 @@ public:
 #if HE_CPP_USE_STD_MATH
         return std::isinf(value) && value > 0.0;
 #else
-        return value == std::numeric_limits<double>::infinity();
+        return value == he_cpp_alg::Infinity<double>();
 #endif
     }
 
@@ -146,7 +147,7 @@ public:
 #if HE_CPP_USE_STD_MATH
         return std::isinf(value);
 #else
-        return IsPositiveInfinity(value) || value == -std::numeric_limits<float>::infinity();
+        return IsPositiveInfinity(value) || value == -he_cpp_alg::Infinity<float>();
 #endif
     }
 
@@ -159,7 +160,7 @@ public:
 #if HE_CPP_USE_STD_MATH
         return std::isinf(value);
 #else
-        return IsPositiveInfinity(value) || value == -std::numeric_limits<double>::infinity();
+        return IsPositiveInfinity(value) || value == -he_cpp_alg::Infinity<double>();
 #endif
     }
 
@@ -350,7 +351,7 @@ public:
     /// <returns>Positive-infinity constant for <typeparamref name="T"/>.</returns>
     template <typename T>
     static T PositiveInfinity() {
-        return std::numeric_limits<T>::infinity();
+        return he_cpp_alg::Infinity<T>();
     }
 
     /// <summary>
@@ -360,7 +361,7 @@ public:
     /// <returns>Negative-infinity constant for <typeparamref name="T"/>.</returns>
     template <typename T>
     static T NegativeInfinity() {
-        return -std::numeric_limits<T>::infinity();
+        return -he_cpp_alg::Infinity<T>();
     }
 
     /// <summary>
@@ -370,7 +371,7 @@ public:
     /// <returns>Quiet NaN constant for <typeparamref name="T"/>.</returns>
     template <typename T>
     static T NaN() {
-        return std::numeric_limits<T>::quiet_NaN();
+        return he_cpp_alg::QuietNaN<T>();
     }
 
     /// <summary>

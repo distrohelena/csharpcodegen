@@ -1,10 +1,8 @@
 #pragma once
 
-#include <functional>
 #include <type_traits>
-#include <memory>
-
 #include "native_algorithm.hpp"
+#include "native_owned_ptr.hpp"
 
 // The generated configuration is optional for direct hosted consumers.  When it
 // is present, its capability values remain the single source of truth.
@@ -50,6 +48,10 @@
 #define HE_CPP_USE_STD_SHARED_PTR 1
 #endif
 
+#ifndef HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
+#define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 1
+#endif
+
 #if !HE_CPP_USE_STD_STRING || !HE_CPP_USE_STD_VECTOR || !HE_CPP_USE_STD_UNORDERED_MAP || !HE_CPP_USE_STD_UNORDERED_SET || !HE_CPP_USE_STD_FUNCTION || !HE_CPP_USE_STD_CHRONO || !HE_CPP_USE_STD_SHARED_PTR
 #if !defined(HE_CPP_RUNTIME_PROVIDER_HEADER)
 #error "A custom runtime provider is required when standard string, vector, unordered-map, or unordered-set storage is disabled. Define HE_CPP_RUNTIME_PROVIDER_HEADER to a header that declares he_cpp_custom::String, Vector<T>, UnorderedMap<K,V,H,E>, UnorderedSet<T,H,E>, Hash<T>, and Fail(const char*)."
@@ -74,6 +76,14 @@
 
 #if HE_CPP_USE_STD_UNORDERED_SET
 #include <unordered_set>
+#endif
+
+#if HE_CPP_USE_STD_FUNCTION || HE_CPP_USE_STD_STRING
+#include <functional>
+#endif
+
+#if HE_CPP_USE_STD_SHARED_PTR
+#include <memory>
 #endif
 
 #if defined(HE_CPP_RUNTIME_PROVIDER_HEADER) && (!HE_CPP_USE_STD_UNORDERED_MAP || !HE_CPP_USE_STD_UNORDERED_SET || !HE_CPP_USE_STD_STRING)
@@ -149,9 +159,11 @@ namespace he_cpp_runtime_detail {
 template <typename TValue, bool UseStandardHash>
 struct HashSelector;
 
+#if HE_CPP_USE_STD_STRING
 template <typename TValue>
 struct HashSelector<TValue, true> : std::hash<TValue> {
 };
+#endif
 
 template <typename TValue>
 struct HashSelector<TValue, false> : he_cpp_custom::Hash<TValue> {

@@ -2,9 +2,7 @@
 #define HE_CPP_RUNTIME_NATIVE_HASH_HPP
 
 #include <cstdint>
-#include <functional>
 #include <type_traits>
-#include <utility>
 
 #include "native_runtime.hpp"
 

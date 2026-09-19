@@ -249,5 +249,20 @@ done
     -I"$fixture/hosted" -I"$runtime" \
     "$fixture/algorithm_smoke.cpp" -o "$output/algorithm-smoke"
 "$output/algorithm-smoke"
+
+freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST"
+freestanding_includes="-I$fixture/poison -I$fixture/freestanding -I$fixture -I$runtime"
+
+if "$cxx" $freestanding_flags $freestanding_includes \
+    -c "$fixture/hosted_services_guard.cpp" -o "$output/hosted-services-guard.o" \
+    >"$output/hosted-services-guard.log" 2>&1; then
+    echo 'Hosted threading service unexpectedly compiled under the freestanding runtime.' >&2
+    exit 1
+fi
+grep -q 'hosted threading or OS facilities' "$output/hosted-services-guard.log"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/algorithm_smoke.cpp" -o "$output/freestanding-algorithm-smoke"
+"$output/freestanding-algorithm-smoke"
 echo 'Runtime capability fixtures passed.'
 
