@@ -6,7 +6,6 @@
 #include <functional>
 #include <memory>
 #include <type_traits>
-#include <utility>
 
 /// <summary>
 /// Represents a lightweight managed event bridge used by transpiled engine members during native execution.

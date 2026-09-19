@@ -236,10 +236,10 @@ template <typename TResult, typename TException>
 
 /// <summary>
 /// Binds one leading argument to a callable, matching the single-receiver form generated delegate
-/// construction uses. std::bind_front is a C++20 library addition, so targets whose standard library
-/// predates it, or ships an incomplete C++20 library, would otherwise fail to compile generated code
-/// that is otherwise valid. The fallback reproduces the same shape through std::invoke, which keeps
-/// pointer and reference receivers working identically.
+/// construction uses. The bound callable is invoked through he_cpp_alg::Invoke rather than the
+/// hosted C++20 bind_front library addition, which some freestanding targets either lack or ship
+/// incompletely. Member-function pointers with a pointer or a reference receiver are both
+/// supported; pointer-to-data-member receivers are not.
 /// </summary>
 /// <typeparam name="TCallable">Callable bound ahead of its trailing arguments.</typeparam>
 /// <typeparam name="TBound">Leading argument bound to the callable.</typeparam>

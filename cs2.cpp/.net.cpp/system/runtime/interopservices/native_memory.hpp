@@ -1,6 +1,6 @@
 #pragma once
 
-#include <algorithm>
+#include "../../../runtime/native_algorithm.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -19,7 +19,7 @@ public:
     /// <param name="alignment">Required alignment in bytes.</param>
     /// <returns>Aligned unmanaged pointer on success; otherwise null.</returns>
     static void* AlignedAlloc(uintptr_t byteCount, uintptr_t alignment) {
-        size_t normalizedAlignment = std::max<size_t>(static_cast<size_t>(alignment), alignof(void*));
+        size_t normalizedAlignment = he_cpp_alg::Max<size_t>(static_cast<size_t>(alignment), alignof(void*));
         size_t normalizedByteCount = static_cast<size_t>(byteCount);
         size_t alignedByteCount = normalizedByteCount;
         if (normalizedAlignment > 0) {
