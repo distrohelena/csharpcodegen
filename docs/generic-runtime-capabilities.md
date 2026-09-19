@@ -25,6 +25,15 @@ and math `runtime/freestanding/freestanding_math.hpp` as defaults, both overrida
 with the usual options. The `native-core-boot-freestanding` preset pairs it with
 the stripped core restrictions plus `ForbidHostedServices`.
 
+The profile leaves RTTI off, which suits a bare-metal target but not every
+program. Generated code that dispatches a generic implementation through an
+abstract base - helengine's `EngineBinaryReader` is the case in hand - needs
+`--set codegen-use-rtti=true`, the way the PS1 platform definition already sets
+it; without it the conversion stops with `CPP1001`. The choice carries through
+to the compiler: building that same output for the 65816 with `-fno-rtti` costs
+about 122 `dynamic_cast`/`typeid` errors, so those translation units have to be
+compiled with RTTI enabled as well.
+
 Boolean values are validated. The existing `CPPRuntimeProfile` properties remain
 the defaults when no override is supplied. Caller options take precedence over
 named presets. A provider header is required when any standard storage facility

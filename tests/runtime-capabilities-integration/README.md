@@ -81,3 +81,15 @@ file supplies the C math names itself instead of deferring to a platform libm
 the target does not have. Any generated freestanding tree that does reach
 `system/math.hpp` must put it on the link line for the same reason.
 
+Two conversion settings this fixture does not need, but a real freestanding
+conversion does. Generated code that dispatches a generic implementation
+through an abstract base (helengine's `EngineBinaryReader`) needs
+`--set codegen-use-rtti=true`, as the PS1 platform definition sets, or the
+conversion stops with `CPP1001`; compiling that output for the 65816 with
+`-fno-rtti` costs about 122 `dynamic_cast`/`typeid` errors, so the RTTI-bearing
+translation units must be built without that flag. And the
+`native-core-boot-freestanding` preset keeps the 4-byte pointer default, so an
+SNES conversion passes `--set pointer-size-bytes=2` together with
+`--platform generic --set generated-math-convention=native-column-vector`;
+`--platform retroppc` is rejected without them.
+

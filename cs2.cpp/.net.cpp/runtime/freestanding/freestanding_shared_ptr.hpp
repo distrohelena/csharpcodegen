@@ -10,6 +10,10 @@
 // tests/runtime-capabilities-integration/single_thread_shared_ptr.hpp: same shape, but the control
 // block lives in he_cpp_custom::Allocate/Free storage (placement new plus an explicit destructor
 // call) instead of global new/delete, matching every other freestanding provider type.
+//
+// The pointee is the exception, and deliberately so: the default deleter calls delete, because the
+// pointer handed to this type comes from a new expression in generated code. Only the control block,
+// which this file allocates itself, goes through the hooks.
 namespace he_cpp_freestanding {
 
 namespace detail {

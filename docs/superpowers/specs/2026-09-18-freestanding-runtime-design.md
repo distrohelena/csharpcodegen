@@ -147,8 +147,9 @@ before inserting for that reason.
 - `FreestandingHash<T>`: FNV-1a 32-bit over the object bytes for integral,
   enum and pointer types; over the characters for `FreestandingString`. Hash
   and equality agree for every key type the templates use.
-- `FreestandingFunction<R(Args...)>`: type-erased callable with a 16-byte
-  inline buffer and heap fallback; copyable, movable, `explicit operator bool`,
+- `FreestandingFunction<R(Args...)>`: type-erased callable with a
+  `2 * sizeof(void*) + 8` byte inline buffer - 24 bytes on a 64-bit host, 12 on
+  the 65816 - and heap fallback; copyable, movable, `explicit operator bool`,
   `operator()`. Empty invocation calls `Fail`.
 - `FreestandingSharedPtr<T>`: the single-thread control-block design of the
   integration fixture's `SingleThreadSharedPtr`, moved into the library and
