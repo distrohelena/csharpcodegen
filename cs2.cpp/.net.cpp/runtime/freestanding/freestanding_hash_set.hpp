@@ -20,6 +20,11 @@ public:
     using const_iterator = typename Table::ConstIterator;
     using InsertResult = typename Table::InsertResult;
 
+    FreestandingHashSet() = default;
+    /// <summary>Reserves room for expected values up front. Explicit because generated code
+    /// direct-initialises a HashSet from an element count, never converts one implicitly.</summary>
+    explicit FreestandingHashSet(size_t expected) { reserve(expected); }
+
     size_t size() const { return Storage.size(); }
     bool empty() const { return Storage.empty(); }
     iterator begin() { return Storage.begin(); }

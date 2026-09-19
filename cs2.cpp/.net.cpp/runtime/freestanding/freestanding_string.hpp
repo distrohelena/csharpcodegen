@@ -144,8 +144,34 @@ public:
         return npos;
     }
     size_t find(const FreestandingString& text, size_t position = 0) const { return find(text.Data, position); }
+    // strchr matches the terminating NUL of characters, so an embedded NUL in Data would otherwise
+    // report a hit against every set; skip those explicitly, and treat a null set as matching nothing
+    // rather than handing strchr a null pointer.
     size_t find_first_of(const char* characters, size_t position = 0) const {
-        for (size_t index = position; index < Length; ++index) if (strchr(characters, Data[index]) != nullptr) return index;
+        if (characters == nullptr) return npos;
+        for (size_t index = position; index < Length; ++index) {
+            if (Data[index] != '\0' && strchr(characters, Data[index]) != nullptr) return index;
+        }
+        return npos;
+    }
+    /// <summary>Returns the last index at or before position holding any character of the set, or npos.</summary>
+    size_t find_last_of(const char* characters, size_t position = npos) const {
+        if (Length == 0 || characters == nullptr) return npos;
+        size_t index = position < Length - 1 ? position : Length - 1;
+        for (;; --index) {
+            if (Data[index] != '\0' && strchr(characters, Data[index]) != nullptr) return index;
+            if (index == 0) break;
+        }
+        return npos;
+    }
+    /// <summary>Returns the last index at or before position holding character, or npos.</summary>
+    size_t find_last_of(char character, size_t position = npos) const {
+        if (Length == 0) return npos;
+        size_t index = position < Length - 1 ? position : Length - 1;
+        for (;; --index) {
+            if (Data[index] == character) return index;
+            if (index == 0) break;
+        }
         return npos;
     }
     FreestandingString& erase(size_t position, size_t count = npos) {

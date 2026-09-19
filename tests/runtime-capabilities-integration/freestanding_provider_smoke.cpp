@@ -116,7 +116,26 @@ int string_smoke() {
     // undefined behavior, so this is derived by hand from the alias-safe semantics implemented above,
     // not from a runnable std::string comparison.)
     r.replace(0, 1, r.c_str() + 2);
-    if (r != "bcdefdefabcdefdef") return 29;
+    if (r != "bcdefdefabcdefdef") return 115;
+    // find_last_of, both overloads: hit, miss, an explicit position that clamps the scan, the default
+    // npos position, an empty string and a null character set.
+    FreestandingString path("a/b/c.txt");
+    if (path.find_last_of('/') != 3) return 116;
+    if (path.find_last_of("/.") != 5) return 117;
+    if (path.find_last_of('z') != FreestandingString::npos) return 118;
+    if (path.find_last_of("QZ#") != FreestandingString::npos) return 119;
+    if (path.find_last_of('/', 2) != 1) return 120;
+    if (path.find_last_of("/.", 2) != 1) return 121;
+    if (path.find_last_of('/', FreestandingString::npos) != 3) return 122;
+    if (FreestandingString().find_last_of('a') != FreestandingString::npos) return 123;
+    if (FreestandingString().find_last_of("a") != FreestandingString::npos) return 124;
+    if (path.find_last_of(static_cast<const char*>(nullptr)) != FreestandingString::npos) return 125;
+    if (path.find_first_of(static_cast<const char*>(nullptr)) != FreestandingString::npos) return 126;
+    // An embedded NUL must not match any set: strchr would otherwise find it in the set's own
+    // terminator and report a hit for every non-empty set.
+    FreestandingString embeddedNul("ab", 3);
+    if (embeddedNul.find_first_of("x") != FreestandingString::npos) return 127;
+    if (embeddedNul.find_last_of("x") != FreestandingString::npos) return 128;
     return 0;
 }
 
@@ -268,6 +287,17 @@ int map_smoke() {
         if (!map.empty() || copy.size() != 50) return 73;
     }
     if (Tracked::Alive != 0) return 74;
+    {
+        // The capacity constructor the generated Dictionary(int) form reaches through using Base::Base,
+        // plus at() on a present key through both the mutable and the const overload.
+        Map sized(100);
+        for (int index = 0; index < 100; ++index) sized.emplace(index, Tracked(index + 1));
+        if (sized.size() != 100 || sized.find(99) == sized.end()) return 129;
+        if (sized.at(7).Id != 8) return 130;
+        const Map& readOnly = sized;
+        if (readOnly.at(7).Id != 8) return 131;
+    }
+    if (Tracked::Alive != 0) return 132;
     he_cpp_freestanding::FreestandingHashMap<FreestandingString, int, FreestandingHash<FreestandingString>, StringEqual> names;
     names.emplace(FreestandingString("alpha"), 1);
     names[FreestandingString("beta")] = 2;
@@ -286,6 +316,10 @@ int set_smoke() {
     if (sum != (49 * 50 / 2) - 10) return 84;
     set.clear();
     if (!set.empty()) return 85;
+    // The capacity constructor the generated HashSet(int) form reaches through using Base::Base.
+    he_cpp_freestanding::FreestandingHashSet<int, FreestandingHash<int>, IntEqual> sized(100);
+    for (int index = 0; index < 100; ++index) if (!sized.insert(index).second) return 133;
+    if (sized.size() != 100 || sized.find(50) == sized.end() || sized.find(200) != sized.end()) return 134;
     return 0;
 }
 

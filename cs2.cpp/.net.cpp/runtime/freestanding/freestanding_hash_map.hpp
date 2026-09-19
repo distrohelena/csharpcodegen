@@ -33,6 +33,11 @@ public:
     using const_iterator = typename Table::ConstIterator;
     using InsertResult = typename Table::InsertResult;
 
+    FreestandingHashMap() = default;
+    /// <summary>Reserves room for expected entries up front. Explicit because generated code
+    /// direct-initialises a Dictionary from an element count, never converts one implicitly.</summary>
+    explicit FreestandingHashMap(size_t expected) { reserve(expected); }
+
     size_t size() const { return Storage.size(); }
     bool empty() const { return Storage.empty(); }
     iterator begin() { return Storage.begin(); }
@@ -43,6 +48,18 @@ public:
     const_iterator find(const TKey& key) const { return Storage.Find(key); }
     size_t count(const TKey& key) const { return Storage.Find(key) != Storage.end() ? 1 : 0; }
     bool contains(const TKey& key) const { return count(key) != 0; }
+    /// <summary>Returns the value stored under key, failing when the key is absent.</summary>
+    TValue& at(const TKey& key) {
+        iterator entry = Storage.Find(key);
+        if (entry == Storage.end()) he_cpp_custom::Fail("Key not found");
+        return entry->second;
+    }
+    /// <summary>Returns the value stored under key, failing when the key is absent.</summary>
+    const TValue& at(const TKey& key) const {
+        const_iterator entry = Storage.Find(key);
+        if (entry == Storage.end()) he_cpp_custom::Fail("Key not found");
+        return entry->second;
+    }
 
     // These build lambdas may freely capture key/value by reference, even when they alias this
     // table's own storage (map.emplace(map.find(j)->first, map.find(k)->second)): Storage.Emplace
