@@ -15,7 +15,7 @@ public class StringGate {
 
     /// <summary>Raises a fatal failure for a null borrowed value when exceptions are disabled.</summary>
     public void Require(object value) {
-        object checkedValue = value ?? throw new System.InvalidOperationException("required");
+        _ = value ?? throw new System.InvalidOperationException("required");
     }
 
     /// <summary>Exercises direct exception construction and fatal lowering.</summary>

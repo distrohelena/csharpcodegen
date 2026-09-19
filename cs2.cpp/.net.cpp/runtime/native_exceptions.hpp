@@ -43,6 +43,7 @@ inline HeCppString SelectMessage(const HeCppString& message, const char* fallbac
     (void)message;
     return fallback;
 #else
+    (void)fallback;
     return message;
 #endif
 }
@@ -82,6 +83,7 @@ inline HeCppString MessageWithParameter(const HeCppString& message, const HeCppS
     (void)parameterName;
     return fallback;
 #else
+    (void)fallback;
     HeCppString result = message;
     result += " Parameter name: ";
     result += parameterName;
@@ -115,6 +117,7 @@ inline HeCppString MessageWithFileName(const char* message, const char* fileName
 }
 
 inline HeCppString MessageWithFileName(const HeCppString& message, const HeCppString& fileName, const char* fallback) {
+    (void)fallback;
     HeCppString result = message;
     result += " File name: ";
     result += fileName;
