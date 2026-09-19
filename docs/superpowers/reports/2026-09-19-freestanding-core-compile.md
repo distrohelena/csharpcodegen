@@ -1,10 +1,12 @@
 # Freestanding engine core: 65816 compile measurement
 
-Date: 2026-09-19
-Status: generation succeeded; SNES cross-compile of the unity file fails on 7 provider/runtime
-gaps with RTTI enabled (as required by the generator), and on 129 errors (122 of them purely
-from missing RTTI) if RTTI is disabled. No source, generated, or runtime code beyond the two
-engine ownership fixes below was modified.
+Date: 2026-09-19 (re-measured after the fix wave; see "After the fix wave")
+Status: generation succeeds and the SNES cross-compile of the unity file now succeeds with
+0 errors and a 2.4 MB object file, once RTTI is enabled as the generator requires. The original
+measurement below found 7 provider/runtime gaps with RTTI enabled, and 129 errors (122 of them
+purely from missing RTTI) with RTTI disabled; the fix wave closed all 7. No source, generated,
+or runtime code beyond the two engine ownership fixes below and the fix-wave runtime commits was
+modified.
 
 ## Summary
 
@@ -12,11 +14,13 @@ engine ownership fixes below was modified.
 ownership-consistency fixes are applied to engine source and (b) the generator is told to keep
 compiler RTTI available (`--set codegen-use-rtti=true`), matching what the PS1 platform
 definition already does for the same reason. With RTTI enabled, the unity file (348 `.cpp` /
-443 `.hpp`, 2,226,382 bytes total) fails to compile on the 65816 toolchain with 7 errors, all
-missing provider/runtime methods — no pointer-size, address-space, RTTI, or hosted-service
-errors remain. Disabling RTTI again (`-fno-rtti`) reproduces 122 additional `dynamic_cast`/
-`typeid` errors on top of the same 7, which is the measured cost of turning RTTI off for this
-codebase.
+443 `.hpp`, 2,226,382 bytes total at the time of the first pass, 2,232,009 bytes after the fix
+wave) originally failed to compile on the 65816 toolchain with 7 errors, all missing
+provider/runtime methods — no pointer-size, address-space, RTTI, or hosted-service errors
+remained. Disabling RTTI again (`-fno-rtti`) reproduces 122 additional `dynamic_cast`/`typeid`
+errors on top of the same 7, which is the measured cost of turning RTTI off for this codebase.
+After the fix wave closed those 7 gaps the same command compiles with 0 errors; the numbers are
+in "After the fix wave" at the end of this report.
 
 ## Engine fixes made (file:line, before/after)
 
@@ -194,7 +198,10 @@ concerns): all 4 compiled with `cc exit=0` and 0 errors. `llvm-size` on these in
 files reported `error: '<file>.o': The file was not recognized as a valid object file` for all
 4 — a toolchain quirk worth flagging separately (the file exists, non-empty, e.g. 4256 bytes for
 `LightType.o`, but `llvm-size` from the same `llvm-mos-65816` toolchain does not parse it),
-distinct from and not blocking the compile-error measurement above.
+distinct from and not blocking the compile-error measurement above. The re-measurement below
+explains that quirk: the driver defaults to LTO, so a `-c` "object" is an LLVM bitcode file,
+which none of `llvm-size`, `llvm-readelf` or `llvm-objdump` will read. Adding `-fno-lto`
+produces a real ELF object they all parse.
 
 ## Remaining hosted facilities
 
@@ -208,7 +215,7 @@ in this measurement.
 
 ## What sub-project 2 must solve
 
-1. Close the 7 provider/runtime gaps found here: `FreestandingString::find_last_of` (used 4
+1. (Done in the fix wave, see below.) Close the 7 provider/runtime gaps found here: `FreestandingString::find_last_of` (used 4
    times from `system/io/path.cpp`, itself generated from .NET's `Path` helpers),
    `StringBuilder::get_Length` (2 uses, from the now-converting
    `SceneOverrideScopePath.Format`), and a `Dictionary<char, FontChar>` constructor overload
@@ -221,9 +228,89 @@ in this measurement.
    let a true `-fno-rtti` freestanding build exist, trading engine-code changes for toolchain
    footprint (RTTI's own code/data size cost on the 65816 was not separately measured here since
    no object file linked).
-3. Re-run this exact measurement once the 7 provider gaps are closed to get real `llvm-size`
+3. (Done in the fix wave, see below.) Re-run this exact measurement once the 7 provider gaps are closed to get real `llvm-size`
    numbers for the linked unity object — that is the next concrete milestone for sub-project 2's
    far-memory/banked-code footprint planning.
+
+## After the fix wave
+
+Re-measured on 2026-09-19 after the runtime fix wave (commits `7deefbc` through `28fa3cf` on
+`csharpcodegen` `master`), with the CLI rebuilt (`dotnet build codegen/codegen.csproj -c Release`,
+0 errors) and the generation command above re-run verbatim.
+
+### Generation
+
+Exit code 0, final log line `C++ conversion completed.` File counts are unchanged: 348 `.cpp`,
+443 `.hpp`, 797 files, now 2,232,009 bytes (`du -sb`, up 5,627 bytes from the copied runtime
+changes).
+
+### Compile
+
+The Step 2 command, unchanged and still without `-fno-rtti`:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "/c/dev/helworks:/hw" -w /hw/builds/csharpcodegen/core-freestanding helengine-snes-toolchain bash -c '/usr/lib/llvm-mos-65816/bin/mos-snes-far-clang++ -std=c++20 -fno-exceptions -Os -ferror-limit=0 -I. -c generated_unity.cpp -o core-freestanding.o'
+```
+
+Result: `cc exit=0`, **0 errors** (was 7), 37 warnings, object file produced (2.4 MB). All three
+gap families are gone: `FreestandingString::find_last_of`, `StringBuilder::get_Length` and the
+`Dictionary<char, FontChar>` capacity constructor. The 37 remaining warnings are all
+`-Wdelete-abstract-non-virtual-dtor` from `runtime/native_list.hpp` deleting owned elements
+through an abstract interface pointer (`IDrawable2D`, `IDrawable3D` and friends) — a pre-existing
+generated-ownership shape, not part of this fix wave, and recorded here as a finding for
+sub-project 2.
+
+### Sizes
+
+`llvm-size` still refuses `core-freestanding.o`: the `mos-snes-far-clang++` driver defaults to
+LTO, so `-c` emits LLVM bitcode, and `llvm-readelf` says so outright ("bitcode files are not
+supported"). Recompiling the same unity file with `-fno-lto` added produces a real ELF object
+(`core-freestanding-nolto.o`, also 0 errors), which the tools read:
+
+```
+   text	   data	    bss	    dec	    hex	filename
+1583860	    100	   1986	1585946	 18331a	core-freestanding-nolto.o
+```
+
+Broken down by section family from `llvm-readelf -S --wide` (the object is compiled with one
+section per symbol, so these are sums):
+
+| Section | Bytes |
+| --- | --- |
+| `.text.*` | 1,533,177 |
+| `.rodata.*` | 50,683 |
+| `.data` (as `llvm-size` reports it) | 100 |
+| `.bss.*` | 1,577 |
+| `.noinit.*` | 409 |
+
+`.bss` plus `.noinit` is the 1,986 `llvm-size` attributes to bss. These are pre-link, per-symbol
+figures with nothing discarded: the LTO link below drops the overwhelming majority of them,
+so treat 1.5 MB of `.text` as the upper bound for a whole-core build with no dead-code
+elimination, not as a SNES footprint.
+
+### Link
+
+With a trivial `main.cpp` (`int main() { return 0; }`):
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "/c/dev/helworks:/hw" -w /hw/builds/csharpcodegen/core-freestanding helengine-snes-toolchain bash -c '/usr/lib/llvm-mos-65816/bin/mos-snes-far-clang++ -Os core-freestanding.o main.o -o core-freestanding.elf'
+```
+
+`ld.lld` exits 1 on undefined symbols, as expected. The complete unique list — 3 symbols, both
+for the LTO object and for the `-fno-lto` one — is sub-project 3's list:
+
+```
+he_cpp_custom::Fail(char const*)
+he_cpp_custom::MonotonicMicroseconds()
+__putchar
+```
+
+`he_cpp_custom::Allocate`/`Free` do not appear because `generated_unity.cpp` already includes
+`runtime/freestanding/freestanding_hooks_default.cpp` (and `runtime/freestanding/freestanding_math.cpp`)
+at lines 339-340, which supplies the malloc/free-backed defaults. `__putchar` is referenced from
+the toolchain's own `raise`, not from generated code. So the platform layer sub-project 3 owes
+the core is exactly two functions plus a character sink; there are no undefined engine entry
+points.
 
 ## Deviations from the brief
 
