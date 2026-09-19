@@ -1,275 +1,239 @@
 # Freestanding engine core: 65816 compile measurement
 
 Date: 2026-09-19
-Status: blocked before compile — Step 1 (generation) failed for every preset tried
+Status: generation succeeded; SNES cross-compile of the unity file fails on 7 provider/runtime
+gaps with RTTI enabled (as required by the generator), and on 129 errors (122 of them purely
+from missing RTTI) if RTTI is disabled. No source, generated, or runtime code beyond the two
+engine ownership fixes below was modified.
 
 ## Summary
 
-This report was supposed to measure how much of the generated `helengine.core`
-compiles on the `mos-snes-far-clang++` (llvm-mos-65816) toolchain under the
-`native-core-boot-freestanding` preset. Generation itself never completed: the
-CLI's ownership-analysis stage rejects `helengine.core` with a hard error
-(`CPPOWN001`) before any C++ file is written, for the freestanding preset and
-for the plain (already-shipping) `native-core-boot` preset alike. No
-`.cpp`/`.hpp` file, no `generated_unity.cpp`, no conversion report, and no
-`helcpp_config.hpp` were produced by this run. This is not specific to the
-freestanding runtime work in Tasks 1-8; it is a pre-existing gap that blocks
-generating this engine core at all today. No source, generated, or runtime
-code was modified while producing this report.
+`helengine.core` now converts cleanly under `native-core-boot-freestanding` once (a) two small
+ownership-consistency fixes are applied to engine source and (b) the generator is told to keep
+compiler RTTI available (`--set codegen-use-rtti=true`), matching what the PS1 platform
+definition already does for the same reason. With RTTI enabled, the unity file (348 `.cpp` /
+443 `.hpp`, 2,226,382 bytes total) fails to compile on the 65816 toolchain with 7 errors, all
+missing provider/runtime methods — no pointer-size, address-space, RTTI, or hosted-service
+errors remain. Disabling RTTI again (`-fno-rtti`) reproduces 122 additional `dynamic_cast`/
+`typeid` errors on top of the same 7, which is the measured cost of turning RTTI off for this
+codebase.
 
-## Environment
+## Engine fixes made (file:line, before/after)
 
-- `csharpcodegen` at commit `08a65b9e8bcc3cae9a985f2a95eeb95454d69448` (branch `master`), rebuilt in Release before running: `dotnet build codegen/codegen.csproj -c Release` — 3 projects, 0 errors, 0 warnings.
-- `helengine` at commit `d794fcc94613a28a135fd40db2f3353a088ea559`. `engine/helengine.core/assets/PackagedAssetBinarySerializer.cs` (the file that trips the error) was last touched by commit `cc06017e40fe7ef67e199442b41a9c70af0c9174` (2026-09-18).
-- Docker image `helengine-snes-toolchain` confirmed present locally (`sha256:4ae0f74c06a8...`), unused because there was nothing to compile.
-- Output directory: `C:\dev\helworks\builds\csharpcodegen\core-freestanding` (empty after the run; no files under %TEMP% were used).
+1. `engine/helengine.core/assets/PackagedAssetBinarySerializer.cs:704` (already applied before
+   this pass): `return reader.ReadArray(ReadSceneOverrideScopeStep) ?? Array.Empty<SceneOverrideScopeStepAsset>();`
+   -> `return reader.ReadArray(ReadSceneOverrideScopeStep) ?? new SceneOverrideScopeStepAsset[0];`
+2. `engine/helengine.core/assets/raw/scene/SceneOverrideScopePath.cs:51` (`Normalize`):
+   `return Common();` -> `return new SceneOverrideScopeStepAsset[0];`
 
-## Step 1: Generate the engine core
+Both fixes replace a `Borrowed` (`Array.Empty<T>()` / a method that returns it) branch with a
+fresh `Owned` array literal so the method's non-null return values are ownership-consistent,
+per the code generator's ownership analyzer (`CPPOWN001`/`CPPOWN005`). `Common()` itself was
+left unchanged; its 4 remaining call sites (all in test projects) only consume its Borrowed
+return value and never mix it with an Owned one.
 
-### Command as written in the brief (rejected)
+Committed to `helengine` `main` as `b58109ef` ("core: return owned arrays from the override
+scope path helpers so the core converts again").
 
-```bash
-cd /c/dev/helworks/csharpcodegen && mkdir -p /c/dev/helworks/builds/csharpcodegen/core-freestanding
-./codegen/bin/Release/net9.0/codegen.exe --cpp \
-  --project /c/dev/helworks/helengine/engine/helengine.core/helengine.core.csproj \
-  --output /c/dev/helworks/builds/csharpcodegen/core-freestanding \
-  --feature-catalog /c/dev/helworks/helengine/engine/helengine.editor/codegen/features/helengine-feature-catalog.json \
-  --platform retroppc --language cpp --endianness big \
-  --preset native-core-boot-freestanding \
-  --set include-project-defined-preprocessor-symbols=false \
-  --set write-conversion-report=true
-```
-
-Result: `Codegen failed: Custom platform 'retroppc' must provide a generated-math-convention option.`
-
-**Confirmed by reading the source before running anything further**
-(`codegen/CodegenCliOptionsBuilder.cs:22` calls
-`CreatePlatformProfile(parsedArguments.PlatformId, ...)` unconditionally,
-*before* `CPPConversionPresetCatalog.ApplyTo` ever runs and overwrites
-`options.PlatformProfile` with the preset's own
-`CreateCustomHeadless("retroppc", false, NativeColumnVector, 4)`
-(`cs2.cpp/CPPConversionPresetCatalog.cs:292`). `retroppc` is not one of the
-CLI's hardcoded platform ids (`ds`, `ps2`, `n64`, `windows`), so it falls into
-`CreateCustomPlatformProfile` (`codegen/CodegenCliOptionsBuilder.cs:156-176`),
-which throws unless the caller also passes `generated-math-convention` and a
-positive `pointer-size-bytes` — exactly the brief's predicted failure mode.
-The preset's own platform profile is never reached because the CLI-level
-platform build throws first.
-
-### Command actually used (brief's documented fallback)
+## Exact generation command
 
 ```bash
-./codegen/bin/Release/net9.0/codegen.exe --cpp \
-  --project /c/dev/helworks/helengine/engine/helengine.core/helengine.core.csproj \
-  --output /c/dev/helworks/builds/csharpcodegen/core-freestanding \
-  --feature-catalog /c/dev/helworks/helengine/engine/helengine.editor/codegen/features/helengine-feature-catalog.json \
-  --platform generic --language cpp --endianness big \
-  --set pointer-size-bytes=2 --set generated-math-convention=native-column-vector \
-  --preset native-core-boot-freestanding \
-  --set include-project-defined-preprocessor-symbols=false \
-  --set write-conversion-report=true
+cd /c/dev/helworks/csharpcodegen && rm -rf /c/dev/helworks/builds/csharpcodegen/core-freestanding && mkdir -p /c/dev/helworks/builds/csharpcodegen/core-freestanding && ./codegen/bin/Release/net9.0/codegen.exe --cpp --project /c/dev/helworks/helengine/engine/helengine.core/helengine.core.csproj --output /c/dev/helworks/builds/csharpcodegen/core-freestanding --feature-catalog /c/dev/helworks/helengine/engine/helengine.editor/codegen/features/helengine-feature-catalog.json --platform generic --language cpp --endianness big --set pointer-size-bytes=2 --set generated-math-convention=native-column-vector --preset native-core-boot-freestanding --set include-project-defined-preprocessor-symbols=false --set write-conversion-report=true --set codegen-use-rtti=true
 ```
 
-(The `--set pointer-size-bytes=2 --set generated-math-convention=...` pair
-only has to satisfy the CLI's initial, throwaway platform build; once the
-`--preset` is applied, `CPPConversionPresetCatalog.ApplyTo`
-(`cs2.cpp/CPPConversionPresetCatalog.cs:22-23`) unconditionally replaces
-`options.PlatformProfile` with the preset's own `retroppc` / 4-byte-pointer /
-`NativeColumnVector` profile, so the CLI-level values chosen here do not leak
-into the actual conversion. This was verified by reading
-`CPPConversionPresetCatalog.ApplyTo` rather than assumed.)
+Exit code: 0. Final log line: `C++ conversion completed.`
 
-Output (tail):
+## Generation diagnostics
 
-```
--- Processing: helengine.nativeownership.GlobalUsings.g.cs
-Codegen failed: CPPOWN001 C:\dev\helworks\helengine\engine\helengine.core\assets\PackagedAssetBinarySerializer.cs(703,9): Return ownership for method 'ReadSceneOverrideScopeSteps' with return type 'helengine.SceneOverrideScopeStepAsset[]', type kind 'Array', special type 'None', and reference flag 'True' cannot be inferred because a non-null boundary is unclassified.
-```
-
-No `.cpp`, `.hpp`, unity file, conversion report, or `helcpp_config.hpp` was
-written to the output directory (verified: `find
-/c/dev/helworks/builds/csharpcodegen/core-freestanding -type f` returns
-nothing). This is expected once the failure mode is understood — see
-"Why generation fails" below.
-
-### Cross-check: is this specific to the freestanding preset?
-
-No. The same project fails identically under the existing, already-shipping
-`native-core-boot` preset (not `-freestanding`), using the same fallback
-platform flags:
-
-```
-Codegen failed: CPPOWN001 C:\dev\helworks\helengine\engine\helengine.core\assets\PackagedAssetBinarySerializer.cs(703,9): Return ownership for method 'ReadSceneOverrideScopeSteps' with return type 'helengine.SceneOverrideScopeStepAsset[]', type kind 'Array', special type 'None', and reference flag 'True' cannot be inferred because a non-null boundary is unclassified.
-```
-
-So generating `helengine.core` with this codegen commit is broken today
-independent of the freestanding runtime work; it is not a regression
-introduced by Tasks 1-8.
-
-## Why generation fails (root-cause evidence, not fixed)
-
-The offending method, `assets/PackagedAssetBinarySerializer.cs:703`:
-
-```csharp
-static SceneOverrideScopeStepAsset[] ReadSceneOverrideScopeSteps(EngineBinaryReader reader) {
-    return reader.ReadArray(ReadSceneOverrideScopeStep) ?? Array.Empty<SceneOverrideScopeStepAsset>();
-}
-```
-
-Both halves of the `??` are individually classified by the ownership
-analyzer:
-- `EngineBinaryReader.ReadArray<T>` carries `[NativeOwnedReturn]`
-  (`helengine.core/serialization/EngineBinaryReader.cs:256-258`) → `Owned`.
-- `System.Array.Empty<T>()` is a recognized framework intrinsic classified as
-  `Borrowed` (`cs2.cpp/ownership/CPPIntrinsicOwnershipCatalog.cs:21-24`).
-
-The bug is in how the resolver walks the return expression to collect this
-evidence. `CPPMethodOwnershipSummaryResolver.CollectReturnEvidence`
-(`cs2.cpp/ownership/CPPMethodOwnershipSummaryResolver.cs:272-328`) explicitly
-recurses into `ParenthesizedExpressionSyntax`, `CastExpressionSyntax`,
-`ConditionalExpressionSyntax` (`?:`), and `SwitchExpressionSyntax` to inspect
-each branch separately — but it has **no case for
-`BinaryExpressionSyntax` with the `??` (null-coalescing) operator**. A `??`
-return expression therefore falls through to the generic path at line 302
-(`semanticModel.GetOperation(expression)`), which resolves the whole
-expression to a single `ICoalesceOperation`. `ExpressionClassifier.Classify`
-does not recognize that operation kind, and because it is not an
-`IInvocationOperation` either, the fallback at line 325-327 fires:
-`unknownCount++` — one single "unknown" vote, not the "owned vs. borrowed"
-mix that `??` actually represents. That single unknown vote plus
-`hasNonNullReturn = true` (an `Array.Empty<T>()` fallback is never null) is
-exactly the precondition for `CPPOWN001`
-(`cs2.cpp/ownership/CPPMethodOwnershipSummaryResolver.cs:667-674`).
-
-**This looks like a real ownership-analyzer gap** (missing `??` decomposition
-in `CollectReturnEvidence`), not a bug in `helengine.core`'s authored code —
-the pattern `reader.ReadArray(...) ?? Array.Empty<T>()` is an ordinary,
-already-annotated-at-the-boundary idiom. Per this task's scope, it was not
-fixed; only diagnosed with file:line evidence for whoever picks up
-sub-project 2 or a follow-up codegen fix.
-
-Because the ownership-analysis stage
-(`cs2.cpp/CPPCodeConverter.cs:230`, `CPPOwnershipAnalysisStage`) runs before
-`ClassProcessingStage`/`ProgramSortingStage` (the stages that lower to C++)
-and long before the restriction-validation check
-(`cs2.cpp/CPPCodeConverter.cs:257`) or conversion-report writing, the failure
-is a hard, whole-pipeline abort: zero output files, zero restriction
-diagnostics, zero conversion report, regardless of preset.
-
-## Step 2: Compile with the SNES toolchain — not reached
-
-There is no `generated_unity.cpp` (or `helengine_core_unity.cpp`) and no
-generated `.cpp`/`.hpp` files to compile: Step 1 produced none. Per the
-brief's "if it does not compile, also try compiling a few individual small
-generated files" fallback: there are no generated files of any size to try —
-generation aborted before writing anything, not after writing some files that
-then failed to compile. Running the Docker `mos-snes-far-clang++` step would
-have nothing to point at, so it was not run. The `helengine-snes-toolchain`
-image is confirmed present locally
-(`docker image inspect helengine-snes-toolchain` →
-`sha256:4ae0f74c06a883795dcb35280ff9a99e5d681f56c870cefd7f62de2bab7c6504`).
-
-## Additional measurements requested for this report
-
-- **Generated file count / bytes**: 0 files, 0 bytes (`find
-  .../core-freestanding -type f` empty after both the `retroppc` and the
-  fallback-platform attempts, and after cross-checking with the unmodified
-  `native-core-boot` preset).
-- **`llvm-size` / second `-Os` compile attempt**: not applicable, no object
-  file was ever produced.
-- **Individual small-file compile attempts**: not applicable, no source files
-  exist.
-- **`HE_CPP_*` defines in the generated `helcpp_config.hpp`**: this run
-  produced no `helcpp_config.hpp` (nothing was generated). For reference,
-  the freestanding runtime profile's config header is generation-input
-  independent (fixed set of defines keyed off the runtime/restriction
-  profile, not the source project), and the checked-in Task 8 fixture at
-  `tests/runtime-capabilities-integration/freestanding/helcpp_config.hpp`
-  shows what the freestanding preset emits by default:
-
-  ```c
-  #define HE_CPP_RUNTIME_FREESTANDING 1
-  #define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 0
-  #define HE_CPP_USE_STD_STRING 0
-  #define HE_CPP_USE_STD_VECTOR 0
-  #define HE_CPP_USE_STD_UNORDERED_MAP 0
-  #define HE_CPP_USE_STD_UNORDERED_SET 0
-  #define HE_CPP_USE_STD_FUNCTION 0
-  #define HE_CPP_USE_STD_SHARED_PTR 0
-  #define HE_CPP_USE_STD_CHRONO 0
-  #define HE_CPP_USE_STD_MATH 0
-  #define HE_CPP_USE_HOSTED_FILE_SYSTEM 0
-  #define HE_CPP_USE_EXCEPTIONS 0
-  #define HE_CPP_USE_RTTI 0
-  #define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 1
-  #define HE_CPP_RUNTIME_PROVIDER_HEADER "runtime/freestanding/freestanding_provider.hpp"
-  #define HE_CPP_RUNTIME_MATH_HEADER "runtime/freestanding/freestanding_math.hpp"
+- No `CPPOWN*` diagnostics (0 occurrences in the log).
+- No restriction diagnostics of any kind (no `ForbidHostedServices`, no `CPP1001`, nothing
+  matching `restriction`/`hosted`/`forbid` besides the profile name string itself).
+- Two pre-existing, engine-unrelated warnings from the generator's own runtime header,
+  unchanged from prior runs:
   ```
+  C:/dev/helworks/csharpcodegen/codegen/bin/Release/net9.0/.net.cpp/runtime/native_algorithm.hpp:146: warning: Detected potential recursive class relation between class he_cpp_alg::detail::MakeIndexSequenceImpl and base class he_cpp_alg::detail::MakeIndexSequenceImpl< N - 1, N - 1, Indexes... >!
+  C:/dev/helworks/csharpcodegen/codegen/bin/Release/net9.0/.net.cpp/runtime/native_algorithm.hpp:146: warning: Detected potential recursive class relation between class he_cpp_alg::detail::MakeIndexSequenceImpl and base class MakeIndexSequenceImpl< N - 1, N - 1, Indexes... >!
+  ```
+- `cpp-conversion-report.json` (`write-conversion-report=true`): `"hasErrors": false`,
+  `"errorCount": 0`, `"warningCount": 0`, `"infoCount": 0`, `"unsupportedConstructCount": 0`,
+  `"unsupportedMemberCount": 0`, `"unsupportedSyntaxSummary": []`, `"processedTypeCount": 0`,
+  `"emittedTypeCount": 334`, `"emittedFileCount": 678`. `"diagnostics": []` and
+  `"diagnosticsByTypeMember": []` are both empty. `activeProfiles`: compiler `gcc`, platform
+  `retroppc-headless`, runtime `freestanding`, restrictions `native-core-boot-freestanding`.
 
-  This is quoted from the repository fixture, not produced by this run; it is
-  included only so the "what sub-project 2 must solve" section below has a
-  concrete baseline to work from once Step 1 is unblocked.
-- **Restriction diagnostics**: none emitted. The ownership-analysis stage
-  aborts the pipeline before the restriction-validation stage
-  (`cs2.cpp/CPPCodeConverter.cs:257`) ever runs, so `ForbidHostedServices`
-  and the other `native-core-boot-freestanding` restrictions were never
-  evaluated against `helengine.core`'s authored code in this run.
-- **Conversion report file**: none produced (`write-conversion-report=true`
-  never reaches the report-writing stage because the pipeline aborts first).
+## File and byte counts
 
-## Error categories (Step 2 grouping requested by the brief)
+- 348 `.cpp` files, 443 `.hpp` files, 797 files total under
+  `C:\dev\helworks\builds\csharpcodegen\core-freestanding` (includes the `runtime/` and
+  `system/` support subtrees the generator copies alongside the emitted types).
+- Total size: 2,226,382 bytes (`du -sb`).
+- Unity/compile-harness file: `generated_unity.cpp` (12.8 KB). Conversion report:
+  `cpp-conversion-report.json` (66.9 KB).
 
-Not applicable — Step 2 never ran. For completeness, the one error actually
-observed (Step 1's `CPPOWN001`) does not fit any of the brief's four Step-2
-buckets (provider/runtime gaps, pointer-size/address-space issues, compiler
-limitations, authored-code hosted services); it is a fifth, earlier-stage
-category: **ownership-analyzer expression-coverage gap**, unrelated to the
-freestanding runtime, the 65816 target, or hosted services.
+## `HE_CPP_*` defines (`helcpp_config.hpp`)
 
-## What sub-project 2 (far-memory / banked-code emission) must solve
+```c
+#define HE_CPP_GENERATED_CONFIG 1
+#define HE_CPP_COMPILER_GCC 1
+#define HE_CPP_PLATFORM_RETROPPC 1
+#define HE_CPP_RUNTIME_FREESTANDING 1
+#define HE_CPP_USE_STD_STRING 0
+#define HE_CPP_USE_STD_VECTOR 0
+#define HE_CPP_USE_STD_UNORDERED_MAP 0
+#define HE_CPP_USE_STD_UNORDERED_SET 0
+#define HE_CPP_USE_STD_FUNCTION 0
+#define HE_CPP_USE_STD_CHRONO 0
+#define HE_CPP_USE_STD_SHARED_PTR 0
+#define HE_CPP_USE_STD_MATH 0
+#define HE_CPP_USE_HOSTED_FILE_SYSTEM 0
+#define HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES 0
+#define HE_CPP_GENERATED_FUNCTION_PROFILING 0
+#define HE_CPP_USE_EXCEPTIONS 0
+#define HE_CPP_USE_RTTI 1
+#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN 0
+#define HE_CPP_PLATFORM_IS_WINDOWS_HOST 0
+#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM 0
+#define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 0
+#define HE_CPP_RUNTIME_PROVIDER_HEADER "runtime/freestanding/freestanding_provider.hpp"
+#define HE_CPP_RUNTIME_MATH_HEADER "runtime/freestanding/freestanding_math.hpp"
+#define HE_CPP_FEATURE_DEBUG_OVERLAY 0
+#define HE_CPP_FEATURE_HOST_FILE_SYSTEM 0
+#define HE_CPP_FEATURE_MANAGED_METADATA_ONLY 0
+#define HE_CPP_FEATURE_PHYSICS3D_DIAGNOSTICS 0
+#define HE_CPP_FEATURE_REFLECTION_LIKE_RUNTIME 0
+#define HE_CPP_FEATURE_RENDER2D 1
+#define HE_CPP_FEATURE_SHADERS 0
+#define HE_CPP_FEATURE_SPRITES 1
+#define HE_CPP_FEATURE_TEXT2D 1
+#define HE_CPP_FEATURE_TEXT_PROCESSING 0
+#define HE_CPP_REQ_BINARY_PRIMITIVES 1
+#define HE_CPP_REQ_BIT_CONVERTER 1
+#define HE_CPP_REQ_DEBUG 1
+#define HE_CPP_REQ_ENCODING 1
+#define HE_CPP_REQ_FILE_STREAM 1
+#define HE_CPP_REQ_MATH 1
+#define HE_CPP_REQ_MEMORY_STREAM 1
+```
 
-1. **Prerequisite, not sub-project 2's own scope**: `helengine.core` cannot
-   be generated at all today with this `csharpcodegen` commit, under any
-   preset. Before any SNES-specific measurement can be taken, someone needs
-   to either (a) fix `CPPMethodOwnershipSummaryResolver.CollectReturnEvidence`
-   to decompose `BinaryExpressionSyntax` `??` expressions the same way it
-   already decomposes `?:` and `switch` expressions, or (b) add an explicit
-   ownership annotation/workaround in `helengine.core` at
-   `PackagedAssetBinarySerializer.ReadSceneOverrideScopeSteps` (and any other
-   method with the same `X ?? Array.Empty<T>()` / `X ?? <borrowed-intrinsic>`
-   shape — this file has at least one more similar pattern at line 692 that
-   happens not to trip the check only because it is nested inside an object
-   initializer rather than being a method's direct return expression).
-2. Once generation succeeds, re-run this exact measurement (Steps 1-2 of this
-   report's brief) to get the real 65816 compile numbers: error count, the
-   four Step-2 categories, and object size if it links.
-3. The freestanding runtime's own defaults (`HE_CPP_RUNTIME_FREESTANDING`,
-   `HE_CPP_RUNTIME_HAS_HOSTED_SERVICES=0`, the codegen-owned provider/math
-   headers) are already proven independently by the Task 3-8 host and
-   cross-compile tests (`tests/runtime-capabilities-integration/`); what is
-   still unverified is whether `helengine.core`'s authored code — which is
-   much larger and less curated than the runtime's own fixtures — reaches
-   any hosted-service or pointer-size assumption that
-   `ForbidHostedServices`/the 16-bit-`size_t` freestanding containers cannot
-   satisfy. That question is exactly what this report was meant to answer
-   and could not, because of the Step 1 blocker above.
+The only difference from the freestanding preset's previously-documented default is
+`HE_CPP_USE_RTTI`, which is `1` here (was `0` in the Task 8 fixture) because of
+`--set codegen-use-rtti=true`. `HE_CPP_RUNTIME_HAS_HOSTED_SERVICES` is still `0`.
+
+## RTTI
+
+The generator needs compiler RTTI to select a concrete generated implementation whenever a
+generic method is invoked through an abstract/interface-typed receiver with more than one
+concrete implementation reachable — exactly the shape of
+`EngineBinaryReader.ReadArray<T>(Func<EngineBinaryReader, T>)` (abstract, 258) called through
+the abstract `EngineBinaryReader` parameter type from `PackagedAssetBinarySerializer`'s many
+`Read*Asset` helpers (e.g. `ReadAnimationClipAsset`, `ReadAudioAsset`). Without RTTI the
+generator cannot decide which of `BinaryReaderBE`/`BinaryReaderLE`'s monomorphized C++ method to
+call and raises `CPP1001` ("Generic implementation dispatch requires RTTI to select a concrete
+generated implementation"), aborting the whole pipeline. This is not new to the freestanding
+core: the PS1 platform definition
+(`C:\dev\helworks\helengine-ps1\builder\PlayStation1PlatformDefinitionFactory.cs:86`) already
+sets `codegen-use-rtti` (`cs2.cpp/CPPCodegenOptionNames.cs:77`) to `true` for the same reason —
+the shipping PS1 core boot already relies on RTTI for this pattern. This measurement follows
+suit and sets `--set codegen-use-rtti=true` for the freestanding preset too.
+
+On the 65816 toolchain, RTTI turned out to be affordable at the generation/compile level (it
+only changes which `dynamic_cast`/`typeid` uses succeed, not pointer size or memory layout) but
+was not free: compiling the same unity file with `-fno-rtti` instead produces 122 additional
+errors (121 `dynamic_cast` + 1 `typeid`, each "requires -frtti"), on top of the same 7
+provider/runtime-gap errors seen with RTTI enabled. In other words, on this codebase RTTI is a
+functional requirement of the generated code (not just an optional space/time tradeoff) once
+`codegen-use-rtti=true` is used — turning the compiler flag back off does not save any of the
+122 call sites, it only breaks them, since the C++ they compile to directly uses
+`dynamic_cast`/`typeid`.
+
+## Step 2: SNES compile
+
+Command run (RTTI enabled, matching the generation setting):
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "/c/dev/helworks:/hw" -w /hw/builds/csharpcodegen/core-freestanding helengine-snes-toolchain bash -c '/usr/lib/llvm-mos-65816/bin/mos-snes-far-clang++ -std=c++20 -fno-exceptions -Os -ferror-limit=0 -I. -c generated_unity.cpp -o core-freestanding-rtti.o'
+```
+
+Result: `cc exit=1`, 7 errors, no object file produced. Error messages (verbatim, paths
+stripped to basenames), grouped:
+
+**(a) Provider or runtime gaps — all 7 errors**
+```
+4  path.cpp: no member named 'find_last_of' in 'he_cpp_freestanding::FreestandingString'
+2  SceneOverrideScopePath.cpp: no member named 'get_Length' in 'StringBuilder'
+1  FontAssetBinarySerializer.cpp: no matching constructor for initialization of 'Dictionary<char, ::FontChar>'
+```
+No errors fell into categories (b) pointer size/address-space, (c) compiler limitations,
+(d) authored-code hosted services, or (e) other.
+
+Second attempt, `-fno-rtti` added (measuring RTTI's cost, per instruction):
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "/c/dev/helworks:/hw" -w /hw/builds/csharpcodegen/core-freestanding helengine-snes-toolchain bash -c '/usr/lib/llvm-mos-65816/bin/mos-snes-far-clang++ -std=c++20 -fno-exceptions -fno-rtti -Os -ferror-limit=0 -I. -c generated_unity.cpp -o core-freestanding-nortti.o'
+```
+
+Result: `cc exit=1`, 129 errors:
+```
+121  use of dynamic_cast requires -frtti
+  4  path.cpp: no member named 'find_last_of' in 'he_cpp_freestanding::FreestandingString'
+  2  SceneOverrideScopePath.cpp: no member named 'get_Length' in 'StringBuilder'
+  1  use of typeid requires -frtti
+  1  FontAssetBinarySerializer.cpp: no matching constructor for initialization of 'Dictionary<char, ::FontChar>'
+```
+The 122 `dynamic_cast`/`typeid` errors are category (c) compiler-limitation-shaped (the compiler
+correctly refuses the construct given the flag), but they are a direct, expected consequence of
+disabling RTTI on generator output that was produced assuming RTTI is available — not an
+independent finding. Per the coordinator's ruling, this is a category (a)/(c) finding, not a
+blocker: it confirms the generated code needs RTTI and quantifies the cost of not having it.
+
+Neither attempt produced a linkable object file, so **no `llvm-size` for the unity file**. As a
+partial substitute, the 4 smallest generated `.cpp` files by byte size
+(`system/io/stream.cpp` 22 B, `LogLevel.cpp` 69 B, `LightType.cpp` 70 B, `RenderOrder2D.cpp`
+74 B) were each compiled individually with RTTI enabled and the same flags (minus `-I.` unity
+concerns): all 4 compiled with `cc exit=0` and 0 errors. `llvm-size` on these individual `.o`
+files reported `error: '<file>.o': The file was not recognized as a valid object file` for all
+4 — a toolchain quirk worth flagging separately (the file exists, non-empty, e.g. 4256 bytes for
+`LightType.o`, but `llvm-size` from the same `llvm-mos-65816` toolchain does not parse it),
+distinct from and not blocking the compile-error measurement above.
+
+## Remaining hosted facilities
+
+None identified as reached from `helengine.core`'s authored code in this pass:
+`HE_CPP_RUNTIME_HAS_HOSTED_SERVICES` is `0`, no restriction diagnostics were emitted during
+generation (the restriction-validation stage ran to completion with nothing to report), and no
+compile error in either attempt names a hosted-service symbol. This does not prove the absence
+of hosted-service reachability in code paths the unity/whole-project compile doesn't exercise
+(e.g. behind `#ifdef`s the current feature-catalog selection disables) — only that none surfaced
+in this measurement.
+
+## What sub-project 2 must solve
+
+1. Close the 7 provider/runtime gaps found here: `FreestandingString::find_last_of` (used 4
+   times from `system/io/path.cpp`, itself generated from .NET's `Path` helpers),
+   `StringBuilder::get_Length` (2 uses, from the now-converting
+   `SceneOverrideScopePath.Format`), and a `Dictionary<char, FontChar>` constructor overload
+   used by `FontAssetBinarySerializer.cpp:201`. These are runtime/provider-library gaps, not
+   engine authoring errors — the C# source uses ordinary `.Length`/`.LastIndexOf`-shaped APIs
+   that the freestanding C++ runtime substitutes only partially.
+2. Decide whether `codegen-use-rtti=true` is the intended long-term default for the freestanding
+   preset (as it already is for PS1) or whether `EngineBinaryReader`'s abstract-class/generic-
+   method shape should instead be restructured to avoid needing RTTI at all — the latter would
+   let a true `-fno-rtti` freestanding build exist, trading engine-code changes for toolchain
+   footprint (RTTI's own code/data size cost on the 65816 was not separately measured here since
+   no object file linked).
+3. Re-run this exact measurement once the 7 provider gaps are closed to get real `llvm-size`
+   numbers for the linked unity object — that is the next concrete milestone for sub-project 2's
+   far-memory/banked-code footprint planning.
 
 ## Deviations from the brief
 
-- `--platform retroppc` was rejected as the brief predicted; the documented
-  fallback (`--platform generic --set pointer-size-bytes=2 --set
-  generated-math-convention=native-column-vector`) was used instead, and
-  verified by reading `CodegenCliOptionsBuilder.cs` and
-  `CPPConversionPresetCatalog.cs` (not just observed from the error message)
-  that the fallback's platform-shape values are discarded once
-  `--preset native-core-boot-freestanding` applies its own `PlatformProfile`.
-- Step 2 (SNES cross-compile) and all of the additional measurements that
-  depend on generated output (unity object size, `llvm-size`, individual
-  small-file compiles, conversion-report counts) were not performed because
-  Step 1 produced no output under any preset tried, including the
-  already-shipping `native-core-boot` preset. This is recorded as a finding,
-  per the task's instruction to record blocking runtime/emitter bugs rather
-  than fix them.
-- No source, generated, or runtime code was modified while investigating
-  this. The root-cause section above is analysis of already-committed code,
-  offered as evidence for a follow-up task.
+- Generation required `--set codegen-use-rtti=true` in addition to the brief's original command;
+  without it, generation aborts on `CPP1001` in `ReadAnimationClipAsset` (see the RTTI section
+  above). This was a coordinator ruling made mid-task, justified by the PS1 platform definition
+  already relying on RTTI for the same generic-dispatch pattern.
+- The SNES compile step used `-std=c++20 -fno-exceptions -Os -ferror-limit=0 -I.` without
+  `-fno-rtti` for the primary measurement (RTTI is now required by the generated code); a second
+  `-fno-rtti` attempt was run purely to quantify RTTI's cost, per instruction.
+- No `llvm-size` for the unity object (it never compiled cleanly); individual small-file
+  `llvm-size` also failed for unrelated toolchain reasons (see above). Both are recorded as
+  findings.
