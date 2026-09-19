@@ -196,23 +196,39 @@ decltype(auto) Invoke(TCallable&& callable, TArgs&&... args) {
     return Forward<TCallable>(callable)(Forward<TArgs>(args)...);
 }
 
-/// <summary>Positive infinity even where numeric_limits reports none.</summary>
+/// <summary>
+/// Positive infinity even where numeric_limits reports none. The GCC/Clang builtin fallback exists
+/// for freestanding toolchains whose numeric_limits report no infinity; MSVC never sees that builtin
+/// name, since it would otherwise reject it while parsing the discarded if-constexpr branch.
+/// </summary>
 template <typename T>
 constexpr T Infinity() {
     if constexpr (std::numeric_limits<T>::has_infinity) {
         return std::numeric_limits<T>::infinity();
     } else {
+#if defined(__GNUC__) || defined(__clang__)
         return static_cast<T>(__builtin_inf());
+#else
+        return std::numeric_limits<T>::infinity();
+#endif
     }
 }
 
-/// <summary>Quiet NaN even where numeric_limits reports none.</summary>
+/// <summary>
+/// Quiet NaN even where numeric_limits reports none. The GCC/Clang builtin fallback exists for
+/// freestanding toolchains whose numeric_limits report no quiet NaN; MSVC never sees that builtin
+/// name, since it would otherwise reject it while parsing the discarded if-constexpr branch.
+/// </summary>
 template <typename T>
 constexpr T QuietNaN() {
     if constexpr (std::numeric_limits<T>::has_quiet_NaN) {
         return std::numeric_limits<T>::quiet_NaN();
     } else {
+#if defined(__GNUC__) || defined(__clang__)
         return static_cast<T>(__builtin_nan(""));
+#else
+        return std::numeric_limits<T>::quiet_NaN();
+#endif
     }
 }
 

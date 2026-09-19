@@ -342,7 +342,7 @@ public sealed class CPPRuntimeTemplateContractTests {
 
         Assert.Contains("class NativeListEqual", source, StringComparison.Ordinal);
         Assert.Contains("value.Equals(right)", source, StringComparison.Ordinal);
-        Assert.Contains("std::find_if", source, StringComparison.Ordinal);
+        Assert.Contains("he_cpp_alg::FindIf", source, StringComparison.Ordinal);
     }
 
     /// <summary>
