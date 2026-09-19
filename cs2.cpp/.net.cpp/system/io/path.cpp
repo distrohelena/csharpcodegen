@@ -3,8 +3,6 @@
 #include "helcpp_config.hpp"
 
 #include "../../runtime/native_algorithm.hpp"
-#include <stdlib.h>
-
 
 
 #if HE_CPP_PLATFORM_IS_WINDOWS_HOST && defined(_WIN32)
