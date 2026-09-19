@@ -273,5 +273,64 @@ grep -q 'hosted threading or OS facilities' "$output/hosted-services-guard.log"
 result=0
 "$output/freestanding-provider-smoke" fail || result=$?
 test "$result" -eq 73
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/smoke.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-smoke"
+"$output/freestanding-smoke"
+result=0
+"$output/freestanding-smoke" fail >"$output/freestanding-fatal.stdout" 2>"$output/freestanding-fatal.stderr" || result=$?
+test "$result" -eq 73
+# freestanding/helcpp_config.hpp sets HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES=1: every exception's
+# what() collapses to the fixed literal "Exception" regardless of subtype or caller message, so the
+# custom message this fixture raises never reaches stderr here (see native_exceptions.hpp's compact
+# Exception constructors). Check for that canonical text instead of the caller's own message.
+grep -q 'Exception' "$output/freestanding-fatal.stderr"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/services.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-services"
+"$output/freestanding-services"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/streams.cpp" "$fixture/streams-main.cpp" \
+    "$runtime/system/io/memory-stream.cpp" \
+    "$runtime/system/io/file-stream.cpp" \
+    "$runtime/system/io/binary-reader.cpp" \
+    "$runtime/system/io/binary-writer.cpp" \
+    "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-streams"
+"$output/freestanding-streams"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/number_parse_smoke.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-number-parse"
+"$output/freestanding-number-parse"
+
+"$cxx" $freestanding_flags $freestanding_includes \
+    "$fixture/debug_fail.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/freestanding-debug-fail"
+result=0
+"$output/freestanding-debug-fail" >"$output/freestanding-debug-fail.stdout" 2>"$output/freestanding-debug-fail.stderr" || result=$?
+test "$result" -eq 73
+# Same compact-message collapse as the freestanding-smoke check above: System::Diagnostics::Debug::Fail
+# discards its message under HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES=1 (see debug.hpp) and raises a
+# default-constructed InvalidOperationException, whose what() is also the canonical "Exception" literal.
+grep -q 'Exception' "$output/freestanding-debug-fail.stderr"
+
+if [ -n "${TARGET_CXX:-}" ]; then
+    target_freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Os"
+    for source in smoke services streams number_parse_smoke debug_fail freestanding_provider_smoke algorithm_smoke; do
+        "$TARGET_CXX" $target_freestanding_flags $freestanding_includes \
+            -c "$fixture/$source.cpp" -o "$output/$source-freestanding-target.o"
+    done
+    for source in memory-stream file-stream binary-reader binary-writer; do
+        "$TARGET_CXX" $target_freestanding_flags $freestanding_includes \
+            -c "$runtime/system/io/$source.cpp" -o "$output/$source-freestanding-target.o"
+    done
+    "$TARGET_CXX" $target_freestanding_flags $freestanding_includes \
+        -c "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" -o "$output/hooks-default-freestanding-target.o"
+fi
+
 echo 'Runtime capability fixtures passed.'
 

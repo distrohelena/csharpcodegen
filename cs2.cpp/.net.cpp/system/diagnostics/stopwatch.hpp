@@ -72,7 +72,7 @@ public:
     /// Initializes a new stopwatch in the stopped state.
     /// </summary>
     Stopwatch()
-        : Elapsed(this), IsRunningValue(false), StartTimestamp(), TotalElapsedMilliseconds(0.0) {
+        : IsRunningValue(false), StartTimestamp(), TotalElapsedMilliseconds(0.0), Elapsed(this) {
     }
 
     /// <summary>
@@ -130,11 +130,6 @@ public:
         return ComputeElapsed();
     }
 
-    /// <summary>
-    /// Gets the accumulated elapsed time in a field shape that matches the generated C++ property lowering.
-    /// </summary>
-    LiveTimeSpan Elapsed;
-
 private:
     /// <summary>
     /// Tracks whether the stopwatch is currently running.
@@ -151,6 +146,20 @@ private:
     /// </summary>
     double TotalElapsedMilliseconds;
 
+public:
+    /// <summary>
+    /// Gets the accumulated elapsed time in a field shape that matches the generated C++ property lowering.
+    /// </summary>
+    // Declared (and therefore constructed) after the plain data members above: LiveTimeSpan's
+    // constructor stores this Stopwatch's address for later use through get_Elapsed()/Start()/Stop(),
+    // and constructing it before IsRunningValue/StartTimestamp/TotalElapsedMilliseconds existed a
+    // false-positive -Wmaybe-uninitialized under -Werror (GCC 16 cannot prove the escaped pointer isn't
+    // dereferenced during construction). Member construction order always follows declaration order
+    // regardless of the constructor's initializer-list order, so this field is placed, and initialized,
+    // last.
+    LiveTimeSpan Elapsed;
+
+private:
     /// <summary>
     /// Captures the current monotonic timestamp from the platform's preferred high-resolution timer.
     /// </summary>

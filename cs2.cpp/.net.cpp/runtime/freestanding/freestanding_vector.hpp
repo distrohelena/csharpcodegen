@@ -29,6 +29,9 @@ public:
     using const_iterator = const T*;
 
     FreestandingVector() : Data(nullptr), Length(0), Capacity(0) {}
+    // Matches std::vector(size_type count): count default-constructed elements, so it requires T to
+    // be default-constructible, same as the single-argument resize(newLength) it delegates to.
+    explicit FreestandingVector(size_t count) : FreestandingVector() { resize(count); }
     FreestandingVector(std::initializer_list<T> items) : FreestandingVector() {
         reserve(items.size());
         for (const T& item : items) push_back(item);
@@ -160,6 +163,16 @@ public:
         Length -= count;
         return Data + start;
     }
+    // Matches std::vector::assign(InputIt, InputIt): replaces the contents with copies of [first,
+    // last). first/last may point into this vector's own storage only if that range does not overlap
+    // the destination being overwritten (the same aliasing contract std::vector::assign carries);
+    // clear() runs before any write here, so a range aliasing this vector's own elements would already
+    // be invalid by the time it is read, exactly as with the standard container.
+    template <typename TIterator>
+    void assign(TIterator first, TIterator last) {
+        clear();
+        for (; first != last; ++first) push_back(*first);
+    }
     iterator insert(const_iterator position, const T& value) {
         size_t index = static_cast<size_t>(position - Data);
         T copy(value);
@@ -173,6 +186,25 @@ public:
         }
         ++Length;
         return Data + index;
+    }
+    // Reallocates down to exactly Length, releasing storage entirely once Length reaches zero rather
+    // than keeping a zero-length allocation around.
+    void shrink_to_fit() {
+        if (Capacity <= Length) return;
+        if (Length == 0) {
+            if (Data != nullptr) he_cpp_custom::Free(Data);
+            Data = nullptr;
+            Capacity = 0;
+            return;
+        }
+        T* buffer = static_cast<T*>(he_cpp_custom::Allocate(Length * sizeof(T)));
+        for (size_t index = 0; index < Length; ++index) {
+            new (buffer + index) T(he_cpp_alg::Move(Data[index]));
+            Data[index].~T();
+        }
+        he_cpp_custom::Free(Data);
+        Data = buffer;
+        Capacity = Length;
     }
     void swap(FreestandingVector& other) noexcept {
         he_cpp_alg::Swap(Data, other.Data);

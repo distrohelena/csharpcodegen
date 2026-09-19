@@ -34,8 +34,15 @@ public:
     // build() before it does anything that could rehash the table (see its comment), so the copy the
     // build lambda makes below always reads valid memory regardless of any later rehash.
     InsertResult insert(const TValue& value) { return Storage.Emplace(value, [&]() { return value; }); }
+    // Builds value locally first (so it is independent of the table's own storage even when args
+    // aliased it), then moves it into Emplace's build lambda: a successful insert moves the already-
+    // built value into the table instead of taking the extra copy that routing through insert(const
+    // TValue&) would.
     template <typename... TArgs>
-    InsertResult emplace(TArgs&&... args) { TValue value(he_cpp_alg::Forward<TArgs>(args)...); return insert(value); }
+    InsertResult emplace(TArgs&&... args) {
+        TValue value(he_cpp_alg::Forward<TArgs>(args)...);
+        return Storage.Emplace(value, [&]() { return he_cpp_alg::Move(value); });
+    }
     size_t erase(const TValue& value) { return Storage.Erase(value); }
     iterator erase(iterator position) { return Storage.Erase(position); }
     void clear() { Storage.clear(); }

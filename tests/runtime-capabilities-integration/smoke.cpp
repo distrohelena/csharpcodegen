@@ -131,6 +131,7 @@ namespace he_cpp_custom {
     std::fputs(message, stderr);
     std::exit(73);
 }
+std::uint64_t MonotonicMicroseconds() { return 0; }
 }
 
 int main(int argc, char**) {

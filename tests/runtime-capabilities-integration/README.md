@@ -41,3 +41,13 @@ behavior and both fatal paths, and cross-compiles the generated class when
 `TARGET_CXX` is supplied. It does not compile the full generated unity harness,
 which currently includes hosted I/O sources even for this small fixture.
 
+## Freestanding variant
+
+The `freestanding/` config selects the codegen-owned provider under
+`cs2.cpp/.net.cpp/runtime/freestanding/`. The `poison/` directory is placed
+first on the include path so any hosted header include fails on the host.
+With `TARGET_CXX` set to the SNES toolchain driver
+(`/usr/lib/llvm-mos-65816/bin/mos-snes-far-clang++` in the
+`helengine-snes-toolchain` Docker image) the same sources are cross-compiled
+to objects as freestanding compile evidence.
+

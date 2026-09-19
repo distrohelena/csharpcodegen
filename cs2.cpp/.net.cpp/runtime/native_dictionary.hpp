@@ -125,6 +125,12 @@ public:
         OwnsValuesFlag = false;
     }
 
+    // value may be a reference into this dictionary's own storage (dict.set_Item(a, dict.get_Item(b)),
+    // the Dictionary-level shape of dict[a] = dict[b]): operator[] below may insert a new key and
+    // rehash the underlying table, which invalidates every reference into the table taken before that
+    // call -- including this parameter, if the caller's argument expression read straight out of the
+    // table. Copy into an independent local before touching the table, so the copy-assignment always
+    // reads valid memory regardless of any rehash operator[] performs.
     void Add(const TKey& key, const TValue& value) {
         if constexpr (std::is_pointer_v<TValue>) {
             if (OwnsValuesFlag) {
@@ -132,7 +138,8 @@ public:
             }
         }
 
-        (*this)[key] = value;
+        TValue copy(value);
+        (*this)[key] = he_cpp_alg::Move(copy);
     }
 
     /// <summary>
@@ -145,12 +152,13 @@ public:
         }
 
         OwnsValuesFlag = true;
+        TValue copy(value);
         auto iterator = this->find(key);
-        if (iterator != Base::end() && iterator->second != value) {
+        if (iterator != Base::end() && iterator->second != copy) {
             delete iterator->second;
         }
 
-        (*this)[key] = value;
+        (*this)[key] = he_cpp_alg::Move(copy);
     }
 
     TValue& get_Item(const TKey& key) {
@@ -162,14 +170,15 @@ public:
     }
 
     void set_Item(const TKey& key, const TValue& value) {
+        TValue copy(value);
         if constexpr (std::is_pointer_v<TValue>) {
             auto iterator = this->find(key);
-            if (iterator != Base::end() && iterator->second != value) {
+            if (iterator != Base::end() && iterator->second != copy) {
                 DeleteOwnedValue(iterator->second);
             }
         }
 
-        (*this)[key] = value;
+        (*this)[key] = he_cpp_alg::Move(copy);
     }
 
     bool ContainsKey(const TKey& key) const {

@@ -365,7 +365,7 @@ size_t FileStream::Position() const { return position; }
 void FileStream::SetPosition(size_t value) { position = he_cpp_alg::Min(value, length); }
 
 // Internal byte-level operations
-void FileStream::InternalReserve(size_t count) { /* Not needed for file streams */ }
+void FileStream::InternalReserve(size_t count) { (void)count; /* Not needed for file streams */ }
 
 void FileStream::InternalWriteByte(uint8_t byte) {
     Write(&byte, 0, 1);

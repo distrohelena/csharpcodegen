@@ -3,6 +3,9 @@
 #include "runtime/freestanding/freestanding_hash.hpp"
 #include "runtime/freestanding/freestanding_hash_map.hpp"
 #include "runtime/freestanding/freestanding_hash_set.hpp"
+#include "runtime/freestanding/freestanding_function.hpp"
+#include "runtime/freestanding/freestanding_shared_ptr.hpp"
+#include "runtime/native_dictionary.hpp"
 #include <string.h>
 
 using he_cpp_freestanding::FreestandingString;
@@ -271,6 +274,63 @@ int set_smoke() {
     return 0;
 }
 
+// dict.set_Item(9999, dict.get_Item(3)) is the Dictionary-level shape of map[a] = map[b]: set_Item's
+// `value` parameter binds to a reference into the table's own storage (the string stored at key 3).
+// Six entries at capacity 8 sit exactly at the three-quarters threshold, so inserting the seventh key
+// (9999) forces a rehash while `value` still aliases the pre-rehash storage. set_Item must copy value
+// into an independent local before it touches the table, or the copy-assignment below reads freed
+// memory once the rehash inside operator[] has run.
+int dictionary_alias_smoke() {
+    Dictionary<int, HeCppString> dict;
+    const char* labels[6] = { "val0", "val1", "val2", "val3", "val4", "val5" };
+    for (int index = 0; index < 6; ++index) dict.Add(index, HeCppString(labels[index]));
+    dict.set_Item(9999, dict.get_Item(3));
+    if (dict.Count() != 7 || dict.get_Item(9999) != HeCppString("val3") || dict.get_Item(3) != HeCppString("val3")) return 90;
+    return 0;
+}
+
+int function_smoke() {
+    using Fn = he_cpp_freestanding::FreestandingFunction<int(int)>;
+    Fn empty;
+    if (empty) return 100;
+    int captured = 5;
+    Fn add([captured](int value) { return value + captured; });
+    if (!add || add(1) != 6) return 101;
+    Fn copy = add;
+    captured = 100;
+    if (copy(1) != 6) return 102;
+    Fn moved(static_cast<Fn&&>(copy));
+    if (!moved || copy || moved(2) != 7) return 103;
+    Tracked::Alive = 0;
+    {
+        Tracked big(1), bigger(2), biggest(3);
+        Fn heavy([big, bigger, biggest](int value) { return value + big.Id + bigger.Id + biggest.Id; });
+        if (heavy(0) != 6) return 104;
+        Fn heavyCopy = heavy;
+        if (heavyCopy(1) != 7) return 105;
+        heavy = Fn();
+        if (heavy) return 106;
+    }
+    if (Tracked::Alive != 0) return 107;
+    return 0;
+}
+
+int shared_ptr_smoke() {
+    Tracked::Alive = 0;
+    {
+        he_cpp_freestanding::FreestandingSharedPtr<Tracked> owner(new Tracked(42));
+        if (owner.get() == nullptr || owner.use_count() != 1) return 110;
+        he_cpp_freestanding::FreestandingSharedPtr<Tracked> copy(owner);
+        if (owner.use_count() != 2 || copy.get() != owner.get()) return 111;
+        he_cpp_freestanding::FreestandingSharedPtr<Tracked> moved(static_cast<he_cpp_freestanding::FreestandingSharedPtr<Tracked>&&>(copy));
+        if (copy.get() != nullptr || moved.use_count() != 2) return 112;
+        moved.reset();
+        if (owner.use_count() != 1 || Tracked::Alive != 1) return 113;
+    }
+    if (Tracked::Alive != 0) return 114;
+    return 0;
+}
+
 int freestanding_provider_smoke() {
     int result = string_smoke();
     if (result != 0) return result;
@@ -280,7 +340,13 @@ int freestanding_provider_smoke() {
     if (result != 0) return result;
     result = map_smoke();
     if (result != 0) return result;
-    return set_smoke();
+    result = set_smoke();
+    if (result != 0) return result;
+    result = dictionary_alias_smoke();
+    if (result != 0) return result;
+    result = function_smoke();
+    if (result != 0) return result;
+    return shared_ptr_smoke();
 }
 
 #if defined(HE_CPP_TEST_HOST)

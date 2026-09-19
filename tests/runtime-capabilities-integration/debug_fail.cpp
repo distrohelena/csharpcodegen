@@ -1,6 +1,7 @@
 #include "system/diagnostics/debug.hpp"
 
 #ifdef HE_CPP_TEST_HOST
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -10,6 +11,7 @@ namespace he_cpp_custom {
     std::fputc('\n', stderr);
     std::exit(73);
 }
+std::uint64_t MonotonicMicroseconds() { return 0; }
 }
 #endif
 

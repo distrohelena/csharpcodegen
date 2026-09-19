@@ -180,6 +180,7 @@ public:
         erase(position, count);
         return insert(position, text);
     }
+    FreestandingString& replace(size_t position, size_t count, const FreestandingString& text) { return replace(position, count, text.Data); }
     void swap(FreestandingString& other) noexcept {
         he_cpp_alg::Swap(Data, other.Data);
         he_cpp_alg::Swap(Length, other.Length);
