@@ -6,9 +6,9 @@
 // by defining HE_CPP_FREESTANDING_MATH_HOSTED (a usable <math.h> and not the llvm-mos 65816
 // toolchain, whose libm supplies only floorf), which is the case for MSVC and for every host
 // compiler the C# compile tests use, whatever the copied helcpp_config.hpp selects. The profile is
-// probed the same way freestanding_hooks_default.cpp probes it so a freestanding runtime profile or
-// an explicit HE_CPP_FREESTANDING_MATH_SOFTWARE request (the accuracy smoke sets that one on the
-// command line for both of its translation units) still builds the software routines.
+// probed the same way freestanding_hooks_default.cpp probes it, and an explicit
+// HE_CPP_FREESTANDING_MATH_SOFTWARE request (the accuracy smoke passes that one on the command line
+// so it reaches both of its translation units) builds the software routines on a host anyway.
 #if defined(__has_include)
 #if __has_include("helcpp_config.hpp")
 #include "helcpp_config.hpp"
@@ -17,9 +17,7 @@
 
 #include "freestanding_math.hpp"
 
-#if !defined(HE_CPP_FREESTANDING_MATH_HOSTED) \
-    || (defined(HE_CPP_RUNTIME_FREESTANDING) && HE_CPP_RUNTIME_FREESTANDING) \
-    || defined(HE_CPP_FREESTANDING_MATH_SOFTWARE)
+#if !defined(HE_CPP_FREESTANDING_MATH_HOSTED) || defined(HE_CPP_FREESTANDING_MATH_SOFTWARE)
 
 #include <stdint.h>
 #include <string.h>
@@ -38,14 +36,26 @@ constexpr uint64_t SquareRootSeed = 0x1FF8000000000000ULL;
 constexpr int32_t ExponentBias = 1023;
 constexpr int32_t ExponentFieldAllOnes = 0x7FF;
 
-// 2 pi and pi / 2 as a rounded double plus the part that does not fit, so the multiples subtracted
-// during argument reduction carry the accuracy of a constant with more than 53 bits.
-constexpr double TwoPiHigh = 6.283185307179586;
-constexpr double TwoPiLow = 2.4492935982947064e-16;
 constexpr double HalfPiHigh = 1.5707963267948966;
 constexpr double HalfPiLow = 6.123233995736766e-17;
-constexpr double InverseTwoPi = 0.15915494309189535;
 constexpr double TwoOverPi = 0.6366197723675814;
+
+// pi / 2 in three pieces for Cody-Waite argument reduction, in the shape of the medium path of
+// fdlibm's __ieee754_rem_pio2. The first two pieces carry only 27 and 28 significant bits, the rest
+// of their mantissas being zero, so multiplying either by an integer below 2^25 needs at most 53
+// bits and is exact: the multiple of pi / 2 that gets subtracted is then exact too, and the error
+// of the reduction stops growing with the size of the angle. One rounded pi / 2 plus a single
+// correction term cannot do that, because the product with the multiplier rounds away about one
+// more bit for every power of two in that multiplier.
+//
+// Derived with exact rational arithmetic from pi computed by Machin's formula (the derivation is
+// recorded in the task 6 report): Part1 is pi / 2 rounded to a multiple of 2^-28, Part2 is the
+// remainder rounded to a multiple of 2^-58, Part3 is what is left rounded to a double. The three
+// sum to the correctly rounded pi / 2, and pi / 2 - (Part1 + Part2 + Part3) is 4.3e-35, which even
+// at the largest multiplier this file accepts contributes about 7e-28.
+constexpr double HalfPiPart1 = 1.570796325802803;         // 0x3FF921FB54000000
+constexpr double HalfPiPart2 = 9.9209358089824562e-10;    // 0x3E110B4612000000
+constexpr double HalfPiPart3 = -1.2177051777973966e-18;   // 0xBC3676733AE8FE48
 constexpr double Pi = 3.141592653589793;
 constexpr double QuarterPi = 0.7853981633974483;
 constexpr double ThreeQuartersPi = 2.356194490192345;
@@ -106,6 +116,11 @@ int32_t UnbiasedExponent(double value) {
         return field - ExponentBias;
     }
     uint64_t mantissa = ToBits(value) & MantissaMask;
+    if (mantissa == 0) {
+        // Zero has no exponent to report. No caller here passes one, and answering 0 keeps the
+        // loop below from spinning forever if one ever does.
+        return 0;
+    }
     int32_t exponent = -1022;
     while ((mantissa & 0x0010000000000000ULL) == 0) {
         mantissa <<= 1;
@@ -215,7 +230,7 @@ double Sqrt(double value) {
 
 namespace {
 
-/// <summary>The sine Taylor series through the thirteenth power, for arguments in [-pi/4, pi/4].</summary>
+/// <summary>The sine Taylor series through the fifteenth power, for arguments in [-pi/4, pi/4].</summary>
 double SineCore(double value) {
     const double square = value * value;
     const double series =
@@ -224,7 +239,8 @@ double SineCore(double value) {
         square * (-1.984126984126984e-4 +
         square * (2.7557319223985893e-6 +
         square * (-2.505210838544172e-8 +
-        square * 1.6059043836821613e-10))));
+        square * (1.6059043836821613e-10 +
+        square * (-7.647163731819816e-13))))));
     return value + value * square * series;
 }
 
@@ -249,16 +265,18 @@ struct ReducedAngle {
 };
 
 /// <summary>
-/// Subtracts the nearest multiple of 2 pi and then the nearest multiple of pi / 2, each in two
-/// pieces so the constant carries more than 53 bits, leaving a remainder in [-pi/4, pi/4]. The
+/// Subtracts the nearest multiple of pi / 2 in the three exact pieces above, leaving a remainder in
+/// [-pi/4, pi/4] and the quadrant that multiple lands in. The first subtraction cancels the whole
+/// magnitude of the angle and is exact by Sterbenz, and the two that follow each round at most half
+/// an ulp of the remainder, so the reduction costs about 2.2e-16 whatever the angle was. The
 /// quadrant is wrapped in floating point rather than through an integer cast, which keeps the
 /// conversion in range for every argument the callers below let through.
 /// </summary>
 ReducedAngle ReduceAngle(double value) {
-    const double turns = Floor(value * InverseTwoPi + 0.5);
-    double remainder = (value - turns * TwoPiHigh) - turns * TwoPiLow;
-    const double quarters = Floor(remainder * TwoOverPi + 0.5);
-    remainder = (remainder - quarters * HalfPiHigh) - quarters * HalfPiLow;
+    const double quarters = Floor(value * TwoOverPi + 0.5);
+    double remainder = value - quarters * HalfPiPart1;
+    remainder -= quarters * HalfPiPart2;
+    remainder -= quarters * HalfPiPart3;
     const double wrapped = quarters - 4.0 * Floor(quarters * 0.25);
     ReducedAngle reduced;
     reduced.remainder = remainder;
@@ -267,14 +285,22 @@ ReducedAngle ReduceAngle(double value) {
 }
 
 /// <summary>
-/// Reports whether an angle can still be reduced usefully. Above 2^52 consecutive doubles are more
-/// than one radian apart, so the argument carries no information about where in its period it sits
-/// and there is no multi-word pi here to recover it: the trigonometric functions answer nan rather
-/// than a confident wrong number. Below that the reduction stays in range but its error grows with
-/// the magnitude of the angle, from about 2e-14 near 100 radians to about 2e-12 near 20000.
+/// Reports whether an angle is small enough for the reduction above to keep its accuracy. The
+/// multiplier it hands to the two exact pieces of pi / 2 is value * 2 / pi, so a multiplier below
+/// 2^26 - which is what keeps the product with the 27-bit HalfPiPart1 inside 53 bits - allows any
+/// angle below 2^26 * pi / 2, about 1.05e8. The gate is the largest power of two inside that,
+/// 2^26 radians. Measured against the host libm over a log-uniform sweep of 40000 points per
+/// decade with both signs, the relative error (the accuracy smoke's measure, the scale floored at
+/// one) is flat at 1.11e-15 for sine and cosine and 1.8e-15 for tangent from 1 all the way to 1e8,
+/// and first breaks the smoke tolerances between 1.2e8 and 1.5e8, where it jumps to 1.05e-8 for
+/// sine and 4.2e-3 for tangent. Past the gate the answer is nan: there is no multi-word pi here to
+/// recover an angle this file cannot reduce, and a nan is easier to notice than a confident wrong
+/// number. Tangent shares the gate because its own reduction error is the same; what tangent adds
+/// is its poles, where the relative error grows with the size of the result at every magnitude,
+/// large or small, and not because of the reduction.
 /// </summary>
 bool IsReducibleAngle(double value) {
-    return Fabs(value) < 4503599627370496.0;
+    return Fabs(value) <= 67108864.0;
 }
 
 /// <summary>The arc tangent Taylor series, for arguments no larger than tan(15 degrees).</summary>

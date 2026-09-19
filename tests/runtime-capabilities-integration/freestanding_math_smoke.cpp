@@ -43,6 +43,17 @@ int main() {
     }
     failures += Check("sqrt-large", soft::Sqrt(1.0e12), 1.0e6, 1e-12);
     failures += Check("sin-large", soft::Sin(1000.0), ::sin(1000.0), 1e-7);
+    // Large angles: the software reduction subtracts an exact multiple of pi / 2 up to the gate
+    // freestanding_math.cpp documents, 2^26 radians, and answers NaN above it.
+    const double gate = 67108864.0;
+    const double justUnderGate = ::nextafter(gate, 0.0);
+    failures += Check("sin-1e6", soft::Sin(1.0e6), ::sin(1.0e6), 1e-9);
+    failures += Check("cos-1e6", soft::Cos(1.0e6), ::cos(1.0e6), 1e-9);
+    failures += Check("tan-1e6", soft::Tan(1.0e6), ::tan(1.0e6), 1e-8);
+    failures += Check("sin-gate", soft::Sin(justUnderGate), ::sin(justUnderGate), 1e-9);
+    failures += Check("cos-gate", soft::Cos(justUnderGate), ::cos(justUnderGate), 1e-9);
+    failures += Check("tan-gate", soft::Tan(justUnderGate), ::tan(justUnderGate), 1e-8);
+    if (soft::Sin(gate * 2.0) == soft::Sin(gate * 2.0)) { puts("sin past the reduction gate must be NaN"); ++failures; }
     if (soft::Sqrt(-1.0) == soft::Sqrt(-1.0)) { puts("sqrt(-1) must be NaN"); ++failures; }
     if (soft::Finite(soft::Sqrt(-1.0)) != 0 || soft::Finite(1.0) != 1) { puts("finite"); ++failures; }
     if (soft::Log(0.0) > -1.0e300) { puts("log(0) must be -inf"); ++failures; }
