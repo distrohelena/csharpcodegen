@@ -269,6 +269,40 @@ public class CPPClassEmitterTests {
     }
 
     /// <summary>
+    /// Ensures imported global and namespace-qualified pointer signatures include their external generated headers.
+    /// </summary>
+    [Fact]
+    public void Emit_WithImportedGlobalAndNamespacedPointerSignatures_EmitsExternalHeaders() {
+        CPPClassEmitter emitter = CreateEmitter();
+        ConversionClass conversionClass = new ConversionClass {
+            Name = "ImportedPointerConsumer",
+            DeclarationType = MemberDeclarationType.Interface
+        };
+
+        conversionClass.Functions.Add(new ConversionFunction {
+            Name = "FindBody",
+            AccessType = MemberAccessType.Public,
+            ReturnType = new VariableType(VariableDataType.Object, "RigidBody3DComponent", genericArgs: []) {
+                QualifiedTypeName = "helengine.RigidBody3DComponent"
+            }
+        });
+        conversionClass.Functions.Add(new ConversionFunction {
+            Name = "ResolveRuntime",
+            AccessType = MemberAccessType.Public,
+            ReturnType = new VariableType(VariableDataType.Object, "IPhysicsBodySynchronizationRuntime3D", genericArgs: []) {
+                QualifiedTypeName = "helengine.physics.IPhysicsBodySynchronizationRuntime3D"
+            }
+        });
+
+        (string header, _) = Emit(emitter, conversionClass);
+
+        Assert.Contains("#include \"RigidBody3DComponent.hpp\"", header, StringComparison.Ordinal);
+        Assert.Contains("#include \"IPhysicsBodySynchronizationRuntime3D.hpp\"", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("class helengine::", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("class helengine.physics::", header, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Creates the emitter under test with the current C++ processor and runtime program model.
     /// </summary>
     /// <returns>The class emitter to exercise.</returns>

@@ -874,9 +874,6 @@ namespace cs2.cpp {
             }
 
             VariableType referencedType = VariableUtil.GetVarType(normalizedIncludeCandidate);
-            if (referencedType.GenericArgs == null || referencedType.GenericArgs.Count == 0) {
-                return false;
-            }
 
             string qualifiedTypeName = GetReferencedTypeName(referencedType);
             if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
@@ -1981,9 +1978,24 @@ namespace cs2.cpp {
             HashSet<string> referencedTypes,
             HashSet<string> includeRequiredTypes,
             HashSet<string> excludedTypeNames) {
-            string typeName = program.FindGeneratedClass(typeSymbol)?.GetEmittedTypeName()
-                ?? NormalizeReferencedClassName(typeSymbol.Name);
-            if (!excludedTypeNames.Contains(typeName)) {
+            ConversionClass generatedClass = program.FindGeneratedClass(typeSymbol);
+            VariableType semanticType = VariableUtil.GetVarType(typeSymbol);
+            string semanticTypeName = GetReferencedTypeName(semanticType);
+            string leafTypeName = NormalizeReferencedClassName(typeSymbol.Name);
+            bool preserveSemanticIdentity = IsNativeExceptionQualifiedTypeName(semanticTypeName);
+            string typeName = generatedClass?.GetEmittedTypeName()
+                ?? (preserveSemanticIdentity ? semanticTypeName : leafTypeName);
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                typeName = leafTypeName;
+            }
+
+            if (!string.Equals(typeName, leafTypeName, StringComparison.Ordinal)) {
+                referencedTypes.Remove(leafTypeName);
+                includeRequiredTypes.Remove(leafTypeName);
+            }
+
+            if (!excludedTypeNames.Contains(typeName) &&
+                !excludedTypeNames.Contains(leafTypeName)) {
                 referencedTypes.Add(typeName);
                 includeRequiredTypes.Add(typeName);
             }

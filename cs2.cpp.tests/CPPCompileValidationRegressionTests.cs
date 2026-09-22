@@ -132,6 +132,51 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures semantic framework exception bases use the native exception runtime while a user-defined same-named base remains a generated header dependency.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSemanticExceptionBases_PreservesFrameworkAndUserDefinedIdentity() {
+            ConversionOutput nativeOutput = RunConversion("""
+                public class NativeFailure : System.InvalidOperationException {
+                }
+                """);
+            string nativeHeader = File.ReadAllText(Path.Combine(nativeOutput.OutputPath, "NativeFailure.hpp"));
+
+            ConversionOutput userOutput = RunConversion("""
+                public class InvalidOperationException {
+                }
+
+                public class UserFailure : InvalidOperationException {
+                }
+                """);
+            string userHeader = File.ReadAllText(Path.Combine(userOutput.OutputPath, "UserFailure.hpp"));
+
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", nativeHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"InvalidOperationException.hpp\"", nativeHeader, StringComparison.Ordinal);
+            Assert.Contains("#include \"InvalidOperationException.hpp\"", userHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic inheritance emits its specialized generated header without a duplicate unspecialized header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericBase_EmitsOnlySpecializedHeader() {
+            string source = """
+                public interface ShaderContentProcessorBase<T> {
+                }
+
+                public class ShaderContentProcessor : ShaderContentProcessorBase<int> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ShaderContentProcessor.hpp"));
+
+            Assert.Contains(@"#include ""ShaderContentProcessorBase_1.hpp""", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(@"#include ""ShaderContentProcessorBase.hpp""", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures inherited classes and method-body type references emit the includes and base declaration required for native compile visibility.
         /// </summary>
         [Fact]
