@@ -44,6 +44,12 @@ namespace cs2.cpp {
         internal CPPOwnershipAnalysisResult OwnershipAnalysisResult { get; private set; }
 
         /// <summary>
+        /// Gets the validated P/Invoke plan (native imports, callback trampolines, and mirror structs) for the active
+        /// conversion run; null before the P/Invoke analysis stage runs and an empty plan when the project has no imports.
+        /// </summary>
+        internal CPPPInvokePlan PInvokePlan { get; private set; }
+
+        /// <summary>
         /// Exposes the program model to lowering processors through the host seam.
         /// </summary>
         ConversionProgram ICPPConversionHost.Program => Program;
@@ -52,6 +58,11 @@ namespace cs2.cpp {
         /// Exposes the ownership plan to lowering processors through the host seam.
         /// </summary>
         CPPOwnershipAnalysisResult ICPPConversionHost.OwnershipAnalysisResult => OwnershipAnalysisResult;
+
+        /// <summary>
+        /// Exposes the P/Invoke plan to lowering processors through the host seam.
+        /// </summary>
+        CPPPInvokePlan ICPPConversionHost.PInvokePlan => PInvokePlan;
 
         /// <summary>
         /// Exposes instantiated generated types to lowering processors through the host seam.
@@ -227,6 +238,7 @@ namespace cs2.cpp {
                    .AddStage(new CPPPreprocessorFilterStage(this))
                    .AddStage(new CPPAssemblyMetadataStage(this))
                    .AddStage(new DocumentPreprocessingStage())
+                   .AddStage(new CPPPInvokeAnalysisStage(this))
                    .AddStage(new CPPOwnershipAnalysisStage(this))
                    .AddStage(new ClassProcessingStage())
                    .AddStage(new ProgramSortingStage());
@@ -541,6 +553,7 @@ namespace cs2.cpp {
             }
 
             OwnershipAnalysisResult = null;
+            PInvokePlan = null;
             tsProgram.ClearEmittedTypeNameIndex();
 
             Report.Reset();
@@ -566,6 +579,15 @@ namespace cs2.cpp {
             }
 
             OwnershipAnalysisResult = result;
+        }
+
+        /// <summary>
+        /// Stores the validated P/Invoke plan produced by the P/Invoke analysis stage for downstream C++ lowering.
+        /// </summary>
+        /// <param name="plan">Plan of native imports, callback trampolines, and mirror structs for the active project closure.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="plan"/> is null.</exception>
+        internal void SetPInvokePlan(CPPPInvokePlan plan) {
+            PInvokePlan = plan ?? throw new ArgumentNullException(nameof(plan));
         }
 
         /// <summary>

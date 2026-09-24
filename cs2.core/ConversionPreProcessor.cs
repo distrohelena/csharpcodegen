@@ -398,6 +398,12 @@ namespace cs2.core {
                 func.NativeFreeFunctionName = nativeFreeFunctionName;
                 func.NativeFreeFunctionIncludePath = nativeFreeFunctionIncludePath;
             }
+            if (methodSymbol != null) {
+                func.MethodId = methodSymbol.OriginalDefinition.GetDocumentationCommentId() ?? string.Empty;
+                func.IsDllImport = methodSymbol.GetDllImportData() != null;
+                func.IsUnmanagedCallersOnly = methodSymbol.GetAttributes().Any(attribute =>
+                    attribute.AttributeClass?.ToDisplayString() == "System.Runtime.InteropServices.UnmanagedCallersOnlyAttribute");
+            }
 
             ApplyFunctionReturnType(method.ReturnType, semantic, func);
 

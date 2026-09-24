@@ -69,6 +69,9 @@ namespace cs2.cpp {
         public CPPOwnershipAnalysisResult OwnershipAnalysisResult => Owner.OwnershipAnalysisResult;
 
         /// <inheritdoc />
+        public CPPPInvokePlan PInvokePlan => Owner.PInvokePlan;
+
+        /// <inheritdoc />
         public CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar => ClassRegistrar;
 
         /// <inheritdoc />

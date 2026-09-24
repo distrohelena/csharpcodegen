@@ -37,6 +37,21 @@ namespace cs2.core {
         public bool ReturnsReference { get; set; }
         public string NativeFreeFunctionName { get; set; }
         public string NativeFreeFunctionIncludePath { get; set; }
+        /// <summary>
+        /// Gets or sets the documentation-comment id of the original method definition, used to match this function
+        /// against P/Invoke plan entries; empty when the function has no resolved method symbol.
+        /// </summary>
+        public string MethodId { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the source method is a <c>DllImport</c> extern declaration, which is
+        /// lowered to a direct native call and therefore never emitted as a generated member or throwing stub.
+        /// </summary>
+        public bool IsDllImport { get; set; }
+        /// <summary>
+        /// Gets or sets a value indicating whether the source method carries <c>UnmanagedCallersOnly</c>, meaning native
+        /// code may call it through a generated callback trampoline.
+        /// </summary>
+        public bool IsUnmanagedCallersOnly { get; set; }
         public SemanticModel Semantic { get; set; }
 
         public List<ConversionVariable> InParameters { get; set; }
@@ -70,6 +85,7 @@ namespace cs2.core {
             BodyVariables = new List<ConversionFunctionVariableUsage>();
             NativeFreeFunctionName = string.Empty;
             NativeFreeFunctionIncludePath = string.Empty;
+            MethodId = string.Empty;
         }
 
         public string GetGenericArguments() {

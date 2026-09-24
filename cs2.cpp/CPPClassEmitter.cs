@@ -633,7 +633,7 @@ namespace cs2.cpp {
                 sourceWriter.WriteLine($"#include \"{requirement.IncludePath}\"");
             }
 
-            if (conversionClass.Functions.Any(function => !function.HasBody) &&
+            if (conversionClass.Functions.Any(function => !function.HasBody && !function.IsDllImport) &&
                 emittedIncludePaths.Add("runtime/native_exceptions.hpp")) {
                 sourceWriter.WriteLine("#include \"runtime/native_exceptions.hpp\"");
             }
@@ -3361,7 +3361,7 @@ namespace cs2.cpp {
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunction(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter, TextWriter sourceWriter) {
-            if (IsNativeFreeFunctionStub(function)) {
+            if (IsNativeFreeFunctionStub(function) || function.IsDllImport) {
                 return;
             }
 
@@ -3441,7 +3441,7 @@ namespace cs2.cpp {
         /// <param name="function">The function to declare.</param>
         /// <param name="headerWriter">Writer that receives the declaration.</param>
         void WriteFunctionDeclaration(ConversionClass conversionClass, ConversionFunction function, TextWriter headerWriter) {
-            if (IsNativeFreeFunctionStub(function)) {
+            if (IsNativeFreeFunctionStub(function) || function.IsDllImport) {
                 return;
             }
 
@@ -3483,7 +3483,7 @@ namespace cs2.cpp {
         /// <param name="function">The function to define.</param>
         /// <param name="sourceWriter">Writer that receives the definition.</param>
         void WriteFunctionDefinition(ConversionClass conversionClass, ConversionFunction function, TextWriter sourceWriter) {
-            if (IsNativeFreeFunctionStub(function)) {
+            if (IsNativeFreeFunctionStub(function) || function.IsDllImport) {
                 return;
             }
 

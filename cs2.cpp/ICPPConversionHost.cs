@@ -27,6 +27,12 @@ namespace cs2.cpp {
         CPPOwnershipAnalysisResult OwnershipAnalysisResult { get; }
 
         /// <summary>
+        /// Gets the validated P/Invoke plan (native imports, callback trampolines, and mirror structs) for the active run,
+        /// or null before P/Invoke analysis.
+        /// </summary>
+        CPPPInvokePlan PInvokePlan { get; }
+
+        /// <summary>
         /// Gets the registrar that records runtime requirements for lowering performed through this host.
         /// </summary>
         CPPRuntimeRequirementRegistrar RuntimeRequirementRegistrar { get; }

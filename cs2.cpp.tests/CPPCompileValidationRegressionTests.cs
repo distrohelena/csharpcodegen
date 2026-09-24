@@ -11747,7 +11747,7 @@ namespace cs2.cpp.tests {
         /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
         /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
-        static ConversionOutput RunConversion(
+        internal static ConversionOutput RunConversion(
             string source,
             bool allowUnsafe = false,
             bool loadNativeRuntimeMetadata = false,
@@ -11916,7 +11916,7 @@ namespace cs2.cpp.tests {
         /// <param name="OutputPath">Generated output directory.</param>
         /// <param name="GeneratedText">Concatenated generated textual output.</param>
         /// <param name="Report">Parsed conversion report.</param>
-        record ConversionOutput(string OutputPath, string GeneratedText, JsonDocument Report);
+        internal record ConversionOutput(string OutputPath, string GeneratedText, JsonDocument Report);
 
     /// <summary>
         /// Ensures inherited object hashes use portable identity hashing while explicit overrides remain ordinary calls.
