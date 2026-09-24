@@ -110,4 +110,29 @@ public sealed class CPPPInvokeCallbackTests {
         Assert.Contains("    static_assert(offsetof(Hidden, A) == offsetof(he_pinvoke_Hidden, A)", source, StringComparison.Ordinal);
         Assert.Contains("    static_assert(offsetof(Hidden, B) == offsetof(he_pinvoke_Hidden, B)", source, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Ensures casts between native-sized integers or void* and unmanaged function pointers go through the wrapper's
+    /// raw pointer type in both directions, instead of a static_cast the wrapper does not support.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_UnmanagedFunctionPointerCasts_ReinterpretRawPointer() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            public static unsafe class Casts {
+                public static nint RoundTrip(nint value) {
+                    delegate* unmanaged[Stdcall]<int, int> pointer = (delegate* unmanaged[Stdcall]<int, int>)value;
+                    return (nint)pointer;
+                }
+                public static nuint ToUnsigned(delegate* unmanaged[Cdecl]<int> pointer) { return (nuint)pointer; }
+                public static void* ToVoid(delegate* unmanaged[Cdecl]<int> pointer) { return (void*)pointer; }
+                public static int FromVoid(void* address) { delegate* unmanaged[Cdecl]<int> pointer = (delegate* unmanaged[Cdecl]<int>)address; return pointer(); }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Casts.cpp"));
+        Assert.Contains("StdcallFunctionPointer<int32_t, int32_t>(reinterpret_cast<StdcallFunctionPointer<int32_t, int32_t>::PointerType>(value))", source, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<intptr_t>(he_cpp_raw_function_pointer(pointer))", source, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<uintptr_t>(he_cpp_raw_function_pointer(pointer))", source, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<void*>(he_cpp_raw_function_pointer(pointer))", source, StringComparison.Ordinal);
+        Assert.Contains("CdeclFunctionPointer<int32_t>(reinterpret_cast<CdeclFunctionPointer<int32_t>::PointerType>(address))", source, StringComparison.Ordinal);
+    }
 }

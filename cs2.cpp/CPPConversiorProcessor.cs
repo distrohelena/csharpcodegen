@@ -12958,6 +12958,10 @@ namespace cs2.cpp {
                     sourceResult.AfterLines);
             }
 
+            if (TryProcessUnmanagedFunctionPointerCast(semantic, context, castExpr, castTargetTypeName, varType, lines, out ExpressionResult functionPointerCastResult)) {
+                return functionPointerCastResult;
+            }
+
             ITypeSymbol sourceExpressionTypeSymbol = semantic.GetTypeInfo(castExpr.Expression).Type ?? semantic.GetTypeInfo(castExpr.Expression).ConvertedType;
             bool sourceExpressionTypeKnown = sourceExpressionTypeSymbol != null;
             VariableType sourceType = sourceExpressionTypeKnown
@@ -13009,6 +13013,81 @@ namespace cs2.cpp {
             lines.Add(")");
 
             return new ExpressionResult(true, VariablePath.Unknown, varType);
+        }
+
+        /// <summary>
+        /// Lowers a cast between a native address (<c>nint</c>, <c>nuint</c>, or a pointer) and a
+        /// <c>delegate* unmanaged[Stdcall]</c>/<c>[Cdecl]</c> value. An address obtained from native code (for example
+        /// from <c>GetProcAddress</c>) is wrapped by constructing the stdcall/cdecl wrapper from a
+        /// <c>reinterpret_cast</c> to its raw <c>PointerType</c>; a wrapper converted back to an address unwraps its raw
+        /// pointer through <c>he_cpp_raw_function_pointer</c> first. Managed <c>delegate*</c> casts are not handled here.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to classify the cast's source and target types.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="castExpr">Cast expression being lowered.</param>
+        /// <param name="castTargetTypeName">Rendered C++ name of the cast's target type.</param>
+        /// <param name="targetType">Managed target type of the cast, reported as the expression's type.</param>
+        /// <param name="lines">Output token buffer receiving the lowered cast.</param>
+        /// <param name="result">Expression result of the lowered cast when this method returns <c>true</c>.</param>
+        /// <returns><c>true</c> when the cast converts between a native address and an unmanaged function pointer.</returns>
+        bool TryProcessUnmanagedFunctionPointerCast(
+            SemanticModel semantic,
+            LayerContext context,
+            CastExpressionSyntax castExpr,
+            string castTargetTypeName,
+            VariableType targetType,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+            ITypeSymbol targetTypeSymbol = semantic.GetTypeInfo(castExpr.Type).Type;
+            ITypeSymbol sourceTypeSymbol = semantic.GetTypeInfo(castExpr.Expression).Type;
+            if (targetTypeSymbol == null || sourceTypeSymbol == null) {
+                return false;
+            }
+
+            string prefix;
+            string suffix;
+            if (IsNativeCallingConventionFunctionPointer(targetTypeSymbol) && IsNativeAddressType(sourceTypeSymbol)) {
+                prefix = $"{castTargetTypeName}(reinterpret_cast<{castTargetTypeName}::PointerType>(";
+                suffix = "))";
+            } else if (IsNativeAddressType(targetTypeSymbol) && IsNativeCallingConventionFunctionPointer(sourceTypeSymbol)) {
+                prefix = $"reinterpret_cast<{castTargetTypeName}>(he_cpp_raw_function_pointer(";
+                suffix = "))";
+            } else {
+                return false;
+            }
+
+            lines.Add(prefix);
+            ExpressionResult sourceResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
+            lines.Add(suffix);
+            result = new ExpressionResult(sourceResult.Processed, VariablePath.Unknown, targetType, sourceResult.BeforeLines, sourceResult.AfterLines);
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether a type is a <c>delegate* unmanaged</c> function pointer lowered to the stdcall or cdecl
+        /// wrapper (as opposed to a managed <c>delegate*</c>, which keeps the managed function-pointer wrapper).
+        /// </summary>
+        /// <param name="type">Type to classify.</param>
+        /// <returns><c>true</c> for stdcall and cdecl unmanaged function pointers.</returns>
+        static bool IsNativeCallingConventionFunctionPointer(ITypeSymbol type) {
+            if (type is not IFunctionPointerTypeSymbol functionPointer) {
+                return false;
+            }
+
+            UnmanagedCallingConventionKind kind = UnmanagedCallingConventionResolver.Resolve(functionPointer.Signature);
+            return kind == UnmanagedCallingConventionKind.StdCall || kind == UnmanagedCallingConventionKind.Cdecl;
+        }
+
+        /// <summary>
+        /// Determines whether a type holds a native address: <c>nint</c>, <c>nuint</c>, or any unmanaged pointer.
+        /// </summary>
+        /// <param name="type">Type to classify.</param>
+        /// <returns><c>true</c> when the type is a native-sized integer or a pointer.</returns>
+        static bool IsNativeAddressType(ITypeSymbol type) {
+            return type.SpecialType == SpecialType.System_IntPtr ||
+                type.SpecialType == SpecialType.System_UIntPtr ||
+                type is IPointerTypeSymbol;
         }
 
         static bool IsIntegerLikeCppTypeName(string cppTypeName) {

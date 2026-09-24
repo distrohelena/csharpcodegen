@@ -36,6 +36,32 @@ public sealed class CPPPInvokeNativeExecutionTests {
     }
 
     /// <summary>
+    /// Ensures an address obtained from native code (GetProcAddress) casts to a stdcall unmanaged function pointer and is
+    /// invoked through it with the declared convention. The module and symbol names are passed as pointers into
+    /// stackalloc buffers because the codegen does not support <c>fixed</c>.
+    /// </summary>
+    [Fact]
+    public void GetProcAddress_CastToUnmanagedFunctionPointer_InvokesAndMatchesManaged() {
+        AssertNativeMatchesManaged("""
+            using System.Runtime.InteropServices;
+            public static unsafe class Probe {
+                [DllImport("kernel32.dll")] static extern nint GetModuleHandleW(ushort* moduleName);
+                [DllImport("kernel32.dll")] static extern nint GetProcAddress(nint module, byte* procName);
+                public static long Run() {
+                    ushort* moduleName = stackalloc ushort[] { 'k', 'e', 'r', 'n', 'e', 'l', '3', '2', '.', 'd', 'l', 'l', 0 };
+                    byte* procName = stackalloc byte[] { (byte)'G', (byte)'e', (byte)'t', (byte)'T', (byte)'i', (byte)'c', (byte)'k', (byte)'C', (byte)'o', (byte)'u', (byte)'n', (byte)'t', (byte)'6', (byte)'4', 0 };
+                    nint address = GetProcAddress(GetModuleHandleW(moduleName), procName);
+                    if (address == 0) {
+                        return -1;
+                    }
+                    delegate* unmanaged[Stdcall]<ulong> getTickCount64 = (delegate* unmanaged[Stdcall]<ulong>)address;
+                    return getTickCount64() > 0 ? 1 : 0;
+                }
+            }
+            """, string.Empty, value => value == 1);
+    }
+
+    /// <summary>
     /// Ensures a by-ref struct import compiles in a unity build that already includes Windows.h and matches the managed result.
     /// </summary>
     [Fact]
