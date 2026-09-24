@@ -1,6 +1,5 @@
+using cs2.core;
 using Microsoft.CodeAnalysis;
-using System.Collections.Immutable;
-using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 
 namespace cs2.cpp;
@@ -213,30 +212,17 @@ public sealed class CPPPInvokeTypeLowerer {
     CPPPInvokeTypeLoweringResult LowerFunctionPointer(IFunctionPointerTypeSymbol functionPointer) {
         IMethodSymbol signature = functionPointer.Signature;
         CPPPInvokeCallingConvention callingConvention;
-        switch (signature.CallingConvention) {
-            case SignatureCallingConvention.StdCall:
+        switch (UnmanagedCallingConventionResolver.Resolve(signature)) {
+            case UnmanagedCallingConventionKind.StdCall:
                 callingConvention = CPPPInvokeCallingConvention.StdCall;
                 break;
-            case SignatureCallingConvention.CDecl:
+            case UnmanagedCallingConventionKind.Cdecl:
                 callingConvention = CPPPInvokeCallingConvention.Cdecl;
                 break;
-            case SignatureCallingConvention.Unmanaged:
-                ImmutableArray<INamedTypeSymbol> unmanagedConventions = signature.UnmanagedCallingConventionTypes;
-                if (unmanagedConventions.Length == 0) {
-                    callingConvention = CPPPInvokeCallingConvention.StdCall;
-                } else if (unmanagedConventions.Length == 1 && unmanagedConventions[0].Name == "CallConvStdcall") {
-                    callingConvention = CPPPInvokeCallingConvention.StdCall;
-                } else if (unmanagedConventions.Length == 1 && unmanagedConventions[0].Name == "CallConvCdecl") {
-                    callingConvention = CPPPInvokeCallingConvention.Cdecl;
-                } else {
-                    return CPPPInvokeTypeLoweringResult.Failure("unsupported calling convention", "use delegate* unmanaged[Stdcall] or delegate* unmanaged[Cdecl]");
-                }
-                break;
-            case SignatureCallingConvention.ThisCall:
-            case SignatureCallingConvention.FastCall:
-                return CPPPInvokeTypeLoweringResult.Failure("unsupported calling convention", "use delegate* unmanaged[Stdcall] or delegate* unmanaged[Cdecl]");
-            default:
+            case UnmanagedCallingConventionKind.Managed:
                 return CPPPInvokeTypeLoweringResult.Failure("managed function pointers cannot be called from native code", "use delegate* unmanaged[Stdcall]");
+            default:
+                return CPPPInvokeTypeLoweringResult.Failure("unsupported calling convention", "use delegate* unmanaged[Stdcall] or delegate* unmanaged[Cdecl]");
         }
 
         CPPPInvokeTypeLoweringResult returnResult = LowerReturn(signature.ReturnType, true);

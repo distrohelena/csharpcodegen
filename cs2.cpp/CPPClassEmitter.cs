@@ -1854,6 +1854,7 @@ namespace cs2.cpp {
             headerWriter.WriteLine("{");
             WriteNestedTypeFriendDeclarations(conversionClass, headerWriter);
             WriteCallbackTrampolineFriendDeclarations(conversionClass, headerWriter);
+            WriteMirrorLayoutCheckFriendDeclaration(conversionClass, headerWriter);
 
             if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
                 WriteInterfaceSection(conversionClass, headerWriter, sourceWriter);
@@ -1978,12 +1979,36 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Writes compile-time assertions that the generated struct and its native mirror agree on size, alignment, and
-        /// every field offset, so the bit copies performed by the native import forwarders are proven layout-safe.
-        /// Registers the native imports header, which declares the mirror, as a source include.
+        /// Builds the name of the layout-check struct that holds a mirrored struct's layout assertions.
+        /// </summary>
+        /// <param name="conversionClass">Mirrored struct whose checker is named.</param>
+        /// <returns>The checker struct name, <c>he_pinvoke_layout_check_&lt;GeneratedStructName&gt;</c>.</returns>
+        static string GetMirrorLayoutCheckName(ConversionClass conversionClass) {
+            return "he_pinvoke_layout_check_" + conversionClass.GetEmittedTypeName();
+        }
+
+        /// <summary>
+        /// Writes, inside a mirrored struct's class body, the <c>friend</c> declaration of its layout-check struct, so the
+        /// checker's <c>offsetof</c> assertions can name fields that are private in C# (the default field accessibility).
+        /// </summary>
+        /// <param name="conversionClass">Converted type that may be mirrored.</param>
+        /// <param name="headerWriter">Writer positioned inside the class definition.</param>
+        void WriteMirrorLayoutCheckFriendDeclaration(ConversionClass conversionClass, TextWriter headerWriter) {
+            if (!TryGetMirrorStruct(conversionClass, out _)) {
+                return;
+            }
+
+            headerWriter.WriteLine($"    friend struct {GetMirrorLayoutCheckName(conversionClass)};");
+        }
+
+        /// <summary>
+        /// Writes the befriended layout-check struct whose compile-time assertions prove that the generated struct and its
+        /// native mirror agree on size, alignment, and every field offset, so the bit copies performed by the native import
+        /// forwarders are layout-safe. The assertions live inside the friend struct so they have member access to private
+        /// fields. Registers the native imports header, which declares the mirror, as a source include.
         /// </summary>
         /// <param name="conversionClass">Converted struct to check against its mirror.</param>
-        /// <param name="sourceWriter">Writer that receives the assertions.</param>
+        /// <param name="sourceWriter">Writer that receives the layout-check struct.</param>
         void WriteMirrorLayoutAssertions(ConversionClass conversionClass, TextWriter sourceWriter) {
             if (!TryGetMirrorStruct(conversionClass, out CPPPInvokeMirrorStruct mirrorStruct)) {
                 return;
@@ -1992,11 +2017,13 @@ namespace cs2.cpp {
             conversionClass.SourceIncludes.Add($"{CPPNativeImportsWriter.FolderName}/{CPPNativeImportsWriter.HeaderFileName}");
             string structName = GetQualifiedClassName(conversionClass);
             string mirrorName = mirrorStruct.MirrorName;
-            sourceWriter.WriteLine($"static_assert(sizeof({structName}) == sizeof({mirrorName}), \"{structName} size differs from its native mirror {mirrorName}.\");");
-            sourceWriter.WriteLine($"static_assert(alignof({structName}) == alignof({mirrorName}), \"{structName} alignment differs from its native mirror {mirrorName}.\");");
+            sourceWriter.WriteLine($"struct {GetMirrorLayoutCheckName(conversionClass)} {{");
+            sourceWriter.WriteLine($"    static_assert(sizeof({structName}) == sizeof({mirrorName}), \"{structName} size differs from its native mirror {mirrorName}.\");");
+            sourceWriter.WriteLine($"    static_assert(alignof({structName}) == alignof({mirrorName}), \"{structName} alignment differs from its native mirror {mirrorName}.\");");
             foreach (CPPPInvokeMirrorField field in mirrorStruct.Fields) {
-                sourceWriter.WriteLine($"static_assert(offsetof({structName}, {field.Name}) == offsetof({mirrorName}, {field.Name}), \"{structName}::{field.Name} offset differs from its native mirror {mirrorName}.\");");
+                sourceWriter.WriteLine($"    static_assert(offsetof({structName}, {field.Name}) == offsetof({mirrorName}, {field.Name}), \"{structName}::{field.Name} offset differs from its native mirror {mirrorName}.\");");
             }
+            sourceWriter.WriteLine("};");
             sourceWriter.WriteLine();
         }
 

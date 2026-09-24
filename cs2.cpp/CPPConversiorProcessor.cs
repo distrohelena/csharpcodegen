@@ -2366,6 +2366,23 @@ namespace cs2.cpp {
         }
 
         /// <summary>
+        /// Determines whether a call-site argument is a null constant: a <c>null</c> or <c>default</c> literal, or any
+        /// expression Roslyn folds to the constant <c>null</c>. Such arguments carry no function-pointer wrapper to unwrap,
+        /// so DllImport lowering passes them as a typed <c>nullptr</c>.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to fold the argument's constant value.</param>
+        /// <param name="expression">Argument expression to inspect.</param>
+        /// <returns><c>true</c> when the argument is a null constant; otherwise, <c>false</c>.</returns>
+        static bool IsNullConstantArgument(SemanticModel semantic, ExpressionSyntax expression) {
+            if (IsNullLikeExpression(expression)) {
+                return true;
+            }
+
+            Optional<object> constantValue = semantic.GetConstantValue(expression);
+            return constantValue.HasValue && constantValue.Value == null;
+        }
+
+        /// <summary>
         /// Emits semantic replacement or null-release cleanup for one ownership-tracked local assignment.
         /// </summary>
         /// <param name="semantic">Semantic model used to lower the replacement value.</param>
@@ -8790,7 +8807,12 @@ namespace cs2.cpp {
                     callLines.Add(", ");
                 }
 
-                callLines.Add(import.Signature.Parameters[index].FormatForwarderArgument(string.Concat(loweredArgumentLines)));
+                CPPPInvokeParameter importParameter = import.Signature.Parameters[index];
+                if (importParameter.Type.Kind == CPPPInvokeValueKind.FunctionPointer && IsNullConstantArgument(semantic, argument.Expression)) {
+                    callLines.Add(importParameter.FormatNullFunctionPointerArgument());
+                } else {
+                    callLines.Add(importParameter.FormatForwarderArgument(string.Concat(loweredArgumentLines)));
+                }
             }
 
             callLines.Add(")");

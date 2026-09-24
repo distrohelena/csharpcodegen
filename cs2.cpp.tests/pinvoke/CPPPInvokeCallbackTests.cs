@@ -27,6 +27,25 @@ public sealed class CPPPInvokeCallbackTests {
         """;
 
     /// <summary>
+    /// Source that passes null constants for an unmanaged function-pointer parameter and a by-value struct whose fields
+    /// are private (the C# default) to DllImports.
+    /// </summary>
+    const string NullCallbackAndPrivateFieldsSource = """
+        using System.Runtime.InteropServices;
+        public struct Hidden { int A; int B; public Hidden(int a, int b) { A = a; B = b; } }
+        public static unsafe class Probe {
+            [DllImport("kernel32.dll")] static extern int EnumSystemLocalesEx(delegate* unmanaged[Stdcall]<ushort*, uint, nint, int> callback, uint flags, nint lParam, nint reserved);
+            [DllImport("user32.dll")] static extern nint WindowFromPoint(Hidden point);
+            public static int Run() {
+                int first = EnumSystemLocalesEx(null, 0, 0, 0);
+                int second = EnumSystemLocalesEx(default, 0, 0, 0);
+                WindowFromPoint(new Hidden(1, 2));
+                return first + second;
+            }
+        }
+        """;
+
+    /// <summary>
     /// Ensures the trampoline is emitted with the calling convention, noexcept and a forwarding body.
     /// </summary>
     [Fact]
@@ -35,6 +54,7 @@ public sealed class CPPPInvokeCallbackTests {
         string header = File.ReadAllText(Path.Combine(output.OutputPath, "Locales.hpp"));
         string source = File.ReadAllText(Path.Combine(output.OutputPath, "Locales.cpp"));
         Assert.Contains("int32_t HE_CPP_STDCALL he_pinvoke_cb_Locales_OnLocale(", header, StringComparison.Ordinal);
+        Assert.Contains("friend int32_t HE_CPP_STDCALL he_pinvoke_cb_Locales_OnLocale(", header, StringComparison.Ordinal);
         Assert.Contains(") noexcept;", header, StringComparison.Ordinal);
         Assert.Contains("return Locales::OnLocale(name, flags, lParam);", source, StringComparison.Ordinal);
     }
@@ -60,5 +80,34 @@ public sealed class CPPPInvokeCallbackTests {
         Assert.Contains("static_assert(sizeof(NativePoint) == sizeof(he_pinvoke_NativePoint)", source, StringComparison.Ordinal);
         Assert.Contains("static_assert(alignof(NativePoint) == alignof(he_pinvoke_NativePoint)", source, StringComparison.Ordinal);
         Assert.Contains("static_assert(offsetof(NativePoint, Y) == offsetof(he_pinvoke_NativePoint, Y)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures null and default arguments for an unmanaged function-pointer parameter become a typed nullptr instead of
+    /// being unwrapped through he_cpp_raw_function_pointer, which has no overload for nullptr.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_NullFunctionPointerArgument_PassesTypedNullptr() {
+        var output = CPPCompileValidationRegressionTests.RunConversion(NullCallbackAndPrivateFieldsSource, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Probe.cpp"));
+        Assert.Contains("he_pinvoke::kernel32::EnumSystemLocalesEx(static_cast<int32_t (HE_CPP_STDCALL*)(void*,uint32_t,intptr_t)>(nullptr), ", source, StringComparison.Ordinal);
+        Assert.Equal(2, source.Split("static_cast<int32_t (HE_CPP_STDCALL*)(void*,uint32_t,intptr_t)>(nullptr)").Length - 1);
+        Assert.DoesNotContain("he_cpp_raw_function_pointer(nullptr)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a mirrored struct with private fields befriends its layout-check struct, and the checker holding the
+    /// layout assertions is defined in the struct's source file.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_MirrorStructWithPrivateFields_EmitsFriendLayoutCheck() {
+        var output = CPPCompileValidationRegressionTests.RunConversion(NullCallbackAndPrivateFieldsSource, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "Hidden.hpp"));
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Hidden.cpp"));
+        Assert.Contains("    friend struct he_pinvoke_layout_check_Hidden;", header, StringComparison.Ordinal);
+        Assert.Contains("struct he_pinvoke_layout_check_Hidden {", source, StringComparison.Ordinal);
+        Assert.Contains("    static_assert(sizeof(Hidden) == sizeof(he_pinvoke_Hidden)", source, StringComparison.Ordinal);
+        Assert.Contains("    static_assert(offsetof(Hidden, A) == offsetof(he_pinvoke_Hidden, A)", source, StringComparison.Ordinal);
+        Assert.Contains("    static_assert(offsetof(Hidden, B) == offsetof(he_pinvoke_Hidden, B)", source, StringComparison.Ordinal);
     }
 }

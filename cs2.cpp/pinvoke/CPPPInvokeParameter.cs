@@ -73,4 +73,18 @@ public sealed class CPPPInvokeParameter {
                 throw new InvalidOperationException($"P/Invoke parameter '{Name}' has lowered kind '{Type.Kind}', which cannot be passed as an argument.");
         }
     }
+
+    /// <summary>
+    /// Formats a null constant passed to this function-pointer parameter as a <c>nullptr</c> of the native mirror
+    /// function-pointer type. A null argument has no wrapper value to unwrap through <c>he_cpp_raw_function_pointer</c>.
+    /// </summary>
+    /// <returns>The C++ argument text to pass to the generated forwarder.</returns>
+    /// <exception cref="InvalidOperationException">The parameter is not a by-value function pointer.</exception>
+    public string FormatNullFunctionPointerArgument() {
+        if (RefKind != RefKind.None || Type.Kind != CPPPInvokeValueKind.FunctionPointer) {
+            throw new InvalidOperationException($"P/Invoke parameter '{Name}' is not a by-value function pointer, so a null function-pointer argument cannot be formatted for it.");
+        }
+
+        return $"static_cast<{Type.MirrorTypeText}>(nullptr)";
+    }
 }
