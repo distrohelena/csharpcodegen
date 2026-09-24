@@ -48,6 +48,39 @@ public sealed class CPPGeneratedProgramRunner {
     /// </param>
     /// <returns>Compiler diagnostics plus the executed program's exit code and standard output.</returns>
     public CPPGeneratedProgramResult Run(string entryPointBody, string entryPointPrelude) {
+        return RunWithDeveloperCommandArguments(entryPointBody, entryPointPrelude, string.Empty);
+    }
+
+    /// <summary>
+    /// Writes the entry point with a caller-supplied prelude, compiles and links it for an explicit target architecture,
+    /// and runs the executable. On Windows the architecture is passed to <c>VsDevCmd.bat</c> as <c>-arch=</c>, so the same
+    /// generated output can be verified as both a 32-bit and a 64-bit program.
+    /// </summary>
+    /// <param name="entryPointBody">C++ statements placed inside <c>main</c>; the generated unity source and iostream are already included.</param>
+    /// <param name="entryPointPrelude">
+    /// C++ text written before the generated unity include; pass <see cref="string.Empty"/> for none.
+    /// </param>
+    /// <param name="targetArchitecture">VsDevCmd target architecture, for example <c>x86</c> or <c>amd64</c>.</param>
+    /// <returns>Compiler diagnostics plus the executed program's exit code and standard output.</returns>
+    public CPPGeneratedProgramResult Run(string entryPointBody, string entryPointPrelude, string targetArchitecture) {
+        if (string.IsNullOrWhiteSpace(targetArchitecture)) {
+            throw new ArgumentException("A target architecture is required to select the MSVC toolset.", nameof(targetArchitecture));
+        }
+
+        return RunWithDeveloperCommandArguments(entryPointBody, entryPointPrelude, " -arch=" + targetArchitecture);
+    }
+
+    /// <summary>
+    /// Writes the entry point, compiles and links it against the generated sources, and runs the executable.
+    /// </summary>
+    /// <param name="entryPointBody">C++ statements placed inside <c>main</c>.</param>
+    /// <param name="entryPointPrelude">C++ text written before the generated unity include; empty for none.</param>
+    /// <param name="developerCommandArguments">
+    /// Extra arguments appended to the <c>VsDevCmd.bat</c> call on Windows (for example <c> -arch=x86</c>), or
+    /// <see cref="string.Empty"/> to use the developer command's default architecture.
+    /// </param>
+    /// <returns>Compiler diagnostics plus the executed program's exit code and standard output.</returns>
+    CPPGeneratedProgramResult RunWithDeveloperCommandArguments(string entryPointBody, string entryPointPrelude, string developerCommandArguments) {
         if (string.IsNullOrWhiteSpace(entryPointBody)) {
             throw new ArgumentException("An entry point body is required to run a generated program.", nameof(entryPointBody));
         }
@@ -61,7 +94,7 @@ public sealed class CPPGeneratedProgramRunner {
         string programPath = Path.Combine(buildDirectory, ProgramFileName);
         File.WriteAllText(entryPointPath, BuildEntryPointSource(entryPointBody, entryPointPrelude));
 
-        int compilerExitCode = RunProcess(CreateCompilerStartInfo(entryPointPath, programPath, buildDirectory), out string compilerOutput);
+        int compilerExitCode = RunProcess(CreateCompilerStartInfo(entryPointPath, programPath, buildDirectory, developerCommandArguments), out string compilerOutput);
         if (compilerExitCode != 0) {
             return new CPPGeneratedProgramResult(compilerExitCode, compilerOutput, -1, string.Empty);
         }
@@ -111,8 +144,9 @@ public sealed class CPPGeneratedProgramRunner {
     /// <param name="entryPointPath">Entry-point translation unit path.</param>
     /// <param name="programPath">Executable output path.</param>
     /// <param name="buildDirectory">Directory receiving intermediate objects.</param>
+    /// <param name="developerCommandArguments">Extra arguments appended to the <c>VsDevCmd.bat</c> call on Windows.</param>
     /// <returns>A redirected, non-interactive compiler process configuration.</returns>
-    System.Diagnostics.ProcessStartInfo CreateCompilerStartInfo(string entryPointPath, string programPath, string buildDirectory) {
+    System.Diagnostics.ProcessStartInfo CreateCompilerStartInfo(string entryPointPath, string programPath, string buildDirectory, string developerCommandArguments) {
         System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo {
             WorkingDirectory = buildDirectory,
             UseShellExecute = false,
@@ -131,7 +165,7 @@ public sealed class CPPGeneratedProgramRunner {
             File.WriteAllText(
                 compileScriptPath,
                 "@echo off\r\n"
-                + $"call \"{developerCommandPath}\" -no_logo\r\n"
+                + $"call \"{developerCommandPath}\" -no_logo{developerCommandArguments}\r\n"
                 + "if errorlevel 1 exit /b %errorlevel%\r\n"
                 + $"cl /nologo /std:c++20 /EHsc /I\"{OutputPath}\" /I\"{Path.Combine(OutputPath, "runtime")}\" "
                 + $"/Fo\"{buildDirectory}\\\\\" \"{entryPointPath}\"{nativeImportsArgument} /Fe\"{programPath}\"{linkLibraryArguments}\r\n"

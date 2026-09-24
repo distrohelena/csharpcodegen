@@ -369,6 +369,30 @@ public sealed class CPPPInvokeConversionTests {
     }
 
     /// <summary>
+    /// Ensures a by-value struct return is bit-copied from the forwarder's mirror into the generated struct, and a
+    /// pointer return is reinterpreted from the forwarder's void* to the generated pointer type.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_StructAndPointerReturns_ConvertForwarderResults() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public struct Coord { public short X; public short Y; }
+            public static unsafe class NativeConsole {
+                [DllImport("kernel32.dll")] static extern Coord GetLargestConsoleWindowSize(nint consoleOutput);
+                [DllImport("kernel32.dll")] static extern ushort* GetCommandLineW();
+                public static short Width(nint handle) { Coord size = GetLargestConsoleWindowSize(handle); return size.X; }
+                public static ushort First() { ushort* commandLine = GetCommandLineW(); return commandLine[0]; }
+            }
+            """, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "native_imports", "native_imports.hpp"));
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "NativeConsole.cpp"));
+        Assert.Contains("he_pinvoke_Coord GetLargestConsoleWindowSize(intptr_t consoleOutput);", header, StringComparison.Ordinal);
+        Assert.Contains("void* GetCommandLineW();", header, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke_bit_copy<::Coord>(he_pinvoke::kernel32::GetLargestConsoleWindowSize(handle))", source, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<uint16_t*>(he_pinvoke::kernel32::GetCommandLineW())", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Ensures a struct whose address alone crosses the boundary (out parameter, and the pointee of a pointer
     /// parameter) still gets a mirror in the header and friend layout assertions in its generated source.
     /// </summary>
