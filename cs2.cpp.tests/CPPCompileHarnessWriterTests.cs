@@ -102,4 +102,41 @@ public class CPPCompileHarnessWriterTests {
         Assert.DoesNotContain("GeneratedRuntimeModuleManifestAttribute.cpp", unity);
         Assert.DoesNotContain("RuntimeFeatureRequirementAttribute.cpp", unity);
     }
+
+    /// <summary>
+    /// Ensures the isolated native-imports translation unit is excluded from the unity build and compiled by both build
+    /// scripts as a second object.
+    /// </summary>
+    [Fact]
+    public void Write_WithNativeImportsSource_CompilesItAsSecondObject() {
+        string outputFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(outputFolder, "native_imports"));
+        File.WriteAllText(Path.Combine(outputFolder, "Core.cpp"), "int core = 1;" + Environment.NewLine);
+        File.WriteAllText(Path.Combine(outputFolder, "native_imports", "native_imports.cpp"), "int imports = 1;" + Environment.NewLine);
+
+        CPPCompileHarnessWriter.Write(outputFolder, CPPConversionOptions.CreateDefault());
+
+        string unity = File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.UnityFileName));
+        string gcc = File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.GccBuildScriptFileName));
+        string msvc = File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.MsvcBuildScriptFileName));
+        Assert.Contains("Core.cpp", unity);
+        Assert.DoesNotContain("native_imports", unity);
+        Assert.Contains("cl /nologo /std:c++20 /EHsc /I\"%SCRIPT_DIR%.\" /I\"%SCRIPT_DIR%runtime\" /c \"%SCRIPT_DIR%native_imports\\native_imports.cpp\" /Fo\"%BUILD_DIR%\\native_imports.obj\"", msvc);
+        Assert.Contains("g++ -std=c++20 -I\"$SCRIPT_DIR\" -I\"$SCRIPT_DIR/runtime\" -c \"$SCRIPT_DIR/native_imports/native_imports.cpp\" -o \"$BUILD_DIR/native_imports.o\"", gcc);
+    }
+
+    /// <summary>
+    /// Ensures build scripts do not reference the native-imports translation unit when it was not generated.
+    /// </summary>
+    [Fact]
+    public void Write_WithoutNativeImportsSource_OmitsSecondObject() {
+        string outputFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputFolder);
+        File.WriteAllText(Path.Combine(outputFolder, "Core.cpp"), "int core = 1;" + Environment.NewLine);
+
+        CPPCompileHarnessWriter.Write(outputFolder, CPPConversionOptions.CreateDefault());
+
+        Assert.DoesNotContain("native_imports", File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.GccBuildScriptFileName)));
+        Assert.DoesNotContain("native_imports", File.ReadAllText(Path.Combine(outputFolder, CPPCompileHarnessWriter.MsvcBuildScriptFileName)));
+    }
 }

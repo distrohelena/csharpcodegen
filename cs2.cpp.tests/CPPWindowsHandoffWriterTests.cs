@@ -36,6 +36,22 @@ public class CPPWindowsHandoffWriterTests {
     }
 
     /// <summary>
+    /// Ensures a plan without native imports publishes empty native-import source and link-library variables.
+    /// </summary>
+    [Fact]
+    public void Write_WithEmptyPlan_PublishesEmptyNativeImportVariables() {
+        string folder = Path.Combine(Path.GetTempPath(), "cs2cpp-windows-handoff-tests", Guid.NewGuid().ToString("N"));
+        CPPPInvokePlan emptyPlan = new CPPPInvokePlan(new List<CPPPInvokeImport>(), new List<CPPPInvokeCallback>(), new List<CPPPInvokeMirrorStruct>());
+
+        string handoffPath = CPPWindowsHandoffWriter.Write(folder, emptyPlan);
+
+        string handoff = File.ReadAllText(handoffPath);
+        Assert.Contains("set(CPP_GENERATED_CORE_ROOT \"${CMAKE_CURRENT_LIST_DIR}\")", handoff, StringComparison.Ordinal);
+        Assert.Contains("set(CPP_GENERATED_NATIVE_IMPORTS_SOURCE \"\")", handoff, StringComparison.Ordinal);
+        Assert.Contains("set(CPP_GENERATED_NATIVE_LINK_LIBRARIES \"\")", handoff, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Creates a minimal SDK-style project file for temporary converter fixtures.
     /// </summary>
     /// <returns>Project file content suitable for Roslyn-based analysis.</returns>

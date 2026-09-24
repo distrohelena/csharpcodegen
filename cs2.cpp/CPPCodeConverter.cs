@@ -300,13 +300,17 @@ namespace cs2.cpp {
                 TrackEmittedFile(manifestFile);
             }
 
+            foreach (string nativeImportsFile in CPPNativeImportsWriter.Write(outputFolder, PInvokePlan)) {
+                TrackEmittedFile(nativeImportsFile);
+            }
+
             foreach (string harnessFile in CPPCompileHarnessWriter.Write(outputFolder, Options)) {
                 TrackEmittedFile(harnessFile);
             }
 
             CPPGeneratedOwnershipValidator.Validate(outputFolder);
 
-            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder);
+            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder, PInvokePlan);
             TrackEmittedFile(windowsHandoffPath);
 
             if (Options.WriteConversionReport) {
