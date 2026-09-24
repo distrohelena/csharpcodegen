@@ -99,18 +99,21 @@ namespace cs2.cpp {
         };
 
         /// <summary>
-        /// Returns a safe emitted C++ identifier for one source identifier.
+        /// Returns a safe emitted C++ identifier for one source identifier. A C# verbatim prefix (<c>@class</c>) is
+        /// dropped first, because <c>@</c> is not valid in C++ and <c>@name</c> and <c>name</c> are the same C# identifier;
+        /// the remaining name is then suffixed with <c>_</c> when it is a C++ keyword.
         /// </summary>
-        /// <param name="identifier">Source identifier to sanitize.</param>
-        /// <returns>The original identifier when it is safe, otherwise a suffixed safe name.</returns>
+        /// <param name="identifier">Source identifier to sanitize, as written in source or as a symbol name.</param>
+        /// <returns>The identifier without a verbatim prefix when it is safe, otherwise a suffixed safe name.</returns>
         public static string SanitizeIdentifier(string identifier) {
             if (string.IsNullOrWhiteSpace(identifier)) {
                 return identifier;
             }
 
-            return ReservedKeywords.Contains(identifier)
-                ? identifier + "_"
-                : identifier;
+            string name = identifier[0] == '@' ? identifier.Substring(1) : identifier;
+            return ReservedKeywords.Contains(name)
+                ? name + "_"
+                : name;
         }
     }
 }

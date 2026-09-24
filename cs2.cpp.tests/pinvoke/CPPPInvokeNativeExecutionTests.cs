@@ -237,6 +237,8 @@ public sealed class CPPPInvokeNativeExecutionTests {
 
     /// <summary>
     /// Ensures a stdcall callback round trip enumerates the same number of locales natively and managed, with lParam intact.
+    /// The callback's parameters are named with C++ keywords to prove the trampoline and the method agree on the
+    /// sanitized names.
     /// </summary>
     /// <param name="architecture">VsDevCmd target architecture.</param>
     [Theory]
@@ -255,8 +257,8 @@ public sealed class CPPPInvokeNativeExecutionTests {
                 static long BadParameter;
                 [DllImport("kernel32.dll")] static extern int EnumSystemLocalesEx(delegate* unmanaged[Stdcall]<ushort*, uint, nint, int> callback, uint flags, nint lParam, nint reserved);
                 [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-                static int OnLocale(ushort* name, uint flags, nint lParam) {
-                    if (lParam != 42) { BadParameter++; }
+                static int OnLocale(ushort* name, uint @struct, nint template) {
+                    if (template != 42) { BadParameter++; }
                     Count++;
                     return 1;
                 }

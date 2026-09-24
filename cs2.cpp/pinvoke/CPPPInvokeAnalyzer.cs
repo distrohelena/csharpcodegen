@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -65,6 +66,9 @@ public sealed class CPPPInvokeAnalyzer {
 
         Dictionary<string, int> callbackNameCountsByType = CountCallbackNamesByType(methods);
         List<CPPConversionDiagnostic> diagnostics = new List<CPPConversionDiagnostic>();
+        foreach (Compilation compilation in compilations) {
+            ReportUnreachableImports(compilation, diagnostics);
+        }
         CPPPInvokeTypeLowerer lowerer = new CPPPInvokeTypeLowerer();
         Dictionary<string, CPPPInvokeImport> importsByEntryPoint = new Dictionary<string, CPPPInvokeImport>(StringComparer.Ordinal);
         List<CPPPInvokeImport> imports = new List<CPPPInvokeImport>();
@@ -114,6 +118,59 @@ public sealed class CPPPInvokeAnalyzer {
                 CollectMethods(nested, methods);
             }
         }
+    }
+
+    /// <summary>
+    /// Reports every DllImport the member walk cannot turn into a forwarder, so the conversion fails with a CPPPINV
+    /// diagnostic instead of an emission-time exception: DllImport local functions (found by walking the syntax trees,
+    /// since local functions are not type members), and calls to DllImport methods declared in referenced (metadata)
+    /// assemblies, which have no source declaration to analyze.
+    /// </summary>
+    /// <param name="compilation">Compilation whose syntax trees are walked.</param>
+    /// <param name="diagnostics">List every rejection diagnostic is appended to.</param>
+    void ReportUnreachableImports(Compilation compilation, List<CPPConversionDiagnostic> diagnostics) {
+        foreach (SyntaxTree syntaxTree in compilation.SyntaxTrees) {
+            SemanticModel semanticModel = compilation.GetSemanticModel(syntaxTree);
+            foreach (SyntaxNode node in syntaxTree.GetRoot().DescendantNodes()) {
+                if (node is LocalFunctionStatementSyntax localFunction) {
+                    if (semanticModel.GetDeclaredSymbol(localFunction) is IMethodSymbol localMethod && localMethod.GetDllImportData() != null) {
+                        diagnostics.Add(DiagnosticFactory.Create(CPPPInvokeDiagnosticCodes.UnsupportedImportSetting, localFunction, localMethod,
+                            "DllImport local functions are not supported; forwarders are generated only for DllImport methods declared on types.",
+                            "Move the DllImport declaration to a static extern method of a class."));
+                    }
+                } else if (node is InvocationExpressionSyntax invocation) {
+                    if (semanticModel.GetSymbolInfo(invocation).Symbol is IMethodSymbol invokedMethod
+                        && invokedMethod.DeclaringSyntaxReferences.Length == 0
+                        && invokedMethod.GetDllImportData() != null) {
+                        diagnostics.Add(DiagnosticFactory.Create(CPPPInvokeDiagnosticCodes.UnsupportedImportSetting, invocation, invokedMethod,
+                            $"DllImport methods from referenced assemblies are not supported; '{invokedMethod.ToDisplayString()}' has no source declaration to generate a forwarder from.",
+                            "Declare the DllImport in a project that is transpiled together with this one."));
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Determines whether an entry point is a plain C identifier (<c>[A-Za-z_][A-Za-z0-9_]*</c>), the only form an
+    /// <c>extern "C"</c> prototype can name; ordinals (<c>#12</c>) and decorated names (<c>_F@4</c>) are not.
+    /// </summary>
+    /// <param name="entryPoint">Entry point to check.</param>
+    /// <returns><c>true</c> if the entry point is a valid C identifier; otherwise <c>false</c>.</returns>
+    static bool IsCIdentifier(string entryPoint) {
+        if (entryPoint.Length == 0 || (entryPoint[0] >= '0' && entryPoint[0] <= '9')) {
+            return false;
+        }
+        foreach (char character in entryPoint) {
+            bool isIdentifierCharacter = (character >= 'A' && character <= 'Z')
+                || (character >= 'a' && character <= 'z')
+                || (character >= '0' && character <= '9')
+                || character == '_';
+            if (!isIdentifierCharacter) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>
@@ -196,6 +253,14 @@ public sealed class CPPPInvokeAnalyzer {
             hasError = true;
         }
 
+        string entryPoint = string.IsNullOrEmpty(dllImportData.EntryPointName) ? method.Name : dllImportData.EntryPointName;
+        if (!IsCIdentifier(entryPoint)) {
+            diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedImportSetting,
+                $"Entry point '{entryPoint}' is not a valid C identifier; ordinals and decorated names are not supported by direct P/Invoke lowering.",
+                "Use the undecorated exported symbol name as the EntryPoint."));
+            hasError = true;
+        }
+
         if (!TryResolveCallingConvention(dllImportData.CallingConvention, out CPPPInvokeCallingConvention callingConvention)) {
             diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedCallingConvention,
                 $"Calling convention '{dllImportData.CallingConvention}' is not supported by direct P/Invoke lowering.",
@@ -214,8 +279,8 @@ public sealed class CPPPInvokeAnalyzer {
             return;
         }
 
-        string entryPoint = string.IsNullOrEmpty(dllImportData.EntryPointName) ? method.Name : dllImportData.EntryPointName;
         string library = CPPPInvokeLibraryNameNormalizer.Normalize(dllImportData.ModuleName);
+        string linkLibraryName = CPPPInvokeLibraryNameNormalizer.GetLinkLibraryName(dllImportData.ModuleName);
         string methodId = CPPPInvokeMethodIds.Get(method);
         CPPPInvokeSignature signature = new CPPPInvokeSignature(returnResult.Type, parameters, callingConvention);
 
@@ -236,7 +301,7 @@ public sealed class CPPPInvokeAnalyzer {
             return;
         }
 
-        CPPPInvokeImport import = new CPPPInvokeImport(library, entryPoint, signature);
+        CPPPInvokeImport import = new CPPPInvokeImport(library, linkLibraryName, entryPoint, signature);
         import.MethodIds.Add(methodId);
         importsByEntryPoint.Add(entryPoint, import);
         imports.Add(import);

@@ -31,9 +31,52 @@ public sealed class CPPPInvokeAnalyzerTests {
         Assert.False(result.HasErrors);
         CPPPInvokeImport import = Assert.Single(result.Plan.Imports);
         Assert.Equal("user32", import.LibraryNamespace);
+        Assert.Equal("User32", import.LinkLibraryName);
         Assert.Equal("SetWindowPos", import.EntryPoint);
         Assert.Equal("HE_CPP_STDCALL int32_t(intptr_t,intptr_t,int32_t,int32_t,int32_t,int32_t,uint32_t)", import.Signature.MirrorKey);
-        Assert.Equal(new[] { "user32" }, result.Plan.LinkLibraries);
+        Assert.Equal(new[] { "User32" }, result.Plan.LinkLibraries);
+    }
+
+    /// <summary>
+    /// Ensures a DllImport declared as a local function is rejected with a diagnostic instead of failing at emission.
+    /// </summary>
+    [Fact]
+    public void Analyze_LocalFunctionImport_ReportsCPPPINV003() {
+        CPPPInvokeAnalysisResult result = Analyze("""
+            using System.Runtime.InteropServices;
+            static class U {
+                public static int Run() {
+                    return Beep();
+                    [DllImport("user32.dll")] static extern int Beep();
+                }
+            }
+            """);
+
+        CPPConversionDiagnostic diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("CPPPINV003", diagnostic.Code);
+        Assert.Contains("DllImport local functions are not supported", diagnostic.Message, StringComparison.Ordinal);
+        Assert.True(diagnostic.LineNumber > 0);
+    }
+
+    /// <summary>
+    /// Ensures a call to a DllImport method declared in a referenced (metadata) assembly is rejected with a diagnostic
+    /// instead of failing at emission, since the analyzer only builds forwarders for source declarations.
+    /// </summary>
+    [Fact]
+    public void Analyze_CallToReferencedAssemblyImport_ReportsCPPPINV003() {
+        MetadataReference library = CPPPInvokeTestCompilation.CreateReference("""
+            using System.Runtime.InteropServices;
+            public static class NativeLibrary { [DllImport("user32.dll")] public static extern int MessageBeep(uint type); }
+            """);
+        Compilation consumer = CPPPInvokeTestCompilation.Create("""
+            public static class Consumer { public static int Run() { return NativeLibrary.MessageBeep(0); } }
+            """, new[] { library });
+
+        CPPPInvokeAnalysisResult result = new CPPPInvokeAnalyzer().Analyze(new[] { consumer });
+
+        CPPConversionDiagnostic diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("CPPPINV003", diagnostic.Code);
+        Assert.Contains("DllImport methods from referenced assemblies are not supported", diagnostic.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -63,6 +106,9 @@ public sealed class CPPPInvokeAnalyzerTests {
     [InlineData("[DllImport(\"user32.dll\")] static extern int F([MarshalAs(UnmanagedType.I4)] int value);", "CPPPINV003")]
     [InlineData("[DllImport(\"user32.dll\", CallingConvention = CallingConvention.ThisCall)] static extern int F();", "CPPPINV004")]
     [InlineData("[LibraryImport(\"user32.dll\")] private static partial int F(); private static partial int F() { return 0; }", "CPPPINV001")]
+    [InlineData("[DllImport(\"user32.dll\", EntryPoint = \"#12\")] static extern int F();", "CPPPINV003")]
+    [InlineData("[DllImport(\"user32.dll\", EntryPoint = \"_F@4\")] static extern int F(int value);", "CPPPINV003")]
+    [InlineData("[DllImport(\"user32.dll\", EntryPoint = \"?F@@YAHXZ\")] static extern int F();", "CPPPINV003")]
     public void Analyze_InvalidImport_ReportsCode(string declaration, string expectedCode) {
         CPPPInvokeAnalysisResult result = Analyze($$"""
             using System.Runtime.InteropServices;

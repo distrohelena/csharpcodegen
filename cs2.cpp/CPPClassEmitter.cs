@@ -1947,7 +1947,7 @@ namespace cs2.cpp {
             foreach (ConversionFunction function in conversionClass.Functions.Where(candidate => candidate.IsUnmanagedCallersOnly)) {
                 CPPPInvokeCallback callback = GetRequiredCallback(function);
                 string signature = BuildCallbackTrampolineSignature(conversionClass, function, callback);
-                string arguments = string.Join(", ", function.InParameters.Select(parameter => parameter.Name));
+                string arguments = string.Join(", ", function.InParameters.Select(parameter => CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name)));
                 string forwardedCall = $"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}({arguments});";
 
                 headerWriter.WriteLine();
@@ -3871,7 +3871,9 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Writes the function parameter list to the provided writer.
+        /// Writes the function parameter list to the provided writer. Parameter names go through
+        /// <see cref="CPPIdentifierSanitizer.SanitizeIdentifier(string)"/>, the same sanitization the method body uses when
+        /// it references them, so keyword-named and verbatim (<c>@name</c>) parameters are declared under the name the body uses.
         /// </summary>
         /// <param name="function">The function whose parameters will be written.</param>
         /// <param name="writer">Writer that receives the parameter list.</param>
@@ -3881,7 +3883,7 @@ namespace cs2.cpp {
                 string parameterType = GetParameterType(parameter, conversionClass, function);
                 string parameterName = useLoweredValueTypeInParameterNames && IsValueTypeInParameter(parameter)
                     ? GetLoweredValueTypeInParameterName(index)
-                    : parameter.Name;
+                    : CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
 
                 writer.Write($"{parameterType} {parameterName}");
 
@@ -3905,7 +3907,7 @@ namespace cs2.cpp {
                 }
 
                 string parameterType = ConvertType(parameter.VarType, conversionClass, function);
-                writer.WriteLine($"{parameterType} {parameter.Name} = {GetLoweredValueTypeInParameterName(index)};");
+                writer.WriteLine($"{parameterType} {CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name)} = {GetLoweredValueTypeInParameterName(index)};");
             }
         }
 

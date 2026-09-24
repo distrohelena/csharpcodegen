@@ -38,7 +38,7 @@ public sealed class CPPPInvokePlan {
         Imports = imports ?? throw new ArgumentNullException(nameof(imports));
         Callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
         MirrorStructs = mirrorStructs ?? throw new ArgumentNullException(nameof(mirrorStructs));
-        LinkLibraries = imports.Select(import => import.LibraryNamespace).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToList();
+        LinkLibraries = imports.Select(import => import.LinkLibraryName).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToList();
         foreach (CPPPInvokeImport import in imports) {
             foreach (string methodId in import.MethodIds) {
                 ImportsByMethodId[methodId] = import;
@@ -68,8 +68,9 @@ public sealed class CPPPInvokePlan {
     public IReadOnlyList<CPPPInvokeMirrorStruct> MirrorStructs { get; }
 
     /// <summary>
-    /// Gets the distinct native library namespaces referenced by <see cref="Imports"/>, sorted ordinally. This is the
-    /// exact set of libraries the generated project must link against.
+    /// Gets the distinct original library base names (<see cref="CPPPInvokeImport.LinkLibraryName"/>) referenced by
+    /// <see cref="Imports"/>, sorted ordinally. This is the exact set of libraries the generated project must link
+    /// against.
     /// </summary>
     public IReadOnlyList<string> LinkLibraries { get; }
 

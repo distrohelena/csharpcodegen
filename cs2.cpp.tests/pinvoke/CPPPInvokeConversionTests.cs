@@ -45,7 +45,6 @@ public sealed class CPPPInvokeConversionTests {
         #define HE_PINVOKE_NATIVE_IMPORTS_HPP
 
         #include <cstdint>
-        #include <cstring>
 
         #include "../runtime/native_calling_convention.hpp"
 
@@ -58,7 +57,11 @@ public sealed class CPPPInvokeConversionTests {
         inline TTo he_pinvoke_bit_copy(const TFrom& value) {
             static_assert(sizeof(TTo) == sizeof(TFrom), "he_pinvoke_bit_copy requires layout-compatible types.");
             TTo result;
-            std::memcpy(&result, &value, sizeof(TTo));
+            const unsigned char* source = reinterpret_cast<const unsigned char*>(&value);
+            unsigned char* destination = reinterpret_cast<unsigned char*>(&result);
+            for (decltype(sizeof(TTo)) index = 0; index < sizeof(TTo); ++index) {
+                destination[index] = source[index];
+            }
             return result;
         }
 
@@ -170,6 +173,47 @@ public sealed class CPPPInvokeConversionTests {
         Assert.Contains("set(CPP_GENERATED_NATIVE_IMPORTS_SOURCE \"${CPP_GENERATED_CORE_ROOT}/native_imports/native_imports.cpp\")", handoff, StringComparison.Ordinal);
         Assert.Contains("set(CPP_GENERATED_NATIVE_LINK_LIBRARIES \"kernel32;user32\")", handoff, StringComparison.Ordinal);
         Assert.Contains("native_imports.obj", msvc, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a library whose file name is not a C++ identifier keeps its original base name as the published link
+    /// library, while its forwarders live in the sanitized namespace.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_HyphenatedLibrary_PublishesOriginalLinkNameAndSanitizedNamespace() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Shell {
+                [DllImport("gevo-native.dll")] static extern int gevo_init();
+                [DllImport("user32.dll")] static extern nint GetForegroundWindow();
+                public static int Start() { return gevo_init(); }
+            }
+            """, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "native_imports", "native_imports.hpp"));
+        string handoff = File.ReadAllText(Path.Combine(output.OutputPath, "generated_windows_handoff.cmake"));
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Shell.cpp"));
+        Assert.Contains("namespace he_pinvoke::gevo_native {", header, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke::gevo_native::gevo_init()", source, StringComparison.Ordinal);
+        Assert.Contains("set(CPP_GENERATED_NATIVE_LINK_LIBRARIES \"gevo-native;user32\")", handoff, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a DllImport local function fails the conversion with a CPPPINV diagnostic instead of an emission-time
+    /// exception.
+    /// </summary>
+    [Fact]
+    public void AddCsproj_LocalFunctionImport_FailsWithCPPPINV003() {
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Clock {
+                public static ulong Now() {
+                    return GetTickCount64();
+                    [DllImport("kernel32.dll")] static extern ulong GetTickCount64();
+                }
+            }
+            """, allowUnsafe: true));
+        Assert.StartsWith("CPPPINV003", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DllImport local functions are not supported", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

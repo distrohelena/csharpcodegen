@@ -12,22 +12,31 @@ public sealed class CPPPInvokeImport {
     /// </summary>
     /// <param name="libraryNamespace">Normalized native library identifier, as produced by
     /// <see cref="CPPPInvokeLibraryNameNormalizer.Normalize(string)"/>.</param>
+    /// <param name="linkLibraryName">Original library base name the generated project links against, as produced by
+    /// <see cref="CPPPInvokeLibraryNameNormalizer.GetLinkLibraryName(string)"/>.</param>
     /// <param name="entryPoint">Exported native symbol name to call.</param>
     /// <param name="signature">Lowered native signature of the entry point.</param>
     /// <exception cref="ArgumentNullException">
-    /// <paramref name="libraryNamespace"/>, <paramref name="entryPoint"/>, or <paramref name="signature"/> is null.
+    /// <paramref name="libraryNamespace"/>, <paramref name="linkLibraryName"/>, <paramref name="entryPoint"/>, or
+    /// <paramref name="signature"/> is null.
     /// </exception>
-    public CPPPInvokeImport(string libraryNamespace, string entryPoint, CPPPInvokeSignature signature) {
+    public CPPPInvokeImport(string libraryNamespace, string linkLibraryName, string entryPoint, CPPPInvokeSignature signature) {
         LibraryNamespace = libraryNamespace ?? throw new ArgumentNullException(nameof(libraryNamespace));
+        LinkLibraryName = linkLibraryName ?? throw new ArgumentNullException(nameof(linkLibraryName));
         EntryPoint = entryPoint ?? throw new ArgumentNullException(nameof(entryPoint));
         Signature = signature ?? throw new ArgumentNullException(nameof(signature));
     }
 
     /// <summary>
-    /// Gets the normalized native library identifier this import links against, and the C++ namespace its forwarder is
-    /// declared in.
+    /// Gets the sanitized native library identifier used as the C++ namespace its forwarder is declared in.
     /// </summary>
     public string LibraryNamespace { get; }
+
+    /// <summary>
+    /// Gets the original library base name (directory and extension stripped, case and characters preserved) that
+    /// the generated project links against, for example <c>gevo-native</c> for <c>gevo-native.dll</c>.
+    /// </summary>
+    public string LinkLibraryName { get; }
 
     /// <summary>
     /// Gets the exported native symbol name this forwarder calls.

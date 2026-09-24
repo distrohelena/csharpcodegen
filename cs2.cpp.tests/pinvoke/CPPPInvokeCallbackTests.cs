@@ -112,6 +112,29 @@ public sealed class CPPPInvokeCallbackTests {
     }
 
     /// <summary>
+    /// Ensures a callback whose parameters are C++ keywords (a verbatim C# identifier and a C++-only keyword) declares
+    /// sanitized parameter names and forwards exactly those names, matching the references in the method body.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_CallbackWithKeywordParameters_ForwardsSanitizedNames() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.CompilerServices;
+            using System.Runtime.InteropServices;
+            public static class Hooks {
+                [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+                static int OnKey(int @class, nint template) { return @class + (int)template; }
+            }
+            """, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "Hooks.hpp"));
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Hooks.cpp"));
+        Assert.Contains("he_pinvoke_cb_Hooks_OnKey(int32_t class_, intptr_t template_) noexcept;", header, StringComparison.Ordinal);
+        Assert.Contains("static int32_t OnKey(int32_t class_, intptr_t template_);", header, StringComparison.Ordinal);
+        Assert.Contains("return Hooks::OnKey(class_, template_);", source, StringComparison.Ordinal);
+        Assert.Contains("return class_ + static_cast<int32_t>(template_);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("@class", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Ensures casts between native-sized integers or void* and unmanaged function pointers go through the wrapper's
     /// raw pointer type in both directions, instead of a static_cast the wrapper does not support.
     /// </summary>

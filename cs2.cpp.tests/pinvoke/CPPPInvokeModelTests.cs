@@ -22,6 +22,22 @@ public sealed class CPPPInvokeModelTests {
     }
 
     /// <summary>
+    /// Ensures the published link-library name keeps the module's base name exactly (case and punctuation preserved),
+    /// only stripping the directory and a known library extension.
+    /// </summary>
+    [Theory]
+    [InlineData("user32.dll", "user32")]
+    [InlineData("USER32", "USER32")]
+    [InlineData("C:\\libs\\gevo-native.dll", "gevo-native")]
+    [InlineData("libs/libfoo.so", "libfoo")]
+    [InlineData("3dlib.dylib", "3dlib")]
+    [InlineData("gevo_native.lib", "gevo_native")]
+    [InlineData("My.Native.dll", "My.Native")]
+    public void GetLinkLibraryName_KeepsOriginalBaseName(string moduleName, string expected) {
+        Assert.Equal(expected, CPPPInvokeLibraryNameNormalizer.GetLinkLibraryName(moduleName));
+    }
+
+    /// <summary>
     /// Ensures a blank module name is rejected instead of producing an empty namespace.
     /// </summary>
     [Fact]
@@ -56,16 +72,16 @@ public sealed class CPPPInvokeModelTests {
             new CPPPInvokeLoweredType(CPPPInvokeValueKind.Void, "void", null),
             Array.Empty<CPPPInvokeParameter>(),
             CPPPInvokeCallingConvention.StdCall);
-        CPPPInvokeImport user32 = new CPPPInvokeImport("user32", "GetForegroundWindow", signature);
+        CPPPInvokeImport user32 = new CPPPInvokeImport("user32", "User32", "GetForegroundWindow", signature);
         user32.MethodIds.Add("M:A.GetForegroundWindow");
-        CPPPInvokeImport kernel32 = new CPPPInvokeImport("kernel32", "GetTickCount64", signature);
+        CPPPInvokeImport kernel32 = new CPPPInvokeImport("kernel32", "kernel32", "GetTickCount64", signature);
         kernel32.MethodIds.Add("M:A.GetTickCount64");
-        CPPPInvokeImport user32Again = new CPPPInvokeImport("user32", "GetDesktopWindow", signature);
+        CPPPInvokeImport user32Again = new CPPPInvokeImport("user32", "User32", "GetDesktopWindow", signature);
         user32Again.MethodIds.Add("M:B.GetDesktopWindow");
 
         CPPPInvokePlan plan = new CPPPInvokePlan(new[] { user32, kernel32, user32Again }, Array.Empty<CPPPInvokeCallback>(), Array.Empty<CPPPInvokeMirrorStruct>());
 
-        Assert.Equal(new[] { "kernel32", "user32" }, plan.LinkLibraries);
+        Assert.Equal(new[] { "User32", "kernel32" }, plan.LinkLibraries);
         Assert.True(plan.HasNativeImports);
         Assert.True(plan.TryGetImport("M:B.GetDesktopWindow", out CPPPInvokeImport resolved));
         Assert.Equal("he_pinvoke::user32::GetDesktopWindow", resolved.ForwarderQualifiedName);

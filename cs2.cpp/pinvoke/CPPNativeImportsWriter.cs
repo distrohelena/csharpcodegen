@@ -2,9 +2,10 @@ namespace cs2.cpp;
 
 /// <summary>
 /// Writes the isolated native-imports translation unit for a P/Invoke plan. The header declares the native mirror
-/// structs and the namespaced forwarder functions generated code calls; it only includes portable standard headers and
-/// the calling-convention runtime header, so it never drags platform headers such as <c>Windows.h</c> into generated
-/// code. The source declares the raw <c>extern "C"</c> native prototypes and defines each forwarder as a direct call to
+/// structs and the namespaced forwarder functions generated code calls; it only includes <c>&lt;cstdint&gt;</c> and the
+/// calling-convention runtime header, so it never drags platform headers such as <c>Windows.h</c> into generated code,
+/// and it declares no C library function (its bit copy is a byte loop) that an import named <c>memcpy</c> or
+/// <c>strlen</c> could collide with. The source declares the raw <c>extern "C"</c> native prototypes and defines each forwarder as a direct call to
 /// its symbol, and is compiled as its own object outside the unity build.
 /// </summary>
 public static class CPPNativeImportsWriter {
@@ -84,7 +85,6 @@ public static class CPPNativeImportsWriter {
             "#define HE_PINVOKE_NATIVE_IMPORTS_HPP",
             string.Empty,
             "#include <cstdint>",
-            "#include <cstring>",
             string.Empty,
             "#include \"../runtime/native_calling_convention.hpp\"",
             string.Empty
@@ -99,7 +99,11 @@ public static class CPPNativeImportsWriter {
         lines.Add("inline TTo he_pinvoke_bit_copy(const TFrom& value) {");
         lines.Add(Indent + "static_assert(sizeof(TTo) == sizeof(TFrom), \"he_pinvoke_bit_copy requires layout-compatible types.\");");
         lines.Add(Indent + "TTo result;");
-        lines.Add(Indent + "std::memcpy(&result, &value, sizeof(TTo));");
+        lines.Add(Indent + "const unsigned char* source = reinterpret_cast<const unsigned char*>(&value);");
+        lines.Add(Indent + "unsigned char* destination = reinterpret_cast<unsigned char*>(&result);");
+        lines.Add(Indent + "for (decltype(sizeof(TTo)) index = 0; index < sizeof(TTo); ++index) {");
+        lines.Add(Indent + Indent + "destination[index] = source[index];");
+        lines.Add(Indent + "}");
         lines.Add(Indent + "return result;");
         lines.Add("}");
         lines.Add(string.Empty);
