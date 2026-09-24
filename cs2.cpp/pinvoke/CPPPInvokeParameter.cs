@@ -45,7 +45,8 @@ public sealed class CPPPInvokeParameter {
 
     /// <summary>
     /// Converts one lowered managed call-site argument into the native shape this forwarder parameter expects:
-    /// by-reference arguments pass their address as <c>void*</c>, pointers are reinterpreted as <c>void*</c>, enums are
+    /// by-reference arguments pass their address as <c>void*</c>, pointers convert to <c>void*</c> through
+    /// <c>static_cast</c> (valid for every object pointer and for <c>nullptr</c>), enums are
     /// cast to their underlying integer type, by-value structs are bit-copied into their mirror struct, function pointers
     /// are reinterpreted from their raw native address, and primitives pass through unchanged.
     /// </summary>
@@ -54,12 +55,12 @@ public sealed class CPPPInvokeParameter {
     /// <exception cref="InvalidOperationException">The parameter's lowered kind cannot appear in an argument position.</exception>
     public string FormatForwarderArgument(string argumentText) {
         if (RefKind != RefKind.None) {
-            return $"reinterpret_cast<void*>(&({argumentText}))";
+            return $"static_cast<void*>(&({argumentText}))";
         }
 
         switch (Type.Kind) {
             case CPPPInvokeValueKind.Pointer:
-                return $"reinterpret_cast<void*>({argumentText})";
+                return $"static_cast<void*>({argumentText})";
             case CPPPInvokeValueKind.Enum:
                 return $"static_cast<{Type.MirrorTypeText}>({argumentText})";
             case CPPPInvokeValueKind.Struct:

@@ -8751,8 +8751,12 @@ namespace cs2.cpp {
                 int start = context.DepthClass;
                 ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
                 context.PopClass(start);
+                // Out-variable declarations are added below by AddRefOrOutDeclarationBeforeLines and never evaluate user
+                // code, so hoisting them is always safe. Only preparation lines produced by lowering the argument
+                // expression itself evaluate user code, and hoisting those ahead of earlier inline arguments would reorder
+                // side effects.
                 if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
-                    if (arguments.Count > 1) {
+                    if (index > 0) {
                         ReportUnsupportedNode(
                             context,
                             invocationExpression,

@@ -254,7 +254,7 @@ public sealed class CPPPInvokeConversionTests {
             }
             """, allowUnsafe: true);
         string source = File.ReadAllText(Path.Combine(output.OutputPath, "Cursor.cpp"));
-        Assert.Contains("he_pinvoke::user32::GetCursorPos(reinterpret_cast<void*>(&(p)))", source, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke::user32::GetCursorPos(static_cast<void*>(&(p)))", source, StringComparison.Ordinal);
         Assert.True(source.IndexOf("NativePoint p", StringComparison.Ordinal) < source.IndexOf("he_pinvoke::user32::GetCursorPos", StringComparison.Ordinal));
     }
 
@@ -293,7 +293,63 @@ public sealed class CPPPInvokeConversionTests {
             """, allowUnsafe: true);
         string source = File.ReadAllText(Path.Combine(output.OutputPath, "Win.cpp"));
         Assert.Contains("he_pinvoke::user32::WindowFromPoint(he_pinvoke_bit_copy<he_pinvoke_NativePoint>(point))", source, StringComparison.Ordinal);
-        Assert.Contains("he_pinvoke::user32::GetWindowRect(hWnd, reinterpret_cast<void*>(rect))", source, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke::user32::GetWindowRect(hWnd, static_cast<void*>(rect))", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a null literal passed to a pointer parameter converts through static_cast, which accepts nullptr.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_NullPointerArgument_UsesStaticCast() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static unsafe class Module {
+                [DllImport("kernel32.dll")] static extern nint GetModuleHandleW(ushort* name);
+                public static nint Self() { return GetModuleHandleW(null); }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Module.cpp"));
+        Assert.Contains("he_pinvoke::kernel32::GetModuleHandleW(static_cast<void*>(nullptr))", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures an out-variable declared in a multi-argument call is hoisted before the statement and passed by address.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_MultiArgumentOutVar_HoistsDeclarationAndPassesAddress() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Threads {
+                [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+                public static uint Sum(nint hWnd) { uint thread = GetWindowThreadProcessId(hWnd, out uint pid); return pid + thread; }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Threads.cpp"));
+        int callIndex = source.IndexOf("he_pinvoke::user32::GetWindowThreadProcessId(hWnd, static_cast<void*>(&(pid)))", StringComparison.Ordinal);
+        int declarationIndex = source.IndexOf("uint32_t pid;", StringComparison.Ordinal);
+        Assert.True(callIndex >= 0, source);
+        Assert.True(declarationIndex >= 0 && declarationIndex < callIndex, source);
+    }
+
+    /// <summary>
+    /// Ensures two out-variables declared in one call are both hoisted before the statement and passed by address.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_TwoOutVars_HoistsBothDeclarations() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Pair {
+                [DllImport("api.dll")] static extern int GetPair(out int a, out int b);
+                public static int Sum() { GetPair(out int a, out var b); return a + b; }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Pair.cpp"));
+        int callIndex = source.IndexOf("he_pinvoke::api::GetPair(static_cast<void*>(&(a)), static_cast<void*>(&(b)))", StringComparison.Ordinal);
+        int firstDeclarationIndex = source.IndexOf("int32_t a;", StringComparison.Ordinal);
+        int secondDeclarationIndex = source.IndexOf("int32_t b;", StringComparison.Ordinal);
+        Assert.True(callIndex >= 0, source);
+        Assert.True(firstDeclarationIndex >= 0 && firstDeclarationIndex < callIndex, source);
+        Assert.True(secondDeclarationIndex >= 0 && secondDeclarationIndex < callIndex, source);
     }
 
     /// <summary>
