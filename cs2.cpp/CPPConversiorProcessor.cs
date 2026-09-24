@@ -5825,6 +5825,10 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, unsafeInvocationType);
             }
 
+            if (TryProcessPInvokeInvocation(semantic, context, invocationExpression, lines, out ExpressionResult pinvokeResult)) {
+                return pinvokeResult;
+            }
+
             if (TryProcessNativeFreeFunctionInvocation(semantic, context, invocationExpression, lines, out VariableType nativeFreeFunctionType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, nativeFreeFunctionType);
             }
@@ -8686,6 +8690,125 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Lowers a call to a <c>[DllImport]</c> method into a call to its generated namespaced native forwarder
+        /// (<c>he_pinvoke::&lt;lib&gt;::&lt;EntryPoint&gt;</c>), converting each argument to the forwarder's native parameter
+        /// shape and converting the native return value back to the generated managed type.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve the invoked method and lower its arguments.</param>
+        /// <param name="context">Current lowering context.</param>
+        /// <param name="invocationExpression">Candidate invocation expression.</param>
+        /// <param name="lines">Output token buffer receiving the forwarder call expression.</param>
+        /// <param name="result">Expression result carrying the managed return type and any statements (such as out-variable
+        /// declarations) that must be emitted before the enclosing statement.</param>
+        /// <returns><c>true</c> when the invocation targets a DllImport method and was lowered; otherwise <c>false</c>.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// The P/Invoke plan is unavailable or has no import for the method, or the call uses named or omitted arguments.
+        /// </exception>
+        bool TryProcessPInvokeInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = default;
+            IMethodSymbol methodSymbol = ResolveInvokedMethodSymbol(semantic, invocationExpression);
+            if (methodSymbol == null || methodSymbol.GetDllImportData() == null) {
+                return false;
+            }
+
+            CPPPInvokePlan plan = codeConverter.PInvokePlan;
+            if (plan == null) {
+                throw new InvalidOperationException($"DllImport method '{methodSymbol.ToDisplayString()}' was reached before the P/Invoke plan was built.");
+            }
+
+            if (!plan.TryGetImport(CPPPInvokeMethodIds.Get(methodSymbol), out CPPPInvokeImport import)) {
+                throw new InvalidOperationException($"DllImport method '{methodSymbol.ToDisplayString()}' is missing from the P/Invoke plan.");
+            }
+
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocationExpression.ArgumentList.Arguments;
+            if (arguments.Count != import.Signature.Parameters.Count ||
+                arguments.Count != methodSymbol.Parameters.Length ||
+                arguments.Any(argument => argument.NameColon != null)) {
+                throw new InvalidOperationException(
+                    $"Call to DllImport method '{methodSymbol.ToDisplayString()}': named or omitted arguments are not supported for DllImport calls.");
+            }
+
+            GetOwningEmissionClass(context).SourceIncludes.Add($"{CPPNativeImportsWriter.FolderName}/{CPPNativeImportsWriter.HeaderFileName}");
+
+            List<string> beforeLines = new List<string>();
+            List<string> callLines = new List<string> {
+                import.ForwarderQualifiedName,
+                "("
+            };
+            for (int index = 0; index < arguments.Count; index++) {
+                ArgumentSyntax argument = arguments[index];
+                IParameterSymbol parameterSymbol = methodSymbol.Parameters[index];
+
+                List<string> argumentExpressionLines = new List<string>();
+                int start = context.DepthClass;
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentExpressionLines);
+                context.PopClass(start);
+                if (argumentResult.BeforeLines != null && argumentResult.BeforeLines.Count > 0) {
+                    if (arguments.Count > 1) {
+                        ReportUnsupportedNode(
+                            context,
+                            invocationExpression,
+                            "The C++ backend cannot preserve left-to-right evaluation for this DllImport argument shape.");
+                    }
+
+                    beforeLines.AddRange(argumentResult.BeforeLines);
+                }
+
+                List<string> loweredArgumentLines = new List<string>();
+                AppendInvocationArgument(
+                    semantic,
+                    context,
+                    argument.Expression,
+                    argumentExpressionLines,
+                    parameterSymbol,
+                    methodSymbol,
+                    beforeLines,
+                    loweredArgumentLines);
+                if (!string.IsNullOrEmpty(argument.RefKindKeyword.ToString())) {
+                    AddRefOrOutDeclarationBeforeLines(semantic, context, argument.Expression, parameterSymbol, beforeLines);
+                }
+
+                if (index > 0) {
+                    callLines.Add(", ");
+                }
+
+                callLines.Add(import.Signature.Parameters[index].FormatForwarderArgument(string.Concat(loweredArgumentLines)));
+            }
+
+            callLines.Add(")");
+            string callText = string.Concat(callLines);
+
+            VariableType resultType = VariableUtil.GetVarType("void");
+            CPPPInvokeValueKind returnKind = import.Signature.ReturnType.Kind;
+            if (returnKind != CPPPInvokeValueKind.Void) {
+                resultType = VariableUtil.GetVarType(methodSymbol.ReturnType);
+            }
+
+            if (returnKind == CPPPInvokeValueKind.Enum ||
+                returnKind == CPPPInvokeValueKind.Pointer ||
+                returnKind == CPPPInvokeValueKind.Struct) {
+                RegisterGeneratedTypeReferences(context, resultType);
+                string generatedReturnType = QualifyRenderedCppTypeName(GetCppTypeToken(resultType, context.Program), context);
+                if (returnKind == CPPPInvokeValueKind.Enum) {
+                    callText = $"static_cast<{generatedReturnType}>({callText})";
+                } else if (returnKind == CPPPInvokeValueKind.Pointer) {
+                    callText = $"reinterpret_cast<{generatedReturnType}>({callText})";
+                } else {
+                    callText = $"he_pinvoke_bit_copy<{generatedReturnType}>({callText})";
+                }
+            }
+
+            lines.Add(callText);
+            result = new ExpressionResult(true, VariablePath.Unknown, resultType, beforeLines.Count > 0 ? beforeLines : null);
+            return true;
         }
 
         bool TryProcessNativeFreeFunctionInvocation(

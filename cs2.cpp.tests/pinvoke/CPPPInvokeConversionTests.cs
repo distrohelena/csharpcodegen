@@ -224,6 +224,95 @@ public sealed class CPPPInvokeConversionTests {
     }
 
     /// <summary>
+    /// Ensures a primitive import call targets the namespaced forwarder and includes the forwarder header.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_PrimitiveImportCall_UsesForwarder() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Clock {
+                [DllImport("kernel32.dll")] static extern ulong GetTickCount64();
+                public static ulong Now() { return GetTickCount64(); }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Clock.cpp"));
+        Assert.Contains("#include \"native_imports/native_imports.hpp\"", source, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke::kernel32::GetTickCount64()", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures out-var struct arguments declare the local first and pass its address as void*.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_OutVarStructArgument_DeclaresLocalAndPassesAddress() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public struct NativePoint { public int X; public int Y; }
+            public static class Cursor {
+                [DllImport("user32.dll")] static extern int GetCursorPos(out NativePoint point);
+                public static int ReadX() { GetCursorPos(out NativePoint p); return p.X; }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Cursor.cpp"));
+        Assert.Contains("he_pinvoke::user32::GetCursorPos(reinterpret_cast<void*>(&(p)))", source, StringComparison.Ordinal);
+        Assert.True(source.IndexOf("NativePoint p", StringComparison.Ordinal) < source.IndexOf("he_pinvoke::user32::GetCursorPos", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Ensures enum arguments and returns cast through the underlying integer type.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_EnumArgumentAndReturn_CastsThroughUnderlyingType() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public enum Show : int { Hide = 0, Normal = 1 }
+            public static class Win {
+                [DllImport("user32.dll")] static extern Show ShowWindow(nint hWnd, Show command);
+                public static Show Hide(nint hWnd) { return ShowWindow(hWnd, Show.Hide); }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Win.cpp"));
+        Assert.Contains("static_cast<int32_t>(", source, StringComparison.Ordinal);
+        Assert.Contains("static_cast<::Show>(he_pinvoke::user32::ShowWindow(", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures pointer arguments cross as void* and by-value structs are bit-copied into mirrors.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_PointerAndByValueStruct_AreConverted() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public struct NativePoint { public int X; public int Y; }
+            public static unsafe class Win {
+                [DllImport("user32.dll")] static extern nint WindowFromPoint(NativePoint point);
+                [DllImport("user32.dll")] static extern int GetWindowRect(nint hWnd, int* rect);
+                public static nint At(NativePoint point) { return WindowFromPoint(point); }
+                public static int Rect(nint hWnd, int* rect) { return GetWindowRect(hWnd, rect); }
+            }
+            """, allowUnsafe: true);
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Win.cpp"));
+        Assert.Contains("he_pinvoke::user32::WindowFromPoint(he_pinvoke_bit_copy<he_pinvoke_NativePoint>(point))", source, StringComparison.Ordinal);
+        Assert.Contains("he_pinvoke::user32::GetWindowRect(hWnd, reinterpret_cast<void*>(rect))", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures a DllImport call written with named arguments is rejected instead of being silently reordered.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_NamedImportArgument_Throws() {
+        Exception exception = Record.Exception(() => CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public static class Win {
+                [DllImport("user32.dll")] static extern int MoveTo(int x, int y);
+                public static int Move() { return MoveTo(y: 2, x: 1); }
+            }
+            """, allowUnsafe: true));
+        Assert.NotNull(exception);
+        Assert.Contains("named or omitted arguments are not supported for DllImport calls", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Counts ordinal occurrences of a fragment in generated text.
     /// </summary>
     /// <param name="text">Generated text to search.</param>

@@ -42,4 +42,34 @@ public sealed class CPPPInvokeParameter {
     /// the parameter is passed by reference (ref, out, or in), otherwise the parameter's lowered value type text.
     /// </summary>
     public string MirrorParameterText => RefKind != RefKind.None ? "void*" : Type.MirrorTypeText;
+
+    /// <summary>
+    /// Converts one lowered managed call-site argument into the native shape this forwarder parameter expects:
+    /// by-reference arguments pass their address as <c>void*</c>, pointers are reinterpreted as <c>void*</c>, enums are
+    /// cast to their underlying integer type, by-value structs are bit-copied into their mirror struct, function pointers
+    /// are reinterpreted from their raw native address, and primitives pass through unchanged.
+    /// </summary>
+    /// <param name="argumentText">Fully lowered C++ text of the managed argument expression.</param>
+    /// <returns>The C++ argument text to pass to the generated forwarder.</returns>
+    /// <exception cref="InvalidOperationException">The parameter's lowered kind cannot appear in an argument position.</exception>
+    public string FormatForwarderArgument(string argumentText) {
+        if (RefKind != RefKind.None) {
+            return $"reinterpret_cast<void*>(&({argumentText}))";
+        }
+
+        switch (Type.Kind) {
+            case CPPPInvokeValueKind.Pointer:
+                return $"reinterpret_cast<void*>({argumentText})";
+            case CPPPInvokeValueKind.Enum:
+                return $"static_cast<{Type.MirrorTypeText}>({argumentText})";
+            case CPPPInvokeValueKind.Struct:
+                return $"he_pinvoke_bit_copy<{Type.MirrorTypeText}>({argumentText})";
+            case CPPPInvokeValueKind.FunctionPointer:
+                return $"reinterpret_cast<{Type.MirrorTypeText}>(he_cpp_raw_function_pointer({argumentText}))";
+            case CPPPInvokeValueKind.Primitive:
+                return argumentText;
+            default:
+                throw new InvalidOperationException($"P/Invoke parameter '{Name}' has lowered kind '{Type.Kind}', which cannot be passed as an argument.");
+        }
+    }
 }
