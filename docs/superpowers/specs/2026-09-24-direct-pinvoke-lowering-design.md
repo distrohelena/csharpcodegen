@@ -41,10 +41,16 @@ Rules:
   `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`, `nint`, `nuint`,
   pointers `T*` where `T` is blittable or `void`,
   enums (lowered as their underlying type),
-  structs with `LayoutKind.Sequential` or `LayoutKind.Explicit` whose fields are all blittable (including `fixed` buffers),
+  structs (C# default `LayoutKind.Sequential`, optional `Pack`) whose instance fields are all blittable (see the MVP narrowing below for `Explicit` layout and `fixed` buffers),
   `delegate* unmanaged[...]` function pointers whose signature is itself allowed.
   Return type may also be `void`.
-- `ref`, `out` and `in` are allowed only on blittable primitives and blittable structs; they lower to pointers (the .NET runtime pins them without copying, so semantics match).
+- `ref` and `out` are allowed only on blittable primitives and blittable structs; they lower to pointers (the .NET runtime pins them without copying, so semantics match). `in` is rejected in the MVP because C# allows rvalue arguments for `in`, which have no address in the generated C++.
+- MVP narrowing (found while mapping the codegen, each is a `CPPPINV` error with a recommendation):
+  - structs containing `fixed` buffers — the codegen does not lower fixed-size buffers at all yet;
+  - `LayoutKind.Explicit` and `LayoutKind.Auto` structs passed **by value** — pass them by `ref`/`out`/pointer instead (a pointer needs no mirror);
+  - function-pointer **return** types — return `nint` and cast instead;
+  - by-value structs in `[UnmanagedCallersOnly]` signatures — use pointers;
+  - two `[UnmanagedCallersOnly]` methods with the same name in the same type (the trampoline name would collide).
 - **Rejected:** `bool`, `char` (their default .NET marshalling changes size — use `int`/`byte`/`ushort`), `string`, `StringBuilder`, arrays, classes, interfaces, managed delegates, generics, `[MarshalAs]`, `SetLastError = true`, `PreserveSig = false`, any `CharSet` other than the default, `BestFitMapping`, `ThrowOnUnmappableChar`.
 - **Calling convention:** `CallingConvention.Winapi` and `StdCall` → `__stdcall`; `Cdecl` → `__cdecl`; `ThisCall` and `FastCall` are rejected. (x64 ignores the distinction; emitting it keeps x86 correct.)
 - **Ownership:** extern methods carry only value types and raw pointers, so the ownership analysis has nothing to track. They are treated as leaf calls with no ownership summary.
@@ -63,7 +69,7 @@ Three generated artifacts:
      `namespace he_pinvoke::user32 { int32_t SetWindowPos(intptr_t, intptr_t, int32_t, int32_t, int32_t, int32_t, uint32_t); }`
 2. **`native_imports/native_imports.cpp`** — compiled **outside** the unity build. Includes only its own header. Contains the real `extern "C" <ret> <cc> <Symbol>(...)` prototypes and the forwarder definitions that call them.
 3. **Call sites in the unity build** call `he_pinvoke::<lib>::<Symbol>(...)`:
-   - `T*` arguments → `reinterpret_cast<void*>` (or the forwarder's pointer type); `ref`/`out`/`in` → address of the argument.
+   - `T*` arguments → `reinterpret_cast<void*>`; `ref`/`out` → `reinterpret_cast<void*>(&arg)`; enums → `static_cast` to the underlying integer; function pointers → `reinterpret_cast` of the raw pointer to the mirror function-pointer type. Every pointer crosses the boundary as `void*`, so only by-value structs need mirrors.
    - By-value structs are bit-copied (`memcpy` into a mirror temporary; results copied back).
    - For each generated struct/mirror pair the unity side emits `static_assert`s on `sizeof`, `alignof` and every field `offsetof`, so layout drift breaks the build instead of corrupting memory at runtime.
 
@@ -95,6 +101,10 @@ delegate* unmanaged[Stdcall]<nint, uint, nuint, nint, nint> proc = &WindowProc;
 - `&WindowProc` in a `delegate* unmanaged[...]` context lowers to the trampoline's address.
 - Exceptions escaping a callback reach `std::terminate` through `noexcept`. In .NET an exception escaping an `UnmanagedCallersOnly` method also fails fast, so behavior matches in both modes and no stack unwinds through C frames.
 - Invoking a `delegate* unmanaged[...]` value obtained from native code (e.g. `GetProcAddress`) calls through the raw pointer with the declared calling convention.
+- Type lowering: `delegate* unmanaged[Stdcall]<...>` becomes the runtime template `StdcallFunctionPointer<R, Args...>` and `delegate* unmanaged[Cdecl]<...>` becomes `CdeclFunctionPointer<R, Args...>`. Both have the same API as the existing `FunctionPointer<R, Args...>` but their `PointerType` carries the calling-convention macro (`HE_CPP_STDCALL`/`HE_CPP_CDECL` from the new `runtime/native_calling_convention.hpp`, which expand to `__stdcall`/`__cdecl` on `_WIN32` and to nothing elsewhere). A bare `delegate* unmanaged<...>` means the platform default, lowered as stdcall. Managed `delegate*<...>` is unchanged and is rejected in P/Invoke signatures.
+- Trampolines are emitted by the class emitter next to the owning class (declaration in its `.hpp`, definition in its `.cpp`), named `he_pinvoke_cb_<GeneratedTypeName>_<MethodName>`.
+- The `static_assert`s for a mirrored struct are emitted in that struct's generated `.cpp`, which includes `native_imports/native_imports.hpp`.
+- Method identity between the analysis stage and the emission workers uses Roslyn documentation-comment ids (`IMethodSymbol.OriginalDefinition.GetDocumentationCommentId()`), not symbol references.
 - Managed state for callbacks is passed through a static registry keyed by an integer (HWND or an id), not `GCHandle`.
 
 ## 4. Pipeline placement
