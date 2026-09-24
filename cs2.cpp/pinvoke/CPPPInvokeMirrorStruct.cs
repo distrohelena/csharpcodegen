@@ -3,8 +3,12 @@ using Microsoft.CodeAnalysis;
 namespace cs2.cpp;
 
 /// <summary>
-/// Describes one native mirror struct generated for a managed value type that crosses a P/Invoke boundary by value:
-/// its generated C++ name, the managed struct it mirrors, its packing, and its fields in layout order.
+/// Describes the native layout of one source-declared managed struct whose value or address crosses a P/Invoke
+/// boundary: its generated mirror name, the managed struct it mirrors, its packing, and its fields in layout order.
+/// Sequential structs get a declared mirror struct (used by forwarders when the struct crosses by value) and
+/// size/alignment/offset assertions against it; explicit-layout structs, which can only cross by address, get no
+/// declared mirror and instead assert every field offset against its <c>FieldOffset</c> and their size against the
+/// size .NET computes from the fields.
 /// </summary>
 public sealed class CPPPInvokeMirrorStruct {
     /// <summary>
@@ -13,19 +17,22 @@ public sealed class CPPPInvokeMirrorStruct {
     /// <param name="mirrorName">Name of the generated native struct type.</param>
     /// <param name="structType">Managed struct type this mirror struct was generated from.</param>
     /// <param name="pack">Explicit struct packing in bytes, or <c>0</c> to use the platform default packing.</param>
+    /// <param name="isExplicitLayout">Whether the managed struct uses <c>LayoutKind.Explicit</c>; every field then
+    /// carries its <c>FieldOffset</c>.</param>
     /// <param name="fields">Mirror fields in layout order.</param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="mirrorName"/>, <paramref name="structType"/>, or <paramref name="fields"/> is null.
     /// </exception>
-    public CPPPInvokeMirrorStruct(string mirrorName, INamedTypeSymbol structType, int pack, IReadOnlyList<CPPPInvokeMirrorField> fields) {
+    public CPPPInvokeMirrorStruct(string mirrorName, INamedTypeSymbol structType, int pack, bool isExplicitLayout, IReadOnlyList<CPPPInvokeMirrorField> fields) {
         MirrorName = mirrorName ?? throw new ArgumentNullException(nameof(mirrorName));
         StructType = structType ?? throw new ArgumentNullException(nameof(structType));
         Pack = pack;
+        IsExplicitLayout = isExplicitLayout;
         Fields = fields ?? throw new ArgumentNullException(nameof(fields));
     }
 
     /// <summary>
-    /// Gets the name of the generated native struct type.
+    /// Gets the name of the generated native struct type (declared only for sequential structs).
     /// </summary>
     public string MirrorName { get; }
 
@@ -38,6 +45,12 @@ public sealed class CPPPInvokeMirrorStruct {
     /// Gets the explicit struct packing in bytes, or <c>0</c> to use the platform default packing.
     /// </summary>
     public int Pack { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the managed struct uses <c>LayoutKind.Explicit</c>. Explicit-layout structs are
+    /// not declared in the native imports header; their layout is asserted field by field instead.
+    /// </summary>
+    public bool IsExplicitLayout { get; }
 
     /// <summary>
     /// Gets the mirror fields in layout order.

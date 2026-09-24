@@ -2002,12 +2002,14 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Writes the befriended layout-check struct whose compile-time assertions prove that the generated struct and its
-        /// native mirror agree on size, alignment, and every field offset, so the bit copies performed by the native import
-        /// forwarders are layout-safe. The assertions live inside the friend struct so they have member access to private
-        /// fields. Registers the native imports header, which declares the mirror, as a source include.
+        /// Writes the befriended layout-check struct whose compile-time assertions prove that the generated struct matches
+        /// the native layout .NET uses when the struct's value or address crosses a P/Invoke boundary, so bit copies and
+        /// pointers passed to native code are layout-safe. A sequential struct is checked against its native mirror (size,
+        /// alignment, and every field offset); an explicit-layout struct is checked against its <c>FieldOffset</c> values
+        /// and the size .NET computes from them. The assertions live inside the friend struct so they have member access
+        /// to private fields. Registers the native imports header, which declares the mirrors, as a source include.
         /// </summary>
-        /// <param name="conversionClass">Converted struct to check against its mirror.</param>
+        /// <param name="conversionClass">Converted struct to check.</param>
         /// <param name="sourceWriter">Writer that receives the layout-check struct.</param>
         void WriteMirrorLayoutAssertions(ConversionClass conversionClass, TextWriter sourceWriter) {
             if (!TryGetMirrorStruct(conversionClass, out CPPPInvokeMirrorStruct mirrorStruct)) {
@@ -2016,15 +2018,72 @@ namespace cs2.cpp {
 
             conversionClass.SourceIncludes.Add($"{CPPNativeImportsWriter.FolderName}/{CPPNativeImportsWriter.HeaderFileName}");
             string structName = GetQualifiedClassName(conversionClass);
-            string mirrorName = mirrorStruct.MirrorName;
             sourceWriter.WriteLine($"struct {GetMirrorLayoutCheckName(conversionClass)} {{");
-            sourceWriter.WriteLine($"    static_assert(sizeof({structName}) == sizeof({mirrorName}), \"{structName} size differs from its native mirror {mirrorName}.\");");
-            sourceWriter.WriteLine($"    static_assert(alignof({structName}) == alignof({mirrorName}), \"{structName} alignment differs from its native mirror {mirrorName}.\");");
-            foreach (CPPPInvokeMirrorField field in mirrorStruct.Fields) {
-                sourceWriter.WriteLine($"    static_assert(offsetof({structName}, {field.Name}) == offsetof({mirrorName}, {field.Name}), \"{structName}::{field.Name} offset differs from its native mirror {mirrorName}.\");");
+            if (mirrorStruct.IsExplicitLayout) {
+                WriteExplicitLayoutAssertions(structName, mirrorStruct, sourceWriter);
+            } else {
+                WriteSequentialMirrorAssertions(structName, mirrorStruct, sourceWriter);
             }
             sourceWriter.WriteLine("};");
             sourceWriter.WriteLine();
+        }
+
+        /// <summary>
+        /// Writes the assertions that a sequential generated struct and its declared native mirror agree on size,
+        /// alignment, and every field offset. Both sides name each field by the same sanitized identifier.
+        /// </summary>
+        /// <param name="structName">Qualified name of the generated struct.</param>
+        /// <param name="mirrorStruct">Sequential layout mirror of the struct.</param>
+        /// <param name="sourceWriter">Writer positioned inside the layout-check struct.</param>
+        static void WriteSequentialMirrorAssertions(string structName, CPPPInvokeMirrorStruct mirrorStruct, TextWriter sourceWriter) {
+            string mirrorName = mirrorStruct.MirrorName;
+            sourceWriter.WriteLine($"    static_assert(sizeof({structName}) == sizeof({mirrorName}), \"{structName} size differs from its native mirror {mirrorName}.\");");
+            sourceWriter.WriteLine($"    static_assert(alignof({structName}) == alignof({mirrorName}), \"{structName} alignment differs from its native mirror {mirrorName}.\");");
+            foreach (CPPPInvokeMirrorField field in mirrorStruct.Fields) {
+                string fieldName = CPPIdentifierSanitizer.SanitizeIdentifier(field.Name);
+                sourceWriter.WriteLine($"    static_assert(offsetof({structName}, {fieldName}) == offsetof({mirrorName}, {fieldName}), \"{structName}::{fieldName} offset differs from its native mirror {mirrorName}.\");");
+            }
+        }
+
+        /// <summary>
+        /// Writes the assertions for an explicit-layout struct, which has no declared mirror: every field offset must equal
+        /// its <c>FieldOffset</c>, and the struct size must equal the size .NET computes for explicit layout (the furthest
+        /// field end rounded up to the largest field alignment, capped by <c>Pack</c>). The running maximums are named
+        /// <c>constexpr</c> members so the size expression stays linear in the field count.
+        /// </summary>
+        /// <param name="structName">Qualified name of the generated struct.</param>
+        /// <param name="mirrorStruct">Explicit layout description of the struct.</param>
+        /// <param name="sourceWriter">Writer positioned inside the layout-check struct.</param>
+        static void WriteExplicitLayoutAssertions(string structName, CPPPInvokeMirrorStruct mirrorStruct, TextWriter sourceWriter) {
+            IReadOnlyList<CPPPInvokeMirrorField> fields = mirrorStruct.Fields;
+            foreach (CPPPInvokeMirrorField field in fields) {
+                string fieldName = CPPIdentifierSanitizer.SanitizeIdentifier(field.Name);
+                sourceWriter.WriteLine($"    static_assert(offsetof({structName}, {fieldName}) == {field.ExplicitOffset}, \"{structName}::{fieldName} offset differs from its FieldOffset {field.ExplicitOffset}.\");");
+            }
+            if (fields.Count == 0) {
+                return;
+            }
+
+            for (int index = 0; index < fields.Count; index++) {
+                string fieldEnd = $"({fields[index].ExplicitOffset} + sizeof({fields[index].MirrorTypeText}))";
+                string fieldAlignment = $"alignof({fields[index].MirrorTypeText})";
+                if (index == 0) {
+                    sourceWriter.WriteLine($"    static constexpr std::size_t FieldEnd0 = {fieldEnd};");
+                    sourceWriter.WriteLine($"    static constexpr std::size_t FieldAlignment0 = {fieldAlignment};");
+                    continue;
+                }
+                string previousEnd = $"FieldEnd{index - 1}";
+                string previousAlignment = $"FieldAlignment{index - 1}";
+                sourceWriter.WriteLine($"    static constexpr std::size_t FieldEnd{index} = {previousEnd} > {fieldEnd} ? {previousEnd} : {fieldEnd};");
+                sourceWriter.WriteLine($"    static constexpr std::size_t FieldAlignment{index} = {previousAlignment} > {fieldAlignment} ? {previousAlignment} : {fieldAlignment};");
+            }
+
+            int lastIndex = fields.Count - 1;
+            string alignment = mirrorStruct.Pack > 0
+                ? $"(FieldAlignment{lastIndex} > {mirrorStruct.Pack} ? {mirrorStruct.Pack} : FieldAlignment{lastIndex})"
+                : $"FieldAlignment{lastIndex}";
+            sourceWriter.WriteLine($"    static constexpr std::size_t Alignment = {alignment};");
+            sourceWriter.WriteLine($"    static_assert(sizeof({structName}) == (FieldEnd{lastIndex} + Alignment - 1) / Alignment * Alignment, \"{structName} size differs from the size .NET computes from its FieldOffset layout.\");");
         }
 
         void WriteDelegate(ConversionClass conversionClass, TextWriter headerWriter) {

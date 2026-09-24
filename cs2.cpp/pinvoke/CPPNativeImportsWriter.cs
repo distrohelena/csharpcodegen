@@ -71,7 +71,8 @@ public static class CPPNativeImportsWriter {
     }
 
     /// <summary>
-    /// Builds the header text: include guard, portable includes, mirror structs in the plan's nested-first order, the
+    /// Builds the header text: include guard, portable includes, sequential mirror structs in the plan's nested-first
+    /// order (explicit-layout structs are asserted field by field and have no declared mirror), the
     /// <c>he_pinvoke_bit_copy</c> helper, and one namespace block of forwarder declarations per native library.
     /// </summary>
     /// <param name="plan">P/Invoke plan to emit.</param>
@@ -89,7 +90,7 @@ public static class CPPNativeImportsWriter {
             string.Empty
         };
 
-        foreach (CPPPInvokeMirrorStruct mirror in plan.MirrorStructs) {
+        foreach (CPPPInvokeMirrorStruct mirror in plan.MirrorStructs.Where(candidate => !candidate.IsExplicitLayout)) {
             AppendMirrorStruct(lines, mirror);
             lines.Add(string.Empty);
         }

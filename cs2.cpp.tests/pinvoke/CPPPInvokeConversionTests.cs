@@ -369,6 +369,73 @@ public sealed class CPPPInvokeConversionTests {
     }
 
     /// <summary>
+    /// Ensures a struct whose address alone crosses the boundary (out parameter, and the pointee of a pointer
+    /// parameter) still gets a mirror in the header and friend layout assertions in its generated source.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_StructCrossingByRefOrPointer_EmitsMirrorAndLayoutAsserts() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            public struct NativePoint { public int X; public int Y; }
+            public struct NativeRect { public int Left; public int Top; public int Right; public int Bottom; }
+            public static unsafe class Win {
+                [DllImport("user32.dll")] static extern int GetCursorPos(out NativePoint point);
+                [DllImport("user32.dll")] static extern int GetWindowRect(nint hWnd, NativeRect* rect);
+                public static int X() { GetCursorPos(out NativePoint p); return p.X; }
+                public static int Left(nint hWnd, NativeRect* rect) { return GetWindowRect(hWnd, rect); }
+            }
+            """, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "native_imports", "native_imports.hpp"));
+        string pointSource = File.ReadAllText(Path.Combine(output.OutputPath, "NativePoint.cpp"));
+        string rectSource = File.ReadAllText(Path.Combine(output.OutputPath, "NativeRect.cpp"));
+        Assert.Contains("struct he_pinvoke_NativePoint {", header, StringComparison.Ordinal);
+        Assert.Contains("struct he_pinvoke_NativeRect {", header, StringComparison.Ordinal);
+        Assert.Contains("static_assert(sizeof(NativePoint) == sizeof(he_pinvoke_NativePoint)", pointSource, StringComparison.Ordinal);
+        Assert.Contains("static_assert(offsetof(NativePoint, Y) == offsetof(he_pinvoke_NativePoint, Y)", pointSource, StringComparison.Ordinal);
+        Assert.Contains("static_assert(offsetof(NativeRect, Bottom) == offsetof(he_pinvoke_NativeRect, Bottom)", rectSource, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures an explicit-layout struct crossing by ref gets no mirror struct but asserts every field offset against
+    /// its FieldOffset and the struct size against the size .NET computes from the fields.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_ExplicitStructByRef_AssertsFieldOffsetsAndSize() {
+        var output = CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            [StructLayout(LayoutKind.Explicit)] public struct LargeInteger { [FieldOffset(0)] public long QuadPart; [FieldOffset(0)] public uint LowPart; [FieldOffset(4)] public int HighPart; }
+            public static class Clock {
+                [DllImport("kernel32.dll")] static extern int QueryPerformanceFrequency(out LargeInteger frequency);
+                public static long Frequency() { QueryPerformanceFrequency(out LargeInteger value); return value.QuadPart; }
+            }
+            """, allowUnsafe: true);
+        string header = File.ReadAllText(Path.Combine(output.OutputPath, "native_imports", "native_imports.hpp"));
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "LargeInteger.cpp"));
+        Assert.DoesNotContain("struct he_pinvoke_LargeInteger", header, StringComparison.Ordinal);
+        Assert.Contains("struct he_pinvoke_layout_check_LargeInteger {", source, StringComparison.Ordinal);
+        Assert.Contains("static_assert(offsetof(LargeInteger, QuadPart) == 0,", source, StringComparison.Ordinal);
+        Assert.Contains("static_assert(offsetof(LargeInteger, LowPart) == 0,", source, StringComparison.Ordinal);
+        Assert.Contains("static_assert(offsetof(LargeInteger, HighPart) == 4,", source, StringComparison.Ordinal);
+        Assert.Contains("static_assert(sizeof(LargeInteger) == ", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Ensures StructLayout.Size on a crossing struct fails the conversion as an unsupported setting.
+    /// </summary>
+    [Fact]
+    public void AddCsproj_StructLayoutSize_FailsWithCPPPINV003() {
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => CPPCompileValidationRegressionTests.RunConversion("""
+            using System.Runtime.InteropServices;
+            [StructLayout(LayoutKind.Sequential, Size = 16)] public struct Sized { public int X; }
+            public static class Api {
+                [DllImport("api.dll")] static extern int Take(ref Sized value);
+            }
+            """, allowUnsafe: true));
+        Assert.StartsWith("CPPPINV003", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("StructLayout.Size is not supported", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Counts ordinal occurrences of a fragment in generated text.
     /// </summary>
     /// <param name="text">Generated text to search.</param>

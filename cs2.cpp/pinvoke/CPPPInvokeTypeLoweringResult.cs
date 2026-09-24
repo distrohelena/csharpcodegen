@@ -14,11 +14,14 @@ public sealed class CPPPInvokeTypeLoweringResult {
     /// <param name="type">Lowered type when lowering succeeded, otherwise <c>null</c>.</param>
     /// <param name="failureReason">Human-readable reason lowering failed, otherwise <c>null</c>.</param>
     /// <param name="recommendation">Suggested fix for the failure, otherwise <c>null</c>.</param>
-    CPPPInvokeTypeLoweringResult(bool succeeded, CPPPInvokeLoweredType type, string failureReason, string recommendation) {
+    /// <param name="isUnsupportedSetting">Whether the failure is caused by an unsupported attribute setting rather
+    /// than by the type itself.</param>
+    CPPPInvokeTypeLoweringResult(bool succeeded, CPPPInvokeLoweredType type, string failureReason, string recommendation, bool isUnsupportedSetting) {
         Succeeded = succeeded;
         Type = type;
         FailureReason = failureReason;
         Recommendation = recommendation;
+        IsUnsupportedSetting = isUnsupportedSetting;
     }
 
     /// <summary>
@@ -44,6 +47,14 @@ public sealed class CPPPInvokeTypeLoweringResult {
     public string Recommendation { get; }
 
     /// <summary>
+    /// Gets a value indicating whether the failure is caused by an attribute setting the backend does not support
+    /// (for example <c>StructLayout.Size</c>) rather than by the type's shape. The analyzer reports such failures as
+    /// <see cref="CPPPInvokeDiagnosticCodes.UnsupportedImportSetting"/> instead of the signature's type-error code.
+    /// Always <c>false</c> for a successful result.
+    /// </summary>
+    public bool IsUnsupportedSetting { get; }
+
+    /// <summary>
     /// Creates a successful lowering result.
     /// </summary>
     /// <param name="type">Lowered type.</param>
@@ -53,7 +64,7 @@ public sealed class CPPPInvokeTypeLoweringResult {
         if (type == null) {
             throw new ArgumentNullException(nameof(type));
         }
-        return new CPPPInvokeTypeLoweringResult(true, type, null, null);
+        return new CPPPInvokeTypeLoweringResult(true, type, null, null, false);
     }
 
     /// <summary>
@@ -70,6 +81,24 @@ public sealed class CPPPInvokeTypeLoweringResult {
         if (recommendation == null) {
             throw new ArgumentNullException(nameof(recommendation));
         }
-        return new CPPPInvokeTypeLoweringResult(false, null, reason, recommendation);
+        return new CPPPInvokeTypeLoweringResult(false, null, reason, recommendation, false);
+    }
+
+    /// <summary>
+    /// Creates a failed lowering result caused by an attribute setting the backend does not support, reported with
+    /// <see cref="CPPPInvokeDiagnosticCodes.UnsupportedImportSetting"/>.
+    /// </summary>
+    /// <param name="reason">Human-readable reason the setting cannot be honored.</param>
+    /// <param name="recommendation">Suggested fix for the failure.</param>
+    /// <returns>A result reporting an unsupported-setting failure with the given reason and recommendation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="reason"/> or <paramref name="recommendation"/> is null.</exception>
+    public static CPPPInvokeTypeLoweringResult UnsupportedSetting(string reason, string recommendation) {
+        if (reason == null) {
+            throw new ArgumentNullException(nameof(reason));
+        }
+        if (recommendation == null) {
+            throw new ArgumentNullException(nameof(recommendation));
+        }
+        return new CPPPInvokeTypeLoweringResult(false, null, reason, recommendation, true);
     }
 }

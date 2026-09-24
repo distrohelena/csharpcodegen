@@ -24,14 +24,21 @@ public sealed class CPPPInvokeTypeLowerer {
     List<CPPPInvokeMirrorStruct> MirrorStructList = new List<CPPPInvokeMirrorStruct>();
 
     /// <summary>
+    /// Keys of the structs whose fields are being lowered right now, so a pointer field that points back at an
+    /// enclosing struct (for example a linked-list node) does not recurse forever.
+    /// </summary>
+    HashSet<string> StructsInProgress = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
     /// Creates a type lowerer with no mirror structs generated yet.
     /// </summary>
     public CPPPInvokeTypeLowerer() {
     }
 
     /// <summary>
-    /// Gets every struct lowered by value so far, de-duplicated by <see cref="CPPPInvokeMirrorStruct.StructTypeKey"/>,
-    /// with nested structs listed before the containers that embed them.
+    /// Gets the layout mirror of every struct whose value or address crossed the boundary so far, de-duplicated by
+    /// <see cref="CPPPInvokeMirrorStruct.StructTypeKey"/>, with nested structs listed before the containers that embed
+    /// them.
     /// </summary>
     public IReadOnlyList<CPPPInvokeMirrorStruct> MirrorStructs => MirrorStructList;
 
@@ -90,8 +97,8 @@ public sealed class CPPPInvokeTypeLowerer {
     /// <param name="type">Managed type to lower.</param>
     /// <param name="isCallback">Whether the value belongs to a signature invoked by native code as a callback.</param>
     /// <param name="byValue">
-    /// Whether the value crosses the boundary by value (registering struct mirrors and requiring sequential layout)
-    /// rather than by reference, pointer, or as a struct field validated only for blittability.
+    /// Whether the value crosses the boundary by value (requiring sequential layout for structs) rather than by
+    /// reference or as a field of a struct that crosses by reference.
     /// </param>
     /// <returns>The lowering result for this type.</returns>
     CPPPInvokeTypeLoweringResult LowerValue(ITypeSymbol type, bool isCallback, bool byValue) {
@@ -117,13 +124,7 @@ public sealed class CPPPInvokeTypeLowerer {
         }
 
         if (type is IPointerTypeSymbol pointer) {
-            if (pointer.PointedAtType.SpecialType != SpecialType.System_Void) {
-                CPPPInvokeTypeLoweringResult pointee = LowerValue(pointer.PointedAtType, false, false);
-                if (!pointee.Succeeded) {
-                    return pointee;
-                }
-            }
-            return CPPPInvokeTypeLoweringResult.Success(new CPPPInvokeLoweredType(CPPPInvokeValueKind.Pointer, "void*", type));
+            return LowerPointer(pointer);
         }
 
         if (type is IFunctionPointerTypeSymbol functionPointer) {
@@ -147,20 +148,53 @@ public sealed class CPPPInvokeTypeLowerer {
     }
 
     /// <summary>
-    /// Lowers a struct type: rejects generic structs and fixed-size buffers outright, rejects non-sequential layout
-    /// and callback-by-value when crossing by value, recursively lowers every instance field, and registers a mirror
-    /// struct when the struct crosses the boundary by value.
+    /// Lowers a pointer type. Pointers are never marshalled, so every unmanaged pointee is accepted and the pointer
+    /// crosses as <c>void*</c>. When the pointee is a struct, its declaration must still be verifiable (declared in
+    /// source, no compiler-generated fields, no <c>StructLayout.Size</c>); a pointee struct whose fields can be mirrored
+    /// additionally gets a layout mirror so its generated layout is asserted, while one that cannot be mirrored (for
+    /// example because it holds <c>bool</c> or <c>char</c> fields) is accepted without a mirror.
+    /// </summary>
+    /// <param name="pointer">Pointer type to lower.</param>
+    /// <returns>The lowering result for the pointer.</returns>
+    CPPPInvokeTypeLoweringResult LowerPointer(IPointerTypeSymbol pointer) {
+        CPPPInvokeTypeLoweringResult pointerResult = CPPPInvokeTypeLoweringResult.Success(new CPPPInvokeLoweredType(CPPPInvokeValueKind.Pointer, "void*", pointer));
+        if (!IsUserStruct(pointer.PointedAtType)) {
+            return pointerResult;
+        }
+
+        INamedTypeSymbol pointee = (INamedTypeSymbol)pointer.PointedAtType;
+        if (StructsInProgress.Contains(pointee.OriginalDefinition.ToDisplayString())) {
+            return pointerResult;
+        }
+        if (TryRejectStructDeclaration(pointee, out CPPPInvokeTypeLoweringResult declarationFailure)) {
+            return declarationFailure;
+        }
+
+        // The pointee's layout is asserted only when it can be mirrored; a pointee that cannot be mirrored is still a
+        // plain unmarshalled pointer, so its lowering failure does not reject the pointer.
+        LowerStruct(pointee, false, false);
+        return pointerResult;
+    }
+
+    /// <summary>
+    /// Lowers a struct whose value or address crosses the boundary: rejects unverifiable declarations, generic
+    /// structs, fixed-size buffers, callback-by-value structs, non-sequential structs by value and auto-layout structs
+    /// by address, recursively lowers every instance field, and registers a layout mirror so the generated struct's
+    /// layout is asserted against it.
     /// </summary>
     /// <param name="type">Struct type to lower.</param>
     /// <param name="isCallback">Whether the struct belongs to a signature invoked by native code as a callback.</param>
-    /// <param name="byValue">Whether the struct itself crosses the boundary by value.</param>
+    /// <param name="byValue">Whether the struct itself crosses the boundary by value (rather than by address).</param>
     /// <returns>The lowering result for the struct.</returns>
     CPPPInvokeTypeLoweringResult LowerStruct(INamedTypeSymbol type, bool isCallback, bool byValue) {
         if (type.IsGenericType) {
             return RequiresMarshalling();
         }
+        if (TryRejectStructDeclaration(type, out CPPPInvokeTypeLoweringResult declarationFailure)) {
+            return declarationFailure;
+        }
 
-        List<IFieldSymbol> fields = type.GetMembers().OfType<IFieldSymbol>().Where(field => !field.IsStatic && !field.IsConst).ToList();
+        List<IFieldSymbol> fields = GetInstanceFields(type);
         foreach (IFieldSymbol field in fields) {
             if (field.IsFixedSizeBuffer) {
                 return CPPPInvokeTypeLoweringResult.Failure("fixed-size buffers are not supported by the C++ backend yet", "use explicit fields");
@@ -171,36 +205,147 @@ public sealed class CPPPInvokeTypeLowerer {
             return CPPPInvokeTypeLoweringResult.Failure("callbacks cannot take structs by value", "take a pointer");
         }
 
-        AttributeData layoutAttribute = type.GetAttributes().FirstOrDefault(attribute => attribute.AttributeClass.ToDisplayString() == "System.Runtime.InteropServices.StructLayoutAttribute");
-        LayoutKind layoutKind = LayoutKind.Sequential;
-        int pack = 0;
-        if (layoutAttribute != null) {
-            layoutKind = (LayoutKind)Convert.ToInt32(layoutAttribute.ConstructorArguments[0].Value);
-            foreach (KeyValuePair<string, TypedConstant> namedArgument in layoutAttribute.NamedArguments) {
-                if (namedArgument.Key == "Pack") {
-                    pack = Convert.ToInt32(namedArgument.Value.Value);
-                }
-            }
-        }
-
+        LayoutKind layoutKind = GetLayoutKind(type);
         if (byValue && layoutKind != LayoutKind.Sequential) {
             return CPPPInvokeTypeLoweringResult.Failure("only sequential structs can cross by value", "pass it by ref or pointer");
         }
+        if (layoutKind == LayoutKind.Auto) {
+            return CPPPInvokeTypeLoweringResult.Failure("auto-layout structs have no defined native layout", "use LayoutKind.Sequential or LayoutKind.Explicit");
+        }
 
+        bool isExplicitLayout = layoutKind == LayoutKind.Explicit;
+        string structKey = type.OriginalDefinition.ToDisplayString();
         List<CPPPInvokeMirrorField> mirrorFields = new List<CPPPInvokeMirrorField>();
-        foreach (IFieldSymbol field in fields) {
-            CPPPInvokeTypeLoweringResult fieldResult = LowerValue(field.Type, false, byValue);
-            if (!fieldResult.Succeeded) {
-                return fieldResult;
+        StructsInProgress.Add(structKey);
+        try {
+            foreach (IFieldSymbol field in fields) {
+                if (CPPIdentifierSanitizer.SanitizeIdentifier(field.Name) != field.Name) {
+                    return CPPPInvokeTypeLoweringResult.Failure($"field '{field.Name}' is a C++ keyword, and the C++ backend does not rename struct fields", "rename the field");
+                }
+                if (IsUserStruct(field.Type) && GetLayoutKind((INamedTypeSymbol)field.Type) != LayoutKind.Sequential) {
+                    return CPPPInvokeTypeLoweringResult.Failure("explicit and auto layout structs cannot be nested inside another struct that crosses the boundary", "declare the overlapping fields directly in the containing struct");
+                }
+
+                CPPPInvokeTypeLoweringResult fieldResult = LowerValue(field.Type, false, byValue);
+                if (!fieldResult.Succeeded) {
+                    return fieldResult;
+                }
+
+                mirrorFields.Add(isExplicitLayout
+                    ? new CPPPInvokeMirrorField(field.Name, fieldResult.Type.MirrorTypeText, GetFieldOffset(field))
+                    : new CPPPInvokeMirrorField(field.Name, fieldResult.Type.MirrorTypeText));
             }
-            mirrorFields.Add(new CPPPInvokeMirrorField(field.Name, fieldResult.Type.MirrorTypeText));
+        } finally {
+            StructsInProgress.Remove(structKey);
         }
 
         string mirrorName = CreateMirrorName(type);
-        if (byValue) {
-            RegisterMirror(type, mirrorName, pack, mirrorFields);
-        }
+        RegisterMirror(new CPPPInvokeMirrorStruct(mirrorName, type, GetLayoutPack(type), isExplicitLayout, mirrorFields));
         return CPPPInvokeTypeLoweringResult.Success(new CPPPInvokeLoweredType(CPPPInvokeValueKind.Struct, mirrorName, type));
+    }
+
+    /// <summary>
+    /// Rejects a struct declaration whose generated layout cannot be verified wherever the struct crosses the boundary
+    /// (by value, by address, or as a pointee): structs that are not declared in source, structs with
+    /// compiler-generated backing fields (auto-properties and record struct parameters), and structs that set
+    /// <c>StructLayout.Size</c>.
+    /// </summary>
+    /// <param name="type">Struct type to check.</param>
+    /// <param name="failure">The rejection when this method returns <c>true</c>; otherwise <c>null</c>.</param>
+    /// <returns><c>true</c> if the declaration is rejected; otherwise <c>false</c>.</returns>
+    static bool TryRejectStructDeclaration(INamedTypeSymbol type, out CPPPInvokeTypeLoweringResult failure) {
+        if (type.OriginalDefinition.DeclaringSyntaxReferences.Length == 0) {
+            failure = CPPPInvokeTypeLoweringResult.Failure("struct is not declared in source; its generated layout cannot be verified", "declare an equivalent struct in source");
+            return true;
+        }
+        if (GetInstanceFields(type).Any(field => field.AssociatedSymbol is IPropertySymbol || field.IsImplicitlyDeclared)) {
+            failure = CPPPInvokeTypeLoweringResult.Failure("auto-properties and record struct parameters generate hidden fields", "declare explicit fields");
+            return true;
+        }
+
+        AttributeData layoutAttribute = GetStructLayoutAttribute(type);
+        if (layoutAttribute != null && layoutAttribute.NamedArguments.Any(namedArgument => namedArgument.Key == "Size" && Convert.ToInt32(namedArgument.Value.Value) > 0)) {
+            failure = CPPPInvokeTypeLoweringResult.UnsupportedSetting("StructLayout.Size is not supported", "remove Size and declare explicit padding fields");
+            return true;
+        }
+
+        failure = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether a type is a user struct (a non-enum value type that is not a lowerable primitive,
+    /// <c>void</c>, <c>bool</c>, or <c>char</c>), whose layout the P/Invoke rules must verify.
+    /// </summary>
+    /// <param name="type">Type to classify.</param>
+    /// <returns><c>true</c> if the type is a user struct; otherwise <c>false</c>.</returns>
+    static bool IsUserStruct(ITypeSymbol type) {
+        return type.TypeKind == TypeKind.Struct
+            && type is INamedTypeSymbol
+            && GetPrimitiveMirrorText(type.SpecialType) == null
+            && type.SpecialType != SpecialType.System_Void
+            && type.SpecialType != SpecialType.System_Boolean
+            && type.SpecialType != SpecialType.System_Char;
+    }
+
+    /// <summary>
+    /// Gets every instance field of a struct in declaration order, including compiler-generated backing fields.
+    /// </summary>
+    /// <param name="type">Struct whose fields are listed.</param>
+    /// <returns>The non-static, non-const fields of the struct.</returns>
+    static List<IFieldSymbol> GetInstanceFields(INamedTypeSymbol type) {
+        return type.GetMembers().OfType<IFieldSymbol>().Where(field => !field.IsStatic && !field.IsConst).ToList();
+    }
+
+    /// <summary>
+    /// Finds the <c>StructLayoutAttribute</c> applied to a struct.
+    /// </summary>
+    /// <param name="type">Struct whose attributes are searched.</param>
+    /// <returns>The attribute, or <c>null</c> when the struct uses the default sequential layout.</returns>
+    static AttributeData GetStructLayoutAttribute(INamedTypeSymbol type) {
+        return type.GetAttributes().FirstOrDefault(attribute => attribute.AttributeClass.ToDisplayString() == "System.Runtime.InteropServices.StructLayoutAttribute");
+    }
+
+    /// <summary>
+    /// Reads a struct's layout kind, which is sequential unless a <c>StructLayoutAttribute</c> says otherwise.
+    /// </summary>
+    /// <param name="type">Struct whose layout kind is read.</param>
+    /// <returns>The struct's layout kind.</returns>
+    static LayoutKind GetLayoutKind(INamedTypeSymbol type) {
+        AttributeData layoutAttribute = GetStructLayoutAttribute(type);
+        return layoutAttribute == null ? LayoutKind.Sequential : (LayoutKind)Convert.ToInt32(layoutAttribute.ConstructorArguments[0].Value);
+    }
+
+    /// <summary>
+    /// Reads a struct's explicit <c>StructLayout.Pack</c>.
+    /// </summary>
+    /// <param name="type">Struct whose packing is read.</param>
+    /// <returns>The packing in bytes, or <c>0</c> for the platform default.</returns>
+    static int GetLayoutPack(INamedTypeSymbol type) {
+        AttributeData layoutAttribute = GetStructLayoutAttribute(type);
+        if (layoutAttribute == null) {
+            return 0;
+        }
+        foreach (KeyValuePair<string, TypedConstant> namedArgument in layoutAttribute.NamedArguments) {
+            if (namedArgument.Key == "Pack") {
+                return Convert.ToInt32(namedArgument.Value.Value);
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Reads the <c>FieldOffset</c> of a field of an explicit-layout struct.
+    /// </summary>
+    /// <param name="field">Field whose offset is read.</param>
+    /// <returns>The field's offset in bytes.</returns>
+    /// <exception cref="InvalidOperationException">The field has no <c>FieldOffsetAttribute</c>.</exception>
+    static int GetFieldOffset(IFieldSymbol field) {
+        AttributeData offsetAttribute = field.GetAttributes().FirstOrDefault(attribute => attribute.AttributeClass.ToDisplayString() == "System.Runtime.InteropServices.FieldOffsetAttribute");
+        if (offsetAttribute == null) {
+            throw new InvalidOperationException($"Field '{field.ToDisplayString()}' of an explicit-layout struct has no FieldOffset attribute.");
+        }
+        return Convert.ToInt32(offsetAttribute.ConstructorArguments[0].Value);
     }
 
     /// <summary>
@@ -245,15 +390,11 @@ public sealed class CPPPInvokeTypeLowerer {
     }
 
     /// <summary>
-    /// Registers a newly lowered by-value struct as a mirror, skipping registration when a mirror for the same
-    /// managed struct type was already generated.
+    /// Registers a newly lowered struct's layout mirror, skipping registration when a mirror for the same managed
+    /// struct type was already generated.
     /// </summary>
-    /// <param name="type">Managed struct type the mirror was generated from.</param>
-    /// <param name="mirrorName">Generated native mirror struct name.</param>
-    /// <param name="pack">Explicit struct packing in bytes, or <c>0</c> for the platform default.</param>
-    /// <param name="fields">Mirror fields in layout order.</param>
-    void RegisterMirror(INamedTypeSymbol type, string mirrorName, int pack, IReadOnlyList<CPPPInvokeMirrorField> fields) {
-        CPPPInvokeMirrorStruct mirror = new CPPPInvokeMirrorStruct(mirrorName, type, pack, fields);
+    /// <param name="mirror">Layout mirror of the lowered struct.</param>
+    void RegisterMirror(CPPPInvokeMirrorStruct mirror) {
         if (MirrorStructsByKey.ContainsKey(mirror.StructTypeKey)) {
             return;
         }

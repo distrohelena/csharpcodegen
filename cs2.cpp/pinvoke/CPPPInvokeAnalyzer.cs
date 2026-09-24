@@ -325,7 +325,7 @@ public sealed class CPPPInvokeAnalyzer {
 
         returnResult = lowerer.LowerReturn(method.ReturnType, isCallback);
         if (!returnResult.Succeeded) {
-            diagnostics.Add(CreateDiagnostic(method, typeErrorCode,
+            diagnostics.Add(CreateDiagnostic(method, SelectTypeFailureCode(returnResult, typeErrorCode),
                 BuildTypeFailureMessage("Return type", returnResult), returnResult.Recommendation));
             succeeded = false;
         }
@@ -333,7 +333,7 @@ public sealed class CPPPInvokeAnalyzer {
         foreach (IParameterSymbol parameter in method.Parameters) {
             CPPPInvokeTypeLoweringResult parameterResult = lowerer.LowerParameter(parameter.Type, parameter.RefKind, isCallback);
             if (!parameterResult.Succeeded) {
-                diagnostics.Add(CreateDiagnostic(method, typeErrorCode,
+                diagnostics.Add(CreateDiagnostic(method, SelectTypeFailureCode(parameterResult, typeErrorCode),
                     BuildTypeFailureMessage($"Parameter '{parameter.Name}'", parameterResult), parameterResult.Recommendation));
                 succeeded = false;
                 continue;
@@ -426,6 +426,17 @@ public sealed class CPPPInvokeAnalyzer {
             return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Chooses the diagnostic code for a failed lowering: <c>CPPPINV003</c> when the failure comes from an unsupported
+    /// attribute setting (such as <c>StructLayout.Size</c>), otherwise the signature's type-error code.
+    /// </summary>
+    /// <param name="result">The failed lowering result.</param>
+    /// <param name="typeErrorCode">Type-error code of the signature being lowered (<c>CPPPINV002</c> or <c>CPPPINV008</c>).</param>
+    /// <returns>The diagnostic code to report.</returns>
+    static string SelectTypeFailureCode(CPPPInvokeTypeLoweringResult result, string typeErrorCode) {
+        return result.IsUnsupportedSetting ? CPPPInvokeDiagnosticCodes.UnsupportedImportSetting : typeErrorCode;
     }
 
     /// <summary>
