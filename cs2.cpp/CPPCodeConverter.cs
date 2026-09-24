@@ -1,4 +1,4 @@
-using cs2.core;
+﻿using cs2.core;
 using cs2.core.Pipeline;
 using cs2.core.Threading;
 using Microsoft.CodeAnalysis;
@@ -587,10 +587,12 @@ namespace cs2.cpp {
 
         /// <summary>
         /// Stores the validated P/Invoke plan produced by the P/Invoke analysis stage for downstream C++ lowering.
+        /// Derived converters that drive <see cref="WriteOutput(string)"/> without running the conversion pipeline (such
+        /// as focused output tests) use it to supply the plan the pipeline would otherwise have produced.
         /// </summary>
         /// <param name="plan">Plan of native imports, callback trampolines, and mirror structs for the active project closure.</param>
         /// <exception cref="ArgumentNullException"><paramref name="plan"/> is null.</exception>
-        internal void SetPInvokePlan(CPPPInvokePlan plan) {
+        protected internal void SetPInvokePlan(CPPPInvokePlan plan) {
             PInvokePlan = plan ?? throw new ArgumentNullException(nameof(plan));
         }
 

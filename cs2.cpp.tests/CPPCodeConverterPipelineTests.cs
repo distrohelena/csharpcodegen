@@ -23,6 +23,7 @@ public class CPPCodeConverterPipelineTests {
             "CPPPreprocessorFilterStage",
             "CPPAssemblyMetadataStage",
             "DocumentPreprocessingStage",
+            "CPPPInvokeAnalysisStage",
             "CPPOwnershipAnalysisStage",
             "ClassProcessingStage",
             "ProgramSortingStage"
@@ -37,7 +38,8 @@ public class CPPCodeConverterPipelineTests {
         CPPConversionOptions options = CreateTestOptions();
         options.WriteConversionReport = true;
 
-        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), options);
+        TestableCPPCodeConverter converter = new TestableCPPCodeConverter(new CPPConversionRules(), options);
+        converter.UseEmptyPInvokePlan();
         string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
 
         converter.WriteOutput(outputFolder);
@@ -51,7 +53,8 @@ public class CPPCodeConverterPipelineTests {
     /// </summary>
     [Fact]
     public void WriteOutput_ClearsStaleFilesBeforeEmission() {
-        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), CreateTestOptions());
+        TestableCPPCodeConverter converter = new TestableCPPCodeConverter(new CPPConversionRules(), CreateTestOptions());
+        converter.UseEmptyPInvokePlan();
         string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(outputFolder);
         File.WriteAllText(Path.Combine(outputFolder, "AssetContentProcessor.cpp"), "stale");
@@ -105,6 +108,14 @@ public class CPPCodeConverterPipelineTests {
             IReadOnlyList<IConversionStage> stages = (IReadOnlyList<IConversionStage>)(field.GetValue(pipeline)
                 ?? throw new InvalidOperationException("Conversion pipeline stage storage returned null."));
             return stages.Select(stage => stage.GetType().Name).ToArray();
+        }
+
+        /// <summary>
+        /// Supplies the empty P/Invoke plan the analysis stage produces for a project without native imports, because
+        /// these tests call <see cref="CPPCodeConverter.WriteOutput(string)"/> directly without running the pipeline.
+        /// </summary>
+        public void UseEmptyPInvokePlan() {
+            SetPInvokePlan(new CPPPInvokePlan(Array.Empty<CPPPInvokeImport>(), Array.Empty<CPPPInvokeCallback>(), Array.Empty<CPPPInvokeMirrorStruct>()));
         }
     }
 
