@@ -14,6 +14,14 @@ namespace cs2.cpp {
         public string IncludePath { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets the additional runtime headers the requirement brings beside <see cref="IncludePath"/>. Source files that
+        /// register the requirement include them right after the primary header. Feature pruning never deletes them,
+        /// because companions may be shared with other generated files (for example the calling-convention header, which
+        /// the native import forwarders also include).
+        /// </summary>
+        public List<string> CompanionIncludePaths { get; } = new List<string>();
+
+        /// <summary>
         /// Gets or sets the generated config macro that flags the requirement as available.
         /// </summary>
         public string ConfigDefineName { get; set; } = string.Empty;

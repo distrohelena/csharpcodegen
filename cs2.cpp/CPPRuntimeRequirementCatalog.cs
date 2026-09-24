@@ -34,7 +34,7 @@ namespace cs2.cpp {
                 Make("NativeArray", "runtime/array.hpp", "HE_CPP_REQ_NATIVE_ARRAY", "Managed-style array abstraction support."),
                 Make("NativeHashSet", "runtime/native_hash_set.hpp", "HE_CPP_REQ_NATIVE_HASH_SET", "Managed-style hash-set abstraction support."),
                 Make("NativeSpan", "runtime/native_span.hpp", "HE_CPP_REQ_NATIVE_SPAN", "Managed-style non-owning span view support for transient buffer access."),
-                Make("NativeFunctionPointer", "runtime/function_pointer.hpp", "HE_CPP_REQ_NATIVE_FUNCTION_POINTER", "Portable unmanaged function-pointer wrapper support for transpiled C# delegate* signatures."),
+                Make("NativeFunctionPointer", "runtime/function_pointer.hpp", new[] { "runtime/unmanaged_function_pointer.hpp", "runtime/native_calling_convention.hpp" }, "HE_CPP_REQ_NATIVE_FUNCTION_POINTER", "Portable managed, stdcall and cdecl function-pointer wrapper support for transpiled C# delegate* signatures."),
                 Make("Delegate", "system/delegate.hpp", "HE_CPP_REQ_DELEGATE", "Portable callable delegate wrapper support for emitted custom delegate declarations."),
                 Make("NativeVector", "system/numerics/vector.hpp", "HE_CPP_REQ_NATIVE_VECTOR", "Managed System.Numerics.Vector helper and value-bundle support for generic numeric lane operations."),
                 Make("NativeVector128", "system/runtime/intrinsics/vector128.hpp", "HE_CPP_REQ_NATIVE_VECTOR128", "Managed System.Runtime.Intrinsics.Vector128 helper and value-bundle support for portable intrinsic fallbacks."),
@@ -134,6 +134,22 @@ namespace cs2.cpp {
                 ConfigDefineName = configDefineName,
                 Description = description
             };
+        }
+
+        /// <summary>
+        /// Creates a runtime requirement definition whose primary header brings companion runtime headers that source
+        /// files registering the requirement include alongside it.
+        /// </summary>
+        /// <param name="name">Stable requirement name used by the converter.</param>
+        /// <param name="includePath">Primary runtime header emitted for the requirement.</param>
+        /// <param name="companionIncludePaths">Additional runtime headers the requirement brings.</param>
+        /// <param name="configDefineName">Generated config macro that flags the requirement as available.</param>
+        /// <param name="description">Short human-readable description of the requirement role.</param>
+        /// <returns>The initialized requirement definition.</returns>
+        static CPPRuntimeRequirementDefinition Make(string name, string includePath, IReadOnlyList<string> companionIncludePaths, string configDefineName, string description) {
+            CPPRuntimeRequirementDefinition definition = Make(name, includePath, configDefineName, description);
+            definition.CompanionIncludePaths.AddRange(companionIncludePaths);
+            return definition;
         }
     }
 }

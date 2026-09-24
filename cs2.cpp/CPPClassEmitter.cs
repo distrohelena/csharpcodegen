@@ -105,6 +105,9 @@ namespace cs2.cpp {
             }
             headerWriter.WriteLine("#include <cstdint>");
             headerWriter.WriteLine("#include \"runtime/native_string.hpp\"");
+            if (conversionClass.Functions.Any(function => function.IsUnmanagedCallersOnly)) {
+                headerWriter.WriteLine("#include \"runtime/native_calling_convention.hpp\"");
+            }
             headerWriter.WriteLine();
 
             bool wroteInclude = false;
@@ -584,6 +587,10 @@ namespace cs2.cpp {
                 sourceWriter.WriteLine("#include \"runtime/generated_profiler.hpp\"");
             }
 
+            if (TryGetMirrorStruct(conversionClass, out _)) {
+                sourceWriter.WriteLine("#include <cstddef>");
+            }
+
             HashSet<string> emittedIncludePaths = new HashSet<string>(StringComparer.Ordinal);
             HashSet<string> excludedTypeNames = GetExcludedTypeNames(conversionClass);
             HashSet<string> sourceIncludeTypes = new HashSet<string>(StringComparer.Ordinal);
@@ -626,11 +633,13 @@ namespace cs2.cpp {
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(requirement.IncludePath) || !emittedIncludePaths.Add(requirement.IncludePath)) {
-                    continue;
-                }
+                foreach (string requirementIncludePath in new[] { requirement.IncludePath }.Concat(requirement.CompanionIncludePaths)) {
+                    if (string.IsNullOrWhiteSpace(requirementIncludePath) || !emittedIncludePaths.Add(requirementIncludePath)) {
+                        continue;
+                    }
 
-                sourceWriter.WriteLine($"#include \"{requirement.IncludePath}\"");
+                    sourceWriter.WriteLine($"#include \"{requirementIncludePath}\"");
+                }
             }
 
             if (conversionClass.Functions.Any(function => !function.HasBody && !function.IsDllImport) &&
@@ -1516,10 +1525,11 @@ namespace cs2.cpp {
                 return "runtime/native_dictionary";
             }
 
-            if (string.Equals(normalizedTypeName, "FunctionPointer", StringComparison.Ordinal) ||
-                normalizedTypeName.StartsWith("FunctionPointer_", StringComparison.Ordinal)) {
+            if (CPPFunctionPointerTypeNames.TryGetWrapperNameFromNormalizedTypeName(normalizedTypeName, out string functionPointerWrapperName)) {
                 processor?.RegisterRuntimeRequirement("NativeFunctionPointer");
-                return "runtime/function_pointer";
+                return CPPFunctionPointerTypeNames.IsUnmanagedFunctionPointerTypeName(functionPointerWrapperName)
+                    ? "runtime/unmanaged_function_pointer"
+                    : "runtime/function_pointer";
             }
 
             if (string.Equals(normalizedTypeName, "Stack", StringComparison.Ordinal)) {
@@ -1843,6 +1853,7 @@ namespace cs2.cpp {
 
             headerWriter.WriteLine("{");
             WriteNestedTypeFriendDeclarations(conversionClass, headerWriter);
+            WriteCallbackTrampolineFriendDeclarations(conversionClass, headerWriter);
 
             if (conversionClass.DeclarationType == MemberDeclarationType.Interface) {
                 WriteInterfaceSection(conversionClass, headerWriter, sourceWriter);
@@ -1851,6 +1862,7 @@ namespace cs2.cpp {
                     headerWriter.WriteLine("#pragma pack(pop)");
                 }
                 WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
+                WriteCallbackTrampolines(conversionClass, headerWriter, sourceWriter);
                 return;
             }
 
@@ -1872,6 +1884,120 @@ namespace cs2.cpp {
                 headerWriter.WriteLine("#pragma pack(pop)");
             }
             WriteFreeOperatorFunctions(conversionClass, headerWriter, sourceWriter);
+            WriteCallbackTrampolines(conversionClass, headerWriter, sourceWriter);
+            WriteMirrorLayoutAssertions(conversionClass, sourceWriter);
+        }
+
+        /// <summary>
+        /// Resolves the P/Invoke plan callback for one <c>[UnmanagedCallersOnly]</c> function, failing loudly when the plan
+        /// is unavailable or does not contain the callback, since a trampoline cannot be emitted without it.
+        /// </summary>
+        /// <param name="function">UnmanagedCallersOnly function whose callback entry is required.</param>
+        /// <returns>The callback entry naming the trampoline and its calling convention.</returns>
+        /// <exception cref="InvalidOperationException">The plan is unavailable or has no callback for the function.</exception>
+        CPPPInvokeCallback GetRequiredCallback(ConversionFunction function) {
+            CPPPInvokePlan plan = processor?.PInvokePlan;
+            if (plan == null) {
+                throw new InvalidOperationException($"UnmanagedCallersOnly method '{function.Name}' was emitted before the P/Invoke plan was built.");
+            }
+
+            if (!plan.TryGetCallback(function.MethodId, out CPPPInvokeCallback callback)) {
+                throw new InvalidOperationException($"UnmanagedCallersOnly method '{function.Name}' ('{function.MethodId}') is missing from the P/Invoke plan.");
+            }
+
+            return callback;
+        }
+
+        /// <summary>
+        /// Builds the free trampoline's signature text: generated return type, calling-convention macro, trampoline name,
+        /// the method's generated parameter list, and <c>noexcept</c> (native callers cannot unwind C++ exceptions).
+        /// </summary>
+        /// <param name="conversionClass">Class that owns the callback method.</param>
+        /// <param name="function">UnmanagedCallersOnly method the trampoline forwards to.</param>
+        /// <param name="callback">Plan entry that supplies the trampoline name and calling convention.</param>
+        /// <returns>The signature text without a trailing semicolon or body.</returns>
+        string BuildCallbackTrampolineSignature(ConversionClass conversionClass, ConversionFunction function, CPPPInvokeCallback callback) {
+            StringWriter parameterWriter = new StringWriter();
+            WriteParameters(conversionClass, function, parameterWriter);
+            return $"{GetReturnType(conversionClass, function)} {callback.Signature.CallingConventionMacro} {callback.TrampolineName}({parameterWriter}) noexcept";
+        }
+
+        /// <summary>
+        /// Writes one <c>friend</c> declaration per UnmanagedCallersOnly method inside the class body, so the free trampoline
+        /// can forward to the callback even though C# callbacks are usually <c>private static</c>.
+        /// </summary>
+        /// <param name="conversionClass">Class whose callbacks receive friend trampolines.</param>
+        /// <param name="headerWriter">Writer positioned inside the class definition.</param>
+        void WriteCallbackTrampolineFriendDeclarations(ConversionClass conversionClass, TextWriter headerWriter) {
+            foreach (ConversionFunction function in conversionClass.Functions.Where(candidate => candidate.IsUnmanagedCallersOnly)) {
+                CPPPInvokeCallback callback = GetRequiredCallback(function);
+                headerWriter.WriteLine($"    friend {BuildCallbackTrampolineSignature(conversionClass, function, callback)};");
+            }
+        }
+
+        /// <summary>
+        /// Writes each UnmanagedCallersOnly method's free trampoline: a namespace-scope declaration after the class
+        /// definition in the header, and a definition in the source that forwards every argument unchanged to the method.
+        /// </summary>
+        /// <param name="conversionClass">Class whose callbacks receive trampolines.</param>
+        /// <param name="headerWriter">Writer positioned after the class definition.</param>
+        /// <param name="sourceWriter">Writer that receives the trampoline definitions.</param>
+        void WriteCallbackTrampolines(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            foreach (ConversionFunction function in conversionClass.Functions.Where(candidate => candidate.IsUnmanagedCallersOnly)) {
+                CPPPInvokeCallback callback = GetRequiredCallback(function);
+                string signature = BuildCallbackTrampolineSignature(conversionClass, function, callback);
+                string arguments = string.Join(", ", function.InParameters.Select(parameter => parameter.Name));
+                string forwardedCall = $"{GetQualifiedClassName(conversionClass)}::{GetFunctionName(conversionClass, function)}({arguments});";
+
+                headerWriter.WriteLine();
+                headerWriter.WriteLine($"{signature};");
+
+                sourceWriter.WriteLine(signature);
+                sourceWriter.WriteLine("{");
+                sourceWriter.WriteLine(function.ReturnType == null ? forwardedCall : $"return {forwardedCall}");
+                sourceWriter.WriteLine("}");
+                sourceWriter.WriteLine();
+            }
+        }
+
+        /// <summary>
+        /// Resolves the P/Invoke mirror struct for a converted type when the type crosses a native boundary by value.
+        /// Emitters without a processor or plan have no mirrors.
+        /// </summary>
+        /// <param name="conversionClass">Converted type to look up.</param>
+        /// <param name="mirrorStruct">Matched mirror struct when the lookup succeeds.</param>
+        /// <returns>True when the type has a mirror struct in the plan.</returns>
+        bool TryGetMirrorStruct(ConversionClass conversionClass, out CPPPInvokeMirrorStruct mirrorStruct) {
+            mirrorStruct = null;
+            CPPPInvokePlan plan = processor?.PInvokePlan;
+            if (plan == null || conversionClass.TypeSymbol == null) {
+                return false;
+            }
+
+            return plan.TryGetMirrorStruct(conversionClass.TypeSymbol.OriginalDefinition.ToDisplayString(), out mirrorStruct);
+        }
+
+        /// <summary>
+        /// Writes compile-time assertions that the generated struct and its native mirror agree on size, alignment, and
+        /// every field offset, so the bit copies performed by the native import forwarders are proven layout-safe.
+        /// Registers the native imports header, which declares the mirror, as a source include.
+        /// </summary>
+        /// <param name="conversionClass">Converted struct to check against its mirror.</param>
+        /// <param name="sourceWriter">Writer that receives the assertions.</param>
+        void WriteMirrorLayoutAssertions(ConversionClass conversionClass, TextWriter sourceWriter) {
+            if (!TryGetMirrorStruct(conversionClass, out CPPPInvokeMirrorStruct mirrorStruct)) {
+                return;
+            }
+
+            conversionClass.SourceIncludes.Add($"{CPPNativeImportsWriter.FolderName}/{CPPNativeImportsWriter.HeaderFileName}");
+            string structName = GetQualifiedClassName(conversionClass);
+            string mirrorName = mirrorStruct.MirrorName;
+            sourceWriter.WriteLine($"static_assert(sizeof({structName}) == sizeof({mirrorName}), \"{structName} size differs from its native mirror {mirrorName}.\");");
+            sourceWriter.WriteLine($"static_assert(alignof({structName}) == alignof({mirrorName}), \"{structName} alignment differs from its native mirror {mirrorName}.\");");
+            foreach (CPPPInvokeMirrorField field in mirrorStruct.Fields) {
+                sourceWriter.WriteLine($"static_assert(offsetof({structName}, {field.Name}) == offsetof({mirrorName}, {field.Name}), \"{structName}::{field.Name} offset differs from its native mirror {mirrorName}.\");");
+            }
+            sourceWriter.WriteLine();
         }
 
         void WriteDelegate(ConversionClass conversionClass, TextWriter headerWriter) {

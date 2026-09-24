@@ -44,6 +44,12 @@ namespace cs2.cpp {
         public CPPConversionOptions Options => codeConverter?.Options;
 
         /// <summary>
+        /// Gets the P/Invoke plan built by the analysis stage for the active conversion run, which the class emitter consults
+        /// for callback trampolines and mirror-struct layout assertions; null when no host is attached.
+        /// </summary>
+        public CPPPInvokePlan PInvokePlan => codeConverter?.PInvokePlan;
+
+        /// <summary>
         /// Gets the validated semantic ownership plan for the active conversion run when pipeline analysis has completed.
         /// </summary>
         CPPOwnershipEmissionPlan OwnershipEmissionPlan => codeConverter?.OwnershipAnalysisResult?.EmissionPlan;
@@ -9137,7 +9143,7 @@ namespace cs2.cpp {
             }
 
             string typeName = variableType.TypeName ?? string.Empty;
-            if (string.Equals(typeName, "FunctionPointer", StringComparison.Ordinal)) {
+            if (CPPFunctionPointerTypeNames.IsFunctionPointerTypeName(typeName)) {
                 return false;
             }
 
@@ -9149,9 +9155,7 @@ namespace cs2.cpp {
             CPPTypeData typeData;
             VariableType cppType = ConvertToCPPType(variableType, out typeData);
             string cppTypeName = cppType.ToCPPString(context.Program);
-            if (string.Equals(cppTypeName, "FunctionPointer", StringComparison.Ordinal) ||
-                cppTypeName.StartsWith("FunctionPointer<", StringComparison.Ordinal) ||
-                cppTypeName.Contains("::FunctionPointer<", StringComparison.Ordinal)) {
+            if (CPPFunctionPointerTypeNames.IsFunctionPointerCppTypeText(cppTypeName)) {
                 return false;
             }
 
@@ -12545,6 +12549,8 @@ namespace cs2.cpp {
 
         /// <summary>
         /// Lowers address-of method expressions used for unmanaged function pointers into one qualified C++ function address.
+        /// An <c>[UnmanagedCallersOnly]</c> callback in the P/Invoke plan lowers to the address of its free, calling-convention-qualified
+        /// trampoline instead, so native code receives a pointer with the convention it expects.
         /// </summary>
         /// <param name="semantic">Semantic model associated with the expression.</param>
         /// <param name="context">Current lowering context.</param>
@@ -12578,7 +12584,16 @@ namespace cs2.cpp {
 
             ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(prefixUnary).ConvertedType ?? semantic.GetTypeInfo(prefixUnary).Type;
             VariableType resultType = VariableUtil.GetVarType(resultTypeSymbol);
-            lines.Add(RenderQualifiedMethodPointerTarget(methodSymbol, context));
+            CPPPInvokePlan plan = codeConverter.PInvokePlan;
+            if (plan == null) {
+                throw new InvalidOperationException($"Address of method '{methodSymbol.ToDisplayString()}' was lowered before the P/Invoke plan was built.");
+            }
+
+            if (plan.TryGetCallback(CPPPInvokeMethodIds.Get(methodSymbol), out CPPPInvokeCallback callback)) {
+                lines.Add("&" + callback.TrampolineName);
+            } else {
+                lines.Add(RenderQualifiedMethodPointerTarget(methodSymbol, context));
+            }
             result = new ExpressionResult(true, VariablePath.Unknown, resultType);
             return true;
         }
@@ -14003,12 +14018,12 @@ namespace cs2.cpp {
                         return CreateConvertedGenericType(parsedType, "Dictionary");
                 }
                 case VariableDataType.Callback: {
-                        if (string.Equals(parsedType.TypeName, "FunctionPointer", StringComparison.Ordinal)) {
+                        if (CPPFunctionPointerTypeNames.IsFunctionPointerTypeName(parsedType.TypeName)) {
                             codeConverter?.RegisterRuntimeRequirement("NativeFunctionPointer");
                             typeData.IsArray = false;
                             typeData.IsNativeType = false;
                             typeData.IsPointer = false;
-                            return CreateConvertedGenericType(parsedType, "FunctionPointer");
+                            return CreateConvertedGenericType(parsedType, parsedType.TypeName);
                         }
 
                         typeData.IsArray = false;

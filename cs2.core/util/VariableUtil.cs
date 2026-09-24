@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Diagnostics;
+using System.Reflection.Metadata;
 using System.Xml.Linq;
 
 namespace cs2.core {
@@ -89,6 +90,36 @@ namespace cs2.core {
             if (refKind == RefKind.In || refKind == RefKind.RefReadOnlyParameter) {
                 variableType.IsConstReference = true;
                 variableType.IsReference = false;
+            }
+        }
+
+        /// <summary>
+        /// Resolves the runtime wrapper name for a <c>delegate*</c> signature from its calling convention: managed pointers
+        /// map to <c>FunctionPointer</c>, <c>unmanaged[Stdcall]</c> (and bare <c>unmanaged</c>, which is stdcall on the
+        /// supported Windows targets) to <c>StdcallFunctionPointer</c>, and <c>unmanaged[Cdecl]</c> to <c>CdeclFunctionPointer</c>.
+        /// The rules mirror the P/Invoke type lowerer so a local and the native import it feeds agree on the convention.
+        /// Conventions the P/Invoke lowering rejects (thiscall, fastcall, or several modifiers) keep the managed wrapper name
+        /// here, because the P/Invoke analyzer is the single place that reports them as diagnostics.
+        /// </summary>
+        /// <param name="signature">Function-pointer signature whose calling convention selects the wrapper.</param>
+        /// <returns>The wrapper type name used for both the type name and the qualified type name.</returns>
+        static string ResolveFunctionPointerTypeName(IMethodSymbol signature) {
+            switch (signature.CallingConvention) {
+                case SignatureCallingConvention.StdCall:
+                    return "StdcallFunctionPointer";
+                case SignatureCallingConvention.CDecl:
+                    return "CdeclFunctionPointer";
+                case SignatureCallingConvention.Unmanaged:
+                    if (signature.UnmanagedCallingConventionTypes.Length == 0) {
+                        return "StdcallFunctionPointer";
+                    } else if (signature.UnmanagedCallingConventionTypes.Length == 1 && signature.UnmanagedCallingConventionTypes[0].Name == "CallConvStdcall") {
+                        return "StdcallFunctionPointer";
+                    } else if (signature.UnmanagedCallingConventionTypes.Length == 1 && signature.UnmanagedCallingConventionTypes[0].Name == "CallConvCdecl") {
+                        return "CdeclFunctionPointer";
+                    }
+                    return "FunctionPointer";
+                default:
+                    return "FunctionPointer";
             }
         }
 
@@ -663,8 +694,9 @@ namespace cs2.core {
             }
 
             if (typeSymbol is IFunctionPointerTypeSymbol functionPointerTypeSymbol) {
-                VariableType functionPointerType = CreateVariableType(VariableDataType.Callback, "FunctionPointer", functionPointerTypeSymbol);
-                functionPointerType.QualifiedTypeName = "FunctionPointer";
+                string functionPointerTypeName = ResolveFunctionPointerTypeName(functionPointerTypeSymbol.Signature);
+                VariableType functionPointerType = CreateVariableType(VariableDataType.Callback, functionPointerTypeName, functionPointerTypeSymbol);
+                functionPointerType.QualifiedTypeName = functionPointerTypeName;
                 VariableType returnType = GetVarType(functionPointerTypeSymbol.Signature.ReturnType);
                 if (functionPointerTypeSymbol.Signature.ReturnsByRefReadonly) {
                     returnType.IsConstReference = true;

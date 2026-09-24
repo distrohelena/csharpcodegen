@@ -513,8 +513,16 @@ namespace cs2.cpp {
                 return "Func";
             }
 
-            if (MatchesRuntimeType(varType, "FunctionPointer", "FunctionPointer")) {
-                return "FunctionPointer";
+            if (MatchesRuntimeType(varType, CPPFunctionPointerTypeNames.Managed, CPPFunctionPointerTypeNames.Managed)) {
+                return CPPFunctionPointerTypeNames.Managed;
+            }
+
+            if (MatchesRuntimeType(varType, CPPFunctionPointerTypeNames.Stdcall, CPPFunctionPointerTypeNames.Stdcall)) {
+                return CPPFunctionPointerTypeNames.Stdcall;
+            }
+
+            if (MatchesRuntimeType(varType, CPPFunctionPointerTypeNames.Cdecl, CPPFunctionPointerTypeNames.Cdecl)) {
+                return CPPFunctionPointerTypeNames.Cdecl;
             }
 
             if (MatchesRuntimeType(varType, "Nullable", "System.Nullable")) {
