@@ -203,23 +203,11 @@ public sealed class CPPPInvokeAnalyzer {
             hasError = true;
         }
 
-        CPPPInvokeTypeLoweringResult returnResult = lowerer.LowerReturn(method.ReturnType, false);
-        if (!returnResult.Succeeded) {
-            diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedType,
-                BuildTypeFailureMessage("Return type", returnResult), returnResult.Recommendation));
-            hasError = true;
-        }
-
         List<CPPPInvokeParameter> parameters = new List<CPPPInvokeParameter>();
-        foreach (IParameterSymbol parameter in method.Parameters) {
-            CPPPInvokeTypeLoweringResult parameterResult = lowerer.LowerParameter(parameter.Type, parameter.RefKind, false);
-            if (!parameterResult.Succeeded) {
-                diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedType,
-                    BuildTypeFailureMessage($"Parameter '{parameter.Name}'", parameterResult), parameterResult.Recommendation));
-                hasError = true;
-                continue;
-            }
-            parameters.Add(new CPPPInvokeParameter(parameter.Name, parameterResult.Type, parameter.RefKind));
+        bool signatureLowered = TryLowerSignature(method, lowerer, false, CPPPInvokeDiagnosticCodes.UnsupportedType,
+            diagnostics, out CPPPInvokeTypeLoweringResult returnResult, parameters);
+        if (!signatureLowered) {
+            hasError = true;
         }
 
         if (hasError) {
@@ -300,23 +288,11 @@ public sealed class CPPPInvokeAnalyzer {
             hasError = true;
         }
 
-        CPPPInvokeTypeLoweringResult returnResult = lowerer.LowerReturn(method.ReturnType, true);
-        if (!returnResult.Succeeded) {
-            diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedCallbackType,
-                BuildTypeFailureMessage("Return type", returnResult), returnResult.Recommendation));
-            hasError = true;
-        }
-
         List<CPPPInvokeParameter> parameters = new List<CPPPInvokeParameter>();
-        foreach (IParameterSymbol parameter in method.Parameters) {
-            CPPPInvokeTypeLoweringResult parameterResult = lowerer.LowerParameter(parameter.Type, parameter.RefKind, true);
-            if (!parameterResult.Succeeded) {
-                diagnostics.Add(CreateDiagnostic(method, CPPPInvokeDiagnosticCodes.UnsupportedCallbackType,
-                    BuildTypeFailureMessage($"Parameter '{parameter.Name}'", parameterResult), parameterResult.Recommendation));
-                hasError = true;
-                continue;
-            }
-            parameters.Add(new CPPPInvokeParameter(parameter.Name, parameterResult.Type, parameter.RefKind));
+        bool signatureLowered = TryLowerSignature(method, lowerer, true, CPPPInvokeDiagnosticCodes.UnsupportedCallbackType,
+            diagnostics, out CPPPInvokeTypeLoweringResult returnResult, parameters);
+        if (!signatureLowered) {
+            hasError = true;
         }
 
         if (hasError) {
@@ -326,6 +302,46 @@ public sealed class CPPPInvokeAnalyzer {
         CPPPInvokeSignature signature = new CPPPInvokeSignature(returnResult.Type, parameters, callingConvention);
         string trampolineName = "he_pinvoke_cb_" + Sanitize(method.ContainingType.ToDisplayString()) + "_" + method.Name;
         callbacks.Add(new CPPPInvokeCallback(CPPPInvokeMethodIds.Get(method), trampolineName, signature));
+    }
+
+    /// <summary>
+    /// Lowers a method's return type and every parameter with the shared type lowerer, reporting <paramref
+    /// name="typeErrorCode"/> for the return type and for every parameter that fails to lower (not just the
+    /// first). Shared between DllImport and UnmanagedCallersOnly analysis, which differ only in whether the
+    /// signature is lowered for a callback and which diagnostic code a failure reports.
+    /// </summary>
+    /// <param name="method">Method whose return type and parameters are lowered.</param>
+    /// <param name="lowerer">Shared type lowerer used so mirror structs are shared across the whole plan.</param>
+    /// <param name="isCallback">Whether the signature belongs to a method invoked by native code as a callback.</param>
+    /// <param name="typeErrorCode">Diagnostic code to report for a failing return type or parameter: <c>CPPPINV002</c>
+    /// for DllImport signatures, <c>CPPPINV008</c> for callback signatures.</param>
+    /// <param name="diagnostics">List every failure diagnostic is appended to.</param>
+    /// <param name="returnResult">The lowered return type result, whether it succeeded or failed.</param>
+    /// <param name="parameters">List every successfully lowered parameter is appended to, in declaration order.</param>
+    /// <returns><c>true</c> if the return type and every parameter lowered successfully; otherwise <c>false</c>.</returns>
+    bool TryLowerSignature(IMethodSymbol method, CPPPInvokeTypeLowerer lowerer, bool isCallback, string typeErrorCode,
+        List<CPPConversionDiagnostic> diagnostics, out CPPPInvokeTypeLoweringResult returnResult, List<CPPPInvokeParameter> parameters) {
+        bool succeeded = true;
+
+        returnResult = lowerer.LowerReturn(method.ReturnType, isCallback);
+        if (!returnResult.Succeeded) {
+            diagnostics.Add(CreateDiagnostic(method, typeErrorCode,
+                BuildTypeFailureMessage("Return type", returnResult), returnResult.Recommendation));
+            succeeded = false;
+        }
+
+        foreach (IParameterSymbol parameter in method.Parameters) {
+            CPPPInvokeTypeLoweringResult parameterResult = lowerer.LowerParameter(parameter.Type, parameter.RefKind, isCallback);
+            if (!parameterResult.Succeeded) {
+                diagnostics.Add(CreateDiagnostic(method, typeErrorCode,
+                    BuildTypeFailureMessage($"Parameter '{parameter.Name}'", parameterResult), parameterResult.Recommendation));
+                succeeded = false;
+                continue;
+            }
+            parameters.Add(new CPPPInvokeParameter(parameter.Name, parameterResult.Type, parameter.RefKind));
+        }
+
+        return succeeded;
     }
 
     /// <summary>
