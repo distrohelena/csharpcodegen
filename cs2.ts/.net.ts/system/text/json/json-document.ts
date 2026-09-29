@@ -3,9 +3,8 @@ import { JsonDocumentOptions } from "./json-document-options";
 import { JsonElement } from "./json-element";
 import { Utf8JsonReader } from "./utf8-json-reader";
 
-function stripTrailingCommas(text: string): string {
-    return text.replace(/,\s*([}\]])/g, "$1");
-}
+import { JsonCommentHandling } from "./json-comment-handling";
+import { JsonTextParser } from "./json-text-parser";
 
 export class JsonDocument {
     private _root: JsonElement;
@@ -15,8 +14,7 @@ export class JsonDocument {
     }
 
     public static Parse(json: string, options?: JsonDocumentOptions): JsonDocument {
-        const text = options?.AllowTrailingCommas ? stripTrailingCommas(json) : json;
-        const value = text && text.length > 0 ? JSON.parse(text) : null;
+        const value = JsonTextParser.Parse(json, options?.CommentHandling === JsonCommentHandling.Skip, options?.AllowTrailingCommas === true);
         return new JsonDocument(value);
     }
 

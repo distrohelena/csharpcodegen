@@ -130,6 +130,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("JsonNamingPolicy", "./system/text/json/json-naming-policy"),
             new TypeScriptRuntimeRequirementDefinition("JsonDocument", "./system/text/json/json-document"),
             new TypeScriptRuntimeRequirementDefinition("JsonDocumentOptions", "./system/text/json/json-document-options"),
+            new TypeScriptRuntimeRequirementDefinition("JsonCommentHandling", "./system/text/json/json-comment-handling"),
             new TypeScriptRuntimeRequirementDefinition("JsonElement", "./system/text/json/json-element"),
             new TypeScriptRuntimeRequirementDefinition("JsonProperty", "./system/text/json/json-property"),
             new TypeScriptRuntimeRequirementDefinition("JsonValueKind", "./system/text/json/json-value-kind"),
