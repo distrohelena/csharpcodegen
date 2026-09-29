@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using cs2.ts.tests.TestHelpers;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
@@ -211,7 +211,7 @@ namespace cs2.ts.tests {
         }
 
         [Fact]
-        public void Throw_Empty_EmitsPlaceholder() {
+        public void Throw_Empty_EmitsCaughtException() {
             var code = "class C { void M(){ try { throw new System.Exception(); } catch { throw; } } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var method = RoslynTestHelper.GetFirstMethod(root);
@@ -219,7 +219,7 @@ namespace cs2.ts.tests {
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, thr));
-            Assert.Contains("Throw empty", s);
+            Assert.Contains("throw __caughtException_", s);
         }
 
         [Fact]
@@ -262,7 +262,7 @@ namespace cs2.ts.tests {
         }
 
         [Fact]
-        public void TryCatch_WithoutVariable_EmitsBareCatch() {
+        public void TryCatch_WithoutVariable_EmitsSyntheticBinding() {
             var code = "class C { void M(){ try { } catch { } } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var method = RoslynTestHelper.GetFirstMethod(root);
@@ -270,7 +270,7 @@ namespace cs2.ts.tests {
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, tryStmt));
-            Assert.Contains("catch {", s);
+            Assert.Contains("catch (__caughtException_", s);
         }
 
         [Fact]
