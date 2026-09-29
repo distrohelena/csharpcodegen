@@ -4964,11 +4964,12 @@ namespace cs2.ts {
         /// <param name="lockStatement">The lock statement.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessLockStatement(SemanticModel semantic, LayerContext context, LockStatementSyntax lockStatement, List<string> lines) {
-            // You can implement custom locking logic here if needed, otherwise omit the lock
+            // JavaScript omits synchronization, but the C# lock body still owns a lexical scope.
+            // Keep that scope so repeated local names in separate locks never collide after emission.
             lines.Add("// Lock omitted in TypeScript\n");
-
-            // Process the body of the lock statement
+            lines.Add("{\n");
             ProcessStatement(semantic, context, lockStatement.Statement, lines);
+            lines.Add("}\n");
         }
 
         /// <summary>
