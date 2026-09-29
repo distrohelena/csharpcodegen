@@ -10,6 +10,22 @@ Core Project Features
 
 ## C# to TypeScript
 
+### Reproducible dependency setup
+
+The TypeScript converter uses the `submodules/nucleusdotnet` Git submodule. Initialize it at the revision recorded by this repository; a sibling checkout is not an implicit dependency:
+
+```powershell
+git submodule update --init -- submodules/nucleusdotnet
+npm ci --prefix cs2.ts/.net.ts
+dotnet restore cs2.ts.tests/cs2.ts.tests.csproj
+dotnet build cs2.ts/cs2.ts.csproj --no-restore
+```
+
+The submodule revision pins Nucleus .NET 1.0.4 (`9fb31812af39b9a1d4cb8eb785a4f387baf6e388`). Runtime metadata tooling uses the committed npm lockfile. Install the SDK/runtime needed for the project's `net9.0` target before building. Clone/build verification must start without inherited `bin`, `obj` or runtime `node_modules` directories.
+
+The native FormatException adapter and its runtime catalog/project entries are versioned together. Application drivers may add their documented runtime normalizations after copying shims; SweetSquare supplies the C# `Message` getter through its exception normalizer.
+
+
 #### Why?
 In the process of developing a networking package, I needed to connect a client written in C# to a web one. 
 

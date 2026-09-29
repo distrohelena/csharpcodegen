@@ -1,0 +1,3 @@
+[submodule "nucleusdotnet"]
+	path = submodules/nucleusdotnet
+	url = git@github.com:distrohelena/nucleusdotnet.git

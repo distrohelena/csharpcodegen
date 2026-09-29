@@ -53,6 +53,9 @@
     <None Include=".net.ts\system\invalid-operation.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\format.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\file-not-found.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -441,7 +444,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\submodules\nucleusdotnet\nucleus-dotnet\nucleus-dotnet\NucleusDotNet.csproj" />
+    <ProjectReference Include="..\submodules\nucleusdotnet\nucleus-dotnet\nucleus-dotnet\nucleus.dotnet.csproj" />
     <ProjectReference Include="..\cs2.core\cs2.core.csproj" />
   </ItemGroup>
 
