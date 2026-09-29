@@ -15,6 +15,9 @@ namespace cs2.ts {
     /// Processes Roslyn syntax nodes into TypeScript code lines following project rules and mappings.
     /// </summary>
     public class TypeScriptConversiorProcessor : ConversionProcessor {
+        /// <summary>Owns deterministic, collision-safe names for this processor conversion.</summary>
+        readonly TypeScriptTemporaryNameAllocator TemporaryNames = new();
+
         /// <summary>
         /// Determines whether the assignment occurs within an object initializer.
         /// </summary>
@@ -820,7 +823,7 @@ namespace cs2.ts {
             List<string> creationLines = new List<string>();
             ExpressionResult creationResult = BuildObjectCreationExpression(semantic, context, objectCreation, creationLines);
 
-            string collectionName = "__collection_" + Guid.NewGuid().ToString("N")[..8];
+            string collectionName = TemporaryNames.Allocate(semantic, "__collection_");
 
             lines.Add("(() => {");
             lines.Add("const ");
@@ -1012,7 +1015,7 @@ namespace cs2.ts {
             List<string> creationLines = new List<string>();
             ExpressionResult creationResult = BuildImplicitObjectCreationExpression(semantic, context, objectCreation, creationLines);
 
-            string collectionName = "__collection_" + Guid.NewGuid().ToString("N")[..8];
+            string collectionName = TemporaryNames.Allocate(semantic, "__collection_");
 
             lines.Add("(() => {");
             lines.Add("const ");
@@ -1761,7 +1764,7 @@ namespace cs2.ts {
             if (entryStrings.Count > 0 && argumentTexts.Count > 0) {
                 // Constructor arguments (a copy source, a comparer) AND initializer entries cannot
                 // share the runtime constructor's two slots, so the entries apply through set calls.
-                string dictionaryName = "__dictionary_" + Guid.NewGuid().ToString("N")[..8];
+                string dictionaryName = TemporaryNames.Allocate(semantic, "__dictionary_");
                 lines.Add("(() => {\nconst ");
                 lines.Add(dictionaryName);
                 lines.Add(" = new ");
@@ -2158,8 +2161,7 @@ namespace cs2.ts {
                     isOut = true;
                     isOutDeclaration = arg.Expression is DeclarationExpressionSyntax;
                     beforeLines.Add("let ");
-                    strName = "out_" + Guid.NewGuid().ToString().ToLower().Remove(16);
-                    strName = StringUtil.Replace(strName, "-", "");
+                    strName = TemporaryNames.Allocate(semantic, "out_");
                     beforeLines.Add(strName);
                     beforeLines.Add(" = { value: undefined };\n");
                 }
@@ -2766,9 +2768,9 @@ namespace cs2.ts {
             }
 
             List<string> preludeLines = new List<string>();
-            string resultVar = "__binary_" + Guid.NewGuid().ToString("N")[..8];
-            string leftVar = "__left_" + Guid.NewGuid().ToString("N")[..8];
-            string rightVar = "__right_" + Guid.NewGuid().ToString("N")[..8];
+            string resultVar = TemporaryNames.Allocate(semantic, "__binary_");
+            string leftVar = TemporaryNames.Allocate(semantic, "__left_");
+            string rightVar = TemporaryNames.Allocate(semantic, "__right_");
 
             preludeLines.Add("let ");
             preludeLines.Add(resultVar);
@@ -4625,7 +4627,7 @@ namespace cs2.ts {
                 return;
             }
 
-            string resultVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+            string resultVar = TemporaryNames.Allocate(semantic, "__cond_");
             lines.Add("(() => {\n");
             lines.Add("let ");
             lines.Add(resultVar);
@@ -4637,7 +4639,7 @@ namespace cs2.ts {
 
             bool hasCondAfter = condResult.AfterLines != null && condResult.AfterLines.Count > 0;
             if (hasCondAfter) {
-                string condVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                string condVar = TemporaryNames.Allocate(semantic, "__cond_");
                 lines.Add("const ");
                 lines.Add(condVar);
                 lines.Add(" = ");
@@ -4653,9 +4655,9 @@ namespace cs2.ts {
                 lines.Add(") {\n");
             }
 
-            AppendConditionalBranchAssignment(lines, resultVar, whenTrueLines, whenTrueResult);
+            AppendConditionalBranchAssignment(semantic, lines, resultVar, whenTrueLines, whenTrueResult);
             lines.Add("} else {\n");
-            AppendConditionalBranchAssignment(lines, resultVar, whenFalseLines, whenFalseResult);
+            AppendConditionalBranchAssignment(semantic, lines, resultVar, whenFalseLines, whenFalseResult);
             lines.Add("}\n");
             lines.Add("return ");
             lines.Add(resultVar);
@@ -4726,11 +4728,13 @@ namespace cs2.ts {
         /// <summary>
         /// Appends a conditional branch assignment into a prelude-based conditional expression.
         /// </summary>
+        /// <param name="semantic">Compilation used to reserve source identifiers for generated temporaries.</param>
         /// <param name="lines">The output lines to append to.</param>
         /// <param name="resultVar">The variable receiving the branch value.</param>
         /// <param name="branchLines">The rendered branch expression lines.</param>
         /// <param name="branchResult">The expression result for the branch.</param>
         void AppendConditionalBranchAssignment(
+            SemanticModel semantic,
             List<string> lines,
             string resultVar,
             List<string> branchLines,
@@ -4741,7 +4745,7 @@ namespace cs2.ts {
 
             bool hasAfter = branchResult.AfterLines != null && branchResult.AfterLines.Count > 0;
             if (hasAfter) {
-                string branchVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                string branchVar = TemporaryNames.Allocate(semantic, "__cond_");
                 lines.Add("const ");
                 lines.Add(branchVar);
                 lines.Add(" = ");
@@ -4893,7 +4897,7 @@ namespace cs2.ts {
                     }
                 }
             } else if (usingStatement.Expression != null) {
-                expressionResourceName = "__using_" + Guid.NewGuid().ToString("N")[..8];
+                expressionResourceName = TemporaryNames.Allocate(semantic, "__using_");
                 nameLines.Add(expressionResourceName);
             }
 
@@ -5175,7 +5179,7 @@ namespace cs2.ts {
             }
 
             if (hasAfterLines) {
-                string condVar = "__cond_" + Guid.NewGuid().ToString("N")[..8];
+                string condVar = TemporaryNames.Allocate(semantic, "__cond_");
                 lines.Add("let ");
                 lines.Add(condVar);
                 lines.Add(" = ");
@@ -5290,7 +5294,7 @@ namespace cs2.ts {
                 wrapElseBlock = true;
             }
 
-            string patternTarget = "__patternTarget" + Guid.NewGuid().ToString("N")[..8];
+            string patternTarget = TemporaryNames.Allocate(semantic, "__patternTarget");
 
             lines.Add("const ");
             lines.Add(patternTarget);

@@ -1,4 +1,4 @@
-using cs2.core;
+﻿using cs2.core;
 using cs2.ts.tests.TestHelpers;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System;
@@ -76,6 +76,7 @@ namespace cs2.ts.tests {
             Assert.Contains('.', output);
         }
 
+        /// <summary>Checks that out temporaries and writeback occur once in the emitted statement body.</summary>
         [Fact]
         public void Invocation_WithOutParameter_GeneratesTempAndAfterAssignment() {
             var code = @"class C { static void Foo(out int x){ x = 1; } void M(){ int x; Foo(out x); } }";
@@ -85,13 +86,13 @@ namespace cs2.ts.tests {
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var (lines, result) = TsProcessorTestHarness.RunProcessBlock(proc, ctx, model, method.Body!);
-            // Expect temporary out var and afterLines assignment back
-            Assert.NotNull(result.BeforeLines);
-            Assert.Contains("let ", string.Concat(result.BeforeLines));
-            Assert.NotNull(result.AfterLines);
-            var after = string.Concat(result.AfterLines);
-            Assert.Contains("x = out_", after);
-            Assert.Contains(".value;", after);
+            // Statement emission consumes the prelude/follow-up once and places both in the body.
+            Assert.Null(result.BeforeLines);
+            Assert.Null(result.AfterLines);
+            string output = string.Concat(lines);
+            Assert.Contains("let out_", output);
+            Assert.Contains("x = out_", output);
+            Assert.Contains(".value;", output);
         }
 
         [Fact]
@@ -201,6 +202,7 @@ namespace cs2.ts.tests {
             Assert.StartsWith("await ", TsProcessorTestHarness.JoinLines(lines));
         }
 
+        /// <summary>Checks that a qualified CLR type resolves to the runtime reflection descriptor.</summary>
         [Fact]
         public void QualifiedName_InTypeOf_IsHandled() {
             var code = "class C { void M(){ typeof(System.Int32); } }";
@@ -212,12 +214,12 @@ namespace cs2.ts.tests {
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var lines = TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr);
             var s = TsProcessorTestHarness.JoinLines(lines);
-            Assert.StartsWith("typeof ", s);
-            Assert.Contains("Int32", s);
+            Assert.Equal("Type.number", s);
         }
 
+        /// <summary>Checks that a primitive typeof expression resolves to its runtime reflection descriptor.</summary>
         [Fact]
-        public void TypeOfExpression_EmitsTypeof() {
+        public void TypeOfExpression_EmitsRuntimeType() {
             var code = "class C { void M(){ typeof(int); } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var method = RoslynTestHelper.GetFirstMethod(root);
@@ -226,7 +228,7 @@ namespace cs2.ts.tests {
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var lines = TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, expr);
-            Assert.StartsWith("typeof ", TsProcessorTestHarness.JoinLines(lines));
+            Assert.Equal("Type.number", TsProcessorTestHarness.JoinLines(lines));
         }
 
         [Fact]
@@ -436,17 +438,20 @@ namespace cs2.ts.tests {
             Assert.Contains(" => ", s);
         }
 
+        /// <summary>Checks that an out declaration produces a local initialized from the completed call.</summary>
         [Fact]
-        public void DeclarationExpression_InOutVar_IsNotImplemented_Yet() {
+        public void DeclarationExpression_InOutVar_EmitsLocalAssignment() {
             var code = @"class C { static void Foo(out int x){ x=1; } void M(){ Foo(out var z); } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var invoke = root.DescendantNodes().OfType<InvocationExpressionSyntax>().First(i => i.ToString().StartsWith("Foo("));
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
-            Assert.Throws<NotImplementedException>(() => {
-                var lines = new List<string>();
-                proc.ProcessExpression(model, ctx, invoke, lines);
-            });
+            var method = RoslynTestHelper.GetMethodByName(root, "M");
+            var emitted = TsProcessorTestHarness.RunProcessBlock(proc, ctx, model, method.Body!);
+            string output = string.Concat(emitted.Lines);
+            Assert.Contains("let out_", output);
+            Assert.Contains("let z = out_", output);
+            Assert.Contains(".value;", output);
         }
 
         [Fact]
@@ -754,9 +759,10 @@ namespace cs2.ts.tests {
             Assert.Contains("\"M\"", output);
         }
 
+        /// <summary>Checks the actual Roslyn pattern-expression syntax and its emitted Boolean type test.</summary>
         [Fact]
         public void PatternIsExpression_EmitsIifeChecks() {
-            var code = "class C { void M(object o){ var x = o is string; } }";
+            var code = "class C { void M(object o){ var x = o is string text; } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var pattern = root.DescendantNodes().OfType<IsPatternExpressionSyntax>().First();
 
