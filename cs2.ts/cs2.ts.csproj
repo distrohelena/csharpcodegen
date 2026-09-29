@@ -8,6 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include=".net.ts\system\collections\generic\key-not-found.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\unauthorized-access.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

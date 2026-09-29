@@ -12,6 +12,7 @@ namespace cs2.ts {
             // system
             new TypeScriptRuntimeRequirementDefinition("InvalidOperationException", "./system/invalid-operation.exception"),
             new TypeScriptRuntimeRequirementDefinition("UnauthorizedAccessException", "./system/unauthorized-access.exception"),
+            new TypeScriptRuntimeRequirementDefinition("KeyNotFoundException", "./system/collections/generic/key-not-found.exception"),
             new TypeScriptRuntimeRequirementDefinition("NotSupportedException", "./system/not-supported.exception"),
             new TypeScriptRuntimeRequirementDefinition("NotImplementedException", "./system/not-implemented.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentException", "./system/argument.exception"),

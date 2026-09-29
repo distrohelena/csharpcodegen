@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { JsonValueKind } from "./json-value-kind";
 import { JsonProperty } from "./json-property";
+import { ArgumentNullException } from "../../argument-null.exception";
+import { InvalidOperationException } from "../../invalid-operation.exception";
+import { KeyNotFoundException } from "../../collections/generic/key-not-found.exception";
 
 export class JsonElement {
     private _value: any;
@@ -39,11 +42,34 @@ export class JsonElement {
         return text == null ? "null" : text;
     }
 
+    /** Returns a JSON string or null; numbers, booleans and containers are not coerced. */
     public GetString(): string {
-        if (this._value == null) {
+        if (this.ValueKind === JsonValueKind.Null) {
             return null;
         }
-        return typeof this._value === "string" ? this._value : String(this._value);
+        this.RequireKind(JsonValueKind.String);
+        return this._value;
+    }
+
+    /** Reads an actual JSON Boolean, rejecting text and numeric substitutes. */
+    public GetBoolean(): boolean {
+        if (this.ValueKind !== JsonValueKind.True && this.ValueKind !== JsonValueKind.False) {
+            throw new InvalidOperationException("The requested operation requires a JSON Boolean.");
+        }
+        return this._value;
+    }
+
+    /** Returns the number of entries in a JSON array, including null values. */
+    public GetArrayLength(): number {
+        this.RequireKind(JsonValueKind.Array);
+        return this._value.length;
+    }
+
+    /** Rejects a mismatched JSON kind instead of substituting an empty container or scalar. */
+    private RequireKind(kind: JsonValueKind): void {
+        if (this.ValueKind !== kind) {
+            throw new InvalidOperationException("The JSON element has an incompatible value kind.");
+        }
     }
 
     public GetDecimal(): number {
@@ -71,32 +97,42 @@ export class JsonElement {
         return false;
     }
 
+    /** Looks up an exact own-property name; an absent property returns an undefined JsonElement. */
     public TryGetProperty(name: string, outValue: { value: JsonElement }): boolean {
-        const value = this._value;
-        if (!name || value == null || typeof value !== "object" || Array.isArray(value)) {
-            outValue.value = null;
-            return false;
+        if (name == null) {
+            throw new ArgumentNullException("propertyName");
         }
-
-        if (Object.prototype.hasOwnProperty.call(value, name)) {
-            const propertyValue = value[name];
-            outValue.value = propertyValue instanceof JsonElement ? propertyValue : new JsonElement(propertyValue);
+        this.RequireKind(JsonValueKind.Object);
+        if (Object.prototype.hasOwnProperty.call(this._value, name)) {
+            const value = this._value[name];
+            outValue.value = value instanceof JsonElement ? value : new JsonElement(value);
             return true;
         }
-
-        outValue.value = null;
+        outValue.value = new JsonElement(undefined);
         return false;
     }
 
-    public EnumerateArray(): JsonArrayEnumerator {
-        const items = Array.isArray(this._value) ? this._value : [];
-        return new JsonArrayEnumerator(items);
+    /** Requires an exact object property, throwing for absent names without consulting the prototype. */
+    public GetProperty(name: string): JsonElement {
+        const result: { value: JsonElement } = { value: undefined };
+        if (!this.TryGetProperty(name, result)) {
+            throw new KeyNotFoundException();
+        }
+        return result.value;
     }
 
-    public EnumerateObject(): JsonObjectEnumerator {
-        const obj = this._value && typeof this._value === "object" && !Array.isArray(this._value) ? this._value : {};
-        return new JsonObjectEnumerator(obj);
+    /** Enumerates only an actual JSON array; nonarrays are rejected before iteration starts. */
+    public EnumerateArray(): JsonArrayEnumerator {
+        this.RequireKind(JsonValueKind.Array);
+        return new JsonArrayEnumerator(this._value);
     }
+
+    /** Enumerates only own JSON object properties, rejecting null, arrays and scalar values. */
+    public EnumerateObject(): JsonObjectEnumerator {
+        this.RequireKind(JsonValueKind.Object);
+        return new JsonObjectEnumerator(this._value);
+    }
+
 }
 
 class JsonArrayEnumerator {
