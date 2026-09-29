@@ -17,11 +17,12 @@ The TypeScript converter uses the `submodules/nucleusdotnet` Git submodule. Init
 ```powershell
 git submodule update --init -- submodules/nucleusdotnet
 npm ci --prefix cs2.ts/.net.ts
-dotnet restore cs2.ts.tests/cs2.ts.tests.csproj
+dotnet restore cs2.ts.tests/cs2.ts.tests.csproj -p:TargetFramework=net9.0
 dotnet build cs2.ts/cs2.ts.csproj --no-restore
+dotnet test cs2.ts.tests/cs2.ts.tests.csproj --no-restore
 ```
 
-The submodule revision pins Nucleus .NET 1.0.4 (`9fb31812af39b9a1d4cb8eb785a4f387baf6e388`). Runtime metadata tooling uses the committed npm lockfile. Install the SDK/runtime needed for the project's `net9.0` target before building. Clone/build verification must start without inherited `bin`, `obj` or runtime `node_modules` directories.
+The submodule revision pins Nucleus .NET 1.0.4 (`9fb31812af39b9a1d4cb8eb785a4f387baf6e388`). Runtime metadata tooling uses the committed npm lockfile. Install the SDK/runtime needed for the project's `net9.0` target before building. Select TargetFramework=net9.0 for the converter restore; Nucleus also supports .NET Framework 4.7.2, which is not used by this converter. Do not set TargetFrameworks globally: that changes single-target project restore evaluation and can prevent the xUnit adapter from loading. Require an actual nonzero test count, not only a zero process exit code. Clone/build verification must start without inherited `bin`, `obj` or runtime `node_modules` directories.
 
 The native FormatException adapter and its runtime catalog/project entries are versioned together. Application drivers may add their documented runtime normalizations after copying shims; SweetSquare supplies the C# `Message` getter through its exception normalizer.
 
