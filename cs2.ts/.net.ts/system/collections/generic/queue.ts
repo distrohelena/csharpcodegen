@@ -1,101 +1,109 @@
-// @ts-nocheck
-export class Queue<T> {
-    private items: T[] = [];
+import { ArgumentNullException } from '../../argument-null.exception';
+import { ArgumentOutOfRangeException } from '../../argument-out-of-range.exception';
+import { InvalidOperationException } from '../../invalid-operation.exception';
 
-    // Add an item to the list
-    public Add(item: T): void {
-        this.items.push(item);
+/** FIFO collection used by generated network send and download queues. */
+export class Queue<T> implements Iterable<T> {
+    /** Ring storage; dequeued slots are cleared so consumed packets can be collected. */
+    private Items: Array<T | undefined> = [];
+    /** Physical index of the next item to dequeue. */
+    private Head = 0;
+    /** Number of live entries in the ring. */
+    private Size = 0;
+    /** Mutation counter captured by each enumerator. */
+    private Version = 0;
+
+    /** Creates an empty queue without reserving storage. */
+    constructor();
+    /** Reserves capacity for an initially empty queue. */
+    constructor(capacity: number);
+    /** Copies items from an iterable in enumeration order. */
+    constructor(collection: Iterable<T>);
+    /** Selects the capacity or iterable constructor without treating explicit null as empty. */
+    constructor(source?: number | Iterable<T>) {
+        if (arguments.length === 0) return;
+        if (typeof source === 'number') {
+            if (!Number.isInteger(source) || source < 0 || source > 2147483647) {
+                throw new ArgumentOutOfRangeException('capacity');
+            }
+            this.Items = new Array<T | undefined>(source);
+        } else if (source === null || source === undefined) {
+            throw new ArgumentNullException('collection');
+        } else {
+            for (const item of source) this.Enqueue(item);
+        }
     }
 
-    // Add multiple items to the list
-    public AddRange(items: T[]): void {
-        this.items.push(...items);
+    /** Returns the number of items available for dequeue. */
+    public get Count(): number {
+        return this.Size;
     }
 
-    // Remove an item from the list (first occurrence)
-    public Remove(item: T): boolean {
-        const index = this.items.indexOf(item);
-        if (index !== -1) {
-            this.items.splice(index, 1);
-            return true;
+    /** Appends an item at the tail, growing ring storage only when it is full. */
+    public Enqueue(item: T): void {
+        if (this.Size === this.Items.length) {
+            const capacity = Math.max(4, this.Items.length * 2);
+            const expanded = new Array<T | undefined>(capacity);
+            for (let index = 0; index < this.Size; index++) expanded[index] = this.Items[(this.Head + index) % this.Items.length];
+            this.Items = expanded;
+            this.Head = 0;
+        }
+        this.Items[(this.Head + this.Size) % this.Items.length] = item;
+        this.Size++;
+        this.Version++;
+    }
+
+    /** Removes the oldest item, throwing the native empty-queue exception when no item exists. */
+    public Dequeue(): T {
+        const item = this.Peek();
+        this.Items[this.Head] = undefined;
+        this.Head = (this.Head + 1) % this.Items.length;
+        this.Size--;
+        this.Version++;
+        return item;
+    }
+
+    /** Reads the oldest item without removing it or invalidating enumerators. */
+    public Peek(): T {
+        if (this.Size === 0) throw new InvalidOperationException('Queue empty.');
+        return this.Items[this.Head] as T;
+    }
+
+    /** Removes all entries, releases their references and retains allocated capacity. */
+    public Clear(): void {
+        this.Items.fill(undefined);
+        this.Head = 0;
+        this.Size = 0;
+        this.Version++;
+    }
+
+    /** Tests primitive value or object identity, including equality of NaN values. */
+    public Contains(item: T): boolean {
+        for (let index = 0; index < this.Size; index++) {
+            const candidate = this.Items[(this.Head + index) % this.Items.length];
+            if (candidate === item || (Number.isNaN(candidate) && Number.isNaN(item))) return true;
         }
         return false;
     }
 
-    // Remove an item at a specific index
-    public RemoveAt(index: number): void {
-        if (index >= 0 && index < this.items.length) {
-            this.items.splice(index, 1);
-        } else {
-            throw new Error("Index out of range.");
-        }
-    }
-
-    // Clear the list
-    public Clear(): void {
-        this.items = [];
-    }
-
-    // Check if the list contains an item
-    public Contains(item: T): boolean {
-        return this.items.indexOf(item) !== -1;
-    }
-
-    // Get the item at a specific index
-    public Get(index: number): T {
-        if (index >= 0 && index < this.items.length) {
-            return this.items[index];
-        } else {
-            throw new Error("Index out of range.");
-        }
-    }
-
-    // Find the first item that matches a predicate
-    public Find(predicate: (item: T) => boolean): T | undefined {
-        return this.items.find(predicate);
-    }
-
-    // Find all items that match a predicate
-    public FindAll(predicate: (item: T) => boolean): T[] {
-        return this.items.filter(predicate);
-    }
-
-    // Get the index of an item
-    public IndexOf(item: T): number {
-        return this.items.indexOf(item);
-    }
-
-    // Get the number of items in the list
-    public get Count(): number {
-        return this.items.length;
-    }
-
-    // Get all items in the list as an array
+    /** Copies the live entries in FIFO order without exposing the ring storage. */
     public ToArray(): T[] {
-        return [...this.items];
+        const result = new Array<T>(this.Size);
+        for (let index = 0; index < this.Size; index++) result[index] = this.Items[(this.Head + index) % this.Items.length] as T;
+        return result;
     }
 
-    // Insert an item at a specific index
-    public Insert(index: number, item: T): void {
-        if (index >= 0 && index <= this.items.length) {
-            this.items.splice(index, 0, item);
-        } else {
-            throw new Error("Index out of range.");
+    /** Captures the current mutation version before the first iterator step. */
+    public [Symbol.iterator](): IterableIterator<T> {
+        return this.Enumerate(this.Version);
+    }
+
+    /** Enumerates FIFO entries and rejects mutations even before the first or final step. */
+    private *Enumerate(expectedVersion: number): IterableIterator<T> {
+        for (let index = 0; index < this.Size; index++) {
+            if (this.Version !== expectedVersion) throw new InvalidOperationException('Collection was modified; enumeration operation may not execute.');
+            yield this.Items[(this.Head + index) % this.Items.length] as T;
         }
-    }
-
-    // Sort the list using a compare function
-    public Sort(compareFn?: (a: T, b: T) => number): void {
-        this.items.sort(compareFn);
-    }
-
-    // Reverse the list
-    public Reverse(): void {
-        this.items.reverse();
-    }
-
-    // ForEach loop
-    public ForEach(callback: (item: T, index: number) => void): void {
-        this.items.forEach(callback);
+        if (this.Version !== expectedVersion) throw new InvalidOperationException('Collection was modified; enumeration operation may not execute.');
     }
 }
