@@ -12,6 +12,33 @@ namespace cs2.ts.tests {
     /// TypeScript snippet and also validates syntax via the TypeScript compiler when available.
     /// </summary>
     public class TypeScriptConversiorProcessorTests_Expressions {
+        /// <summary>Preserves empty entries and unlimited results for the default char-split overload.</summary>
+        [Fact]
+        public void StringSplit_DefaultCharOptions_DoesNotEmitZeroLimit() {
+            var compilation = RoslynTestHelper.CreateCompilation("class C { void M(){ \"service.id\".Split('.'); } }");
+            var invocation = compilation.Root.DescendantNodes().OfType<InvocationExpressionSyntax>().Single();
+            var harness = TsProcessorTestHarness.Create();
+            var stringClass = new ConversionClass { Name = "string" };
+            stringClass.Functions.Add(new ConversionFunction { Name = "Split", Remap = "split" });
+            harness.Program.Classes.Add(stringClass);
+            TsProcessorTestHarness.PushClassAndFunction(harness.Context);
+            string output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(
+                harness.Processor, harness.Context, compilation.Model, invocation));
+            Assert.Equal("\"service.id\".split(\".\")", output.Trim());
+        }
+
+        /// <summary>Does not remove a user-defined Split method's ordinary optional argument.</summary>
+        [Fact]
+        public void StringSplit_OptionalDefaultFix_DoesNotAffectOtherTypes() {
+            var compilation = RoslynTestHelper.CreateCompilation("class C { static string[] Split(char value, int count = 0) { return null; } void M(){ Split('.'); } }");
+            var invocation = compilation.Root.DescendantNodes().OfType<InvocationExpressionSyntax>().Single();
+            var harness = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(harness.Context);
+            string output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(
+                harness.Processor, harness.Context, compilation.Model, invocation));
+            Assert.Contains(", 0)", output);
+        }
+
         [Fact]
         public void Assignment_Basic_EmitsEquals() {
             var code = "class C { int a; int b; void M(){ a = b; } }";

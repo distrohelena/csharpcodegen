@@ -2384,6 +2384,16 @@ namespace cs2.ts {
             }
 
             var parameters = methodSymbol.Parameters;
+            // Split(char, StringSplitOptions.None) maps to JavaScript's unlimited split.
+            // Its omitted options value is not the JavaScript result-count limit.
+            if (methodSymbol.ContainingType.SpecialType == SpecialType.System_String &&
+                methodSymbol.Name == "Split" && count == 1 && parameters.Length == 2 &&
+                parameters[0].Type.SpecialType == SpecialType.System_Char &&
+                parameters[1].Type.ToDisplayString() == "System.StringSplitOptions" &&
+                parameters[1].HasExplicitDefaultValue && Equals(parameters[1].ExplicitDefaultValue, 0)) {
+                return;
+            }
+
             if (count >= parameters.Length) {
                 return;
             }
