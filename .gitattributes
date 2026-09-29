@@ -1,0 +1,3 @@
+# Copied runtime sources must be byte-stable across Git checkout settings.
+cs2.ts/.net.ts/**/*.ts text eol=lf
+cs2.ts/.net.ts/**/*.json text eol=lf
