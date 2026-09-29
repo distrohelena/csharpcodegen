@@ -1,4 +1,4 @@
-using cs2.core;
+﻿using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -4994,25 +4994,16 @@ namespace cs2.ts {
                 ? new[] { tryStatement.Catches[0] }
                 : tryStatement.Catches.ToArray();
             foreach (var catchClause in catchClauses) {
-                string catchVarName = null;
-                if (catchClause.Declaration != null) {
-                    var identifier = catchClause.Declaration.Identifier;
-                    if (!identifier.IsMissing && !string.IsNullOrWhiteSpace(identifier.Text)) {
-                        catchVarName = identifier.Text;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(catchVarName)) {
-                    lines.Add("catch {\n");
-                } else {
-                    lines.Add("catch (");
-                    lines.Add(catchVarName);
-                    lines.Add(") {\n");
-
+                string catchVarName = GetCatchVariableName(catchClause);
+                lines.Add("catch (");
+                lines.Add(catchVarName);
+                lines.Add(") {\n");
+                if (catchClause.Declaration != null && !catchClause.Declaration.Identifier.IsMissing
+                    && !string.IsNullOrWhiteSpace(catchClause.Declaration.Identifier.Text)) {
                     FunctionStack fn = context.GetCurrentFunction();
                     ConversionVariable var = new ConversionVariable();
                     var.Name = catchVarName;
-                    var.VarType = VariableUtil.GetVarType(catchClause.Declaration?.Type, semantic);
+                    var.VarType = VariableUtil.GetVarType(catchClause.Declaration.Type, semantic);
                     fn.Stack.Add(var);
                 }
                 if (tryStatement.Catches.Count > 1) {
@@ -5342,6 +5333,21 @@ namespace cs2.ts {
             return new ExpressionResult(true);
         }
 
+        /// <summary>Returns the catch binding shared by the handler and its rethrows, avoiding source identifier collisions.</summary>
+        /// <param name="catchClause">Handler whose caught exception must remain available.</param>
+        /// <returns>The declared identifier or a deterministic unused synthetic identifier.</returns>
+        static string GetCatchVariableName(CatchClauseSyntax catchClause) {
+            string declared = catchClause.Declaration?.Identifier.Text;
+            if (!string.IsNullOrWhiteSpace(declared)) {
+                return declared;
+            }
+            string name = "__caughtException_" + catchClause.SpanStart;
+            while (catchClause.SyntaxTree.GetRoot().DescendantTokens().Any(token => token.ValueText == name)) {
+                name += "_";
+            }
+            return name;
+        }
+
         /// <summary>
         /// Processes throw statements.
         /// </summary>
@@ -5351,7 +5357,11 @@ namespace cs2.ts {
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessThrowStatement(SemanticModel semantic, LayerContext context, ThrowStatementSyntax throwStatement, List<string> lines) {
             if (throwStatement.Expression == null) {
-                lines.Add("throw new Error('Throw empty. TODO: Throw exception');\n");
+                CatchClauseSyntax catchClause = throwStatement.Ancestors().OfType<CatchClauseSyntax>().FirstOrDefault();
+                if (catchClause == null) {
+                    throw new InvalidOperationException("A rethrow requires an enclosing catch clause.");
+                }
+                lines.Add("throw " + GetCatchVariableName(catchClause) + ";\n");
             } else {
                 lines.Add("throw ");
                 ProcessExpression(semantic, context, throwStatement.Expression, lines);
