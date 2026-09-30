@@ -2082,6 +2082,10 @@ namespace cs2.ts {
                 return primitiveResult;
             }
 
+            if (TryProcessNumericCompareTo(semantic, context, invocationExpression, lines, out ExpressionResult numericCompareResult)) {
+                return numericCompareResult;
+            }
+
             if (TryProcessObjectGetType(semantic, context, invocationExpression, lines, out ExpressionResult getTypeResult)) {
                 return getTypeResult;
             }
@@ -3992,6 +3996,55 @@ namespace cs2.ts {
             lines.Add(".toString()");
 
             result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+            return true;
+        }
+
+        /// <summary>
+        /// Emits typed numeric CompareTo calls through the runtime, evaluating receiver and argument once in source order.
+        /// Object overloads and user-defined comparisons retain their normal invocation handling.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify the selected numeric overload.</param>
+        /// <param name="context">Conversion context that records the required numeric runtime import.</param>
+        /// <param name="invocationExpression">Invocation whose resolved method is inspected.</param>
+        /// <param name="lines">Destination for the generated comparison expression.</param>
+        /// <param name="result">Integer expression result when this overload is supported.</param>
+        /// <returns>True only for a primitive numeric instance comparison with its matching typed parameter.</returns>
+        bool TryProcessNumericCompareTo(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name.Identifier.Text != "CompareTo") {
+                return false;
+            }
+
+            IMethodSymbol method = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
+            if (method == null || method.IsStatic || method.Name != "CompareTo" ||
+                !IsNumericSpecialType(method.ContainingType.SpecialType) ||
+                method.Parameters.Length != 1 ||
+                !SymbolEqualityComparer.Default.Equals(method.Parameters[0].Type, method.ContainingType) ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            List<string> argumentLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, argumentLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeNumberUtil"));
+            lines.Add("NativeNumberUtil.compareTo(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(argumentLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
             return true;
         }
 

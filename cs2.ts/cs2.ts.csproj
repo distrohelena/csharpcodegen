@@ -113,6 +113,9 @@
     <None Include=".net.ts\system\util\nat-string-util.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\util\nat-number-util.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\util\nat-array-util.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

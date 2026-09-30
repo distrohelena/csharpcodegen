@@ -37,6 +37,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("IDisposable", "./system/disposable.interface"),
             new TypeScriptRuntimeRequirementDefinition("Guid", "./system/guid"),
             new TypeScriptRuntimeRequirementDefinition("NativeArrayUtil", "./system/util/nat-array-util"),
+            new TypeScriptRuntimeRequirementDefinition("NativeNumberUtil", "./system/util/nat-number-util"),
             new TypeScriptRuntimeRequirementDefinition("NativeStringUtil", "./system/util/nat-string-util"),
             new TypeScriptRuntimeRequirementDefinition("Convert", "./system/convert"),
             new TypeScriptRuntimeRequirementDefinition("Enum", "./system/enum"),
