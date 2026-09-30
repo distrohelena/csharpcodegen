@@ -252,6 +252,10 @@ namespace cs2.ts {
             makeTypeScriptFunction("Copy", "copy", clArray, "", "NativeArrayUtil");
             makeTypeScriptFunction("SequenceEqual", "sequenceEqual", clArray, "", "NativeArrayUtil");
 
+            ConversionClass clBuffer = makeClass("Buffer");
+            RegisterClass(clBuffer);
+            makeTypeScriptFunction("BlockCopy", "blockCopy", clBuffer, "", "NativeArrayUtil");
+
             ConversionClass clnumber = makeClass("number");
             RegisterClass(clnumber);
 

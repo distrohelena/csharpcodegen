@@ -1,5 +1,30 @@
 // @ts-nocheck
 ﻿export class NativeArrayUtil {
+    /** Copies byte ranges, including overlapping views, without relying on a Node Buffer global. */
+    static blockCopy(source: ArrayBuffer | ArrayBufferView, sourceOffset: number,
+        destination: ArrayBuffer | ArrayBufferView, destinationOffset: number, count: number): void {
+        const sourceBytes = NativeArrayUtil.byteView(source);
+        const destinationBytes = NativeArrayUtil.byteView(destination);
+        if (!Number.isSafeInteger(sourceOffset) || !Number.isSafeInteger(destinationOffset) || !Number.isSafeInteger(count)
+            || sourceOffset < 0 || destinationOffset < 0 || count < 0) {
+            throw new RangeError("BlockCopy requires non-negative integer byte offsets and count.");
+        }
+        if (sourceOffset > sourceBytes.length - count || destinationOffset > destinationBytes.length - count) {
+            throw new RangeError("BlockCopy byte range is outside the supplied arrays.");
+        }
+        destinationBytes.set(sourceBytes.subarray(sourceOffset, sourceOffset + count), destinationOffset);
+    }
+
+    /** Exposes the exact bytes of a primitive array view, preserving its offset and byte length. */
+    private static byteView(value: ArrayBuffer | ArrayBufferView): Uint8Array {
+        if (value instanceof ArrayBuffer) {
+            return new Uint8Array(value);
+        } else if (ArrayBuffer.isView(value)) {
+            return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        }
+        throw new TypeError("BlockCopy requires primitive array buffers or views.");
+    }
+
     static copy(src: Uint8Array, dest: Uint8Array, length: number): void;
     static copy(src: Uint8Array, srcOffset: number, dest: Uint8Array, destOffset: number, length: number): void;
     static copy(src: Uint8Array, arg1: number | Uint8Array, arg2: Uint8Array | number, arg3?: number, arg4?: number): void {
@@ -58,43 +83,4 @@ Uint8Array.prototype.AsSpan = function(start: number = 0, length?: number): Uint
 Uint8Array.prototype.Clone = function(): Uint8Array {
     return new Uint8Array(this);
 };
-
-function toUint8Array(value: ArrayBuffer | ArrayBufferView): Uint8Array {
-    if (value instanceof Uint8Array) {
-        return value;
-    }
-    if (value instanceof ArrayBuffer) {
-        return new Uint8Array(value);
-    }
-    if (ArrayBuffer.isView(value)) {
-        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    }
-    throw new TypeError("Buffer.BlockCopy expects an ArrayBuffer or ArrayBufferView.");
-}
-
-const globalBuffer = (globalThis as any).Buffer;
-if (globalBuffer && typeof globalBuffer.BlockCopy !== "function") {
-    globalBuffer.BlockCopy = function(
-        src: ArrayBuffer | ArrayBufferView,
-        srcOffset: number,
-        dest: ArrayBuffer | ArrayBufferView,
-        destOffset: number,
-        count: number
-    ): void {
-        const srcView = toUint8Array(src);
-        const destView = toUint8Array(dest);
-        const srcStart = srcOffset ?? 0;
-        const destStart = destOffset ?? 0;
-        const length = count ?? 0;
-
-        if (srcStart < 0 || destStart < 0 || length < 0) {
-            throw new RangeError("Buffer.BlockCopy offsets and length must be non-negative.");
-        }
-        if (srcStart + length > srcView.length || destStart + length > destView.length) {
-            throw new RangeError("Buffer.BlockCopy length is out of range.");
-        }
-
-        NativeArrayUtil.copy(srcView, srcStart, destView, destStart, length);
-    };
-}
 
