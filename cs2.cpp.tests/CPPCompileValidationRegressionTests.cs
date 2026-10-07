@@ -6466,6 +6466,26 @@ namespace cs2.cpp.tests {
             Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
         }
 
+        /// <summary>Verifies the native exception template accepts an enum actual-value argument without boxing it.</summary>
+        [Fact]
+        public void WriteOutput_WithArgumentOutOfRangeExceptionActualValue_UsesRuntimeOverload() {
+            string source = """
+                using System;
+                public enum Mode { Default }
+                public class Fixture {
+                    public void Reject(Mode mode) {
+                        throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported mode.");
+                    }
+                }
+                """;
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+            Assert.Contains("new ArgumentOutOfRangeException", sourceOutput);
+            Assert.Contains("template<typename TParameterName, typename TActualValue, typename TMessage>", runtimeHeader);
+            Assert.Contains("const TActualValue& actualValue", runtimeHeader);
+        }
+
         /// <summary>
         /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
         /// </summary>

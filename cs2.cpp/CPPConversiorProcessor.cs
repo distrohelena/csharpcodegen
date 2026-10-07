@@ -307,6 +307,7 @@ namespace cs2.cpp {
             }
 
             VariableType declaredType = VariableUtil.GetVarType(declarationPattern.Type, semantic);
+            RegisterGeneratedTypeReferences(context, declaredType);
             CPPTypeData declaredTypeData;
             VariableType cppDeclaredType = ConvertToCPPType(declaredType, out declaredTypeData);
 
@@ -322,6 +323,9 @@ namespace cs2.cpp {
             string declaredTypeName = cppDeclaredType.ToCPPString(context.Program);
             string variableName = designation.Identifier.Text;
             string sourceExpression = string.Concat(sourceLines);
+            bool conditionalPattern = isPatternExpression.Ancestors()
+                .OfType<ConditionalExpressionSyntax>()
+                .Any(conditional => conditional.Condition.Span.Contains(isPatternExpression.Span));
             List<string> beforeLines = sourceResult.BeforeLines != null
                 ? new List<string>(sourceResult.BeforeLines)
                 : new List<string>();
@@ -337,17 +341,25 @@ namespace cs2.cpp {
             if (declaredTypeData.IsPointer || IsReferencePatternType(semantic, declarationPattern.Type, declaredType)) {
                 RegisterRuntimeRequirement("NativeCast");
 
-                beforeLines.Add($"{declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
-                lines.Add($"{variableName} != nullptr");
+                if (conditionalPattern) {
+                    lines.Add($"({variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression})) != nullptr");
+                } else {
+                    beforeLines.Add($"{declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
+                    lines.Add($"{variableName} != nullptr");
+                }
             } else {
                 string pointerName = $"__pattern_{variableName}";
 
-                beforeLines.Add($"{declaredTypeName}* {pointerName} = static_cast<{declaredTypeName}*>({sourceExpression});\n");
+                if (!conditionalPattern) {
+                    beforeLines.Add($"{declaredTypeName}* {pointerName} = static_cast<{declaredTypeName}*>({sourceExpression});\n");
+                }
                 if (conversionVariable != null) {
                     conversionVariable.Remap = $"(*{pointerName})";
                 }
 
-                lines.Add($"{pointerName} != nullptr");
+                lines.Add(conditionalPattern
+                    ? $"({pointerName} = static_cast<{declaredTypeName}*>({sourceExpression})) != nullptr"
+                    : $"{pointerName} != nullptr");
             }
 
             if (conversionVariable != null) {
@@ -12868,7 +12880,44 @@ namespace cs2.cpp {
                 string.Equals(cppTypeName, "uintptr_t", StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Keeps condition pattern variables alive through both ternary branches without eagerly evaluating short-circuited casts.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve pattern types.</param>
+        /// <param name="context">Current expression lowering scope.</param>
+        /// <param name="conditional">Managed conditional expression to lower.</param>
+        /// <param name="lines">Output tokens for the native expression.</param>
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
+            DeclarationPatternSyntax[] patterns = conditional.Condition.DescendantNodesAndSelf()
+                .OfType<DeclarationPatternSyntax>()
+                .Where(pattern => pattern.Designation is SingleVariableDesignationSyntax)
+                .ToArray();
+            if (patterns.Length == 0) {
+                ProcessConditionalExpressionCore(semantic, context, conditional, lines);
+                return;
+            }
+
+            lines.Add("([&]() { ");
+            foreach (DeclarationPatternSyntax pattern in patterns) {
+                VariableType declaredType = VariableUtil.GetVarType(pattern.Type, semantic);
+                VariableType cppDeclaredType = ConvertToCPPType(declaredType, out CPPTypeData declaredTypeData);
+                string variableName = ((SingleVariableDesignationSyntax)pattern.Designation).Identifier.Text;
+                if (!declaredTypeData.IsPointer && !IsReferencePatternType(semantic, pattern.Type, declaredType)) {
+                    variableName = $"__pattern_{variableName}";
+                }
+                lines.Add($"{cppDeclaredType.ToCPPString(context.Program)}* {variableName} = nullptr; ");
+            }
+            lines.Add("return ");
+            ProcessConditionalExpressionCore(semantic, context, conditional, lines);
+            lines.Add("; }())");
+        }
+
+        /// <summary>Emits ternary condition and branches after any pattern variable scope has been established.</summary>
+        /// <param name="semantic">Semantic model for the conditional expression.</param>
+        /// <param name="context">Current expression lowering scope.</param>
+        /// <param name="conditional">Conditional expression whose values are emitted.</param>
+        /// <param name="lines">Output tokens for the expression body.</param>
+        void ProcessConditionalExpressionCore(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
             if (TryProcessNullableConditionalExpression(semantic, context, conditional, lines)) {
                 return;
             }

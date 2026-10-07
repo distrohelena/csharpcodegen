@@ -359,6 +359,15 @@ public:
     ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& message)
         : ArgumentException(he_cpp_exception_detail::MessageWithParameter(message, parameterName, "Specified argument was out of range.")) {
     }
+
+    /// <summary>
+    /// Accepts the managed actual-value constructor shape while retaining the native parameter-name and message payload.
+    /// </summary>
+    template<typename TParameterName, typename TActualValue, typename TMessage>
+    ArgumentOutOfRangeException(const TParameterName& parameterName, const TActualValue& actualValue, const TMessage& message)
+        : ArgumentOutOfRangeException(parameterName, message) {
+        (void)actualValue;
+    }
 };
 
 /// <summary>
