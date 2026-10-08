@@ -11,5 +11,7 @@ export interface IReadOnlyDictionary<TKey, TValue> extends IEnumerable<KeyValueP
     readonly Count?: number;
     containsKey(key: TKey): boolean;
     tryGetValue(key: TKey, outValue: { value?: TValue }): boolean;
+    /** Preserves existing values and uses the supplied C# default only when the key is absent. */
+    GetValueOrDefault(key: TKey, defaultValue: TValue): TValue;
     get(key: TKey): TValue | undefined;
 }

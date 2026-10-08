@@ -896,6 +896,45 @@ namespace cs2.core {
             }
         }
 
+        /// <summary>
+        /// Captures a custom event declaration and its add/remove accessor bodies.
+        /// </summary>
+        /// <param name="semantic">Semantic model that owns the declaration.</param>
+        /// <param name="eventDeclaration">Custom event declaration.</param>
+        /// <param name="context">Active conversion context.</param>
+        static void ProcessCustomEvent(SemanticModel semantic, EventDeclarationSyntax eventDeclaration, ConversionContext context) {
+            MemberUtil.GetModifiers(eventDeclaration.Modifiers,
+                out bool isStatic,
+                out bool isOverride,
+                out MemberAccessType accessType,
+                out MemberDeclarationType declarationType);
+
+            ConversionVariable variable = context.StartVar();
+            variable.Semantic = semantic;
+            variable.Name = eventDeclaration.Identifier.Text;
+            variable.IsStatic = isStatic;
+            variable.AccessType = accessType;
+            variable.VarType = new VariableType(VariableDataType.Object, "Event");
+            variable.IsOverride = isOverride;
+            variable.DeclarationType = declarationType;
+
+            foreach (AccessorDeclarationSyntax accessor in eventDeclaration.AccessorList.Accessors) {
+                BlockSyntax body = accessor.Body;
+                if (body == null && accessor.ExpressionBody != null) {
+                    body = SyntaxFactory.Block(SyntaxFactory.ExpressionStatement(accessor.ExpressionBody.Expression));
+                }
+                if (body == null) {
+                    continue;
+                }
+
+                if (accessor.IsKind(SyntaxKind.AddAccessorDeclaration)) {
+                    variable.EventAddBlock = body;
+                } else if (accessor.IsKind(SyntaxKind.RemoveAccessorDeclaration)) {
+                    variable.EventRemoveBlock = body;
+                }
+            }
+        }
+
         public static ExpressionResult PreProcessExpression(SemanticModel semantic, ConversionContext context, SyntaxNode exp) {
             if (exp is NamespaceDeclarationSyntax nameSpace) {
                 string name = nameSpace.Name.ToString();
@@ -1006,6 +1045,8 @@ namespace cs2.core {
                 ProcessIndexer(semantic, indexerDeclaration, context);
             } else if (exp is EventFieldDeclarationSyntax eventDecl) {
                 ProcessEvent(semantic, eventDecl, context);
+            } else if (exp is EventDeclarationSyntax customEventDeclaration) {
+                ProcessCustomEvent(semantic, customEventDeclaration, context);
             } else if (exp is BlockSyntax block) {
                 PreProcessBlock(semantic, context, block);
             } else if (exp is LocalDeclarationStatementSyntax local) {

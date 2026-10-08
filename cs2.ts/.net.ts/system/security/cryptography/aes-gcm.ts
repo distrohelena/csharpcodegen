@@ -8,9 +8,14 @@ import { getSubtleCrypto, toArrayBuffer } from "./web-crypto";
  */
 export class AesGcm implements IDisposable {
     private key: Uint8Array;
+    private readonly tagLengthBytes: number;
 
-    constructor(key: Uint8Array) {
+    constructor(key: Uint8Array, tagLengthBytes: number = 16) {
+        if (![12, 13, 14, 15, 16].includes(tagLengthBytes)) {
+            throw new RangeError("AES-GCM tag length must be between 12 and 16 bytes.");
+        }
         this.key = key;
+        this.tagLengthBytes = tagLengthBytes;
     }
 
     dispose(): void {
@@ -37,7 +42,7 @@ export class AesGcm implements IDisposable {
         const params: AesGcmParams = {
             name: "AES-GCM",
             iv: toArrayBuffer(iv),
-            tagLength: 128 // 16 bytes
+            tagLength: this.tagLengthBytes * 8
         };
         if (associatedData && associatedData.length > 0) {
             params.additionalData = toArrayBuffer(associatedData);
@@ -51,8 +56,7 @@ export class AesGcm implements IDisposable {
             )
         );
 
-        const tagLength = 16; // bytes
-        const ciphertextLength = encrypted.length - tagLength;
+        const ciphertextLength = encrypted.length - this.tagLengthBytes;
 
         cipherText.set(encrypted.subarray(0, ciphertextLength));
         tag.set(encrypted.subarray(ciphertextLength));
@@ -81,7 +85,7 @@ export class AesGcm implements IDisposable {
         const params: AesGcmParams = {
             name: "AES-GCM",
             iv: toArrayBuffer(iv),
-            tagLength: 128 // 16 bytes
+            tagLength: this.tagLengthBytes * 8
         };
         if (associatedData && associatedData.length > 0) {
             params.additionalData = toArrayBuffer(associatedData);

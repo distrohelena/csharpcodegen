@@ -138,6 +138,20 @@ export class Utf8JsonWriter {
         this.parts.push(JSON.stringify(text));
     }
 
+    /** Writes a named byte value using the standard base64 text representation. */
+    public WriteBase64String(name: string, value: Uint8Array): void {
+        this.WritePropertyName(name);
+        this.WriteBase64StringValue(value);
+    }
+
+    /** Writes an unnamed byte value using the standard base64 text representation. */
+    public WriteBase64StringValue(value: Uint8Array): void {
+        if (value == null) {
+            throw new Error("Base64 bytes cannot be null.");
+        }
+        this.WriteStringValue(this.toBase64(value));
+    }
+
     public WriteNumber(nameOrValue: string | number, value?: number): void {
         if (value === undefined) {
             this.WriteNumberValue(nameOrValue as number);
@@ -183,6 +197,25 @@ export class Utf8JsonWriter {
         this.parts.push("null");
     }
 
+    /**
+     * Emits a complete JSON value without adding escaping. The default C# overload validates that
+     * the input is exactly one JSON value before writing it.
+     */
+    public WriteRawValue(rawValue: string, skipInputValidation: boolean = false): void {
+        if (typeof rawValue !== "string") {
+            throw new Error("Raw JSON value cannot be null.");
+        }
+        if (!skipInputValidation) {
+            JSON.parse(rawValue);
+        }
+        if (this.pendingProperty) {
+            this.pendingProperty = false;
+        } else {
+            this.writeValuePrefix();
+        }
+        this.parts.push(rawValue);
+    }
+
     public Flush(): void {
         if (!this.stream || this.flushed) {
             return;
@@ -200,5 +233,21 @@ export class Utf8JsonWriter {
 
     public toString(): string {
         return this.parts.join("");
+    }
+
+    /** Encodes bytes without relying on Node Buffer globals in browser modules. */
+    private toBase64(value: Uint8Array): string {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let result = "";
+        for (let index = 0; index < value.length; index += 3) {
+            const first = value[index];
+            const second = index + 1 < value.length ? value[index + 1] : 0;
+            const third = index + 2 < value.length ? value[index + 2] : 0;
+            result += alphabet[first >> 2];
+            result += alphabet[((first & 0x03) << 4) | (second >> 4)];
+            result += index + 1 < value.length ? alphabet[((second & 0x0f) << 2) | (third >> 6)] : "=";
+            result += index + 2 < value.length ? alphabet[third & 0x3f] : "=";
+        }
+        return result;
     }
 }

@@ -8,6 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include=".net.ts\system\net\web-utility.ts"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Include=".net.ts\system\dbnull.ts"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Include=".net.ts\system\collections\generic\key-not-found.exception.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -15,6 +17,9 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\text\json\json-comment-handling.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\text\encodings\web\javascript-encoder.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\text\json\json-text-parser.ts">
@@ -36,6 +41,20 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\string-comparison.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\string-split-options.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>    <None Include=".net.ts\system\text\json\nodes\json-node.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\text\json\nodes\json-object.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\text\json\nodes\json-array.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\text\json\nodes\json-value.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\environment.ts">
@@ -119,6 +138,9 @@
     <None Include=".net.ts\system\util\nat-array-util.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\util\nat-delegate-util.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\collections\generic\queue.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -135,6 +157,9 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\argument.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\argument-guard.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\io\file-mode.ts">
@@ -185,6 +210,12 @@
     <None Include=".net.ts\system\security\cryptography\rfc-2898-derive-bytes.ts">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\security\cryptography\cryptographic-operations.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\numerics\bit-operations.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\tuple.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -225,6 +256,15 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\collections\generic\dictionary.interface.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\collections\generic\ireadonlycollection.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\collections\generic\iset.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\collections\generic\sorted-dictionary.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\collections\generic\iequalitycomparer.ts">
@@ -365,6 +405,9 @@
     <None Include=".net.ts\system\text\json\json-element.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\text\json\json-element-source.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\text\json\json-ignore-condition.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -404,10 +447,58 @@
     <None Include=".net.ts\system\threading\auto-reset-event.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include=".net.ts\system\threading\manual-reset-event-slim.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\timer.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\timeout.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include=".net.ts\system\threading\send-or-post-callback.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\threading\synchronization-context.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\cancellation-state.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\cancellation-token-registration.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\operation-canceled.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\tasks\task-canceled.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\object-disposed.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\aggregate.exception.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\cancellation-token.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\cancellation-timer.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\cancellation-token-source.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\runtime\compiler-services\conditional-weak-table.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\tasks\task-creation-options.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\tasks\task-status-registry.ts">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include=".net.ts\system\threading\tasks\task-completion-source.ts">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include=".net.ts\system\threading\tasks\task.ts">

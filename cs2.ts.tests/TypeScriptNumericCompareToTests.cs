@@ -29,7 +29,7 @@ namespace cs2.ts.tests {
         [Fact]
         public void SideEffectsRemainOrdered() {
             string output = Emit("class C { double Left() => 0; double Right() => 0; int M() { return Left().CompareTo(Right()); } }");
-            Assert.Equal("NativeNumberUtil.compareTo(Left(), Right())", output);
+            Assert.Equal("NativeNumberUtil.compareTo(this.Left(), this.Right())", output);
         }
 
         /// <summary>A user-defined comparison method is not mistaken for a numeric primitive.</summary>

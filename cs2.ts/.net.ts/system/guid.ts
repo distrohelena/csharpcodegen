@@ -1,5 +1,6 @@
 // @ts-nocheck
 export class Guid {
+    public static readonly Empty = new Guid(new Uint8Array(16));
     private readonly byteArray: Uint8Array;
 
     public constructor(byteArray: Uint8Array) {
@@ -48,6 +49,34 @@ export class Guid {
         byteArray[7] = parseInt(value.substring(14, 16), 16);
 
         return new Guid(byteArray);
+    }
+
+    /**
+     * Parses the standard D, N, B and P textual Guid forms without throwing.
+     * The out holder follows the converter's existing C# out-parameter convention.
+     */
+    public static TryParse(value: string | null | undefined, outValue: { value: Guid | undefined }): boolean {
+        outValue.value = Guid.Empty;
+        if (typeof value !== 'string') {
+            return false;
+        }
+
+        let normalized = value.trim();
+        if ((normalized.startsWith('{') && normalized.endsWith('}')) ||
+            (normalized.startsWith('(') && normalized.endsWith(')'))) {
+            normalized = normalized.slice(1, -1);
+        }
+
+        if (/^[0-9a-f]{32}$/i.test(normalized)) {
+            normalized = `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}-${normalized.slice(16, 20)}-${normalized.slice(20)}`;
+        }
+
+        try {
+            outValue.value = Guid.parse(normalized);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     // Constructor to create a GUID from a byte array

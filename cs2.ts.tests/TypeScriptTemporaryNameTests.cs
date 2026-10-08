@@ -36,10 +36,13 @@ namespace cs2.ts.tests {
         [InlineData("int x = 7; bool ok = false && Read(out x); return x;", 7)]
         [InlineData("int x = 7; bool ok = true || Read(out x); return x;", 7)]
         [InlineData("int x = 0; bool enabled = true; int value = enabled ? (Read(out x) ? x : 0) : 0; return value;", 5)]
+        [InlineData("int value; int total = 0; while (Read(out value) && total < 1) { total += value; } return total;", 5)]
+        [InlineData("int value; bool read; read = Read(out value); return read ? value : 0;", 5)]
         public void GeneratedStatements_AreStableAndPreserveValues(string body, int expected) {
             string first = Emit(body);
             string second = Emit(body);
             Assert.Equal(first, second);
+
             Assert.Equal(expected, Execute(first));
         }
 

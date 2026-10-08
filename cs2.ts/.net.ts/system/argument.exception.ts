@@ -2,6 +2,8 @@
 export class ArgumentException extends Error {
     public ParamName?: string;
     public InnerException?: Error;
+    /** Exposes the native Error message through the property emitted for System.Exception.Message. */
+    public get Message(): string { return this.message; }
 
     constructor(message: string = "Value does not fall within the expected range.", paramNameOrInnerException?: string | Error | null, innerException?: Error | null) {
         let paramName: string | undefined;

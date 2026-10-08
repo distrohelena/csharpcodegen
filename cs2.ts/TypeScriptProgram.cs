@@ -1,4 +1,4 @@
-using cs2.core;
+﻿using cs2.core;
 using Nucleus;
 using System;
 using System.Reflection;
@@ -275,16 +275,24 @@ namespace cs2.ts {
             makeTypeScriptFunction("StartsWith", "startsWith", clString, "string");
             makeTypeScriptFunction("EndsWith", "endsWith", clString, "string");
             makeTypeScriptFunction("Contains", "includes", clString, "string");
+            makeTypeScriptFunction("Equals", "Equals", clString, "bool");
             makeTypeScriptFunction("Split", "split", clString, "string");
             makeTypeScriptFunction("Substring", "substring", clString, "string");
             makeTypeScriptFunction("Trim", "trim", clString, "string");
+            makeTypeScriptFunction("TrimStart", "trimStart", clString, "string");
+            makeTypeScriptFunction("TrimEnd", "trimEnd", clString, "string");
             makeTypeScriptFunction("ToLowerInvariant", "toLowerCase", clString, "string");
+            makeTypeScriptFunction("ToUpperInvariant", "toUpperCase", clString, "string");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clString, "string");
             makeTypeScriptFunction("IsNullOrWhiteSpace", "isNullOrWhiteSpace", clString, "string");
             makeTypeScriptVariable("Empty", "Empty", clString, "string", "NativeStringUtil");
             RegisterClass(clString);
 
             ConversionClass clStringUpper = makeClass("String");
+            makeTypeScriptFunction("Trim", "trim", clStringUpper, "string");
+            makeTypeScriptFunction("ToLowerInvariant", "toLowerCase", clStringUpper, "string");
+            makeTypeScriptFunction("ToUpperInvariant", "toUpperCase", clStringUpper, "string");
+            makeTypeScriptFunction("Join", "join", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsNullOrEmpty", "isNullOrEmpty", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsNullOrWhiteSpace", "isNullOrWhiteSpace", clStringUpper, "string", "NativeStringUtil");
             makeTypeScriptFunction("IsLetter", "isLetter", clStringUpper, "bool", "NativeStringUtil");

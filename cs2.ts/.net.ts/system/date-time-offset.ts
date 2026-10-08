@@ -199,7 +199,16 @@ export class DateTimeOffset {
         return this.Add(TimeSpan.fromMilliseconds(-ts.TotalMilliseconds));
     }
 
-    public ToString(format?: string): string {
+    /** Formats the round-trip representation or the invariant minute identifier used by signed authority time windows. */
+    public ToString(format?: string, _provider?: unknown): string {
+        if (format === "yyyyMMddHHmm") {
+            const local = this.getLocalDate();
+            return local.getUTCFullYear().toString().padStart(4, "0")
+                + (local.getUTCMonth() + 1).toString().padStart(2, "0")
+                + local.getUTCDate().toString().padStart(2, "0")
+                + local.getUTCHours().toString().padStart(2, "0")
+                + local.getUTCMinutes().toString().padStart(2, "0");
+        }
         if (format === "o" || format === "O" || !format) {
             const local = this.getLocalDate();
             const year = local.getUTCFullYear().toString().padStart(4, "0");

@@ -232,7 +232,7 @@ namespace cs2.ts.tests {
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var s = string.Concat(TsProcessorTestHarness.RunProcessStatement(proc, ctx, model, ifStmt));
             Assert.Contains("const __patternTarget", s);
-            Assert.Contains("const s = __patternTarget", s);
+            Assert.Contains("const s = <string><unknown>__patternTarget", s);
         }
 
         [Fact]

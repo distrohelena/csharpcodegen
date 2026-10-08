@@ -8,9 +8,42 @@ export class ReadOnlyCollection<T> extends Array<T> implements IReadOnlyList<T> 
         if (list == null) {
             throw new ArgumentNullException("list");
         }
-        const items = Array.isArray(list) ? list : Array.from(list);
-        super(...items);
-        Object.setPrototypeOf(this, new.target.prototype);
+        super();
+
+        // A .NET ReadOnlyCollection is a live wrapper around its IList.  Keeping
+        // the supplied Array/List as the proxy target preserves all array read
+        // operations while the traps reject mutations through this view.
+        const target = Array.isArray(list) ? list : Array.from(list);
+        const readOnlyPrototype = new.target.prototype;
+        return new Proxy(target, {
+            get: (array, property, receiver) => {
+                const ownMember = Reflect.getOwnPropertyDescriptor(readOnlyPrototype, property);
+                if (ownMember !== undefined) {
+                    return Reflect.get(readOnlyPrototype, property, receiver);
+                }
+                return Reflect.get(array, property, receiver);
+            },
+            getPrototypeOf: () => readOnlyPrototype,
+            set: () => {
+                throw new NotSupportedException("Collection is read-only.");
+            },
+            defineProperty: () => {
+                throw new NotSupportedException("Collection is read-only.");
+            },
+            deleteProperty: () => {
+                throw new NotSupportedException("Collection is read-only.");
+            },
+            setPrototypeOf: () => {
+                throw new NotSupportedException("Collection is read-only.");
+            },
+            preventExtensions: () => {
+                throw new NotSupportedException("Collection is read-only.");
+            }
+        }) as ReadOnlyCollection<T>;
+    }
+
+    public static get [Symbol.species](): ArrayConstructor {
+        return Array;
     }
 
     public get count(): number {
@@ -53,6 +86,10 @@ export class ReadOnlyCollection<T> extends Array<T> implements IReadOnlyList<T> 
     }
 
     public Sort(_comparer?: ((a: T, b: T) => number) | { Compare?: (a: T, b: T) => number }): void {
+        throw new NotSupportedException("Collection is read-only.");
+    }
+
+    public sort(_compareFn?: (a: T, b: T) => number): this {
         throw new NotSupportedException("Collection is read-only.");
     }
 

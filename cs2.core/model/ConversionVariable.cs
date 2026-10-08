@@ -62,6 +62,14 @@ namespace cs2.core {
 
         public BlockSyntax? GetBlock { get; set; }
         public BlockSyntax? SetBlock { get; set; }
+        /// <summary>
+        /// Gets or sets the body of a custom event add accessor.
+        /// </summary>
+        public BlockSyntax? EventAddBlock { get; set; }
+        /// <summary>
+        /// Gets or sets the body of a custom event remove accessor.
+        /// </summary>
+        public BlockSyntax? EventRemoveBlock { get; set; }
         public ExpressionSyntax? ArrowExpression { get; set; }
 
         VariableType varType;

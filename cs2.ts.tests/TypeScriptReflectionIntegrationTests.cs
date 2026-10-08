@@ -13,18 +13,14 @@ using Xunit;
 
 namespace cs2.ts.tests {
     public class TypeScriptReflectionIntegrationTests {
-        static readonly MethodInfo WriteClassMethod = typeof(TypeScriptCodeConverter)
-            .GetMethod("writeClass", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("writeClass method not found");
-
         [Fact]
-        public void StaticCacheEnabled_EmitsPrivateRegisterField() {
+        public void StaticCacheEnabled_EmitsRegisterField() {
             var symbol = GetClassSymbol("namespace Demo { public class Foo { } }");
             var conversionClass = new ConversionClass { Name = symbol.Name, TypeSymbol = symbol };
 
             string output = RenderClass(null, conversionClass);
 
-            Assert.Contains("private static readonly __type", output);
+            Assert.Contains("static readonly __type", output);
             Assert.Contains("registerType(Foo", output);
         }
 
@@ -48,7 +44,7 @@ namespace cs2.ts.tests {
             var options = new TypeScriptConversionOptions { Reflection = new ReflectionOptions { UseStaticReflectionCache = false } };
             string output = RenderClass(options, conversionClass);
 
-            Assert.DoesNotContain("private static readonly __type", output);
+            Assert.DoesNotContain("static readonly __type", output);
             Assert.Contains("registerType(Foo", output);
         }
 
@@ -107,14 +103,18 @@ namespace cs2.ts.tests {
             var rules = new ConversionRules();
             var original = TypeScriptReflectionEmitter.GlobalOptions.Clone();
             try {
-                var converter = new TypeScriptCodeConverter(rules, TypeScriptEnvironment.NodeJS, options);
-                using var ms = new MemoryStream();
-                using var writer = new StreamWriter(ms, new UTF8Encoding(false), 1024, leaveOpen: true);
-                WriteClassMethod.Invoke(converter, new object[] { conversionClass, writer });
-                writer.Flush();
-                ms.Position = 0;
-                using var reader = new StreamReader(ms, Encoding.UTF8);
-                return reader.ReadToEnd();
+                var program = new TypeScriptProgram(rules);
+                var processor = new TypeScriptConversiorProcessor();
+                var emitter = new TypeScriptClassEmitter(
+                    processor,
+                    program,
+                    program,
+                    options ?? new TypeScriptConversionOptions(),
+                    new TypeScriptReflectionImportTracker(),
+                    null);
+                using var writer = new StringWriter();
+                emitter.EmitClass(conversionClass, new TypeScriptOutputWriter(writer));
+                return writer.ToString();
             } finally {
                 TypeScriptReflectionEmitter.GlobalOptions = original;
             }

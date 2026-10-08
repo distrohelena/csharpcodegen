@@ -12,8 +12,8 @@ namespace cs2.ts.tests.TestHelpers {
     /// Keeps unit tests concise and focused on processor behavior.
     /// </summary>
     internal static class RoslynTestHelper {
-        public static (Compilation Compilation, SemanticModel Model, CompilationUnitSyntax Root) CreateCompilation(string code) {
-            var syntaxTree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest));
+        public static (Compilation Compilation, SemanticModel Model, CompilationUnitSyntax Root) CreateCompilation(string code, string path = "") {
+            var syntaxTree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.Latest), path);
 
             var references = new[] {
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),

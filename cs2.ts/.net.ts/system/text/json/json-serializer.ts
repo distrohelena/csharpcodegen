@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { JsonTextParser } from "./json-text-parser";
+import { ArgumentNullException } from "../../argument-null.exception";
 import { JsonIgnoreCondition } from "./json-ignore-condition";
 import { JsonNamingPolicy } from "./json-naming-policy";
 import { JsonNumberHandling } from "./json-number-handling";
@@ -12,10 +14,6 @@ import { Guid } from "../../guid";
 import { Dictionary } from "../../collections/generic/dictionary";
 import { List } from "../../collections/generic/list";
 import { Encoding } from "../encoding";
-
-function stripTrailingCommas(text: string): string {
-    return text.replace(/,\s*([}\]])/g, "$1");
-}
 
 function applyNamingPolicy(name: string, options?: JsonSerializerOptions): string {
     const policy = options?.PropertyNamingPolicy;
@@ -455,6 +453,7 @@ export class JsonSerializer {
     }
 
     public static Serialize<T>(value: T, options?: JsonSerializerOptions): string;
+    public static Serialize(value: any, inputType: Type | null, options?: JsonSerializerOptions): string;
     public static Serialize(writer: Utf8JsonWriter, value: any, inputType?: Type, options?: JsonSerializerOptions): void;
     public static Serialize(...args: any[]): any {
         if (args[0] instanceof Utf8JsonWriter) {
@@ -467,10 +466,11 @@ export class JsonSerializer {
         }
 
         const value = args[0];
-        const options = args[1] as JsonSerializerOptions | undefined;
+        const inputType = args[1] instanceof Type ? args[1] as Type : null;
+        const options = (inputType ? args[2] : args[1]) as JsonSerializerOptions | undefined;
         const writerOptions = options ? Object.assign(new JsonWriterOptions(), { Indented: options.WriteIndented }) : undefined;
         const writer = new Utf8JsonWriter(undefined, writerOptions);
-        const runtimeType = value != null ? Type.of(value) : null;
+        const runtimeType = inputType ?? (value != null ? Type.of(value) : null);
         serializeValue(writer, value, runtimeType, options);
         return writer.toString();
     }
@@ -480,10 +480,11 @@ export class JsonSerializer {
         return Encoding.UTF8.getBytes(json);
     }
 
-    public static Deserialize<T>(json: string, options?: JsonSerializerOptions): T;
-    public static Deserialize(json: string, returnType: Type, options?: JsonSerializerOptions): any;
+    public static Deserialize<T>(json: string | Uint8Array, options?: JsonSerializerOptions): T;
+    public static Deserialize(json: string | Uint8Array, returnType: Type, options?: JsonSerializerOptions): any;
     public static Deserialize(...args: any[]): any {
-        const json = args[0] ?? "";
+        const json = args[0];
+        if (json == null) throw new ArgumentNullException("json");
         let returnType: Type | null = null;
         let options: JsonSerializerOptions | undefined;
 
@@ -494,8 +495,13 @@ export class JsonSerializer {
             options = args[1] as JsonSerializerOptions;
         }
 
-        const text = options?.AllowTrailingCommas ? stripTrailingCommas(json) : json;
-        const parsed = text && text.length > 0 ? JSON.parse(text) : null;
+        let parsed: unknown;
+        try {
+            const text = typeof json === "string" ? json : new TextDecoder("utf-8", { fatal: true }).decode(json);
+            parsed = JsonTextParser.Parse(text, false, options?.AllowTrailingCommas === true);
+        } catch (error) {
+            throw new JsonException(error instanceof Error ? error.message : "Invalid JSON input.");
+        }
 
         if (returnType) {
             return convertValueFromJson(parsed, returnType, options);

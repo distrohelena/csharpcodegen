@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { JsonElementSource } from "./json-element-source";
 import { JsonValueKind } from "./json-value-kind";
 import { JsonProperty } from "./json-property";
 import { ArgumentNullException } from "../../argument-null.exception";
@@ -7,9 +8,12 @@ import { KeyNotFoundException } from "../../collections/generic/key-not-found.ex
 
 export class JsonElement {
     private _value: any;
+    /** Original lexical token and child tokens, when this element came from a parsed document. */
+    private _source?: JsonElementSource;
 
-    constructor(value: any) {
+    constructor(value: any, source?: JsonElementSource) {
         this._value = value;
+        this._source = source;
     }
 
     public get ValueKind(): JsonValueKind {
@@ -38,8 +42,17 @@ export class JsonElement {
     }
 
     public GetRawText(): string {
+        if (this._source) return this._source.Raw;
         const text = JSON.stringify(this._value);
         return text == null ? "null" : text;
+    }
+
+    /** Re-emits this element as a JSON value without converting it through a string property. */
+    public WriteTo(writer: { WriteRawValue(rawValue: string, skipInputValidation?: boolean): void }): void {
+        if (writer == null) {
+            throw new ArgumentNullException("writer");
+        }
+        writer.WriteRawValue(this.GetRawText(), false);
     }
 
     /** Returns a JSON string or null; numbers, booleans and containers are not coerced. */
@@ -79,13 +92,38 @@ export class JsonElement {
         return Number(this._value);
     }
 
+    /** Uses CLR display casing for Booleans and preserves parsed numeric/container text. */
+    public ToString(): string {
+        if (this.ValueKind === JsonValueKind.Null || this.ValueKind === JsonValueKind.Undefined) return "";
+        if (this.ValueKind === JsonValueKind.String) return this._value;
+        if (this.ValueKind === JsonValueKind.True) return "True";
+        if (this.ValueKind === JsonValueKind.False) return "False";
+        return this.GetRawText();
+    }
+
+    /** Supports translated object string conversion with the same kind-sensitive result. */
+    public toString(): string { return this.ToString(); }
+
+    /** Accepts only integral JSON tokens in the CLR signed 32-bit range. */
+    public TryGetInt32(outValue: { value: number }): boolean {
+        return this.TryGetInteger(outValue, -2147483648n, 2147483647n);
+    }
+
+    /** Checks the exact signed 64-bit token bounds before converting to the runtime number representation. */
     public TryGetInt64(outValue: { value: number }): boolean {
-        if (typeof this._value === "number" && Number.isFinite(this._value) && Math.floor(this._value) === this._value) {
-            outValue.value = this._value;
-            return true;
-        }
+        return this.TryGetInteger(outValue, -9223372036854775808n, 9223372036854775807n);
+    }
+
+    /** Rejects exponent/decimal syntax and wrong kinds instead of accepting rounded numeric substitutes. */
+    private TryGetInteger(outValue: { value: number }, minimum: bigint, maximum: bigint): boolean {
+        this.RequireKind(JsonValueKind.Number);
+        const token = this.GetRawText();
         outValue.value = 0;
-        return false;
+        if (!/^-?(?:0|[1-9][0-9]*)$/.test(token)) return false;
+        const exact = BigInt(token);
+        if (exact < minimum || exact > maximum) return false;
+        outValue.value = Number(exact);
+        return true;
     }
 
     public TryGetDouble(outValue: { value: number }): boolean {
@@ -105,7 +143,7 @@ export class JsonElement {
         this.RequireKind(JsonValueKind.Object);
         if (Object.prototype.hasOwnProperty.call(this._value, name)) {
             const value = this._value[name];
-            outValue.value = value instanceof JsonElement ? value : new JsonElement(value);
+            outValue.value = value instanceof JsonElement ? value : new JsonElement(value, this._source?.Children.get(name));
             return true;
         }
         outValue.value = new JsonElement(undefined);
@@ -124,13 +162,13 @@ export class JsonElement {
     /** Enumerates only an actual JSON array; nonarrays are rejected before iteration starts. */
     public EnumerateArray(): JsonArrayEnumerator {
         this.RequireKind(JsonValueKind.Array);
-        return new JsonArrayEnumerator(this._value);
+        return new JsonArrayEnumerator(this._value, this._source);
     }
 
     /** Enumerates only own JSON object properties, rejecting null, arrays and scalar values. */
     public EnumerateObject(): JsonObjectEnumerator {
         this.RequireKind(JsonValueKind.Object);
-        return new JsonObjectEnumerator(this._value);
+        return new JsonObjectEnumerator(this._value, this._source);
     }
 
 }
@@ -139,7 +177,7 @@ class JsonArrayEnumerator {
     private _items: any[];
     private _index: number = -1;
 
-    constructor(items: any[]) {
+    constructor(items: any[], private readonly _source?: JsonElementSource) {
         this._items = items;
     }
 
@@ -149,7 +187,7 @@ class JsonArrayEnumerator {
     }
 
     public get Current(): JsonElement {
-        return new JsonElement(this._items[this._index]);
+        return new JsonElement(this._items[this._index], this._source?.Children.get(String(this._index)));
     }
 
     public next(): IteratorResult<JsonElement> {
@@ -168,7 +206,7 @@ class JsonObjectEnumerator {
     private _entries: Array<[string, any]>;
     private _index: number = -1;
 
-    constructor(obj: Record<string, any>) {
+    constructor(obj: Record<string, any>, private readonly _source?: JsonElementSource) {
         this._entries = Object.entries(obj);
     }
 
@@ -179,7 +217,7 @@ class JsonObjectEnumerator {
 
     public get Current(): JsonProperty {
         const entry = this._entries[this._index];
-        return new JsonProperty(entry[0], entry[1]);
+        return new JsonProperty(entry[0], new JsonElement(entry[1], this._source?.Children.get(entry[0])));
     }
 
     public next(): IteratorResult<JsonProperty> {

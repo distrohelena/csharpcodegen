@@ -1,5 +1,6 @@
 // @ts-nocheck
 export class TimeSpan {
+    public static readonly Zero = new TimeSpan(0);
     private _milliseconds: number;
 
     /// <summary>

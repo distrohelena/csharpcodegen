@@ -1,8 +1,10 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 import { IDictionary } from "./dictionary.interface"
 import { IEqualityComparer } from "./iequalitycomparer";
 import { KeyValuePair } from "./key-value-pair";
 import { List } from "./list";
+
+type DictionaryEntry<TKey, TValue> = [TKey, TValue] | KeyValuePair<TKey, TValue>;
 
 export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
     private buckets: { [key: string]: Array<{ key: TKey; value: TValue }> } = {};
@@ -15,11 +17,11 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
     constructor(capacity: number, comparer: IEqualityComparer<TKey>);
     constructor(comparer: IEqualityComparer<TKey>);
     constructor(keyToString: (key: TKey) => string);
-    constructor(entries: Iterable<[TKey, TValue]>);
-    constructor(comparer: IEqualityComparer<TKey>, entries: Iterable<[TKey, TValue]>);
-    constructor(entries: Iterable<[TKey, TValue]>, comparer: IEqualityComparer<TKey>);
+    constructor(entries: Iterable<DictionaryEntry<TKey, TValue>>);
+    constructor(comparer: IEqualityComparer<TKey>, entries: Iterable<DictionaryEntry<TKey, TValue>>);
+    constructor(entries: Iterable<DictionaryEntry<TKey, TValue>>, comparer: IEqualityComparer<TKey>);
     constructor(arg1?: any, arg2?: any) {
-        let entries: Iterable<[TKey, TValue]> | undefined;
+        let entries: Iterable<DictionaryEntry<TKey, TValue>> | undefined;
 
         if (typeof arg1 === "number") {
             // capacity is ignored in JS implementation
@@ -28,7 +30,7 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         } else if (arg1 && typeof arg1 === "object" && typeof arg1.Equals === "function" && typeof arg1.GetHashCode === "function") {
             this.comparer = arg1 as IEqualityComparer<TKey>;
         } else if (arg1 && typeof arg1[Symbol.iterator] === "function") {
-            entries = arg1 as Iterable<[TKey, TValue]>;
+            entries = arg1 as Iterable<DictionaryEntry<TKey, TValue>>;
         }
 
         if (arg2) {
@@ -39,7 +41,7 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
             } else if (arg2 && typeof arg2 === "object" && typeof arg2.Equals === "function" && typeof arg2.GetHashCode === "function") {
                 this.comparer = arg2 as IEqualityComparer<TKey>;
             } else if (arg2 && typeof arg2[Symbol.iterator] === "function") {
-                entries = arg2 as Iterable<[TKey, TValue]>;
+            entries = arg2 as Iterable<DictionaryEntry<TKey, TValue>>;
             }
         }
 
@@ -143,6 +145,12 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
         return this.tryGetValue(key, out) ? out.value : undefined;
     }
 
+    /** Returns the stored value, including null or falsy values; only a missing key uses the converter-supplied default. */
+    public GetValueOrDefault(key: TKey, defaultValue: TValue): TValue {
+        const result = { value: defaultValue };
+        return this.tryGetValue(key, result) ? result.value : defaultValue;
+    }
+
     // Remove an item by key
     public remove(key: TKey): boolean {
         const hash = this.getHash(key);
@@ -163,6 +171,11 @@ export class Dictionary<TKey, TValue> implements IDictionary<TKey, TValue> {
             }
         }
         return false;
+    }
+
+    /** .NET Dictionary.Remove alias retained when no member remap is available. */
+    public Remove(key: TKey): boolean {
+        return this.remove(key);
     }
 
     // Check if a key exists

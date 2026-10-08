@@ -151,6 +151,22 @@ namespace cs2.ts.tests {
         /// <summary>
         /// Ensures conditional expressions with throw branches emit IIFE-wrapped throws.
         /// </summary>
+        /// <summary>Conditional out-variable scaffolding must use an async wrapper when a branch awaits a browser operation.</summary>
+        [Fact]
+        public void ConditionalExpression_WithAsyncOutBranch_EmitsAwaitedAsyncIife() {
+            const string code = "using System; class TypeScriptAsyncAttribute : Attribute { } class Store { [TypeScriptAsync] public bool TryRead(out int value) { value = 1; return true; } } class C { bool M(Store store, bool choose) { int value; return choose ? store.TryRead(out value) : false; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var expression = root.DescendantNodes().OfType<ConditionalExpressionSyntax>().Single();
+            var (processor, context, _) = TsProcessorTestHarness.Create();
+            TsProcessorTestHarness.PushClassAndFunction(context, returnType: VariableUtil.GetVarType("bool"));
+            var lines = TsProcessorTestHarness.RunProcessExpression(processor, context, model, expression);
+            var output = TsProcessorTestHarness.JoinLines(lines);
+
+            Assert.StartsWith("(await (async () => {", output);
+            Assert.EndsWith("})())", output);
+            Assert.Contains("await store.TryRead", output);
+            Assert.True((context.GetCurrentFunction() ?? throw new InvalidOperationException("Conversion function fixture missing.")).Function.IsAsync);
+        }
         [Fact]
         public void ConditionalExpression_WithThrow_EmitsIifeThrow() {
             var code = "class C { string M(string value){ return value != null ? value : throw new System.Exception(); } }";
@@ -416,7 +432,7 @@ namespace cs2.ts.tests {
         }
 
         [Fact]
-        public void ConditionalAccess_EmitsQuestionDot() {
+        public void ConditionalAccess_EvaluatesReceiverOnce() {
             var code = "class C { string s; void M(){ s?.ToString(); } }";
             var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
             var method = RoslynTestHelper.GetFirstMethod(root);
@@ -424,7 +440,10 @@ namespace cs2.ts.tests {
             var (proc, ctx, _) = TsProcessorTestHarness.Create();
             TsProcessorTestHarness.PushClassAndFunction(ctx);
             var s = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, cond));
-            Assert.Contains("?.", s);
+            Assert.Contains("const __conditionalReceiver", s);
+            Assert.Contains("== null ? undefined", s);
+            Assert.Contains("__conditionalReceiver1.", s);
+            Assert.EndsWith("; })()", s);
         }
 
         [Fact]
@@ -765,6 +784,35 @@ namespace cs2.ts.tests {
             Assert.Contains("[", output);
             Assert.Contains("...", output);
             Assert.Contains("]", output);
+        }
+
+        [Fact]
+        public void EmptyCollectionExpression_TargetingHashSet_ConstructsManagedSet() {
+            var code = "using System.Collections.Generic; class C { void M(){ HashSet<int> values = []; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var collection = root.DescendantNodes().OfType<CollectionExpressionSyntax>().Single();
+
+            var (proc, ctx, prog) = TsProcessorTestHarness.Create();
+            prog.Classes.Add(new ConversionClass { Name = "HashSet" });
+            cs2.ts.util.TypeScriptTypeMap.PopulateTypeMap(prog);
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, collection));
+
+            Assert.Equal("new HashSet<number>([])", output);
+        }
+
+        [Fact]
+        public void EmptyCollectionExpression_TargetingReadOnlyListRetainsDeclaredContract() {
+            var code = "using System.Collections.Generic; class C { void M(){ IReadOnlyList<int> values = []; } }";
+            var (_, model, root) = RoslynTestHelper.CreateCompilation(code);
+            var collection = root.DescendantNodes().OfType<CollectionExpressionSyntax>().Single();
+
+            var (proc, ctx, prog) = TsProcessorTestHarness.Create();
+            cs2.ts.util.TypeScriptTypeMap.PopulateTypeMap(prog);
+            TsProcessorTestHarness.PushClassAndFunction(ctx);
+            var output = TsProcessorTestHarness.JoinLines(TsProcessorTestHarness.RunProcessExpression(proc, ctx, model, collection));
+
+            Assert.Equal("<IReadOnlyList<number>><unknown>[]", output);
         }
 
         [Fact]

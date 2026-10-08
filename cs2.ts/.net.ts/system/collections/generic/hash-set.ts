@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { IEqualityComparer } from "./iequalitycomparer";
+import { List } from "./list";
 
 export class HashSet<T> {
     private buckets: { [key: string]: T[] } = {};
@@ -124,7 +125,10 @@ export class HashSet<T> {
     }
 
     // Check if an item exists in the set
-    public Contains(item: T): boolean {
+    public Contains(item: T, comparer?: IEqualityComparer<T>): boolean {
+        if (comparer) {
+            return this.toArray().some(value => comparer.Equals(value, item));
+        }
         const hash = this.getHash(item);
         const bucket = this.buckets[hash];
         if (!bucket) {
@@ -138,8 +142,8 @@ export class HashSet<T> {
         return false;
     }
 
-    public contains(item: T): boolean {
-        return this.Contains(item);
+    public contains(item: T, comparer?: IEqualityComparer<T>): boolean {
+        return this.Contains(item, comparer);
     }
 
     // Clear the set
@@ -175,6 +179,11 @@ export class HashSet<T> {
             }
         }
         return result;
+    }
+
+    /** Materializes the current enumeration into an independent mutable list without reapplying equality rules. */
+    public toList(): List<T> {
+        return new List<T>(this);
     }
 
     public UnionWith(items: Iterable<T>): void {

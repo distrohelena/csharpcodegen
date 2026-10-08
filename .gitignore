@@ -1,4 +1,4 @@
-﻿.vs/
+.vs/
 obj/
 bin/
 x64/
@@ -9,3 +9,4 @@ node.zip
 cs2.ts/.net.ts/dist
 .worktrees/
 scratch/
+TestResults/

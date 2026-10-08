@@ -977,6 +977,7 @@ namespace cs2.ts {
         /// <param name="cl">The class being processed.</param>
         /// <param name="program">The conversion program containing the class.</param>
         protected override void ProcessClass(ConversionClass cl, ConversionProgram program) {
+            TypeScriptInterfaceContractAligner.Align(cl, program);
             conversion.ProcessClass(cl, program);
         }
 

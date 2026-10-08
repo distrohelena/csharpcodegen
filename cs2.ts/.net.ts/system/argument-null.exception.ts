@@ -2,6 +2,12 @@
 import { ArgumentException } from "./argument.exception";
 
 export class ArgumentNullException extends ArgumentException {
+    public static ThrowIfNull(value: any, paramName?: string | null): void {
+        if (value === null || value === undefined) {
+            throw new ArgumentNullException(paramName ?? undefined);
+        }
+    }
+
     constructor();
     constructor(paramName: string);
     constructor(paramName: string, message: string);

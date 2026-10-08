@@ -3,8 +3,19 @@ export type EventHandler<TEventArgs = any> = (sender: any, e: TEventArgs) => voi
 export class Event {
     private handlers: Array<(...args: any[]) => void> = [];
 
+    public constructor(
+        private readonly addHook?: (handler: (...args: any[]) => void) => void,
+        private readonly removeHook?: (handler: (...args: any[]) => void) => void
+    ) {
+    }
+
     public Add(handler: (...args: any[]) => void): void {
         if (!handler) {
+            return;
+        }
+
+        if (this.addHook) {
+            this.addHook(handler);
             return;
         }
 
@@ -13,6 +24,11 @@ export class Event {
 
     public Remove(handler: (...args: any[]) => void): void {
         if (!handler) {
+            return;
+        }
+
+        if (this.removeHook) {
+            this.removeHook(handler);
             return;
         }
 
@@ -33,6 +49,11 @@ export class Event {
 
     public Invoke(...args: any[]): void {
         this.Emit(...args);
+    }
+
+    /** Returns a stable snapshot of the current invocation list. */
+    public GetInvocationList(): Array<(...args: any[]) => void> {
+        return this.handlers.slice();
     }
 
     public Clear(): void {

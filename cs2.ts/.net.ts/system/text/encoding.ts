@@ -1,5 +1,14 @@
 // @ts-nocheck
+import { ArgumentNullException } from "../argument-null.exception";
 export class Encoding {
+    /** Counts the bytes emitted by this encoding, rejecting a null string like the CLR API. */
+    GetByteCount(text: string): number {
+        if (text == null) throw new ArgumentNullException("s");
+        return this.getBytes(text).length;
+    }
+
+    /** Supports camel-cased calls emitted by encoding method translations. */
+    getByteCount(text: string): number { return this.GetByteCount(text); }
     static get UTF8(): Encoding {
         return new Utf8Encoding();
     }

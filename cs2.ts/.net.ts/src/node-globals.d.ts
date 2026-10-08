@@ -11,7 +11,12 @@ declare module "crypto" {
 declare module "fs" {
     export function readdirSync(path: string): string[];
     export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean };
-    export function readFileSync(path: string, options?: any): string | Buffer;
+    /** An explicit text encoding makes Node decode the file and return text. */
+    export function readFileSync(path: string, options: string | { encoding: string; flag?: string }): string;
+    /** Without a text encoding Node returns the original file bytes. */
+    export function readFileSync(path: string, options?: { encoding?: null; flag?: string }): Buffer;
+    /** A dynamic encoding retains both possible return types until the caller narrows it. */
+    export function readFileSync(path: string, options: { encoding?: string | null; flag?: string } | string | null): string | Buffer;
     export function writeFileSync(path: string, data: any): void;
     export function mkdirSync(path: string, options?: any): void;
     export function existsSync(path: string): boolean;
@@ -53,9 +58,16 @@ declare module "asn1.js" {
 declare const Buffer: any;
 
 declare module "buffer" {
-    export const Buffer: any;
+    /** Browser-buffer operations used by generated and handwritten binary code. */
+    export class Buffer extends Uint8Array {
+        public static alloc(size: number): Buffer;
+        public static from(data: string | ArrayBuffer | ArrayLike<number>, encoding?: string): Buffer;
+        public write(string: string, offset?: number, length?: number, encoding?: string): number;
+        public equals(otherBuffer: Uint8Array): boolean;
+        public copy(targetBuffer: Buffer, targetStart?: number, sourceStart?: number, sourceEnd?: number): number;
+    }
 }
 
 declare module "node:buffer" {
-    export const Buffer: any;
+    export { Buffer } from "buffer";
 }

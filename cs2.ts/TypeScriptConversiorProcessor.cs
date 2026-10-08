@@ -1,4 +1,4 @@
-﻿using cs2.core;
+using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -17,6 +17,9 @@ namespace cs2.ts {
     public class TypeScriptConversiorProcessor : ConversionProcessor {
         /// <summary>Owns deterministic, collision-safe names for this processor conversion.</summary>
         readonly TypeScriptTemporaryNameAllocator TemporaryNames = new();
+
+        /// <summary>Supplies the explicit receiver consumed by the first member binding in a conditional-access chain.</summary>
+        readonly System.Threading.AsyncLocal<Stack<string>> ConditionalAccessReceivers = new();
 
         /// <summary>
         /// Determines whether the assignment occurs within an object initializer.
@@ -91,10 +94,6 @@ namespace cs2.ts {
                     valueResult.Type.TypeName.StartsWith("Promise<")) {
                     if (!functionStack.Function.IsAsync) {
                         functionStack.Function.IsAsync = true;
-                        if (functionStack.Function.ReturnType != null) {
-                            functionStack.Function.ReturnType = new VariableType(functionStack.Function.ReturnType);
-                            functionStack.Function.ReturnType.TypeName = $"Promise<{functionStack.Function.ReturnType.TypeName}>";
-                        }
                     }
                 }
 
@@ -104,6 +103,7 @@ namespace cs2.ts {
                 return;
             }
 
+            int assignmentStart = lines.Count;
             int startDepth = context.Class.Count;
             ExpressionResult assignResult = ProcessExpression(semantic, context, assignment.Left, lines);
             context.PopClass(startDepth);
@@ -129,10 +129,19 @@ namespace cs2.ts {
                 return;
             }
 
-            if (assignResult.Type != null && assignResult.Type.Type == VariableDataType.Callback && (operatorVal == "+=" || operatorVal == "-=")) {
-                lines.Add($" = ");
+            bool isDelegateAssignment = (assignResult.Type != null && assignResult.Type.Type == VariableDataType.Callback) ||
+                semantic.GetTypeInfo(assignment.Left).Type?.TypeKind == TypeKind.Delegate;
+            bool isInsideObject = IsInsideObjectInitializer(assignment);
+            if (isDelegateAssignment && (operatorVal == "+=" || operatorVal == "-=")) {
+                string target = string.Concat(lines.Skip(assignmentStart));
+                lines.RemoveRange(assignmentStart, lines.Count - assignmentStart);
+                context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeDelegateUtil"));
+                lines.Add(target);
+                lines.Add(" = NativeDelegateUtil.");
+                lines.Add(operatorVal == "+=" ? "combine(" : "remove(");
+                lines.Add(target);
+                lines.Add(", ");
             } else {
-                bool isInsideObject = IsInsideObjectInitializer(assignment);
                 lines.Add(isInsideObject ? " : " : $" {operatorVal} ");
             }
 
@@ -149,15 +158,45 @@ namespace cs2.ts {
 
                 if (!fn.Function.IsAsync) {
                     fn.Function.IsAsync = true;
-                    if (fn.Function.ReturnType != null) {
-                        fn.Function.ReturnType = new VariableType(fn.Function.ReturnType);
-                        fn.Function.ReturnType.TypeName = $"Promise<{fn.Function.ReturnType.TypeName}>";
-                    }
                 }
             }
 
-            lines.AddRange(initLines);
 
+            bool hasPrerequisites = (result.BeforeLines?.Count ?? 0) > 0 || (result.AfterLines?.Count ?? 0) > 0;
+            if (hasPrerequisites && isInsideObject) {
+                string temporary = TemporaryNames.Allocate(semantic, "__initializerValue");
+                lines.Add("(() => { ");
+                if (result.BeforeLines != null) {
+                    lines.AddRange(result.BeforeLines);
+                }
+                lines.Add("const ");
+                lines.Add(temporary);
+                lines.Add(" = ");
+                lines.AddRange(initLines);
+                lines.Add("; ");
+                if (result.AfterLines != null) {
+                    lines.AddRange(result.AfterLines);
+                }
+                lines.Add("return ");
+                lines.Add(temporary);
+                lines.Add("; })()");
+                return;
+            }
+            if (hasPrerequisites && assignment.Parent is ExpressionStatementSyntax) {
+                if (result.BeforeLines != null) {
+                    lines.InsertRange(assignmentStart, result.BeforeLines);
+                }
+                lines.AddRange(initLines);
+                lines.Add(";\n");
+                if (result.AfterLines != null) {
+                    lines.AddRange(result.AfterLines);
+                }
+                return;
+            }
+            lines.AddRange(initLines);
+            if (isDelegateAssignment && (operatorVal == "+=" || operatorVal == "-=")) {
+                lines.Add(")");
+            }
         }
 
         /// <summary>
@@ -175,12 +214,32 @@ namespace cs2.ts {
             ExpressionSyntax expression,
             List<string> lines,
             List<ExpressionResult> refTypes = null) {
-            if (expression is SwitchExpressionSyntax switchExpression) {
+            if (expression is AssignmentExpressionSyntax discard &&
+                discard.IsKind(SyntaxKind.SimpleAssignmentExpression) &&
+                semantic.GetOperation(discard.Left) is Microsoft.CodeAnalysis.Operations.IDiscardOperation) {
+                // Keep evaluation and the assignment expression's value, but never create an underscore binding.
+                lines.Add("(");
+                ExpressionResult value = ProcessExpression(semantic, context, discard.Right, lines, refTypes);
+                if (!value.Processed) {
+                    throw new NotSupportedException($"Discarded expression is unsupported: {discard.Right}");
+                }
+                lines.Add(")");
+                return value;
+            } else if (expression is AwaitExpressionSyntax awaitedExpression) {
+                lines.Add("await ");
+                ExpressionResult awaited = ProcessExpression(semantic, context, awaitedExpression.Expression, lines, refTypes);
+                // Await consumes the value, but declarations and out-variable assignments still belong to the enclosing statement.
+                awaited.Type = VariableUtil.GetVarType(semantic.GetTypeInfo(awaitedExpression).Type);
+                context.GetCurrentFunction().Function.IsAsync = true;
+                return awaited;
+            } else if (expression is SwitchExpressionSyntax switchExpression) {
                 return ProcessSwitchExpression(semantic, context, switchExpression, lines);
             } else if (expression is IsPatternExpressionSyntax patternExpression) {
                 return ProcessIsPatternExpression(semantic, context, patternExpression, lines);
             } else if (expression is CollectionExpressionSyntax collectionExpression) {
                 return ProcessCollectionExpression(semantic, context, collectionExpression, lines);
+            } else if (expression is AnonymousObjectCreationExpressionSyntax anonymousCreation) {
+                return ProcessAnonymousObjectCreation(semantic, context, anonymousCreation, lines);
             } else if (expression is ImplicitObjectCreationExpressionSyntax implicitCreation) {
                 return ProcessImplicitObjectCreationExpressionSyntax(semantic, context, implicitCreation, lines);
             } else if (expression is CheckedExpressionSyntax checkedExpression) {
@@ -191,6 +250,51 @@ namespace cs2.ts {
             }
 
             return base.ProcessExpression(semantic, context, expression, lines, refTypes);
+        }
+
+        /// <summary>Emits anonymous records with their exact declared or inferred property names and source evaluation order.</summary>
+        /// <param name="semantic">Semantic model used to identify each anonymous property.</param>
+        /// <param name="context">Scope used to resolve member values and temporary names.</param>
+        /// <param name="creation">Anonymous object whose ordered values must reach serialization intact.</param>
+        /// <param name="lines">Destination for the structural TypeScript object expression.</param>
+        /// <returns>The object result with prerequisite declarations preserved for its caller.</returns>
+        ExpressionResult ProcessAnonymousObjectCreation(SemanticModel semantic, LayerContext context, AnonymousObjectCreationExpressionSyntax creation, List<string> lines) {
+            List<string> beforeLines = new List<string>();
+            lines.Add("({ ");
+            for (int index = 0; index < creation.Initializers.Count; index++) {
+                AnonymousObjectMemberDeclaratorSyntax initializer = creation.Initializers[index];
+                IPropertySymbol property = semantic.GetDeclaredSymbol(initializer) as IPropertySymbol;
+                if (property == null) {
+                    throw new NotSupportedException($"Anonymous property could not be resolved: {initializer}");
+                }
+                if (index > 0) { lines.Add(", "); }
+                // Computed keys also preserve a literal __proto__ property without changing the object's prototype.
+                lines.Add("[" + QuoteString(property.Name) + "]: ");
+                List<string> valueLines = new List<string>();
+                int depth = context.DepthClass;
+                ExpressionResult value = ProcessExpression(semantic, context, initializer.Expression, valueLines);
+                context.PopClass(depth);
+                if (!value.Processed) {
+                    throw new NotSupportedException($"Anonymous property value is unsupported: {initializer.Expression}");
+                }
+                if (value.BeforeLines != null) { beforeLines.AddRange(value.BeforeLines); }
+                if (value.AfterLines != null && value.AfterLines.Count > 0) {
+                    List<string> assignments = new List<string>();
+                    SplitAfterLines(value.AfterLines, beforeLines, assignments);
+                    string temporary = TemporaryNames.Allocate(semantic, "__anonymousValue");
+                    bool awaits = initializer.Expression.DescendantNodesAndSelf().OfType<AwaitExpressionSyntax>().Any();
+                    lines.Add(awaits ? "(await (async () => { const " : "(() => { const ");
+                    lines.Add(temporary + " = ");
+                    lines.AddRange(valueLines);
+                    lines.Add("; ");
+                    lines.AddRange(assignments);
+                    lines.Add("return " + temporary + (awaits ? "; })())" : "; })()"));
+                } else {
+                    lines.AddRange(valueLines);
+                }
+            }
+            lines.Add(" })");
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("object")) { BeforeLines = beforeLines };
         }
 
         /// <summary>
@@ -300,6 +404,12 @@ namespace cs2.ts {
 
             SymbolInfo symbolInfo = semantic.GetSymbolInfo(identifier);
             ISymbol nsSymbol = symbolInfo.Symbol;
+            if (nsSymbol is IPropertySymbol arrayLengthProperty &&
+                arrayLengthProperty.ContainingType?.SpecialType == SpecialType.System_Array &&
+                (arrayLengthProperty.Name == "Length" || arrayLengthProperty.Name == "LongLength")) {
+                lines.Add("length");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayLengthProperty.Type));
+            }
             IMethodSymbol invokedMethod = nsSymbol as IMethodSymbol;
             if (invokedMethod == null && symbolInfo.CandidateSymbols.Length > 0) {
                 invokedMethod = symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
@@ -316,6 +426,16 @@ namespace cs2.ts {
             bool isObjectInitializerTarget = assignment != null &&
                 assignment.Left == identifier &&
                 IsInsideObjectInitializer(assignment);
+            if (isObjectInitializerTarget) {
+                // Initializer keys belong to the created object's type, never to the enclosing method's fields or parameters.
+                ConversionClass owner = ((TypeScriptProgram)context.Program).GetClassByName(nsSymbol?.ContainingType?.Name);
+                ConversionVariable member = owner?.Variables.FirstOrDefault(variable => variable.Name == name);
+                if (member == null) {
+                    member = owner?.Variables.FirstOrDefault(variable => variable.Name == StringUtil.ToCamelCase(name));
+                }
+                lines.Add(!string.IsNullOrEmpty(member?.Remap) ? member.Remap : member?.Name ?? identifier.Identifier.ValueText);
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(identifierType.Type));
+            }
             bool isMethodGroup = invokedMethod != null &&
                 !isInvocation &&
                 IsDelegateType(identifierType.ConvertedType ?? identifierType.Type);
@@ -420,6 +540,7 @@ namespace cs2.ts {
 
             // function from the current class
             ConversionFunction classFn = null;
+            bool matchedInvocationSignature = false;
             if (currentClass != null) {
                 classFn = currentClass.Functions.Find(c => c.Name == name);
             }
@@ -466,6 +587,7 @@ namespace cs2.ts {
 
                         if (match != null) {
                             classFn = match;
+                            matchedInvocationSignature = true;
                             currentClass = methodClass;
                         }
                     }
@@ -491,8 +613,10 @@ namespace cs2.ts {
                 }
             }
 
-            bool paramsMatch = false;
-            if (classFn != null && classFn.InParameters != null && refTypes != null) {
+            // Roslyn already matched the source overload. Its trailing optional parameters are appended later,
+            // so refTypes contains only supplied arguments and must not select a different runtime overload.
+            bool paramsMatch = matchedInvocationSignature;
+            if (!paramsMatch && classFn != null && classFn.InParameters != null && refTypes != null) {
                 paramsMatch = classFn.InParameters.Count == refTypes.Count;
             }
 
@@ -630,6 +754,35 @@ namespace cs2.ts {
                 bool isMemberAccessName = identifier.Parent is MemberAccessExpressionSyntax memberAccess &&
                     memberAccess.Name == identifier ||
                     identifier.Parent is MemberBindingExpressionSyntax;
+                bool isUnqualifiedMemberReference = !forcedStaticPrefix &&
+                    !isObjectInitializerTarget &&
+                    !isMemberAccessName &&
+                    functionInVar == null &&
+                    matchingVars.Count == 0 &&
+                    nsSymbol?.ContainingType != null &&
+                    (nsSymbol is IFieldSymbol || nsSymbol is IPropertySymbol || nsSymbol is IEventSymbol ||
+                     nsSymbol is IMethodSymbol memberMethod && memberMethod.MethodKind == MethodKind.Ordinary);
+                if (isUnqualifiedMemberReference) {
+                    if (nsSymbol.IsStatic) {
+                        lines.Add(nsSymbol.ContainingType.Name + ".");
+                    } else {
+                        lines.Add("this.");
+                    }
+                    forcedStaticPrefix = true;
+                }
+                bool isUnqualifiedStaticMember = !forcedStaticPrefix &&
+                    !isObjectInitializerTarget &&
+                    !isMemberAccessName &&
+                    functionInVar == null &&
+                    matchingVars.Count == 0 &&
+                    (nsSymbol is IFieldSymbol || nsSymbol is IPropertySymbol) &&
+                    nsSymbol?.IsStatic == true &&
+                    nsSymbol.ContainingType?.Name == currentClass.Name;
+                if (isUnqualifiedStaticMember) {
+                    lines.Add(nsSymbol.ContainingType.Name + ".");
+                    forcedStaticPrefix = true;
+                }
+
                 if (layer == 1 && !forcedStaticPrefix && !isObjectInitializerTarget && !isMemberAccessName) {
                     bool isClassVar = (classVar != null &&
                         functionInVar == null &&
@@ -719,8 +872,10 @@ namespace cs2.ts {
                             context.AddClass(GetClass((TypeScriptProgram)context.Program, classFn.ReturnType));
 
                             if (classFn.IsAsync) {
-                                VariableType cloned = new VariableType(classFn.ReturnType);
-                                cloned.TypeName = $"Promise<{cloned.TypeName}>";
+                                VariableType cloned = new VariableType(classFn.ReturnType) {
+                                    TypeName = classFn.ReturnType.ToTypeScriptAsyncReturnString((TypeScriptProgram)context.Program),
+                                    GenericArgs = new List<VariableType>()
+                                };
                                 return new ExpressionResult(true, VariablePath.Unknown, cloned);
                             }
                             return new ExpressionResult(true, VariablePath.Unknown, classFn.ReturnType);
@@ -1055,6 +1210,419 @@ namespace cs2.ts {
             return true;
         }
 
+        /// <summary>
+        /// Lowers the predicate Enumerable.Any overload for strings through a UTF-16-preserving runtime helper.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish LINQ from user-defined Any methods.</param>
+        /// <param name="context">Conversion context that records the NativeStringUtil runtime requirement.</param>
+        /// <param name="invocationExpression">Reduced Enumerable.Any invocation over a string.</param>
+        /// <param name="lines">Destination for the helper invocation.</param>
+        /// <param name="result">Boolean result when the LINQ string operation is converted.</param>
+        /// <returns>True only for Enumerable.Any(string, predicate) invoked as an extension method.</returns>
+        bool TryProcessStringEnumerableAny(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isReducedEnumerableAny = method?.Name == "Any" && method.ReducedFrom != null &&
+                method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable";
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (!isReducedEnumerableAny || receiverType?.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            ArgumentSyntax predicate = invocationExpression.ArgumentList.Arguments[0];
+            if (predicate.NameColon != null) {
+                throw new NotSupportedException("Enumerable.Any string predicate requires positional arguments.");
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            List<string> predicateLines = new List<string>();
+            ProcessExpression(semantic, context, predicate.Expression, predicateLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.any(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(predicateLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers the predicate Enumerable.All overload for strings through a UTF-16-preserving runtime helper.
+        /// </summary>
+        bool TryProcessStringEnumerableAll(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isReducedEnumerableAll = method?.Name == "All" && method.ReducedFrom != null &&
+                method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable";
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (!isReducedEnumerableAll || receiverType?.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            ArgumentSyntax predicate = invocationExpression.ArgumentList.Arguments[0];
+            if (predicate.NameColon != null) {
+                throw new NotSupportedException("Enumerable.All string predicate requires positional arguments.");
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            List<string> predicateLines = new List<string>();
+            ProcessExpression(semantic, context, predicate.Expression, predicateLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.all(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(predicateLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers Enumerable.Select over a string to a UTF-16 char-array projection.
+        /// </summary>
+        /// <returns>True only for the positional selector overload invoked as an extension method over a string.</returns>
+        bool TryProcessStringEnumerableSelect(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isReducedEnumerableSelect = method?.Name == "Select" && method.ReducedFrom != null &&
+                method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable";
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (!isReducedEnumerableSelect || receiverType?.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            ArgumentSyntax selector = invocationExpression.ArgumentList.Arguments[0];
+            if (selector.NameColon != null) {
+                throw new NotSupportedException("Enumerable.Select string selector requires positional arguments.");
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            List<string> selectorLines = new List<string>();
+            ProcessExpression(semantic, context, selector.Expression, selectorLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.select(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(selectorLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers String.Replace(oldValue, newValue), which replaces every literal occurrence in .NET.
+        /// JavaScript String.replace without a global regex replaces only the first occurrence.
+        /// </summary>
+        bool TryProcessStringReplace(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax memberName ||
+                memberName.Identifier.Text != "Replace" ||
+                invocationExpression.ArgumentList.Arguments.Count != 2 ||
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (method?.ContainingType?.SpecialType != SpecialType.System_String ||
+                receiverType?.SpecialType != SpecialType.System_String ||
+                method.Parameters.Length != 2) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            List<string> oldValueLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, oldValueLines);
+            context.PopClass(depth);
+            List<string> newValueLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression, newValueLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.replace(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(oldValueLines);
+            lines.Add(", ");
+            lines.AddRange(newValueLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers String.Trim overloads with one or more character arguments through a runtime helper.
+        /// JavaScript trim methods ignore supplied characters, while .NET treats them as a character set.
+        /// </summary>
+        bool TryProcessStringTrimCharacters(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                memberAccess.Name is not IdentifierNameSyntax memberName ||
+                invocationExpression.ArgumentList.Arguments.Count == 0) {
+                return false;
+            }
+
+            string mode = memberName.Identifier.Text switch {
+                "Trim" => "both",
+                "TrimStart" => "start",
+                "TrimEnd" => "end",
+                _ => null
+            };
+            if (mode == null) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (method?.ContainingType?.SpecialType != SpecialType.System_String ||
+                receiverType?.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            var argumentLines = new List<List<string>>();
+            foreach (ArgumentSyntax argument in invocationExpression.ArgumentList.Arguments) {
+                if (argument.NameColon != null) {
+                    throw new NotSupportedException("String.Trim character arguments require positional arguments.");
+                }
+                depth = context.DepthClass;
+                List<string> convertedArgument = new List<string>();
+                ProcessExpression(semantic, context, argument.Expression, convertedArgument);
+                context.PopClass(depth);
+                argumentLines.Add(convertedArgument);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.trimCharacters(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.Add(StringUtil.FormatDoubleQuotedLiteral(mode));
+            foreach (List<string> argument in argumentLines) {
+                lines.Add(", ");
+                lines.AddRange(argument);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers String.Split(separator, StringSplitOptions) so browser output retains option semantics.
+        /// </summary>
+        /// <returns>True only for the two-argument String.Split overload with a StringSplitOptions value.</returns>
+        bool TryProcessStringSplitWithOptions(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 2) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            ITypeSymbol optionType = semantic.GetTypeInfo(invocationExpression.ArgumentList.Arguments[1].Expression).Type;
+            bool isStringSplit = method?.Name == "Split" &&
+                method.ContainingType?.SpecialType == SpecialType.System_String &&
+                receiverType?.SpecialType == SpecialType.System_String &&
+                optionType?.ToDisplayString() == "System.StringSplitOptions";
+            if (!isStringSplit) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            List<string> separatorLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, separatorLines);
+            context.PopClass(depth);
+            List<string> optionLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression, optionLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeStringUtil"));
+            lines.Add("NativeStringUtil.split(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(separatorLines);
+            lines.Add(", ");
+            lines.AddRange(optionLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers Enumerable.SingleOrDefault for array-mapped reference collections, preserving duplicate-match failures.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify the selected LINQ overload.</param>
+        /// <param name="context">Conversion context that records NativeArrayUtil.</param>
+        /// <param name="invocationExpression">Reduced SingleOrDefault invocation.</param>
+        /// <param name="lines">Destination for the runtime helper call.</param>
+        /// <param name="result">Reference result when the collection has zero or one matching item.</param>
+        /// <returns>True for the supported predicate overload over an array-mapped reference collection.</returns>
+        bool TryProcessEnumerableSingleOrDefault(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isReducedEnumerableSingleOrDefault = method?.Name == "SingleOrDefault" && method.ReducedFrom != null &&
+                method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable";
+            ITypeSymbol returnedType = semantic.GetTypeInfo(invocationExpression).Type;
+            if (!isReducedEnumerableSingleOrDefault || returnedType == null || !returnedType.IsReferenceType) {
+                return false;
+            }
+
+            ArgumentSyntax predicate = invocationExpression.ArgumentList.Arguments[0];
+            if (predicate.NameColon != null) {
+                throw new NotSupportedException("Enumerable.SingleOrDefault predicate requires positional arguments.");
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            List<string> predicateLines = new List<string>();
+            ProcessExpression(semantic, context, predicate.Expression, predicateLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+            lines.Add("NativeArrayUtil.singleOrDefault<");
+            lines.Add(VariableUtil.GetVarType(returnedType).ToTypeScriptString((TypeScriptProgram)context.Program));
+            lines.Add(">(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            lines.AddRange(predicateLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(returnedType));
+            return true;
+        }
+        /// <summary>
+        /// Lowers Enumerable.SequenceEqual with an explicit comparer for iterable collections.
+        /// </summary>
+        bool TryProcessEnumerableSequenceEqual(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 2) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isReducedEnumerableSequenceEqual = method?.Name == "SequenceEqual" && method.ReducedFrom != null &&
+                method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable";
+            if (!isReducedEnumerableSequenceEqual) {
+                return false;
+            }
+
+            ArgumentSyntax second = invocationExpression.ArgumentList.Arguments[0];
+            ArgumentSyntax comparer = invocationExpression.ArgumentList.Arguments[1];
+            if (second.NameColon != null || comparer.NameColon != null) {
+                throw new NotSupportedException("Enumerable.SequenceEqual requires positional arguments.");
+            }
+
+            int depth = context.DepthClass;
+            List<string> firstLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, firstLines);
+            context.PopClass(depth);
+
+            List<string> secondLines = new List<string>();
+            ProcessExpression(semantic, context, second.Expression, secondLines);
+            context.PopClass(depth);
+
+            List<string> comparerLines = new List<string>();
+            ProcessExpression(semantic, context, comparer.Expression, comparerLines);
+            context.PopClass(depth);
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+            lines.Add("NativeArrayUtil.sequenceEqual(");
+            lines.AddRange(firstLines);
+            lines.Add(", ");
+            lines.AddRange(secondLines);
+            lines.Add(", ");
+            lines.AddRange(comparerLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
         /// <summary>
         /// Attempts to emit a dictionary creation expression from an implicit initializer.
         /// </summary>
@@ -1914,6 +2482,10 @@ namespace cs2.ts {
         /// <param name="refTypes">Resolved argument types for overload matching.</param>
         /// <returns>The expression result describing the access.</returns>
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+            if (TryProcessPrimitiveConstantMember(semantic, memberAccess, lines, out ExpressionResult primitiveConstant)) {
+                return primitiveConstant;
+            }
+
             List<string> leftLines = new List<string>();
             ExpressionResult leftResult = ProcessExpression(semantic, context, memberAccess.Expression, leftLines);
             if (leftResult.Processed) {
@@ -2055,6 +2627,117 @@ namespace cs2.ts {
             return false;
         }
 
+        /// <summary>Emits CLR primitive constants with their semantic JavaScript values.</summary>
+        static bool TryProcessPrimitiveConstantMember(
+            SemanticModel semantic,
+            MemberAccessExpressionSyntax memberAccess,
+            List<string> lines,
+            out ExpressionResult result) {
+
+            result = new ExpressionResult(false);
+            if (semantic.GetSymbolInfo(memberAccess).Symbol is not IFieldSymbol field || !field.IsStatic) {
+                return false;
+            }
+
+            string value = null;
+            switch (field.ContainingType.SpecialType) {
+                case SpecialType.System_Double:
+                    if (field.Name == "Epsilon") value = "Number.MIN_VALUE";
+                    else if (field.Name == "MinValue") value = "-Number.MAX_VALUE";
+                    else if (field.Name == "MaxValue") value = "Number.MAX_VALUE";
+                    break;
+                case SpecialType.System_Single:
+                    if (field.Name == "Epsilon") value = "1.401298464324817e-45";
+                    else if (field.Name == "MinValue") value = "-3.4028234663852886e38";
+                    else if (field.Name == "MaxValue") value = "3.4028234663852886e38";
+                    break;
+                case SpecialType.System_Int64:
+                    if (field.Name == "MinValue") value = "-9223372036854775808";
+                    else if (field.Name == "MaxValue") value = "9223372036854775807";
+                    break;
+                case SpecialType.System_Int32:
+                    if (field.Name == "MinValue") value = "-2147483648";
+                    else if (field.Name == "MaxValue") value = "2147483647";
+                    break;
+                case SpecialType.System_Int16:
+                    if (field.Name == "MinValue") value = "-32768";
+                    else if (field.Name == "MaxValue") value = "32767";
+                    break;
+                case SpecialType.System_SByte:
+                    if (field.Name == "MinValue") value = "-128";
+                    else if (field.Name == "MaxValue") value = "127";
+                    break;
+                case SpecialType.System_Byte:
+                    if (field.Name == "MinValue") value = "0";
+                    else if (field.Name == "MaxValue") value = "255";
+                    break;
+                case SpecialType.System_UInt16:
+                    if (field.Name == "MinValue") value = "0";
+                    else if (field.Name == "MaxValue") value = "65535";
+                    break;
+                case SpecialType.System_UInt32:
+                    if (field.Name == "MinValue") value = "0";
+                    else if (field.Name == "MaxValue") value = "4294967295";
+                    break;
+            }
+
+            if (value == null) {
+                return false;
+            }
+            lines.Add(value);
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(field.Type));
+            return true;
+        }
+
+        /// <summary>Lowers numeric framework calls whose CLR casing or overload contract differs in JavaScript.</summary>
+        bool TryProcessNumericFrameworkInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+
+            result = new ExpressionResult(false);
+            if (invocationExpression.ArgumentList.Arguments.Count != 1) {
+                return false;
+            }
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            MemberAccessExpressionSyntax numericMemberAccess = invocationExpression.Expression as MemberAccessExpressionSyntax;
+            ITypeSymbol invocationReceiverType = numericMemberAccess != null
+                ? semantic.GetTypeInfo(numericMemberAccess.Expression).Type
+                : null;
+            bool isSystemMathReceiver = invocationReceiverType?.ContainingNamespace?.ToDisplayString() == "System" &&
+                (invocationReceiverType.Name == "Math" || invocationReceiverType.Name == "MathF");
+            bool isFrameworkMathSyntax = numericMemberAccess != null &&
+                (numericMemberAccess.Expression.ToString() == "Math" || numericMemberAccess.Expression.ToString() == "MathF" ||
+                 numericMemberAccess.Expression.ToString() == "System.Math" || numericMemberAccess.Expression.ToString() == "System.MathF");
+            bool isMathAbs = numericMemberAccess?.Name.Identifier.ValueText == "Abs" &&
+                (isSystemMathReceiver || (method == null && isFrameworkMathSyntax));
+            if (isMathAbs) {
+                lines.Add("Math.abs(");
+                ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, lines);
+                lines.Add(")");
+                ITypeSymbol returnType = method?.ReturnType ?? semantic.GetTypeInfo(invocationExpression).Type;
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(returnType));
+                return true;
+            }
+
+            if (method == null || method.Name != "Parse" || !TryGetNumericTryParseBounds(method.ContainingType.SpecialType, out string minimum, out string maximum)) {
+                return false;
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeNumberUtil"));
+            lines.Add("NativeNumberUtil.parseInteger(");
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, lines);
+            lines.Add(", ");
+            lines.Add(minimum);
+            lines.Add(", ");
+            lines.Add(maximum);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
         /// <summary>
         /// Processes invocation expressions, including runtime-specific remaps.
         /// </summary>
@@ -2070,8 +2753,76 @@ namespace cs2.ts {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
             }
 
+            if (TryProcessNumericFrameworkInvocation(semantic, context, invocationExpression, lines, out ExpressionResult numericFrameworkResult)) {
+                return numericFrameworkResult;
+            }
+
+            if (TryProcessThreadingPrimitiveInvocation(semantic, context, invocationExpression, lines, out ExpressionResult threadingPrimitiveResult)) {
+                return threadingPrimitiveResult;
+            }
+
+            if (TryProcessFrameworkInvocationAdapter(semantic, context, invocationExpression, lines, out ExpressionResult frameworkAdapterResult)) {
+                return frameworkAdapterResult;
+            }
+
+            if (TryProcessTaskAwaiter(semantic, context, invocationExpression, lines, out ExpressionResult awaitedTask)) {
+                return awaitedTask;
+            }
+
+            if (TryProcessTaskConfigureAwait(semantic, context, invocationExpression, lines, out ExpressionResult configuredTask)) {
+                return configuredTask;
+            }
+
+            if (TryProcessDictionaryDefaultLookup(semantic, context, invocationExpression, lines, out ExpressionResult dictionaryResult)) {
+                return dictionaryResult;
+            }
+
+            if (TryProcessStringEnumerableAny(semantic, context, invocationExpression, lines, out ExpressionResult stringAnyResult)) {
+                return stringAnyResult;
+            }
+
+            if (TryProcessStringEnumerableAll(semantic, context, invocationExpression, lines, out ExpressionResult stringAllResult)) {
+                return stringAllResult;
+            }
+
+            if (TryProcessStringReplace(semantic, context, invocationExpression, lines, out ExpressionResult stringReplaceResult)) {
+                return stringReplaceResult;
+            }
+            if (TryProcessStringTrimCharacters(semantic, context, invocationExpression, lines, out ExpressionResult stringTrimResult)) {
+                return stringTrimResult;
+            }
+            if (TryProcessStringSplitWithOptions(semantic, context, invocationExpression, lines, out ExpressionResult stringSplitResult)) {
+                return stringSplitResult;
+            }
+
+            if (TryProcessStringEnumerableSelect(semantic, context, invocationExpression, lines, out ExpressionResult stringSelectResult)) {
+                return stringSelectResult;
+            }
+
+            if (TryProcessEnumerableGrouping(semantic, context, invocationExpression, lines, out ExpressionResult enumerableGroupingResult)) {
+                return enumerableGroupingResult;
+            }
+            if (TryProcessEnumerableCoreOperator(semantic, context, invocationExpression, lines, out ExpressionResult enumerableCoreResult)) {
+                return enumerableCoreResult;
+            }
+            if (TryProcessEnumerableSingle(semantic, context, invocationExpression, lines, out ExpressionResult singleResult)) {
+                return singleResult;
+            }
+
+            if (TryProcessEnumerableSingleOrDefault(semantic, context, invocationExpression, lines, out ExpressionResult singleOrDefaultResult)) {
+                return singleOrDefaultResult;
+            }
+
+            if (TryProcessEnumerableSequenceEqual(semantic, context, invocationExpression, lines, out ExpressionResult sequenceEqualResult)) {
+                return sequenceEqualResult;
+            }
+
             if (TryProcessArrayEmpty(semantic, invocationExpression, lines, out ExpressionResult emptyResult)) {
                 return emptyResult;
+            }
+
+            if (TryProcessByteArrayToArray(semantic, context, invocationExpression, lines, out ExpressionResult byteArrayCopyResult)) {
+                return byteArrayCopyResult;
             }
 
             if (TryProcessEnumToString(semantic, context, invocationExpression, lines, out ExpressionResult enumResult)) {
@@ -2082,8 +2833,24 @@ namespace cs2.ts {
                 return primitiveResult;
             }
 
+            if (TryProcessNumericTryParse(semantic, context, invocationExpression, lines, out ExpressionResult numericTryParseResult)) {
+                return numericTryParseResult;
+            }
+
             if (TryProcessNumericCompareTo(semantic, context, invocationExpression, lines, out ExpressionResult numericCompareResult)) {
                 return numericCompareResult;
+            }
+
+            if (TryProcessMathClamp(semantic, context, invocationExpression, lines, out ExpressionResult clampResult)) {
+                return clampResult;
+            }
+
+            if (TryProcessArgumentExceptionGuard(semantic, context, invocationExpression, lines, out ExpressionResult argumentGuardResult)) {
+                return argumentGuardResult;
+            }
+
+            if (TryProcessReferenceEquals(semantic, context, invocationExpression, lines, out ExpressionResult referenceEqualsResult)) {
+                return referenceEqualsResult;
             }
 
             if (TryProcessObjectGetType(semantic, context, invocationExpression, lines, out ExpressionResult getTypeResult)) {
@@ -2156,7 +2923,36 @@ namespace cs2.ts {
             List<string> beforeLines = new List<string>();
             List<string> addLines = new List<string>();
 
+            IMethodSymbol selectedInvocationMethod = GetInvocationMethodSymbol(semantic, invocationExpression);
+            int nextParameterIndex = 0;
+            int sourceArgumentIndex = 0;
             foreach (var arg in invocationExpression.ArgumentList.Arguments) {
+                int parameterIndex = nextParameterIndex;
+                if (arg.NameColon != null && selectedInvocationMethod != null) {
+                    string parameterName = arg.NameColon.Name.Identifier.ValueText;
+                    parameterIndex = selectedInvocationMethod.Parameters.IndexOf(
+                        selectedInvocationMethod.Parameters.FirstOrDefault(parameter => parameter.Name == parameterName));
+                    if (parameterIndex < nextParameterIndex) {
+                        throw new NotSupportedException($"Named argument order cannot be represented safely: {arg}");
+                    }
+                }
+
+                while (selectedInvocationMethod != null && nextParameterIndex < parameterIndex) {
+                    string defaultValue = GetOptionalDefaultValue(selectedInvocationMethod.Parameters[nextParameterIndex]);
+                    if (string.IsNullOrWhiteSpace(defaultValue)) {
+                        throw new NotSupportedException($"Required parameter '{selectedInvocationMethod.Parameters[nextParameterIndex].Name}' was omitted.");
+                    }
+                    if (count > 0) {
+                        argLines.Add(", ");
+                    }
+                    argLines.Add(defaultValue);
+                    count++;
+                    nextParameterIndex++;
+                }
+
+                if (count > 0) {
+                    argLines.Add(", ");
+                }
                 string refKeyword = arg.RefKindKeyword.ToString();
                 string strName = string.Empty;
                 bool isOut = false;
@@ -2172,6 +2968,9 @@ namespace cs2.ts {
 
                 int startArg = context.DepthClass;
                 int argLinesIndex = argLines.Count;
+                if (ShouldSpreadParamsArgument(semantic, invocationExpression, sourceArgumentIndex)) {
+                    argLines.Add("...");
+                }
                 ExpressionResult res = ProcessExpression(semantic, context, arg.Expression, argLines);
                 types.Add(res);
                 context.PopClass(startArg);
@@ -2199,9 +2998,8 @@ namespace cs2.ts {
                 }
 
                 count++;
-                if (count != invocationExpression.ArgumentList.Arguments.Count) {
-                    argLines.Add(", ");
-                }
+                nextParameterIndex = parameterIndex + 1;
+                sourceArgumentIndex++;
             }
 
             AppendOptionalArguments(semantic, invocationExpression, argLines, ref count);
@@ -2250,23 +3048,46 @@ namespace cs2.ts {
                 !string.Equals(remappedName, invocationName, StringComparison.Ordinal)) {
                 ReplaceLastIdentifier(invoLines, invocationName, remappedName);
             }
+            if (invocationSymbol != null && !invocationSymbol.IsStatic &&
+                invocationExpression.Expression is MemberAccessExpressionSyntax stringEqualsAccess &&
+                stringEqualsAccess.Name.Identifier.ValueText == "Equals" &&
+                semantic.GetTypeInfo(stringEqualsAccess.Expression).Type?.SpecialType == SpecialType.System_String) {
+                string memberSuffix = "." + invocationName;
+                string receiver = string.Concat(invoLines);
+                if (receiver.EndsWith(memberSuffix, StringComparison.Ordinal)) {
+                    receiver = receiver.Substring(0, receiver.Length - memberSuffix.Length);
+                    invoLines.Clear();
+                    invoLines.Add("String.Equals(");
+                    invoLines.Add(receiver);
+                    if (invocationExpression.ArgumentList.Arguments.Count > 0) {
+                        invoLines.Add(", ");
+                        argLines.RemoveAt(0);
+                    }
+                }
+            }
             TryInjectJsonSerializerReturnType(invocationSymbol, invoLines, argLines);
             bool wrapInt64 = ShouldWrapBinaryReaderInt64(invocationSymbol);
             bool forceAsync = HasTypeScriptAsyncAttribute(invocationSymbol) ||
-                HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType);
-            bool shouldAwait = forceAsync ||
-                (result.Type != null && result.Type.TypeName.StartsWith("Promise<"));
+                HasTypeScriptAsyncAttribute(invocationSymbol?.ContainingType) ||
+                IsManualResetEventSlimWait(invocationSymbol);
+            // A Task-valued C# call produces a task; only a source await should consume it.
+            // Synchronous APIs remapped to asynchronous browser operations still need the implicit wait.
+            bool shouldAwait = !IsSourceTaskType(invocationSymbol?.ReturnType) &&
+                (forceAsync || (result.Type != null && result.Type.TypeName.StartsWith("Promise<")));
             if (wrapInt64) {
                 lines.Add("Number(");
             }
             if (shouldAwait) {
-                lines.Add("await ");
+                lines.Add("(await ");
                 context.GetCurrentFunction().Function.IsAsync = true;
             }
 
             lines.AddRange(invoLines);
 
             lines.AddRange(argLines);
+            if (shouldAwait) {
+                lines.Add(")");
+            }
             if (wrapInt64) {
                 lines.Add(")");
                 if (invocationSymbol?.ReturnType != null) {
@@ -2297,6 +3118,270 @@ namespace cs2.ts {
             result.BeforeLines = beforeLines;
             result.AfterLines = addLines;
             return result;
+        }
+
+        /// <summary>
+        /// Lowers atomic read/exchange operations to equivalent single-threaded JavaScript expressions.
+        /// Exchange still returns the previous value and mutates the referenced storage location.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish framework methods from user methods with the same names.</param>
+        /// <param name="context">Current conversion scope.</param>
+        /// <param name="invocation">Candidate framework invocation.</param>
+        /// <param name="lines">Destination for the lowered expression.</param>
+        /// <param name="result">Converted expression result when the invocation is supported.</param>
+        /// <returns><c>true</c> when a supported threading primitive was emitted.</returns>
+        bool TryProcessThreadingPrimitiveInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocation,
+            List<string> lines,
+            out ExpressionResult result) {
+
+            result = default;
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method == null || !method.IsStatic ||
+                method.ContainingNamespace?.ToDisplayString() != "System.Threading") {
+                return false;
+            }
+
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocation.ArgumentList.Arguments;
+            VariableType returnType = VariableUtil.GetVarType(method.ReturnType);
+            if (method.ContainingType?.Name == "Thread" && method.Name == "Sleep" && arguments.Count == 1 &&
+                method.Parameters[0].Type.ToDisplayString() == "System.TimeSpan") {
+                context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("Task"));
+                lines.Add("await Task.Delay(");
+                ProcessExpression(semantic, context, arguments[0].Expression, lines);
+                lines.Add(")");
+                context.GetCurrentFunction().Function.IsAsync = true;
+                result = new ExpressionResult(true, VariablePath.Unknown, returnType);
+                return true;
+            }
+            if (method.ContainingType?.Name == "Volatile" && method.Name == "Read" && arguments.Count == 1) {
+                List<string> beforeLines = new List<string>();
+                string target = BuildExpressionString(semantic, context, arguments[0].Expression, beforeLines);
+                lines.Add(target);
+                result = new ExpressionResult(true, VariablePath.Unknown, returnType) { BeforeLines = beforeLines };
+                return true;
+            }
+
+            if (method.ContainingType?.Name != "Interlocked" || method.Name != "Exchange" || arguments.Count != 2) {
+                return false;
+            }
+
+            if (!IsStableThreadingPrimitiveTarget(arguments[0].Expression)) {
+                throw new NotSupportedException($"Interlocked.Exchange requires a stable generated storage target: {arguments[0].Expression}");
+            }
+
+            List<string> prerequisites = new List<string>();
+            string exchangeTarget = BuildExpressionString(semantic, context, arguments[0].Expression, prerequisites);
+            string exchangeValue = BuildExpressionString(semantic, context, arguments[1].Expression, prerequisites);
+            string oldValue = TemporaryNames.Allocate(semantic, "__interlockedOld");
+            lines.Add("(() => { const ");
+            lines.Add(oldValue);
+            lines.Add(" = ");
+            lines.Add(exchangeTarget);
+            lines.Add("; ");
+            lines.Add(exchangeTarget);
+            lines.Add(" = ");
+            lines.Add(exchangeValue);
+            lines.Add("; return ");
+            lines.Add(oldValue);
+            lines.Add("; })()");
+            result = new ExpressionResult(true, VariablePath.Unknown, returnType) { BeforeLines = prerequisites };
+            return true;
+        }
+
+        /// <summary>Bridges selected framework APIs to their browser runtime equivalents.</summary>
+        bool TryProcessFrameworkInvocationAdapter(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocation,
+            List<string> lines,
+            out ExpressionResult result) {
+
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method == null || invocation.Expression is not MemberAccessExpressionSyntax memberAccess) {
+                return false;
+            }
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocation.ArgumentList.Arguments;
+
+            if (method.Name == "Write" && method.ContainingType?.ToDisplayString() == "System.IO.BinaryWriter" &&
+                method.Parameters.Length == 1 && method.Parameters[0].Type.SpecialType == SpecialType.System_Int32 && arguments.Count == 1) {
+                ProcessExpression(semantic, context, memberAccess.Expression, lines);
+                lines.Add(".writeInt32(");
+                ProcessExpression(semantic, context, arguments[0].Expression, lines);
+                lines.Add(")");
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+                return true;
+            }
+
+            if (method.Name == "ContinueWith" &&
+                method.ContainingType?.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks" &&
+                arguments.Count == 2 && arguments[1].Expression.ToString().EndsWith("TaskScheduler.Default", StringComparison.Ordinal)) {
+                ProcessExpression(semantic, context, memberAccess.Expression, lines);
+                lines.Add(".then(");
+                ProcessExpression(semantic, context, arguments[0].Expression, lines);
+                lines.Add(")");
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+                return true;
+            }
+
+            if (method.Name == "IndexOf" && method.IsStatic && method.ContainingType?.SpecialType == SpecialType.System_Array &&
+                arguments.Count == 2) {
+                ProcessExpression(semantic, context, arguments[0].Expression, lines);
+                lines.Add(".indexOf(");
+                ProcessExpression(semantic, context, arguments[1].Expression, lines);
+                lines.Add(")");
+                result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Checks whether repeating a reference target preserves its JavaScript evaluation semantics.</summary>
+        /// <param name="expression">Reference argument supplied to a threading primitive.</param>
+        /// <returns><c>true</c> for local variables and stable field access chains.</returns>
+        static bool IsStableThreadingPrimitiveTarget(ExpressionSyntax expression) {
+            if (expression is IdentifierNameSyntax || expression is ThisExpressionSyntax || expression is BaseExpressionSyntax) {
+                return true;
+            }
+
+            return expression is MemberAccessExpressionSyntax memberAccess &&
+                IsStableThreadingPrimitiveTarget(memberAccess.Expression);
+        }
+
+        /// <summary>Identifies the blocking browser-incompatible wait overload used by mesh response coordination.</summary>
+        /// <remarks>
+        /// Only <c>System.Threading.ManualResetEventSlim.Wait(int)</c> is asynchronous in the browser runtime.
+        /// Other framework overloads remain unconverted until their cancellation and TimeSpan semantics are implemented.
+        /// </remarks>
+        static bool IsManualResetEventSlimWait(IMethodSymbol method) {
+            return method != null && !method.IsStatic && method.Name == "Wait" &&
+                method.ContainingType?.Name == "ManualResetEventSlim" &&
+                method.ContainingType.ContainingNamespace?.ToDisplayString() == "System.Threading" &&
+                method.Parameters.Length == 1 && method.Parameters[0].Type.SpecialType == SpecialType.System_Int32;
+        }
+        /// <summary>Identifies the framework declarations that own Task and ValueTask operations, excluding user overrides.</summary>
+        /// <param name="type">The declaring type of a resolved framework method.</param>
+        /// <returns>Whether this is a framework Task or ValueTask declaration.</returns>
+        static bool IsFrameworkTaskDeclaration(INamedTypeSymbol type) {
+            return type != null && type.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks" &&
+                (type.Name == "Task" || type.Name == "ValueTask");
+        }
+
+        /// <summary>Maps framework awaiter acquisition to the task value and synchronous result consumption to browser await.</summary>
+        /// <param name="semantic">Semantic model used to identify framework awaiter methods.</param>
+        /// <param name="context">Conversion scope whose containing function becomes asynchronous when a result is consumed.</param>
+        /// <param name="invocation">Candidate GetAwaiter or GetResult invocation.</param>
+        /// <param name="lines">Destination for the promise expression or awaited result.</param>
+        /// <param name="result">Converted result type and prerequisite expression work.</param>
+        /// <returns>Whether a framework awaiter operation was emitted.</returns>
+        bool TryProcessTaskAwaiter(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocation, List<string> lines, out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method == null || invocation.ArgumentList.Arguments.Count != 0 ||
+                invocation.Expression is not MemberAccessExpressionSyntax access) {
+                return false;
+            }
+            INamedTypeSymbol owner = method.ContainingType;
+            bool compilerServices = owner.ContainingNamespace?.ToDisplayString() == "System.Runtime.CompilerServices";
+            bool acquire = method.Name == "GetAwaiter" && (IsFrameworkTaskDeclaration(owner) ||
+                (compilerServices && (owner.Name == "ConfiguredTaskAwaitable" || owner.Name == "ConfiguredValueTaskAwaitable")));
+            bool consume = method.Name == "GetResult" && compilerServices &&
+                (owner.Name == "TaskAwaiter" || owner.Name == "ValueTaskAwaiter" ||
+                 owner.Name == "ConfiguredTaskAwaiter" || owner.Name == "ConfiguredValueTaskAwaiter");
+            if (!acquire && !consume) { return false; }
+            if (consume) {
+                lines.Add("(await ");
+                context.GetCurrentFunction().Function.IsAsync = true;
+            }
+            if (acquire) {
+                lines.Add("((<__AwaiterTask>(__task: __AwaiterTask): __AwaiterTask => { if (__task == null) { throw new TypeError(\"Task cannot be null.\"); } return __task; }))(");
+            }
+            result = ProcessExpression(semantic, context, access.Expression, lines);
+            if (!result.Processed) { throw new NotSupportedException($"Unsupported framework awaiter receiver: {access.Expression}"); }
+            if (acquire) { lines.Add(")"); }
+            if (consume) {
+                lines.Add(")");
+                result.Type = VariableUtil.GetVarType(method.ReturnType);
+            }
+            return true;
+        }
+
+        /// <summary>Preserves framework task values while evaluating the browser-irrelevant synchronization-context flag.</summary>
+        /// <param name="semantic">Semantic model distinguishing framework methods from user methods with the same name.</param>
+        /// <param name="context">Active conversion scope.</param>
+        /// <param name="invocation">Candidate ConfigureAwait invocation.</param>
+        /// <param name="lines">Destination for the task-preserving expression.</param>
+        /// <param name="result">Task expression metadata and deferred expression work.</param>
+        /// <returns>Whether the framework boolean ConfigureAwait overload was converted.</returns>
+        bool TryProcessTaskConfigureAwait(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocation, List<string> lines, out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method == null || method.Name != "ConfigureAwait" || !IsFrameworkTaskDeclaration(method.ContainingType) ||
+                invocation.Expression is not MemberAccessExpressionSyntax access) {
+                return false;
+            }
+            if (method.Parameters.Length != 1 || method.Parameters[0].Type.SpecialType != SpecialType.System_Boolean) {
+                throw new NotSupportedException("Browser ConfigureAwait currently requires the boolean synchronization-context overload.");
+            }
+            List<string> before = new List<string>();
+            lines.Add("((<__ConfiguredTask>(__configuredTask: __ConfiguredTask, __captureContext: boolean): __ConfiguredTask => { if (__configuredTask == null) { throw new TypeError(\"Task cannot be null.\"); } return __configuredTask; }))(");
+            ExpressionResult task = AppendConfiguredAwaitOperand(semantic, context, access.Expression, lines, before);
+            lines.Add(", ");
+            AppendConfiguredAwaitOperand(semantic, context, invocation.ArgumentList.Arguments[0].Expression, lines, before);
+            lines.Add(")");
+            result = new ExpressionResult(true, task.VarPath, task.Type) { BeforeLines = before };
+            return true;
+        }
+
+        /// <summary>Emits one ConfigureAwait operand with its out-variable assignments completed before the next operand.</summary>
+        /// <param name="semantic">Semantic model for expression conversion.</param>
+        /// <param name="context">Active conversion scope.</param>
+        /// <param name="operand">Source task receiver or context argument.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        /// <param name="declarations">Outer declarations needed by subsequent source statements.</param>
+        /// <returns>The converted operand metadata.</returns>
+        ExpressionResult AppendConfiguredAwaitOperand(SemanticModel semantic, LayerContext context, ExpressionSyntax operand, List<string> lines, List<string> declarations) {
+            List<string> valueLines = new List<string>();
+            int depth = context.DepthClass;
+            ExpressionResult value = ProcessExpression(semantic, context, operand, valueLines);
+            context.PopClass(depth);
+            if (!value.Processed) {
+                throw new NotSupportedException($"Unsupported ConfigureAwait operand: {operand}");
+            }
+            List<string> assignments = new List<string>();
+            if (value.AfterLines != null) { SplitAfterLines(value.AfterLines, declarations, assignments); }
+            if ((value.BeforeLines == null || value.BeforeLines.Count == 0) && assignments.Count == 0) {
+                lines.AddRange(valueLines);
+                return value;
+            }
+            bool awaits = valueLines.Any(token => token.TrimStart('(').StartsWith("await ", StringComparison.Ordinal));
+            string temporary = TemporaryNames.Allocate(semantic, "__configuredOperand");
+            // Box the return value of an async operand wrapper so Promise assimilation cannot consume the task itself.
+            lines.Add(awaits ? "(await (async () => { " : "(() => { ");
+            if (value.BeforeLines != null) { lines.AddRange(value.BeforeLines); }
+            lines.Add("const " + temporary + " = ");
+            lines.AddRange(valueLines);
+            lines.Add("; ");
+            lines.AddRange(assignments);
+            lines.Add(awaits ? "return { value: " + temporary + " }; })()).value" : "return " + temporary + "; })()");
+            return value;
+        }
+
+        /// <summary>Recognizes framework task values before TypeScript erasure so invocation emission preserves explicit C# awaiting.</summary>
+        /// <param name="type">Resolved C# invocation return type, including derived Task types.</param>
+        /// <returns>True for Task or ValueTask values whose completion must remain controlled by the source.</returns>
+        static bool IsSourceTaskType(ITypeSymbol type) {
+            for (ITypeSymbol current = type; current != null; current = current.BaseType) {
+                if ((current.Name == "Task" || current.Name == "ValueTask") &&
+                    current.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks") {
+                    return true;
+                }
+            }
+            return false;
         }
 
         static void TryInjectJsonSerializerReturnType(IMethodSymbol invocationSymbol, List<string> invocationLines, List<string> argLines) {
@@ -2383,10 +3468,6 @@ namespace cs2.ts {
                 return;
             }
 
-            if (invocationExpression.ArgumentList.Arguments.Any(a => a.NameColon != null)) {
-                return;
-            }
-
             var parameters = methodSymbol.Parameters;
             // Split(char, StringSplitOptions.None) maps to JavaScript's unlimited split.
             // Its omitted options value is not the JavaScript result-count limit.
@@ -2404,6 +3485,9 @@ namespace cs2.ts {
 
             for (int i = count; i < parameters.Length; i++) {
                 IParameterSymbol parameter = parameters[i];
+                if (parameter.IsParams) {
+                    return;
+                }
                 string defaultValue = GetOptionalDefaultValue(parameter);
                 if (string.IsNullOrWhiteSpace(defaultValue)) {
                     break;
@@ -2417,6 +3501,40 @@ namespace cs2.ts {
             }
         }
 
+        /// <summary>
+        /// Determines whether one C# params-array argument must expand into TypeScript rest arguments.
+        /// </summary>
+        static bool ShouldSpreadParamsArgument(SemanticModel semantic, InvocationExpressionSyntax invocationExpression, int argumentIndex) {
+            if (semantic == null || invocationExpression?.ArgumentList == null || argumentIndex < 0 ||
+                argumentIndex >= invocationExpression.ArgumentList.Arguments.Count) {
+                return false;
+            }
+
+            ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
+            if (argument.NameColon != null) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method == null || argumentIndex >= method.Parameters.Length || method.Parameters.Length != invocationExpression.ArgumentList.Arguments.Count) {
+                return false;
+            }
+
+            // The TypeScript Task runtime deliberately accepts one iterable for WhenAll. Expanding the
+            // source array would target a rest signature which the runtime neither declares nor needs.
+            if (method.Name == "WhenAll" && method.ContainingType?.ToDisplayString() == "System.Threading.Tasks.Task") {
+                return false;
+            }
+
+            IParameterSymbol parameter = method.Parameters[argumentIndex];
+            if (!parameter.IsParams) {
+                return false;
+            }
+
+            TypeInfo argumentType = semantic.GetTypeInfo(argument.Expression);
+            ITypeSymbol actualType = argumentType.Type ?? argumentType.ConvertedType;
+            return actualType != null && SymbolEqualityComparer.Default.Equals(actualType, parameter.Type);
+        }
         static IMethodSymbol GetInvocationMethodSymbol(
             SemanticModel semantic,
             InvocationExpressionSyntax invocationExpression) {
@@ -2759,6 +3877,8 @@ namespace cs2.ts {
             context.PopClass(startRight);
 
             BinaryOpTypes op = ParseBinaryOperator(binary.Kind());
+            bool convertLeftCharacterToCodeUnit = RequiresCharacterCodeUnit(binary, semantic, binary.Left);
+            bool convertRightCharacterToCodeUnit = RequiresCharacterCodeUnit(binary, semantic, binary.Right);
 
             if (op == BinaryOpTypes.As && string.IsNullOrWhiteSpace(string.Concat(right)) && binary.Right is TypeSyntax asTypeSyntax) {
                 // Composite type syntaxes (`as byte[]`) have no expression emission and left the cast
@@ -2775,9 +3895,9 @@ namespace cs2.ts {
             bool hasRightAfter = rightResult.AfterLines != null && rightResult.AfterLines.Count > 0;
 
             if (!hasLeftBefore && !hasLeftAfter && !hasRightBefore && !hasRightAfter) {
-                lines.AddRange(left);
+                AppendCharacterCodeUnitOperand(lines, left, convertLeftCharacterToCodeUnit);
                 lines.Add($" {op.ToStringOperator()} ");
-                lines.AddRange(right);
+                AppendCharacterCodeUnitOperand(lines, right, convertRightCharacterToCodeUnit);
                 return leftResult;
             }
 
@@ -2869,9 +3989,9 @@ namespace cs2.ts {
                 }
                 preludeLines.Add(resultVar);
                 preludeLines.Add(" = ");
-                preludeLines.Add(leftVar);
+                AppendCharacterCodeUnitOperand(preludeLines, new List<string> { leftVar }, convertLeftCharacterToCodeUnit);
                 preludeLines.Add($" {op.ToStringOperator()} ");
-                preludeLines.Add(rightVar);
+                AppendCharacterCodeUnitOperand(preludeLines, new List<string> { rightVar }, convertRightCharacterToCodeUnit);
                 preludeLines.Add(";\n");
             }
 
@@ -2880,6 +4000,57 @@ namespace cs2.ts {
             leftResult.BeforeLines = preludeLines;
             leftResult.AfterLines = null;
             return leftResult;
+        }
+        /// <summary>
+        /// Determines whether an operand must be converted from its emitted JavaScript string representation
+        /// to a UTF-16 code unit for a C# character arithmetic operation.
+        /// </summary>
+        static bool RequiresCharacterCodeUnit(BinaryExpressionSyntax binary, SemanticModel semantic, ExpressionSyntax operand) {
+            if (!IsCharacterArithmetic(binary, semantic)) {
+                return false;
+            }
+
+            TypeInfo operandType = semantic.GetTypeInfo(operand);
+            ITypeSymbol typeSymbol = operandType.Type ?? operandType.ConvertedType;
+            return typeSymbol?.SpecialType == SpecialType.System_Char;
+        }
+
+        /// <summary>
+        /// Limits code-unit conversion to numeric C# operators. Character comparisons preserve their
+        /// JavaScript string form, and string concatenation is intentionally outside this conversion.
+        /// </summary>
+        static bool IsCharacterArithmetic(BinaryExpressionSyntax binary, SemanticModel semantic) {
+            switch (binary.Kind()) {
+                case SyntaxKind.AddExpression:
+                case SyntaxKind.SubtractExpression:
+                case SyntaxKind.DivideExpression:
+                case SyntaxKind.MultiplyExpression:
+                case SyntaxKind.ModuloExpression:
+                case SyntaxKind.BitwiseAndExpression:
+                case SyntaxKind.BitwiseOrExpression:
+                case SyntaxKind.ExclusiveOrExpression:
+                case SyntaxKind.LeftShiftExpression:
+                case SyntaxKind.RightShiftExpression:
+                    break;
+                default:
+                    return false;
+            }
+
+            TypeInfo resultType = semantic.GetTypeInfo(binary);
+            ITypeSymbol typeSymbol = resultType.Type ?? resultType.ConvertedType;
+            return typeSymbol != null && IsNumericSpecialType(typeSymbol.SpecialType);
+        }
+
+        /// <summary>Appends a possibly character-valued operand as a UTF-16 code unit.</summary>
+        static void AppendCharacterCodeUnitOperand(List<string> output, List<string> operand, bool convertToCodeUnit) {
+            if (!convertToCodeUnit) {
+                output.AddRange(operand);
+                return;
+            }
+
+            output.Add("(");
+            output.AddRange(operand);
+            output.Add(").charCodeAt(0)");
         }
 
         static BinaryOpTypes ParseBinaryOperator(SyntaxKind kind) {
@@ -2987,8 +4158,19 @@ namespace cs2.ts {
             context.PopClass(startDepth);
             lines.Add("; return ");
 
-            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, "__pattern", lines, out _)) {
+            List<string> conditionLines = new List<string>();
+            if (!TryAppendPatternCondition(semantic, context, patternExpression.Pattern, "__pattern", conditionLines, out string declaredVariable)) {
                 throw new NotSupportedException($"Unsupported pattern expression: {patternExpression.Pattern}");
+            }
+
+            lines.AddRange(conditionLines);
+            if (!string.IsNullOrWhiteSpace(declaredVariable) &&
+                TryGetPatternTypeScriptName(semantic, context, patternExpression.Pattern, out string patternType)) {
+                lines.Add(" && ((");
+                lines.Add(declaredVariable);
+                lines.Add(" = <");
+                lines.Add(patternType);
+                lines.Add("><unknown>__pattern), true)");
             }
 
             lines.Add("; })()");
@@ -3019,6 +4201,12 @@ namespace cs2.ts {
             }
 
             if (pattern is ConstantPatternSyntax constantPattern) {
+                ISymbol constantSymbol = semantic.GetSymbolInfo(constantPattern.Expression).Symbol;
+                if (constantSymbol is INamedTypeSymbol constantType) {
+                    AppendPatternTypeCheck(context, constantType.ToDisplayString(), constantType, targetIdentifier, lines);
+                    return true;
+                }
+
                 lines.Add(targetIdentifier);
                 lines.Add(" === ");
                 int constantDepth = context.DepthClass;
@@ -3050,12 +4238,12 @@ namespace cs2.ts {
                     lines.Add("true");
                     return true;
                 }
-                AppendPatternTypeCheck(context, typeName, targetIdentifier, lines);
+                AppendPatternTypeCheck(context, typeName, semantic.GetTypeInfo(declarationPattern.Type).Type, targetIdentifier, lines);
                 return true;
             }
 
             if (pattern is TypePatternSyntax typePattern) {
-                AppendPatternTypeCheck(context, typePattern.Type.ToString(), targetIdentifier, lines);
+                AppendPatternTypeCheck(context, typePattern.Type.ToString(), semantic.GetTypeInfo(typePattern.Type).Type, targetIdentifier, lines);
                 return true;
             }
 
@@ -3076,9 +4264,10 @@ namespace cs2.ts {
         /// Appends a runtime check for a type pattern.
         /// </summary>
         /// <param name="typeName">The type name from the pattern.</param>
+        /// <param name="patternType">Resolved Roslyn type, when available.</param>
         /// <param name="targetIdentifier">The identifier to test.</param>
         /// <param name="lines">The output lines to append to.</param>
-        void AppendPatternTypeCheck(LayerContext context, string typeName, string targetIdentifier, List<string> lines) {
+        void AppendPatternTypeCheck(LayerContext context, string typeName, ITypeSymbol patternType, string targetIdentifier, List<string> lines) {
             string normalizedTypeName = NormalizePatternTypeName(typeName);
             if (IsGenericTypeParameterName(context, normalizedTypeName)) {
                 lines.Add(targetIdentifier);
@@ -3132,9 +4321,115 @@ namespace cs2.ts {
                 return;
             }
 
+            if (patternType is INamedTypeSymbol namedPatternType && namedPatternType.TypeKind == TypeKind.Interface) {
+                AppendInterfacePatternTypeCheck(context, namedPatternType, targetIdentifier, lines);
+                return;
+            }
+
             lines.Add(targetIdentifier);
             lines.Add(" instanceof ");
             lines.Add(normalizedTypeName);
+        }
+
+        /// <summary>Emits a structural runtime check for the abstract members required by an interface.</summary>
+        /// <param name="context">Current conversion scope used to render the TypeScript interface name.</param>
+        /// <param name="interfaceType">Resolved interface whose required members define the runtime shape.</param>
+        /// <param name="targetIdentifier">Identifier containing the candidate value.</param>
+        /// <param name="lines">Destination for the structural condition.</param>
+        static void AppendInterfacePatternTypeCheck(
+            LayerContext context,
+            INamedTypeSymbol interfaceType,
+            string targetIdentifier,
+            List<string> lines) {
+
+            string typeName = IsErasedFrameworkInterfacePattern(interfaceType)
+                ? "any"
+                : VariableUtil.GetVarType(interfaceType).ToTypeScriptString((TypeScriptProgram)context.Program);
+            List<INamedTypeSymbol> interfaces = new List<INamedTypeSymbol> { interfaceType };
+            interfaces.AddRange(interfaceType.AllInterfaces);
+            HashSet<string> checkedMembers = new HashSet<string>(StringComparer.Ordinal);
+
+            lines.Add(targetIdentifier);
+            lines.Add(" != null");
+            foreach (ISymbol member in interfaces.SelectMany(candidate => candidate.GetMembers())) {
+                if (member is IMethodSymbol method && method.MethodKind == MethodKind.Ordinary && method.IsAbstract) {
+                    string memberName = method.Name == "Dispose" ? "dispose" : method.Name;
+                    if (!checkedMembers.Add("method:" + memberName)) {
+                        continue;
+                    }
+                    lines.Add(" && typeof (<");
+                    lines.Add(typeName);
+                    lines.Add("><unknown>");
+                    lines.Add(targetIdentifier);
+                    lines.Add(").");
+                    lines.Add(memberName);
+                    lines.Add(" === \"function\"");
+                } else if ((member is IPropertySymbol || member is IEventSymbol) && checkedMembers.Add("member:" + member.Name)) {
+                    lines.Add(" && \"");
+                    lines.Add(member.Name);
+                    lines.Add("\" in (<object>");
+                    lines.Add(targetIdentifier);
+                    lines.Add(")");
+                }
+            }
+        }
+
+        /// <summary>Resolves the TypeScript type introduced by a declaration pattern.</summary>
+        /// <param name="semantic">Semantic model for the pattern syntax.</param>
+        /// <param name="context">Current conversion scope.</param>
+        /// <param name="pattern">Pattern that may declare a typed variable.</param>
+        /// <param name="typeName">Rendered TypeScript type when available.</param>
+        /// <returns><c>true</c> when the pattern declares a concrete type.</returns>
+        static bool TryGetPatternTypeScriptName(
+            SemanticModel semantic,
+            LayerContext context,
+            PatternSyntax pattern,
+            out string typeName) {
+
+            typeName = string.Empty;
+            while (pattern is ParenthesizedPatternSyntax parenthesized) {
+                pattern = parenthesized.Pattern;
+            }
+            if (pattern is UnaryPatternSyntax unary && unary.IsKind(SyntaxKind.NotPattern)) {
+                pattern = unary.Pattern;
+                while (pattern is ParenthesizedPatternSyntax parenthesizedInner) {
+                    pattern = parenthesizedInner.Pattern;
+                }
+            }
+            if (pattern is not DeclarationPatternSyntax declarationPattern) {
+                return false;
+            }
+
+            ITypeSymbol resolvedType = semantic.GetTypeInfo(declarationPattern.Type).Type;
+            if (resolvedType is INamedTypeSymbol interfaceType && IsErasedFrameworkInterfacePattern(interfaceType)) {
+                typeName = "any";
+                return true;
+            }
+            HashSet<string> erasedTypeParameters = GetStaticClassGenericParameters(context);
+            if (resolvedType is ITypeParameterSymbol typeParameter &&
+                erasedTypeParameters?.Contains(typeParameter.Name) == true) {
+                typeName = "any";
+                return true;
+            }
+
+            VariableType variableType = VariableUtil.GetVarType(declarationPattern.Type, semantic);
+            if (variableType == null) {
+                return false;
+            }
+            typeName = variableType.ToTypeScriptString((TypeScriptProgram)context.Program);
+            return !string.IsNullOrWhiteSpace(typeName);
+        }
+
+        /// <summary>Identifies framework interfaces used only as structural pattern contracts in browser output.</summary>
+        /// <param name="interfaceType">Resolved pattern interface.</param>
+        /// <returns><c>true</c> when no TypeScript runtime declaration exists for the interface.</returns>
+        static bool IsErasedFrameworkInterfacePattern(INamedTypeSymbol interfaceType) {
+            if (!string.Equals(interfaceType?.ContainingNamespace?.ToDisplayString(), "System", StringComparison.Ordinal)) {
+                return false;
+            }
+
+            return string.Equals(interfaceType.Name, "IFormattable", StringComparison.Ordinal) ||
+                string.Equals(interfaceType.Name, "IConvertible", StringComparison.Ordinal);
         }
 
         static bool IsGenericTypeParameterName(LayerContext context, string typeName) {
@@ -3214,8 +4509,19 @@ namespace cs2.ts {
         /// <param name="pattern">The pattern to inspect.</param>
         /// <param name="declaredVariable">Outputs the declared variable name if present.</param>
         /// <returns>True when a designation exists on the pattern.</returns>
-        bool TryGetPatternDesignation(PatternSyntax pattern, out string declaredVariable) {
+        static bool TryGetPatternDesignation(PatternSyntax pattern, out string declaredVariable) {
             declaredVariable = string.Empty;
+
+            while (pattern is ParenthesizedPatternSyntax parenthesizedPattern) {
+                pattern = parenthesizedPattern.Pattern;
+            }
+
+            if (pattern is UnaryPatternSyntax unaryPattern && unaryPattern.IsKind(SyntaxKind.NotPattern)) {
+                pattern = unaryPattern.Pattern;
+                while (pattern is ParenthesizedPatternSyntax parenthesizedInner) {
+                    pattern = parenthesizedInner.Pattern;
+                }
+            }
 
             if (pattern is DeclarationPatternSyntax declarationPattern &&
                 declarationPattern.Designation is SingleVariableDesignationSyntax designation) {
@@ -3339,6 +4645,24 @@ namespace cs2.ts {
             LayerContext context,
             CollectionExpressionSyntax collectionExpression,
             List<string> lines) {
+            ITypeSymbol convertedType = semantic.GetTypeInfo(collectionExpression).ConvertedType;
+            bool constructsHashSet = convertedType is INamedTypeSymbol namedType &&
+                namedType.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.HashSet<T>";
+            bool retainsInterfaceContract = convertedType is INamedTypeSymbol interfaceType && interfaceType.TypeKind == TypeKind.Interface &&
+                (interfaceType.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.IReadOnlyList<T>" ||
+                 interfaceType.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.IReadOnlyCollection<T>" ||
+                 interfaceType.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.ICollection<T>" ||
+                 interfaceType.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.IEnumerable<T>");
+            if (constructsHashSet) {
+                context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("HashSet"));
+                lines.Add("new ");
+                lines.Add(VariableUtil.GetVarType(convertedType).ToTypeScriptString((TypeScriptProgram)context.Program));
+                lines.Add("(");
+            } else if (retainsInterfaceContract) {
+                lines.Add("<");
+                lines.Add(VariableUtil.GetVarType(convertedType).ToTypeScriptString((TypeScriptProgram)context.Program));
+                lines.Add("><unknown>");
+            }
             lines.Add("[");
 
             var elements = collectionExpression.Elements;
@@ -3363,7 +4687,10 @@ namespace cs2.ts {
             }
 
             lines.Add("]");
-            return new ExpressionResult(true);
+            if (constructsHashSet) {
+                lines.Add(")");
+            }
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(convertedType));
         }
 
         /// <summary>
@@ -3410,7 +4737,9 @@ namespace cs2.ts {
 
             // Process each expression in the initializer
             for (int i = 0; i < implicitArray.Initializer.Expressions.Count; i++) {
+                int expressionDepth = context.DepthClass;
                 ProcessExpression(semantic, context, implicitArray.Initializer.Expressions[i], lines);
+                context.PopClass(expressionDepth);
 
                 // Add a comma separator if it's not the last element
                 if (i < implicitArray.Initializer.Expressions.Count - 1) {
@@ -3621,7 +4950,9 @@ namespace cs2.ts {
             if (arrayCreation.Initializer != null) {
                 lines.Add("[");
                 for (int i = 0; i < arrayCreation.Initializer.Expressions.Count; i++) {
+                    int expressionDepth = context.DepthClass;
                     ProcessExpression(semantic, context, arrayCreation.Initializer.Expressions[i], lines);
+                    context.PopClass(expressionDepth);
 
                     if (i < arrayCreation.Initializer.Expressions.Count - 1) {
                         lines.Add(", ");
@@ -3694,7 +5025,9 @@ namespace cs2.ts {
             }
 
             for (int i = 0; i < initializerExpression.Expressions.Count; i++) {
+                int expressionDepth = context.DepthClass;
                 ProcessExpression(semantic, context, initializerExpression.Expressions[i], lines);
+                context.PopClass(expressionDepth);
 
                 if (i < initializerExpression.Expressions.Count - 1) {
                     lines.Add(", ");
@@ -3776,10 +5109,6 @@ namespace cs2.ts {
                     FunctionStack currentFn = context.GetCurrentFunction();
                     if (currentFn != null && !currentFn.Function.IsAsync) {
                         currentFn.Function.IsAsync = true;
-                        if (currentFn.Function.ReturnType != null) {
-                            currentFn.Function.ReturnType = new VariableType(currentFn.Function.ReturnType);
-                            currentFn.Function.ReturnType.TypeName = $"Promise<{currentFn.Function.ReturnType.TypeName}>";
-                        }
                     }
                 }
 
@@ -3999,6 +5328,64 @@ namespace cs2.ts {
             return true;
         }
 
+        /// <summary>Supplies the erased C# value-type default to dictionary extension calls while retaining argument evaluation order.</summary>
+        /// <param name="semantic">Semantic model identifying the framework extension and its constructed value type.</param>
+        /// <param name="context">Conversion scope used to emit the receiver and arguments.</param>
+        /// <param name="invocation">Framework dictionary lookup being considered.</param>
+        /// <param name="lines">Destination for the runtime method call.</param>
+        /// <param name="result">Resolved value type when this invocation is converted.</param>
+        /// <returns>True when the framework dictionary extension was emitted.</returns>
+        bool TryProcessDictionaryDefaultLookup(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocation, List<string> lines, out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = semantic.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
+            if (method == null || method.Name != "GetValueOrDefault" ||
+                method.ContainingType.ToDisplayString() != "System.Collections.Generic.CollectionExtensions" ||
+                invocation.Expression is not MemberAccessExpressionSyntax access) {
+                return false;
+            }
+            bool reduced = method.ReducedFrom != null;
+            var arguments = invocation.ArgumentList.Arguments;
+            int firstArgument = reduced ? 0 : 1;
+            int explicitCount = arguments.Count - firstArgument;
+            if (explicitCount < 1 || explicitCount > 2 || arguments.Any(argument => argument.NameColon != null)) {
+                throw new NotSupportedException("Dictionary default lookup requires positional key and optional default arguments.");
+            }
+            string implicitDefault = explicitCount == 1 ? GetDictionaryValueDefault(method.ReturnType) : null;
+            int depth = context.DepthClass;
+            ExpressionSyntax receiver = reduced ? access.Expression : arguments[0].Expression;
+            ProcessExpression(semantic, context, receiver, lines);
+            context.PopClass(depth);
+            lines.Add(".GetValueOrDefault(");
+            for (int index = firstArgument; index < arguments.Count; index++) {
+                if (index > firstArgument) { lines.Add(", "); }
+                ProcessExpression(semantic, context, arguments[index].Expression, lines);
+                context.PopClass(depth);
+            }
+            if (explicitCount == 1) {
+                lines.Add(", ");
+                lines.Add(implicitDefault);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        /// <summary>Resolves defaults before generic erasure; unsupported value types must not silently become null.</summary>
+        /// <param name="type">Constructed dictionary value type.</param>
+        /// <returns>The TypeScript literal matching the C# zero-initialized value.</returns>
+        static string GetDictionaryValueDefault(ITypeSymbol type) {
+            if (type.IsReferenceType || type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
+                return "null";
+            } else if (type.SpecialType == SpecialType.System_Boolean) {
+                return "false";
+            } else if (type.SpecialType == SpecialType.System_Char) {
+                return "'\\0'";
+            } else if (IsNumericSpecialType(type.SpecialType) || type.TypeKind == TypeKind.Enum) {
+                return "0";
+            }
+            throw new NotSupportedException($"Dictionary lookup default for '{type}' requires an explicit supported default value.");
+        }
+
         /// <summary>
         /// Emits typed numeric CompareTo calls through the runtime, evaluating receiver and argument once in source order.
         /// Object overloads and user-defined comparisons retain their normal invocation handling.
@@ -4046,6 +5433,583 @@ namespace cs2.ts {
             lines.Add(")");
             result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
             return true;
+        }
+
+        /// <summary>Lowers comparer-aware GroupBy and ToDictionary through iterable runtime helpers.</summary>
+        bool TryProcessEnumerableGrouping(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method?.ContainingType?.ToDisplayString() != "System.Linq.Enumerable") {
+                return false;
+            }
+
+            bool isGroupBy = method.Name == "GroupBy";
+            bool isToDictionary = method.Name == "ToDictionary";
+            if (!isGroupBy && !isToDictionary) {
+                return false;
+            }
+
+            var arguments = invocationExpression.ArgumentList.Arguments;
+
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            var argumentLines = new List<List<string>>();
+            foreach (ArgumentSyntax argument in arguments) {
+                var converted = new List<string>();
+                ProcessExpression(semantic, context, argument.Expression, converted);
+                context.PopClass(depth);
+                argumentLines.Add(converted);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+            if (isGroupBy) {
+                if (arguments.Count < 1 || arguments.Count > 2 ||
+                    (arguments.Count == 2 && !IsEqualityComparerType(semantic.GetTypeInfo(arguments[1].Expression).Type))) {
+                    return false;
+                }
+                lines.Add("NativeArrayUtil.groupBy(");
+                lines.AddRange(receiverLines);
+                lines.Add(", ");
+                lines.AddRange(argumentLines[0]);
+                lines.Add(", ");
+                if (argumentLines.Count == 2) {
+                    lines.AddRange(argumentLines[1]);
+                } else {
+                    lines.Add("null");
+                }
+                lines.Add(")");
+            } else {
+                if (arguments.Count < 1 || arguments.Count > 3) {
+                    return false;
+                }
+                bool hasComparer = arguments.Count > 1 &&
+                    IsEqualityComparerType(semantic.GetTypeInfo(arguments[^1].Expression).Type);
+                int selectorCount = arguments.Count - (hasComparer ? 1 : 0);
+                if (selectorCount < 1 || selectorCount > 2) {
+                    return false;
+                }
+                lines.Add("NativeArrayUtil.toDictionary(");
+                lines.AddRange(receiverLines);
+                lines.Add(", ");
+                lines.AddRange(argumentLines[0]);
+                lines.Add(", ");
+                if (selectorCount == 2) {
+                    lines.AddRange(argumentLines[1]);
+                } else {
+                    lines.Add("null");
+                }
+                lines.Add(", ");
+                if (hasComparer) {
+                    lines.AddRange(argumentLines[selectorCount]);
+                } else {
+                    lines.Add("null");
+                }
+                lines.Add(")");
+            }
+
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        static bool IsEqualityComparerType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            bool IsEqualityComparerInterface(ITypeSymbol candidate) =>
+                candidate?.OriginalDefinition?.ToDisplayString() == "System.Collections.Generic.IEqualityComparer<T>";
+
+            return IsEqualityComparerInterface(typeSymbol) ||
+                typeSymbol.AllInterfaces.Any(IsEqualityComparerInterface);
+        }
+        /// <summary>Lowers common reduced Enumerable operators through iterable runtime helpers.</summary>
+        bool TryProcessEnumerableCoreOperator(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            MemberAccessExpressionSyntax memberAccess = invocationExpression.Expression as MemberAccessExpressionSyntax;
+            bool isConditionalMemberBinding = invocationExpression.Expression is MemberBindingExpressionSyntax;
+            if (memberAccess == null && !isConditionalMemberBinding) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method?.ReducedFrom == null || method.ContainingType?.ToDisplayString() != "System.Linq.Enumerable" ||
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                return false;
+            }
+
+            string helperName = null;
+            int minimumArgumentCount = -1;
+            int maximumArgumentCount = -1;
+            switch (method.Name) {
+                case "All":
+                    helperName = "all";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    break;
+                case "Skip":
+                    helperName = "skip";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    break;
+                case "Sum":
+                    helperName = "sum";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    break;
+                case "OrderBy":
+                    helperName = "orderBy";
+                    minimumArgumentCount = 1;
+                    maximumArgumentCount = 2;
+                    break;
+                case "ToArray":
+                    helperName = "toArray";
+                    minimumArgumentCount = maximumArgumentCount = 0;
+                    break;
+                case "Distinct":
+                    helperName = "distinct";
+                    minimumArgumentCount = 0;
+                    maximumArgumentCount = 1;
+                    break;
+                case "ToList":
+                    helperName = "toList";
+                    minimumArgumentCount = maximumArgumentCount = 0;
+                    break;
+                case "Contains":
+                    helperName = "contains";
+                    minimumArgumentCount = 1;
+                    maximumArgumentCount = 2;
+                    break;
+                case "Take":
+                    helperName = "take";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    if (method.Parameters.Length != 1 || method.Parameters[0].Type.SpecialType != SpecialType.System_Int32) {
+                        return false;
+                    }
+                    break;
+                case "Where":
+                    helperName = "where";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    break;
+                case "Select":
+                    helperName = "select";
+                    minimumArgumentCount = maximumArgumentCount = 1;
+                    break;
+                case "Count":
+                    helperName = "count";
+                    minimumArgumentCount = 0;
+                    maximumArgumentCount = 1;
+                    break;
+                default:
+                    return false;
+            }
+
+            int argumentCount = invocationExpression.ArgumentList.Arguments.Count;
+            if (argumentCount < minimumArgumentCount || argumentCount > maximumArgumentCount) {
+                return false;
+            }
+
+            // String LINQ operations and byte-array ToArray have dedicated lowerings which preserve
+            // their CLR-specific representations. This generic iterable path is intentionally broader.
+            ITypeSymbol receiverType = memberAccess != null
+                ? semantic.GetTypeInfo(memberAccess.Expression).Type
+                : method.ReceiverType;
+            if ((method.Name == "All" && receiverType?.SpecialType == SpecialType.System_String) ||
+                (method.Name == "ToArray" && receiverType is IArrayTypeSymbol byteArray &&
+                 byteArray.Rank == 1 && byteArray.ElementType.SpecialType == SpecialType.System_Byte)) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            if (memberAccess != null) {
+                ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+                context.PopClass(depth);
+            } else {
+                Stack<string> conditionalReceivers = ConditionalAccessReceivers.Value;
+                if (conditionalReceivers == null || conditionalReceivers.Count == 0) {
+                    return false;
+                }
+                receiverLines.Add(conditionalReceivers.Pop());
+            }
+
+            List<List<string>> argumentLines = new List<List<string>>();
+            foreach (ArgumentSyntax argument in invocationExpression.ArgumentList.Arguments) {
+                List<string> convertedArgument = new List<string>();
+                ProcessExpression(semantic, context, argument.Expression, convertedArgument);
+                context.PopClass(depth);
+                argumentLines.Add(convertedArgument);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+            lines.Add("NativeArrayUtil.");
+            lines.Add(helperName);
+            lines.Add("(");
+            lines.AddRange(receiverLines);
+            foreach (List<string> convertedArgument in argumentLines) {
+                lines.Add(", ");
+                lines.AddRange(convertedArgument);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+        /// <summary>Lowers reduced Enumerable.Single for iterable sequences without extending Array prototypes.</summary>
+        bool TryProcessEnumerableSingle(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count > 1) {
+                return false;
+            }
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method?.Name != "Single" || method.ReducedFrom == null ||
+                method.ContainingType?.ToDisplayString() != "System.Linq.Enumerable") {
+                return false;
+            }
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+            lines.Add("NativeArrayUtil.single(");
+            lines.AddRange(receiverLines);
+            if (invocationExpression.ArgumentList.Arguments.Count == 1) {
+                lines.Add(", ");
+                List<string> predicateLines = new List<string>();
+                ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, predicateLines);
+                context.PopClass(depth);
+                lines.AddRange(predicateLines);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        /// <summary>
+        /// Preserves the selected C# primitive parser rather than collapsing every numeric TryParse call
+        /// onto JavaScript's untyped Number constructor.
+        /// </summary>
+        bool TryProcessNumericTryParse(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method == null || !method.IsStatic || method.Name != "TryParse" ||
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                return false;
+            }
+
+            SpecialType numericType = method.ContainingType?.SpecialType ?? SpecialType.None;
+            bool isInteger = TryGetNumericTryParseBounds(numericType, out string minimum, out string maximum);
+            bool isFloatingPoint = numericType == SpecialType.System_Single ||
+                numericType == SpecialType.System_Double || numericType == SpecialType.System_Decimal;
+            if ((!isInteger && !isFloatingPoint) ||
+                (method.Parameters.Length != 2 && method.Parameters.Length != 4) ||
+                invocationExpression.ArgumentList.Arguments.Count != method.Parameters.Length ||
+                method.Parameters[method.Parameters.Length - 1].RefKind != RefKind.Out) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<List<string>> argumentLines = new List<List<string>>();
+            List<string> beforeLines = new List<string>();
+            List<string> afterLines = new List<string>();
+            for (int argumentIndex = 0; argumentIndex < invocationExpression.ArgumentList.Arguments.Count; argumentIndex++) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[argumentIndex];
+                List<string> currentArgumentLines = new List<string>();
+                ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, currentArgumentLines);
+                context.PopClass(depth);
+
+                if (argumentIndex == invocationExpression.ArgumentList.Arguments.Count - 1) {
+                    bool isOutDeclaration = argument.Expression is DeclarationExpressionSyntax;
+                    string temporaryOut = TemporaryNames.Allocate(semantic, "out_");
+                    beforeLines.Add($"let {temporaryOut} = {{ value: undefined }};\n");
+
+                    string outName = string.Concat(currentArgumentLines);
+                    if (!isOutDeclaration && argumentResult.Variable != null && argumentResult.Variable.Modifier.HasFlag(ParameterModifier.Out)) {
+                        outName = argumentResult.Variable.Name;
+                    }
+                    if (!string.Equals(outName, "_", StringComparison.Ordinal)) {
+                        afterLines.Add(isOutDeclaration
+                            ? $"let {outName} = {temporaryOut}.value;\n"
+                            : $"{outName} = {temporaryOut}.value;\n");
+                    }
+                    currentArgumentLines.Clear();
+                    currentArgumentLines.Add(temporaryOut);
+                }
+                argumentLines.Add(currentArgumentLines);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeNumberUtil"));
+            bool hasFormatArguments = method.Parameters.Length == 4;
+            lines.Add(isInteger
+                ? hasFormatArguments ? "NativeNumberUtil.tryParseIntegerWithFormat(" : "NativeNumberUtil.tryParseInteger("
+                : hasFormatArguments ? "NativeNumberUtil.tryParseFloatingPointWithFormat(" : "NativeNumberUtil.tryParseFloatingPoint(");
+            for (int argumentIndex = 0; argumentIndex < argumentLines.Count; argumentIndex++) {
+                if (argumentIndex > 0) {
+                    lines.Add(", ");
+                }
+                lines.AddRange(argumentLines[argumentIndex]);
+            }
+            if (isInteger) {
+                lines.Add(", ");
+                lines.Add(minimum);
+                lines.Add(", ");
+                lines.Add(maximum);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+            result.BeforeLines = beforeLines;
+            result.AfterLines = afterLines;
+            return true;
+        }
+
+        /// <summary>Returns exact representable bounds for integral C# primitive parser overloads.</summary>
+        static bool TryGetNumericTryParseBounds(SpecialType specialType, out string minimum, out string maximum) {
+            minimum = null;
+            maximum = null;
+            switch (specialType) {
+                case SpecialType.System_SByte: minimum = "-128"; maximum = "127"; return true;
+                case SpecialType.System_Byte: minimum = "0"; maximum = "255"; return true;
+                case SpecialType.System_Int16: minimum = "-32768"; maximum = "32767"; return true;
+                case SpecialType.System_UInt16: minimum = "0"; maximum = "65535"; return true;
+                case SpecialType.System_Int32: minimum = "-2147483648"; maximum = "2147483647"; return true;
+                case SpecialType.System_UInt32: minimum = "0"; maximum = "4294967295"; return true;
+                // JavaScript cannot faithfully represent every Int64/UInt64 value. Rejecting values
+                // beyond the safe-integer range is preferable to accepting a rounded authorization value.
+                case SpecialType.System_Int64: minimum = "Number.MIN_SAFE_INTEGER"; maximum = "Number.MAX_SAFE_INTEGER"; return true;
+                case SpecialType.System_UInt64: minimum = "0"; maximum = "Number.MAX_SAFE_INTEGER"; return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>
+        /// Emits framework numeric clamping through the imported runtime helper because JavaScript Math has no Clamp member.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish System.Math from user-defined methods.</param>
+        /// <param name="context">Conversion scope that records the required numeric runtime import.</param>
+        /// <param name="invocationExpression">Invocation whose selected framework overload is inspected.</param>
+        /// <param name="lines">Destination for the generated clamping expression.</param>
+        /// <param name="result">Converted numeric result when the framework overload is supported.</param>
+        /// <returns>True only for a supported three-argument System.Math.Clamp overload.</returns>
+        bool TryProcessMathClamp(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method == null || !method.IsStatic || method.Name != "Clamp" ||
+                method.ContainingType?.ToDisplayString() != "System.Math" ||
+                method.Parameters.Length != 3 || invocationExpression.ArgumentList.Arguments.Count != 3 ||
+                method.Parameters.Any(parameter => !IsNumericSpecialType(parameter.Type.SpecialType))) {
+                return false;
+            }
+            if (invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                throw new NotSupportedException("System.Math.Clamp named arguments require an evaluation-order-preserving lowering.");
+            }
+
+            int depth = context.DepthClass;
+            List<List<string>> argumentLines = new List<List<string>>();
+            foreach (ArgumentSyntax argument in invocationExpression.ArgumentList.Arguments) {
+                List<string> currentArgumentLines = new List<string>();
+                ProcessExpression(semantic, context, argument.Expression, currentArgumentLines);
+                context.PopClass(depth);
+                argumentLines.Add(currentArgumentLines);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeNumberUtil"));
+            lines.Add("NativeNumberUtil.clamp(");
+            for (int index = 0; index < argumentLines.Count; index++) {
+                if (index > 0) { lines.Add(", "); }
+                lines.AddRange(argumentLines[index]);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers Enumerable.ToArray over byte[] to a detached typed-array copy because Uint8Array has no C#-style ToArray member.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish LINQ from user-defined methods.</param>
+        /// <param name="context">Conversion scope for processing the byte-array receiver.</param>
+        /// <param name="invocationExpression">Selected zero-argument ToArray invocation.</param>
+        /// <param name="lines">Destination for the generated typed-array copy expression.</param>
+        /// <param name="result">Converted byte-array result.</param>
+        /// <returns>True only for System.Linq.Enumerable.ToArray over a one-dimensional byte array.</returns>
+        bool TryProcessByteArrayToArray(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
+                invocationExpression.ArgumentList.Arguments.Count != 0) {
+                return false;
+            }
+
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            bool isEnumerableToArray = method?.Name == "ToArray" &&
+                (method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable" ||
+                method.ReducedFrom?.ContainingType?.ToDisplayString() == "System.Linq.Enumerable");
+            ITypeSymbol receiverType = semantic.GetTypeInfo(memberAccess.Expression).Type;
+            if (!isEnumerableToArray || receiverType is not IArrayTypeSymbol byteArray ||
+                byteArray.Rank != 1 || byteArray.ElementType.SpecialType != SpecialType.System_Byte ||
+                method.ReturnType is not IArrayTypeSymbol returnArray ||
+                returnArray.Rank != 1 || returnArray.ElementType.SpecialType != SpecialType.System_Byte) {
+                return false;
+            }
+
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+
+            lines.Add("Uint8Array.from(");
+            lines.AddRange(receiverLines);
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers the framework whitespace guard to a runtime that imports both exception classes without a module-order dependency.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to distinguish System.ArgumentException from user-defined methods.</param>
+        /// <param name="context">Conversion scope that records the dedicated guard runtime import.</param>
+        /// <param name="invocationExpression">Invocation whose selected framework method is inspected.</param>
+        /// <param name="lines">Destination for the generated guard call.</param>
+        /// <param name="result">Void result when the framework guard is converted.</param>
+        /// <returns>True only for the supported positional framework whitespace guard overload.</returns>
+        bool TryProcessArgumentExceptionGuard(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (method == null || !method.IsStatic || method.Name != "ThrowIfNullOrWhiteSpace" ||
+                method.ContainingType?.ToDisplayString() != "System.ArgumentException" ||
+                method.Parameters.Length != 2 || invocationExpression.ArgumentList.Arguments.Count < 1 ||
+                invocationExpression.ArgumentList.Arguments.Count > 2) {
+                return false;
+            }
+            if (invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                throw new NotSupportedException("ArgumentException.ThrowIfNullOrWhiteSpace named arguments require an evaluation-order-preserving lowering.");
+            }
+
+            int depth = context.DepthClass;
+            List<List<string>> argumentLines = new List<List<string>>();
+            foreach (ArgumentSyntax argument in invocationExpression.ArgumentList.Arguments) {
+                List<string> currentArgumentLines = new List<string>();
+                ProcessExpression(semantic, context, argument.Expression, currentArgumentLines);
+                context.PopClass(depth);
+                argumentLines.Add(currentArgumentLines);
+            }
+
+            context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("ArgumentGuard"));
+            lines.Add("ArgumentGuard.throwIfNullOrWhiteSpace(");
+            for (int index = 0; index < argumentLines.Count; index++) {
+                if (index > 0) { lines.Add(", "); }
+                lines.AddRange(argumentLines[index]);
+            }
+            lines.Add(")");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+            return true;
+        }
+
+        /// <summary>
+        /// Maps reference-only System.Object.ReferenceEquals calls to JavaScript identity comparison.
+        /// </summary>
+        /// <remarks>
+        /// Value-type boxing is not representable in the browser runtime, so calls with operands
+        /// that are not statically known reference types remain unsupported rather than silently
+        /// changing .NET equality semantics.
+        /// </remarks>
+        bool TryProcessReferenceEquals(
+            SemanticModel semantic,
+            LayerContext context,
+            InvocationExpressionSyntax invocationExpression,
+            List<string> lines,
+            out ExpressionResult result) {
+            result = new ExpressionResult(false);
+
+            bool isReferenceEquals = invocationExpression.Expression switch {
+                MemberAccessExpressionSyntax memberAccess => memberAccess.Name.Identifier.ValueText == "ReferenceEquals",
+                IdentifierNameSyntax identifierName => identifierName.Identifier.ValueText == "ReferenceEquals",
+                _ => false
+            };
+            if (!isReferenceEquals ||
+                invocationExpression.ArgumentList.Arguments.Count != 2 ||
+                invocationExpression.ArgumentList.Arguments.Any(argument => argument.NameColon != null)) {
+                return false;
+            }
+
+            IMethodSymbol methodSymbol = GetInvocationMethodSymbol(semantic, invocationExpression);
+            if (methodSymbol == null || !methodSymbol.IsStatic ||
+                methodSymbol.ContainingType?.SpecialType != SpecialType.System_Object ||
+                !IsGuaranteedReferenceType(semantic.GetTypeInfo(invocationExpression.ArgumentList.Arguments[0].Expression).Type) ||
+                !IsGuaranteedReferenceType(semantic.GetTypeInfo(invocationExpression.ArgumentList.Arguments[1].Expression).Type)) {
+                return false;
+            }
+
+            int leftDepth = context.DepthClass;
+            List<string> leftLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, leftLines);
+            context.PopClass(leftDepth);
+
+            int rightDepth = context.DepthClass;
+            List<string> rightLines = new List<string>();
+            ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[1].Expression, rightLines);
+            context.PopClass(rightDepth);
+
+            lines.AddRange(leftLines);
+            lines.Add(" === ");
+            lines.AddRange(rightLines);
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
+            return true;
+        }
+
+        /// <summary>
+        /// Determines whether the source type has reference identity without value-type boxing.
+        /// </summary>
+        static bool IsGuaranteedReferenceType(ITypeSymbol typeSymbol) {
+            if (typeSymbol == null) {
+                return false;
+            }
+
+            if (typeSymbol.TypeKind == TypeKind.Class || typeSymbol.TypeKind == TypeKind.Interface ||
+                typeSymbol.TypeKind == TypeKind.Array || typeSymbol.TypeKind == TypeKind.Delegate) {
+                return typeSymbol.SpecialType != SpecialType.System_Object;
+            }
+
+            return typeSymbol is ITypeParameterSymbol typeParameter && typeParameter.HasReferenceTypeConstraint;
         }
 
         /// <summary>
@@ -4539,10 +6503,27 @@ namespace cs2.ts {
             string operatorSymbol = prefixUnary.OperatorToken.ToString();
             lines.Add(operatorSymbol);
 
-            // Process the operand
+            // Process into a private buffer first: some invocation lowerings expand to a binary
+            // expression (ReferenceEquals -> left === right) even when the source operand is an invocation.
             int start = context.DepthClass;
-            ExpressionResult result = ProcessExpression(semantic, context, prefixUnary.Operand, lines);
+            List<string> operandLines = new List<string>();
+            ExpressionResult result = ProcessExpression(semantic, context, prefixUnary.Operand, operandLines);
             context.PopClass(start);
+            string emittedOperand = string.Concat(operandLines);
+            bool requiresGrouping = prefixUnary.Operand is BinaryExpressionSyntax ||
+                prefixUnary.Operand is ConditionalExpressionSyntax ||
+                prefixUnary.Operand is AssignmentExpressionSyntax ||
+                emittedOperand.Contains(" === ") || emittedOperand.Contains(" !== ") ||
+                emittedOperand.Contains(" == ") || emittedOperand.Contains(" != ") ||
+                emittedOperand.Contains(" && ") || emittedOperand.Contains(" || ") ||
+                emittedOperand.Contains(" ?? ");
+            if (requiresGrouping) {
+                lines.Add("(");
+            }
+            lines.AddRange(operandLines);
+            if (requiresGrouping) {
+                lines.Add(")");
+            }
 
             return result;
         }
@@ -4555,7 +6536,50 @@ namespace cs2.ts {
         /// <param name="memberBinding">The member binding expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessMemberBindingExpression(SemanticModel semantic, LayerContext context, MemberBindingExpressionSyntax memberBinding, List<string> lines) {
-            // Reuse identifier processing to apply remaps (ex: Length -> length).
+            Stack<string> receivers = ConditionalAccessReceivers.Value;
+            if (receivers != null && receivers.Count > 0) {
+                lines.Add(receivers.Pop());
+                lines.Add(".");
+            }
+            ISymbol memberSymbol = semantic.GetSymbolInfo(memberBinding.Name).Symbol;
+            if (memberSymbol?.Name == "Length" &&
+                (memberSymbol.ContainingType?.SpecialType == SpecialType.System_Array ||
+                 memberSymbol.ContainingType?.SpecialType == SpecialType.System_String)) {
+                lines.Add("length");
+                return;
+            }
+            if (memberSymbol?.Name == "ToString" && memberSymbol.ContainingType?.ToDisplayString() == "System.Guid") {
+                lines.Add("toString");
+                return;
+            }
+            if (memberSymbol?.ContainingType?.SpecialType == SpecialType.System_String) {
+                string stringMember = memberSymbol.Name switch {
+                    "Trim" => "trim",
+                    "TrimStart" => "trimStart",
+                    "TrimEnd" => "trimEnd",
+                    "ToLower" => "toLowerCase",
+                    "ToLowerInvariant" => "toLowerCase",
+                    "ToUpper" => "toUpperCase",
+                    "ToUpperInvariant" => "toUpperCase",
+                    _ => null
+                };
+                if (stringMember != null) {
+                    lines.Add(stringMember);
+                    return;
+                }
+            }
+            if (memberSymbol != null) {
+                ConversionClass owner = ((TypeScriptProgram)context.Program).GetClassByName(memberSymbol.ContainingType?.Name);
+                if (memberSymbol is IMethodSymbol method) {
+                    ConversionFunction function = owner?.Functions.FirstOrDefault(candidate =>
+                        candidate.Name == method.Name && candidate.InParameters.Count == method.Parameters.Length);
+                    lines.Add(!string.IsNullOrWhiteSpace(function?.Remap) ? function.Remap : function?.Name ?? memberSymbol.Name);
+                    return;
+                }
+                ConversionVariable variable = owner?.Variables.FirstOrDefault(candidate => candidate.Name == memberSymbol.Name);
+                lines.Add(!string.IsNullOrWhiteSpace(variable?.Remap) ? variable.Remap : variable?.Name ?? memberSymbol.Name);
+                return;
+            }
             ProcessExpression(semantic, context, memberBinding.Name, lines);
         }
 
@@ -4567,12 +6591,79 @@ namespace cs2.ts {
         /// <param name="conditionalAccess">The conditional access expression.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessConditionalAccessExpression(SemanticModel semantic, LayerContext context, ConditionalAccessExpressionSyntax conditionalAccess, List<string> lines) {
-            // Process the expression being accessed conditionally
-            ProcessExpression(semantic, context, conditionalAccess.Expression, lines);
-            lines.Add("?.");
+            if (conditionalAccess.WhenNotNull is InvocationExpressionSyntax invocation &&
+                invocation.Expression is MemberBindingExpressionSyntax &&
+                invocation.ArgumentList.Arguments.Count == 0) {
+                IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+                if (method?.Name == "ToList" && method.ReducedFrom != null &&
+                    method.ContainingType?.ToDisplayString() == "System.Linq.Enumerable") {
+                    string receiver = TemporaryNames.Allocate(semantic, "__conditionalEnumerable");
+                    context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
+                    lines.Add("(() => { const ");
+                    lines.Add(receiver);
+                    lines.Add(" = ");
+                    int receiverDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, conditionalAccess.Expression, lines);
+                    context.PopClass(receiverDepth);
+                    lines.Add("; return ");
+                    lines.Add(receiver);
+                    lines.Add(" == null ? undefined : NativeArrayUtil.toList(");
+                    lines.Add(receiver);
+                    lines.Add("); })()");
+                    return;
+                }
+            }
 
-            // Process the member or invocation being accessed conditionally
-            ProcessExpression(semantic, context, (ExpressionSyntax)conditionalAccess.WhenNotNull, lines);
+            if (ShouldAwaitConvertedConditionalInvocation(semantic, context, conditionalAccess)) {
+                lines.Add("await ");
+                context.GetCurrentFunction().Function.IsAsync = true;
+            }
+            string conditionalReceiver = TemporaryNames.Allocate(semantic, "__conditionalReceiver");
+            lines.Add("(() => { const ");
+            lines.Add(conditionalReceiver);
+            lines.Add(" = ");
+            int expressionDepth = context.DepthClass;
+            ProcessExpression(semantic, context, conditionalAccess.Expression, lines);
+            context.PopClass(expressionDepth);
+            lines.Add("; return ");
+            lines.Add(conditionalReceiver);
+            lines.Add(" == null ? undefined : ");
+
+            Stack<string> receivers = ConditionalAccessReceivers.Value ??= new Stack<string>();
+            int originalReceiverCount = receivers.Count;
+            receivers.Push(conditionalReceiver);
+            try {
+                ProcessExpression(semantic, context, (ExpressionSyntax)conditionalAccess.WhenNotNull, lines);
+            } finally {
+                while (receivers.Count > originalReceiverCount) {
+                    receivers.Pop();
+                }
+            }
+            lines.Add("; })()");
+        }
+
+        /// <summary>Detects a synchronous C# method whose emitted implementation became asynchronous.</summary>
+        bool ShouldAwaitConvertedConditionalInvocation(
+            SemanticModel semantic,
+            LayerContext context,
+            ConditionalAccessExpressionSyntax conditionalAccess) {
+
+            if (conditionalAccess.WhenNotNull is not InvocationExpressionSyntax invocation) {
+                return false;
+            }
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method?.ContainingType == null) {
+                return false;
+            }
+            TypeScriptProgram program = (TypeScriptProgram)context.Program;
+            ConversionClass owner = program.GetClassByName(method.ContainingType.Name);
+            ConversionFunction function = owner?.Functions.FirstOrDefault(candidate =>
+                candidate.Name == method.Name && candidate.InParameters.Count == method.Parameters.Length);
+            if (function == null) {
+                return false;
+            }
+            EnsureFunctionAsyncState(semantic, context, owner, function);
+            return function.IsAsync;
         }
 
         /// <summary>
@@ -4690,8 +6781,13 @@ namespace cs2.ts {
                 return;
             }
 
+            bool requiresAsyncIife = ContainsAwait(conditionLines) ||
+                ContainsAwait(condResult.BeforeLines) || ContainsAwait(condResult.AfterLines) ||
+                ContainsAwait(whenTrueLines) || ContainsAwait(whenTrueResult.BeforeLines) || ContainsAwait(whenTrueResult.AfterLines) ||
+                ContainsAwait(whenFalseLines) || ContainsAwait(whenFalseResult.BeforeLines) || ContainsAwait(whenFalseResult.AfterLines);
             string resultVar = TemporaryNames.Allocate(semantic, "__cond_");
-            lines.Add("(() => {\n");
+            lines.Add(requiresAsyncIife ? "(await (async () => {\n" : "(() => {\n");
+
             lines.Add("let ");
             lines.Add(resultVar);
             lines.Add(";\n");
@@ -4725,7 +6821,7 @@ namespace cs2.ts {
             lines.Add("return ");
             lines.Add(resultVar);
             lines.Add(";\n");
-            lines.Add("})()");
+            lines.Add(requiresAsyncIife ? "})())" : "})()");
         }
 
         /// <summary>
@@ -4750,6 +6846,10 @@ namespace cs2.ts {
             context.PopClass(branchDepth);
         }
 
+        /// <summary>Returns whether rendered TypeScript lines contain an await expression.</summary>
+        static bool ContainsAwait(IEnumerable<string> lines) {
+            return lines != null && lines.Any(line => line != null && line.Contains("await ", StringComparison.Ordinal));
+        }
         /// <summary>
         /// Determines whether an expression result requires prelude or follow-up statements.
         /// </summary>
@@ -5148,18 +7248,74 @@ namespace cs2.ts {
         /// <param name="whileStatement">The while statement.</param>
         /// <param name="lines">The output lines to append to.</param>
         protected override void ProcessWhileStatement(SemanticModel semantic, LayerContext context, WhileStatementSyntax whileStatement, List<string> lines) {
-            lines.Add("while (");
             int conditionDepth = context.DepthClass;
-            ProcessExpression(semantic, context, whileStatement.Condition, lines);
+            List<string> conditionLines = new List<string>();
+            ExpressionResult conditionResult = ProcessExpression(semantic, context, whileStatement.Condition, conditionLines);
             context.PopClass(conditionDepth);
-            lines.Add(") {\n");
 
-            // Process the body of the while loop
+            List<string> beforeLines = conditionResult.BeforeLines ?? new List<string>();
+            List<string> afterLines = conditionResult.AfterLines ?? new List<string>();
+            if (beforeLines.Count == 0 && afterLines.Count == 0) {
+                lines.Add("while (");
+                lines.AddRange(conditionLines);
+                lines.Add(") {\n");
+                ProcessStatement(semantic, context, whileStatement.Statement, lines);
+                lines.Add("}\n");
+                return;
+            }
+
+            // A condition can prepare temporaries (notably `out` wrappers) and assign
+            // values that the body consumes. Evaluate them on every iteration, while
+            // hoisting C# out declarations to the enclosing block where their scope lives.
+            List<string> iterationPreamble = new List<string>();
+            foreach (string rawBeforeLine in string.Concat(beforeLines).Split('\n')) {
+                string beforeLine = rawBeforeLine.TrimEnd('\r');
+                if (string.IsNullOrWhiteSpace(beforeLine)) {
+                    continue;
+                }
+                beforeLine += "\n";
+                if (beforeLine.StartsWith("let ", StringComparison.Ordinal)) {
+                    int assignmentIndex = beforeLine.IndexOf(" = ", StringComparison.Ordinal);
+                    if (assignmentIndex > 4) {
+                        string name = beforeLine.Substring(4, assignmentIndex - 4);
+                        lines.Add($"let {name};\n");
+                        iterationPreamble.Add(beforeLine.Substring(4));
+                        continue;
+                    }
+
+                    lines.Add(beforeLine);
+                    continue;
+                }
+                iterationPreamble.Add(beforeLine);
+            }
+
+            List<string> iterationAssignments = new List<string>();
+            foreach (string rawAfterLine in string.Concat(afterLines).Split('\n')) {
+                string afterLine = rawAfterLine.TrimEnd('\r');
+                if (string.IsNullOrWhiteSpace(afterLine)) {
+                    continue;
+                }
+                afterLine += "\n";
+                if (afterLine.StartsWith("let ", StringComparison.Ordinal)) {
+                    int assignmentIndex = afterLine.IndexOf(" = ", StringComparison.Ordinal);
+                    if (assignmentIndex > 4) {
+                        string name = afterLine.Substring(4, assignmentIndex - 4);
+                        lines.Add($"let {name};\n");
+                        iterationAssignments.Add(afterLine.Substring(4));
+                        continue;
+                    }
+                }
+                iterationAssignments.Add(afterLine);
+            }
+            lines.Add("while (true) {\n");
+            lines.AddRange(iterationPreamble);
+            lines.Add("if (!(");
+            lines.AddRange(conditionLines);
+            lines.Add(")) { break; }\n");
+            lines.AddRange(iterationAssignments);
             ProcessStatement(semantic, context, whileStatement.Statement, lines);
-
             lines.Add("}\n");
         }
-
         /// <summary>
         /// Processes for statements.
         /// </summary>
@@ -5221,10 +7377,19 @@ namespace cs2.ts {
                 }
             }
 
+            List<string> patternDeclarations = BuildCompositePatternDeclarations(semantic, context, ifStatement.Condition);
+
             int start = context.DepthClass;
             List<string> conditionLines = new List<string>();
             ExpressionResult condResult = ProcessExpression(semantic, context, ifStatement.Condition, conditionLines);
             context.PopClass(start);
+
+            if (patternDeclarations.Count > 0) {
+                if (condResult.BeforeLines == null) {
+                    condResult.BeforeLines = new List<string>();
+                }
+                condResult.BeforeLines.InsertRange(0, patternDeclarations);
+            }
 
             bool hasBeforeLines = condResult.BeforeLines != null && condResult.BeforeLines.Count > 0;
             bool hasAfterLines = condResult.AfterLines != null && condResult.AfterLines.Count > 0;
@@ -5282,6 +7447,30 @@ namespace cs2.ts {
             }
 
             return condResult;
+        }
+
+        /// <summary>Builds scope declarations for variables introduced inside a compound if condition.</summary>
+        /// <param name="semantic">Semantic model used to resolve declaration pattern types.</param>
+        /// <param name="context">Current conversion scope.</param>
+        /// <param name="condition">Compound condition whose pattern variables must remain visible in the branch.</param>
+        /// <returns>TypeScript declarations emitted before evaluating the condition.</returns>
+        static List<string> BuildCompositePatternDeclarations(
+            SemanticModel semantic,
+            LayerContext context,
+            ExpressionSyntax condition) {
+
+            List<string> declarations = new List<string>();
+            HashSet<string> declaredNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (IsPatternExpressionSyntax patternExpression in condition.DescendantNodesAndSelf().OfType<IsPatternExpressionSyntax>()) {
+                if (!TryGetPatternDesignation(patternExpression.Pattern, out string variableName) ||
+                    string.IsNullOrWhiteSpace(variableName) ||
+                    !declaredNames.Add(variableName) ||
+                    !TryGetPatternTypeScriptName(semantic, context, patternExpression.Pattern, out string typeName)) {
+                    continue;
+                }
+                declarations.Add($"let {variableName}!: {typeName};\n");
+            }
+            return declarations;
         }
 
         /// <summary>
@@ -5342,7 +7531,18 @@ namespace cs2.ts {
             IfStatementSyntax ifStatement,
             IsPatternExpressionSyntax patternExpression,
             List<string> lines) {
-            if (!TryGetPatternDesignation(patternExpression.Pattern, out string declaredVariable)) {
+            PatternSyntax declarationPattern = patternExpression.Pattern;
+            while (declarationPattern is ParenthesizedPatternSyntax parenthesizedPattern) {
+                declarationPattern = parenthesizedPattern.Pattern;
+            }
+            bool negativeGuard = declarationPattern is UnaryPatternSyntax unaryPattern && unaryPattern.IsKind(SyntaxKind.NotPattern);
+            if (negativeGuard) {
+                declarationPattern = ((UnaryPatternSyntax)declarationPattern).Pattern;
+                while (declarationPattern is ParenthesizedPatternSyntax parenthesizedDeclaration) {
+                    declarationPattern = parenthesizedDeclaration.Pattern;
+                }
+            }
+            if (!TryGetPatternDesignation(declarationPattern, out string declaredVariable)) {
                 return new ExpressionResult(false);
             }
 
@@ -5357,9 +7557,11 @@ namespace cs2.ts {
                 wrapElseBlock = true;
             }
 
-            string patternTarget = TemporaryNames.Allocate(semantic, "__patternTarget");
+            // Negative guards expose the matched value to the enclosing scope and the else branch.
+            // Test that same binding so TypeScript retains its narrowing after an early return.
+            string patternTarget = negativeGuard ? declaredVariable : TemporaryNames.Allocate(semantic, "__patternTarget");
 
-            lines.Add("const ");
+            lines.Add(negativeGuard ? "let " : "const ");
             lines.Add(patternTarget);
             lines.Add(" = ");
             int targetDepth = context.DepthClass;
@@ -5373,11 +7575,18 @@ namespace cs2.ts {
             }
             lines.Add(") {\n");
 
-            lines.Add("const ");
-            lines.Add(declaredVariable);
-            lines.Add(" = ");
-            lines.Add(patternTarget);
-            lines.Add(";\n");
+            if (!negativeGuard) {
+                lines.Add("const ");
+                lines.Add(declaredVariable);
+                lines.Add(" = ");
+                if (TryGetPatternTypeScriptName(semantic, context, patternExpression.Pattern, out string declaredType)) {
+                    lines.Add("<");
+                    lines.Add(declaredType);
+                    lines.Add("><unknown>");
+                }
+                lines.Add(patternTarget);
+                lines.Add(";\n");
+            }
 
             ProcessStatement(semantic, context, ifStatement.Statement, lines);
             lines.Add("\n}\n");
@@ -5639,7 +7848,18 @@ namespace cs2.ts {
 
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
+                VariableType declaredVariableType = VariableUtil.GetVarType(declaration.Type, semantic);
                 lines.Add($"{variable.Identifier.ToString()}");
+                if (ShouldAnnotateLocalDeclaration(semantic, declaration, variable)) {
+                    lines.Add(": ");
+                    if (IsEventSnapshotLocal(semantic, variable)) {
+                        TypeScriptProgram program = (TypeScriptProgram)context.Program;
+                        context.AddClass(program.GetClassByName("Event"));
+                        lines.Add("Event");
+                    } else {
+                        lines.Add(declaredVariableType.ToTypeScriptString((TypeScriptProgram)context.Program));
+                    }
+                }
 
                 if (i < declaration.Variables.Count - 1) {
                     lines.Add(",");
@@ -5649,7 +7869,7 @@ namespace cs2.ts {
                     ConversionVariable var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
 
-                    var.VarType = VariableUtil.GetVarType(declaration.Type, semantic);
+                    var.VarType = declaredVariableType;
                     fn.Stack.Add(var);
                 }
 
@@ -5673,10 +7893,6 @@ namespace cs2.ts {
 
                         if (!fn.Function.IsAsync) {
                             fn.Function.IsAsync = true;
-                            if (fn.Function.ReturnType != null) {
-                                fn.Function.ReturnType = new VariableType(fn.Function.ReturnType);
-                                fn.Function.ReturnType.TypeName = $"Promise<{fn.Function.ReturnType.TypeName}>";
-                            }
                         }
                     }
 
@@ -5694,6 +7910,53 @@ namespace cs2.ts {
             }
 
             return initResult;
+        }
+
+        /// <summary>Retains local types when TypeScript cannot infer the source collection element contract.</summary>
+        static bool ShouldAnnotateLocalDeclaration(
+            SemanticModel semantic,
+            VariableDeclarationSyntax declaration,
+            VariableDeclaratorSyntax variable) {
+
+            if (declaration?.Type == null || declaration.Type.ToString() == "var") {
+                return false;
+            }
+            if (variable.Initializer == null) {
+                return true;
+            }
+            if (variable.Initializer.Value is not InvocationExpressionSyntax invocation) {
+                return false;
+            }
+            IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocation);
+            if (method?.Name != "Empty" || method.ContainingType?.SpecialType != SpecialType.System_Array) {
+                return false;
+            }
+            return semantic.GetTypeInfo(declaration.Type).Type?.TypeKind == TypeKind.Interface;
+        }
+
+        /// <summary>Detects a delegate local used exclusively to snapshot a field-like event.</summary>
+        static bool IsEventSnapshotLocal(SemanticModel semantic, VariableDeclaratorSyntax variable) {
+            if (semantic?.GetDeclaredSymbol(variable) is not ILocalSymbol local ||
+                local.Type?.TypeKind != TypeKind.Delegate) {
+                return false;
+            }
+
+            SyntaxNode scope = variable.Ancestors().FirstOrDefault(node =>
+                node is BaseMethodDeclarationSyntax ||
+                node is AccessorDeclarationSyntax ||
+                node is LocalFunctionStatementSyntax);
+            if (scope == null) {
+                return false;
+            }
+
+            List<AssignmentExpressionSyntax> assignments = scope.DescendantNodes()
+                .OfType<AssignmentExpressionSyntax>()
+                .Where(assignment => SymbolEqualityComparer.Default.Equals(
+                    semantic.GetSymbolInfo(assignment.Left).Symbol,
+                    local))
+                .ToList();
+            return assignments.Count > 0 && assignments.All(assignment =>
+                GetEventSymbol(semantic, assignment.Right) != null);
         }
 
         /// <summary>

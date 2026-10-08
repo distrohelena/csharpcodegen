@@ -1,4 +1,43 @@
-// @ts-nocheck
+﻿// @ts-nocheck
+import { ReadOnlyCollection } from "../objectmodel/read-only-collection";
+import { IEqualityComparer } from "./iequalitycomparer";
+
+type Ordering<T> = {
+    selector: (item: T) => any;
+    comparer?: { Compare?: (left: any, right: any) => number };
+    descending: boolean;
+};
+
+const orderingState = Symbol("cs2.ts.ordering-state");
+
+function valuesEqual<T>(left: T, right: T, comparer?: IEqualityComparer<T>): boolean {
+    return comparer ? comparer.Equals(left, right) : left === right;
+}
+
+function compareValues(left: any, right: any, comparer?: { Compare?: (left: any, right: any) => number }): number {
+    if (comparer?.Compare) {
+        return comparer.Compare(left, right);
+    }
+    if (left === right) return 0;
+    if (left == null) return -1;
+    if (right == null) return 1;
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function orderBy<T>(items: T[], orderings: Ordering<T>[]): T[] {
+    const ordered = [...items].sort((left, right) => {
+        for (const ordering of orderings) {
+            const comparison = compareValues(ordering.selector(left), ordering.selector(right), ordering.comparer);
+            if (comparison !== 0) {
+                return ordering.descending ? -comparison : comparison;
+            }
+        }
+        return 0;
+    });
+    Object.defineProperty(ordered, orderingState, { value: orderings, configurable: true });
+    return ordered;
+}
+
 export class List<T> extends Array<T> {
     // Initialize a new list, optionally with items or a capacity placeholder
     constructor();
@@ -72,8 +111,8 @@ export class List<T> extends Array<T> {
     }
 
     // Check if the list contains an item
-    public contains(item: T): boolean {
-        return this.indexOf(item) !== -1;
+    public contains(item: T, comparer?: IEqualityComparer<T>): boolean {
+        return this.some(value => valuesEqual(value, item, comparer));
     }
 
     // Get the item at a specific index
@@ -105,6 +144,12 @@ export class List<T> extends Array<T> {
         return [...this];
     }
 
+    // Expose the same backing list through a mutation-blocking view, matching
+    // System.Collections.Generic.List<T>.AsReadOnly rather than taking a snapshot.
+    public AsReadOnly(): ReadOnlyCollection<T> {
+        return new ReadOnlyCollection<T>(this);
+    }
+
     // Sorts the list in place
     public Sort(comparer?: ((a: T, b: T) => number) | { Compare?: (a: T, b: T) => number }): void {
         if (typeof comparer === "function") {
@@ -134,6 +179,11 @@ export class List<T> extends Array<T> {
         return new List<T>(...range);
     }
 
+    /** Mirrors List<T>.Reverse by mutating this list in place. */
+    public Reverse(): void {
+        Array.prototype.reverse.call(this);
+    }
+
     // Remove a range of elements starting at index, with specified count
     public removeRange(index: number, count: number): void {
         if (index < 0 || count < 0 || index + count > this.length) {
@@ -150,12 +200,18 @@ declare global {
         readonly Count: number;
         toList(): List<T>;
         Any(predicate?: (item: T) => boolean): boolean;
+        contains(item: T, comparer?: IEqualityComparer<T>): boolean;
+        Contains(item: T, comparer?: IEqualityComparer<T>): boolean;
+        Distinct(comparer?: IEqualityComparer<T>): T[];
+        SequenceEqual(other: Iterable<T>, comparer?: IEqualityComparer<T>): boolean;
         FirstOrDefault(predicate?: (item: T, index: number) => boolean): T | undefined;
         Where(predicate: (item: T, index: number) => boolean): T[];
         Select<TResult>(selector: (item: T, index: number) => TResult): TResult[];
         ToArray(): T[];
-        OrderBy<TKey>(selector: (item: T) => TKey): T[];
-        OrderByDescending<TKey>(selector: (item: T) => TKey): T[];
+        OrderBy<TKey>(selector: (item: T) => TKey, comparer?: { Compare?: (left: TKey, right: TKey) => number }): T[];
+        OrderByDescending<TKey>(selector: (item: T) => TKey, comparer?: { Compare?: (left: TKey, right: TKey) => number }): T[];
+        ThenBy<TKey>(selector: (item: T) => TKey, comparer?: { Compare?: (left: TKey, right: TKey) => number }): T[];
+        ThenByDescending<TKey>(selector: (item: T) => TKey, comparer?: { Compare?: (left: TKey, right: TKey) => number }): T[];
     }
 }
 
@@ -174,6 +230,46 @@ if (!(Array.prototype as any).Any) {
             return this.some((item: any) => predicate(item));
         }
         return this.length > 0;
+    };
+}
+
+if (!(Array.prototype as any).contains) {
+    (Array.prototype as any).contains = function (item: any, comparer?: IEqualityComparer<any>) {
+        return this.some((value: any) => valuesEqual(value, item, comparer));
+    };
+}
+
+if (!(Array.prototype as any).Contains) {
+    (Array.prototype as any).Contains = function (item: any, comparer?: IEqualityComparer<any>) {
+        return this.contains(item, comparer);
+    };
+}
+
+if (!(Array.prototype as any).Distinct) {
+    (Array.prototype as any).Distinct = function (comparer?: IEqualityComparer<any>) {
+        const distinct: any[] = [];
+        for (const item of this) {
+            if (!distinct.some(value => valuesEqual(value, item, comparer))) {
+                distinct.push(item);
+            }
+        }
+        return distinct;
+    };
+}
+
+if (!(Array.prototype as any).SequenceEqual) {
+    (Array.prototype as any).SequenceEqual = function (other: Iterable<any>, comparer?: IEqualityComparer<any>) {
+        if (other == null) {
+            return false;
+        }
+        const iterator = other[Symbol.iterator]();
+        for (const item of this) {
+            const next = iterator.next();
+            if (next.done || !valuesEqual(item, next.value, comparer)) {
+                return false;
+            }
+        }
+        return iterator.next().done === true;
     };
 }
 
@@ -237,35 +333,39 @@ if (!Object.getOwnPropertyDescriptor(Array.prototype, "Count")) {
 }
 
 if (!(Array.prototype as any).OrderBy) {
-    (Array.prototype as any).OrderBy = function (selector: (item: any) => any) {
+    (Array.prototype as any).OrderBy = function (selector: (item: any) => any, comparer?: { Compare?: (left: any, right: any) => number }) {
         if (!selector) {
             throw new Error("Selector cannot be null.");
         }
-        const result = [...this];
-        result.sort((left, right) => {
-            const leftKey = selector(left);
-            const rightKey = selector(right);
-            if (leftKey < rightKey) return -1;
-            if (leftKey > rightKey) return 1;
-            return 0;
-        });
-        return result;
+        return orderBy(this, [{ selector, comparer, descending: false }]);
     };
 }
 
 if (!(Array.prototype as any).OrderByDescending) {
-    (Array.prototype as any).OrderByDescending = function (selector: (item: any) => any) {
+    (Array.prototype as any).OrderByDescending = function (selector: (item: any) => any, comparer?: { Compare?: (left: any, right: any) => number }) {
         if (!selector) {
             throw new Error("Selector cannot be null.");
         }
-        const result = [...this];
-        result.sort((left, right) => {
-            const leftKey = selector(left);
-            const rightKey = selector(right);
-            if (leftKey < rightKey) return 1;
-            if (leftKey > rightKey) return -1;
-            return 0;
-        });
-        return result;
+        return orderBy(this, [{ selector, comparer, descending: true }]);
+    };
+}
+
+if (!(Array.prototype as any).ThenBy) {
+    (Array.prototype as any).ThenBy = function (selector: (item: any) => any, comparer?: { Compare?: (left: any, right: any) => number }) {
+        if (!selector) {
+            throw new Error("Selector cannot be null.");
+        }
+        const preceding = (this as any)[orderingState] ?? [];
+        return orderBy(this, [...preceding, { selector, comparer, descending: false }]);
+    };
+}
+
+if (!(Array.prototype as any).ThenByDescending) {
+    (Array.prototype as any).ThenByDescending = function (selector: (item: any) => any, comparer?: { Compare?: (left: any, right: any) => number }) {
+        if (!selector) {
+            throw new Error("Selector cannot be null.");
+        }
+        const preceding = (this as any)[orderingState] ?? [];
+        return orderBy(this, [...preceding, { selector, comparer, descending: true }]);
     };
 }

@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 import { TimeSpan } from "./time-span";
 
 export class DateTime {
@@ -125,7 +125,8 @@ export class DateTime {
         return new TimeSpan(0, 0, 0, 0, this._date.getTime() - other._date.getTime());
     }
 
-    public ToString(format?: string): string {
+    /** The provider is intentionally accepted for the .NET overload; supported formats are invariant. */
+    public ToString(format?: string, _provider?: unknown): string {
         if (format === "o" || format === "O") {
             const year = this._date.getUTCFullYear().toString().padStart(4, "0");
             const month = (this._date.getUTCMonth() + 1).toString().padStart(2, "0");

@@ -9,6 +9,8 @@ namespace cs2.ts {
         /// Gets the shared runtime requirement definitions.
         /// </summary>
         public static IReadOnlyList<TypeScriptRuntimeRequirementDefinition> BaseRequirements { get; } = new List<TypeScriptRuntimeRequirementDefinition> {
+            new TypeScriptRuntimeRequirementDefinition("WebUtility", "./system/net/web-utility"),
+            new TypeScriptRuntimeRequirementDefinition("DBNull", "./system/dbnull"),
             // system
             new TypeScriptRuntimeRequirementDefinition("InvalidOperationException", "./system/invalid-operation.exception"),
             new TypeScriptRuntimeRequirementDefinition("UnauthorizedAccessException", "./system/unauthorized-access.exception"),
@@ -17,6 +19,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("NotImplementedException", "./system/not-implemented.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentException", "./system/argument.exception"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentNullException", "./system/argument-null.exception"),
+            new TypeScriptRuntimeRequirementDefinition("ArgumentGuard", "./system/argument-guard"),
             new TypeScriptRuntimeRequirementDefinition("ArgumentOutOfRangeException", "./system/argument-out-of-range.exception"),
             new TypeScriptRuntimeRequirementDefinition("FileNotFoundException", "./system/file-not-found.exception"),
             new TypeScriptRuntimeRequirementDefinition("FormatException", "./system/format.exception"),
@@ -37,6 +40,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("IDisposable", "./system/disposable.interface"),
             new TypeScriptRuntimeRequirementDefinition("Guid", "./system/guid"),
             new TypeScriptRuntimeRequirementDefinition("NativeArrayUtil", "./system/util/nat-array-util"),
+            new TypeScriptRuntimeRequirementDefinition("NativeDelegateUtil", "./system/util/nat-delegate-util"),
             new TypeScriptRuntimeRequirementDefinition("NativeNumberUtil", "./system/util/nat-number-util"),
             new TypeScriptRuntimeRequirementDefinition("NativeStringUtil", "./system/util/nat-string-util"),
             new TypeScriptRuntimeRequirementDefinition("Convert", "./system/convert"),
@@ -45,6 +49,8 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("AppDomain", "./system/app-domain"),
             new TypeScriptRuntimeRequirementDefinition("StringComparer", "./system/string-comparer"),
             new TypeScriptRuntimeRequirementDefinition("StringComparison", "./system/string-comparison"),
+            new TypeScriptRuntimeRequirementDefinition("StringSplitOptions", "./system/string-split-options"),
+            new TypeScriptRuntimeRequirementDefinition("JavaScriptEncoder", "./system/text/encodings/web/javascript-encoder"),
 
             // system.collection.concurrent
             new TypeScriptRuntimeRequirementDefinition("ConcurrentDictionary", "./system/collections/concurrent/concurrent-dictionary"),
@@ -52,6 +58,9 @@ namespace cs2.ts {
             // system.collection.generic
             new TypeScriptRuntimeRequirementDefinition("IDictionary", "./system/collections/generic/dictionary.interface"),
             new TypeScriptRuntimeRequirementDefinition("Dictionary", "./system/collections/generic/dictionary"),
+            new TypeScriptRuntimeRequirementDefinition("IReadOnlyCollection", "./system/collections/generic/ireadonlycollection"),
+            new TypeScriptRuntimeRequirementDefinition("ISet", "./system/collections/generic/iset"),
+            new TypeScriptRuntimeRequirementDefinition("SortedDictionary", "./system/collections/generic/sorted-dictionary"),
             new TypeScriptRuntimeRequirementDefinition("ICollection", "./system/collections/generic/icollection"),
             new TypeScriptRuntimeRequirementDefinition("IList", "./system/collections/generic/ilist"),
             new TypeScriptRuntimeRequirementDefinition("IEqualityComparer", "./system/collections/generic/iequalitycomparer"),
@@ -112,6 +121,7 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("HashAlgorithm", "./system/security/cryptography/hash-algorithm"),
             new TypeScriptRuntimeRequirementDefinition("HMACSHA256", "./system/security/cryptography/hmac-sha256"),
             new TypeScriptRuntimeRequirementDefinition("Rfc2898DeriveBytes", "./system/security/cryptography/rfc-2898-derive-bytes"),
+            new TypeScriptRuntimeRequirementDefinition("CryptographicOperations", "./system/security/cryptography/cryptographic-operations"),
             new TypeScriptRuntimeRequirementDefinition("HashAlgorithmName", "./system/security/cryptography/hash-algorithm-name"),
             new TypeScriptRuntimeRequirementDefinition("RandomNumberGenerator", "./system/security/cryptography/random-number-generator"),
             new TypeScriptRuntimeRequirementDefinition("WebCryptoUtil", "./system/security/cryptography/web-crypto"),
@@ -138,6 +148,10 @@ namespace cs2.ts {
             new TypeScriptRuntimeRequirementDefinition("JsonElement", "./system/text/json/json-element"),
             new TypeScriptRuntimeRequirementDefinition("JsonProperty", "./system/text/json/json-property"),
             new TypeScriptRuntimeRequirementDefinition("JsonValueKind", "./system/text/json/json-value-kind"),
+            new TypeScriptRuntimeRequirementDefinition("JsonNode", "./system/text/json/nodes/json-node"),
+            new TypeScriptRuntimeRequirementDefinition("JsonObject", "./system/text/json/nodes/json-object"),
+            new TypeScriptRuntimeRequirementDefinition("JsonArray", "./system/text/json/nodes/json-array"),
+            new TypeScriptRuntimeRequirementDefinition("JsonValue", "./system/text/json/nodes/json-value"),
             new TypeScriptRuntimeRequirementDefinition("Utf8JsonReader", "./system/text/json/utf8-json-reader"),
             new TypeScriptRuntimeRequirementDefinition("Utf8JsonWriter", "./system/text/json/utf8-json-writer"),
             new TypeScriptRuntimeRequirementDefinition("JsonWriterOptions", "./system/text/json/json-writer-options"),
@@ -153,11 +167,28 @@ namespace cs2.ts {
             // system.threading
             new TypeScriptRuntimeRequirementDefinition("Thread", "./system/threading/thread"),
             new TypeScriptRuntimeRequirementDefinition("AutoResetEvent", "./system/threading/auto-reset-event"),
+            new TypeScriptRuntimeRequirementDefinition("ManualResetEventSlim", "./system/threading/manual-reset-event-slim"),
+            new TypeScriptRuntimeRequirementDefinition("Timer", "./system/threading/timer"),
+            new TypeScriptRuntimeRequirementDefinition("Timeout", "./system/threading/timeout"),
             new TypeScriptRuntimeRequirementDefinition("SynchronizationContext", "./system/threading/synchronization-context", "", true),
             new TypeScriptRuntimeRequirementDefinition("SendOrPostCallback", "./system/threading/send-or-post-callback"),
 
+            new TypeScriptRuntimeRequirementDefinition("CancellationToken", "./system/threading/cancellation-token"),
+            new TypeScriptRuntimeRequirementDefinition("CancellationTokenSource", "./system/threading/cancellation-token-source"),
+            new TypeScriptRuntimeRequirementDefinition("ConditionalWeakTable", "./system/runtime/compiler-services/conditional-weak-table"),
+            new TypeScriptRuntimeRequirementDefinition("CancellationTokenRegistration", "./system/threading/cancellation-token-registration"),
+            new TypeScriptRuntimeRequirementDefinition("OperationCanceledException", "./system/operation-canceled.exception"),
+            new TypeScriptRuntimeRequirementDefinition("TaskCanceledException", "./system/threading/tasks/task-canceled.exception"),
+            new TypeScriptRuntimeRequirementDefinition("TaskCompletionSource", "./system/threading/tasks/task-completion-source"),
+            new TypeScriptRuntimeRequirementDefinition("TaskCreationOptions", "./system/threading/tasks/task-creation-options"),
+            new TypeScriptRuntimeRequirementDefinition("ObjectDisposedException", "./system/object-disposed.exception"),
+            new TypeScriptRuntimeRequirementDefinition("AggregateException", "./system/aggregate.exception"),
+
+            // system.numerics
+            new TypeScriptRuntimeRequirementDefinition("BitOperations", "./system/numerics/bit-operations"),
+
             // system.threading.tasks
-            new TypeScriptRuntimeRequirementDefinition("Task", "./system/threading/tasks/task", "", true),
+            new TypeScriptRuntimeRequirementDefinition("Task", "./system/threading/tasks/task"),
 
             // WebSocketSharp
             new TypeScriptRuntimeRequirementDefinition("WebSocketWS", "./websocketsharp/websocket"),

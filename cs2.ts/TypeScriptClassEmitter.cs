@@ -288,6 +288,15 @@ namespace cs2.ts {
 
                 string definiteAssignment = string.IsNullOrEmpty(assignment) && !var.IsStatic ? "!" : string.Empty;
 
+                if (var.EventAddBlock != null || var.EventRemoveBlock != null) {
+                    writer.WriteLine($"{access}{isStatic} {var.Name}: {type} = new Event(".TrimStart());
+                    EmitEventAccessorHook(cl, var, var.EventAddBlock, "add", writer);
+                    writer.WriteLine(",");
+                    EmitEventAccessorHook(cl, var, var.EventRemoveBlock, "remove", writer);
+                    writer.WriteLine(");");
+                    return true;
+                }
+
                 if (var.DeclarationType == MemberDeclarationType.Abstract) {
                     if (var.IsGet && var.IsSet) {
                         writer.WriteLine($"{access}{isStatic} abstract get {var.Name}(): {type};".TrimStart());
@@ -387,6 +396,37 @@ namespace cs2.ts {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Emits one custom event accessor as a callback passed to the Event runtime.
+        /// </summary>
+        /// <param name="cl">Class that declares the custom event.</param>
+        /// <param name="variable">Converted event variable.</param>
+        /// <param name="block">Accessor body, or <c>null</c> when the accessor is absent.</param>
+        /// <param name="accessorName">Accessor name used for generated function context.</param>
+        /// <param name="writer">TypeScript output writer.</param>
+        void EmitEventAccessorHook(ConversionClass cl, ConversionVariable variable, BlockSyntax block, string accessorName, TypeScriptOutputWriter writer) {
+            if (block == null) {
+                writer.Write("undefined");
+                return;
+            }
+
+            var function = new ConversionFunction {
+                Name = $"{accessorName}_{variable.Name}",
+                RawBlock = block,
+                ReturnType = new VariableType(VariableDataType.Void)
+            };
+            function.InParameters.Add(new ConversionVariable {
+                Name = "value",
+                VarType = new VariableType(VariableDataType.Callback, "Action")
+            });
+
+            writer.WriteLine("(value) => {");
+            List<string> lines = function.WriteLines(Conversion, Program, cl);
+            TypeScriptFunction.PrintLines(writer, lines);
+            writer.WriteLine();
+            writer.Write("}");
         }
 
         string BuildAssignmentExpression(ConversionClass cl, ExpressionSyntax expression) {
@@ -624,7 +664,7 @@ namespace cs2.ts {
                     var param = fn.InParameters[k];
                     string type = param.VarType.ToTypeScriptString(TypeScriptProgram);
                     string paramName = GetParameterName(cl, param);
-                    string defaultExpr = GetParameterDefaultValueExpression(param);
+                    string defaultExpr = GetParameterDefaultValueExpression(cl, param);
 
                     if (HasDefaultValue(param.DefaultValue)) {
                         writer.WriteLine($"const {paramName} = __args.length > {k} ? __args[{k}] as {type} : {defaultExpr};");
@@ -998,11 +1038,12 @@ namespace cs2.ts {
                     type = NormalizeParameterType(param, type);
                     string def = GetParameterDefaultSuffix(cl, param);
                     string paramName = GetParameterName(cl, param);
+                    string rest = param.Modifier.HasFlag(core.ParameterModifier.Params) ? "..." : string.Empty;
 
                     if (param.Modifier.HasFlag(core.ParameterModifier.Out)) {
                         writer.Write($"{paramName}: {{ value?: {type} }}");
                     } else {
-                        writer.Write($"{paramName}: {type}{def}");
+                        writer.Write($"{rest}{paramName}: {type}{def}");
                     }
 
                     if (k != fn.InParameters.Count - 1) {
@@ -1016,15 +1057,12 @@ namespace cs2.ts {
                     if (erasedTypeParameters != null) {
                         returnType = ReplaceTypeParameters(returnType, erasedTypeParameters);
                     }
-                    returnParameter = returnType.ToTypeScriptString(TypeScriptProgram);
+                    returnParameter = fn.IsAsync
+                        ? returnType.ToTypeScriptAsyncReturnString(TypeScriptProgram)
+                        : returnType.ToTypeScriptString(TypeScriptProgram);
                 }
                 if (string.IsNullOrWhiteSpace(returnParameter)) {
-                    returnParameter = "void";
-                }
-                if (fn.IsAsync) {
-                    returnParameter = returnParameter == "void"
-                        ? "Promise<void>"
-                        : $"Promise<{returnParameter}>";
+                    returnParameter = fn.IsAsync ? "Promise<void>" : "void";
                 }
 
                 if (cl.DeclarationType == MemberDeclarationType.Interface || !fn.HasBody) {
@@ -1043,10 +1081,14 @@ namespace cs2.ts {
             if (string.IsNullOrEmpty(def) || cl.DeclarationType != MemberDeclarationType.Class) {
                 return "";
             }
-            return def;
+            string value = def.Trim();
+            if (value.StartsWith("=", StringComparison.Ordinal)) {
+                return " = " + QualifyOwnStaticDefault(cl, value.Substring(1).Trim());
+            }
+            return QualifyOwnStaticDefault(cl, def);
         }
 
-        static string GetParameterDefaultValueExpression(ConversionVariable param) {
+        static string GetParameterDefaultValueExpression(ConversionClass cl, ConversionVariable param) {
             if (param == null || string.IsNullOrWhiteSpace(param.DefaultValue)) {
                 return "undefined";
             }
@@ -1056,9 +1098,20 @@ namespace cs2.ts {
                 value = value.Substring(1).Trim();
             }
 
-            return string.IsNullOrWhiteSpace(value) ? "undefined" : value;
+            return string.IsNullOrWhiteSpace(value) ? "undefined" : QualifyOwnStaticDefault(cl, value);
         }
 
+        static string QualifyOwnStaticDefault(ConversionClass cl, string expression) {
+            if (cl == null || string.IsNullOrWhiteSpace(expression)) {
+                return expression;
+            }
+
+            string value = expression.Trim();
+            bool bareIdentifier = SyntaxFacts.IsValidIdentifier(value);
+            bool isOwnStaticField = bareIdentifier && cl.Variables.Any(variable =>
+                variable.IsStatic && string.Equals(variable.Name, value, StringComparison.Ordinal));
+            return isOwnStaticField ? cl.Name + "." + value : expression;
+        }
         static HashSet<string> GetClassGenericParametersToErase(
             ConversionClass cl,
             ConversionFunction fn,

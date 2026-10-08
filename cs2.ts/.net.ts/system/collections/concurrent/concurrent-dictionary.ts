@@ -7,7 +7,9 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
     private keyToString: (key: TKey) => string;
     private _count: number = 0;
 
-    constructor(concurrencyLevel: number = 0, threads: number = 0) {
+    // The browser implementation is single-threaded, but accepts the CLR comparer/concurrency
+    // constructor shapes so shared source keeps its dictionary semantics at the API boundary.
+    constructor(comparerOrConcurrency?: unknown, capacity?: number) {
         this.keyToString = ((key: TKey) => JSON.stringify(key));
     }
 
@@ -34,7 +36,42 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
 
     // Set value by key using indexing
     public set(key: TKey, value: TValue): void {
-        this.add(key, value);
+        const stringKey = this.keyToString(key);
+        if (!Object.prototype.hasOwnProperty.call(this.items, stringKey)) {
+            this._count++;
+        }
+        this.items[stringKey] = value;
+    }
+
+    /** Mirrors ConcurrentDictionary.TryAdd without replacing an existing value. */
+    public TryAdd(key: TKey, value: TValue): boolean {
+        if (this.containsKey(key)) {
+            return false;
+        }
+        this.set(key, value);
+        return true;
+    }
+
+    /** Mirrors Dictionary.GetValueOrDefault for the concrete browser map. */
+    public GetValueOrDefault(key: TKey, defaultValue: TValue): TValue {
+        const value = this.get(key);
+        return value === undefined ? defaultValue : value;
+    }
+
+    /** Mirrors ConcurrentDictionary.TryRemove and assigns the removed value only on success. */
+    public TryRemove(key: TKey, outValue: { value?: TValue }): boolean {
+        return this.remove(key, outValue);
+    }
+
+    /** Produces detached key/value snapshots so mutation while iterating is safe. */
+    public ToArray(): KeyValuePair<TKey, TValue>[] {
+        const snapshot: KeyValuePair<TKey, TValue>[] = [];
+        this.forEach((key, value) => snapshot.push({ Key: key, Value: value }));
+        return snapshot;
+    }
+
+    public [Symbol.iterator](): Iterator<KeyValuePair<TKey, TValue>> {
+        return this.ToArray()[Symbol.iterator]();
     }
 
     // Get the value by key
@@ -59,6 +96,9 @@ export class ConcurrentDictionary<TKey, TValue> implements IDictionary<TKey, TVa
         }
         return false;
     }
+
+    /** Implements the managed dictionary removal member without changing TryRemove out-value semantics. */
+    public Remove(key: TKey): boolean { return this.remove(key); }
 
     // Check if a key exists
     public containsKey(key: TKey): boolean {

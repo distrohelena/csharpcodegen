@@ -75,6 +75,28 @@ namespace cs2.ts {
         }
 
         /// <summary>
+        /// Formats an async function result without mutating source type metadata or nesting task wrappers.
+        /// JavaScript async returns assimilate task results, including generic thenable values.
+        /// </summary>
+        /// <param name="varType">The declared source result type.</param>
+        /// <param name="program">The program containing runtime type mappings.</param>
+        /// <returns>A Promise containing the resolved return value.</returns>
+        public static string ToTypeScriptAsyncReturnString(this VariableType varType, TypeScriptProgram program) {
+            VariableType result = varType;
+            while (result.TypeName == "Task" || result.TypeName == "ValueTask" || result.TypeName == "Promise") {
+                if (result.GenericArgs.Count == 0) {
+                    return "Promise<void>";
+                }
+                result = result.GenericArgs[0];
+            }
+            string value = result.ToTypeScriptString(program);
+            if (result.IsGenericParameter) {
+                value = $"Awaited<{value}>";
+            }
+            return $"Promise<{value}>";
+        }
+
+        /// <summary>
         /// Returns full TS type string, handling arrays, tuples, and generics.
         /// </summary>
         /// <param name="varType">The source variable type to map.</param>

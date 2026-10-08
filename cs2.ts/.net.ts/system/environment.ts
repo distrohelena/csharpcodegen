@@ -1,5 +1,11 @@
 // @ts-nocheck
 export class Environment {
+    public static get TickCount64(): number {
+        if (typeof performance === "undefined") {
+            throw new Error("Environment.TickCount64 requires the monotonic performance API.");
+        }
+        return Math.floor(performance.now());
+    }
 
     public static get processorCount(): number {
         return 1;
