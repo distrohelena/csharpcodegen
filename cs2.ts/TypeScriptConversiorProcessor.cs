@@ -421,6 +421,15 @@ namespace cs2.ts {
             } else if (invokedMethod != null) {
                 isMethod = true;
             }
+            if (invokedMethod != null &&
+                invokedMethod.Name == "ToString" &&
+                invokedMethod.ContainingType?.ToDisplayString() == "System.Guid") {
+                // Every Guid.ToString(format) binds to the runtime shim's toString(format), whatever the receiver
+                // is (a pattern variable the converter never tracked included). The shim must not expose a
+                // same-named ToString member: the symbol match by name would capture every call instead.
+                lines.Add("toString");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+            }
             TypeInfo identifierType = semantic.GetTypeInfo(identifier);
             AssignmentExpressionSyntax assignment = identifier.Parent as AssignmentExpressionSyntax;
             bool isObjectInitializerTarget = assignment != null &&
