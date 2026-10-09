@@ -118,6 +118,20 @@ export class Guid {
         }
     }
 
+    /**
+     * Mirrors the C# `Guid.ToString(format)` call the converter emits. Only the `"D"` format is supported, returning
+     * the canonical lowercase hyphenated text .NET produces; any other format throws so a generated call can never
+     * silently project a Guid differently from the node (signed rows carry this exact text).
+     * @param format .NET format specifier; must be `"D"`.
+     * @returns Canonical lowercase hyphenated Guid text.
+     */
+    public ToString(format: string): string {
+        if (format !== "D") {
+            throw new Error(`Guid.ToString supports only the "D" format, received '${format}'.`);
+        }
+        return this.toString("D");
+    }
+
     // Static method to check if a string is a valid GUID
     public static isValid(value: string): boolean {
         const hexRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
