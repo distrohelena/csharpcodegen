@@ -4321,6 +4321,21 @@ namespace cs2.ts {
                 return;
             }
 
+            // Arrays have no TypeScript class to name: byte[] is emitted as Uint8Array and every other
+            // array as a plain JS array, so test those runtime shapes rather than the C# spelling.
+            if (patternType is IArrayTypeSymbol arrayPatternType) {
+                if (arrayPatternType.Rank == 1 && arrayPatternType.ElementType.SpecialType == SpecialType.System_Byte) {
+                    lines.Add(targetIdentifier);
+                    lines.Add(" instanceof Uint8Array");
+                    return;
+                }
+
+                lines.Add("Array.isArray(");
+                lines.Add(targetIdentifier);
+                lines.Add(")");
+                return;
+            }
+
             if (patternType is INamedTypeSymbol namedPatternType && namedPatternType.TypeKind == TypeKind.Interface) {
                 AppendInterfacePatternTypeCheck(context, namedPatternType, targetIdentifier, lines);
                 return;

@@ -5808,6 +5808,9 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessInvocationExpressionSyntax(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocationExpression, List<string> lines) {
+            if (TryProcessNativePowerInvocation(semantic, context, invocationExpression, lines)) {
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("double"));
+            }
             if (TryProcessNameOfInvocation(invocationExpression, lines)) {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
             }
@@ -8559,6 +8562,11 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (string.Equals(memberName, "Replace", StringComparison.Ordinal) &&
+                TryProcessNativeStringReplaceInvocation(semantic, context, invocationExpression, memberAccess, lines)) {
+                return true;
+            }
+
             RegisterRuntimeRequirement("NativeString");
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
 
@@ -8713,6 +8721,106 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Emits System.Math.Pow through the selected double-precision runtime helper while evaluating its arguments exactly once in C# source order.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify System.Math and map named arguments to the actual overload.</param>
+        /// <param name="context">Lowering scope that determines the valid lambda capture form.</param>
+        /// <param name="invocationExpression">Two-argument Pow call to lower without changing other math invocations.</param>
+        /// <param name="lines">Output tokens receiving a complete sequencing expression with preparation and cleanup.</param>
+        /// <returns>True when the System.Math.Pow invocation was handled.</returns>
+        bool TryProcessNativePowerInvocation(SemanticModel semantic, LayerContext context,
+            InvocationExpressionSyntax invocationExpression, List<string> lines) {
+            bool namedPow = invocationExpression.Expression is MemberAccessExpressionSyntax memberAccess && memberAccess.Name.Identifier.Text == "Pow" ||
+                invocationExpression.Expression is IdentifierNameSyntax identifier && identifier.Identifier.Text == "Pow";
+            if (!namedPow) return false;
+            IMethodSymbol method = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
+            if (method == null || method.Name != "Pow" || !method.IsStatic ||
+                method.ContainingType.ToDisplayString() != "System.Math" || method.Parameters.Length != 2 ||
+                invocationExpression.ArgumentList.Arguments.Count != 2) return false;
+            RegisterRuntimeRequirement("Math");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
+            string[] parameterNames = new string[2];
+            List<string> cleanupLines = new List<string>();
+            for (int index = 0; index < 2; index++) {
+                ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[index];
+                List<string> argumentLines = new List<string>();
+                int startDepth = context.DepthClass;
+                ExpressionResult result = ProcessExpression(semantic, context, argument.Expression, argumentLines);
+                context.PopClass(startDepth);
+                if (result.BeforeLines != null) lines.AddRange(result.BeforeLines);
+                if (result.AfterLines != null) cleanupLines.AddRange(result.AfterLines);
+                string temporaryName = CreateTemporaryName("__pow_arg");
+                lines.Add($"const double {temporaryName} = ");
+                lines.AddRange(argumentLines);
+                lines.Add(";\n");
+                int parameterIndex = argument.NameColon == null ? index
+                    : argument.NameColon.Name.Identifier.Text == method.Parameters[0].Name ? 0 : 1;
+                parameterNames[parameterIndex] = temporaryName;
+            }
+            string resultName = CreateTemporaryName("__pow_result");
+            lines.Add($"const double {resultName} = Math::Pow({parameterNames[0]}, {parameterNames[1]});\n");
+            lines.AddRange(cleanupLines);
+            lines.Add($"return {resultName};\n}})()");
+            return true;
+        }
+
+        /// <summary>
+        /// Lowers the two-argument string and character Replace overloads through the native replace-all helper, snapshotting the receiver and arguments in C# evaluation order.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify the actual System.String overload and argument expressions.</param>
+        /// <param name="context">Current lowering scope, which determines the valid lambda capture list.</param>
+        /// <param name="invocationExpression">Replace call whose explicit arguments are evaluated in source order.</param>
+        /// <param name="memberAccess">Instance receiver that must be evaluated before either argument.</param>
+        /// <param name="lines">C++ tokens receiving a self-contained expression, including nested expression preparation and cleanup.</param>
+        /// <returns>True when a supported two-argument System.String.Replace overload was emitted.</returns>
+        bool TryProcessNativeStringReplaceInvocation(SemanticModel semantic, LayerContext context,
+            InvocationExpressionSyntax invocationExpression, MemberAccessExpressionSyntax memberAccess, List<string> lines) {
+            IMethodSymbol method = semantic.GetSymbolInfo(invocationExpression).Symbol as IMethodSymbol;
+            if (method == null || method.ContainingType.SpecialType != SpecialType.System_String ||
+                method.Parameters.Length != 2 || invocationExpression.ArgumentList.Arguments.Count != 2 ||
+                (method.Parameters[0].Type.SpecialType != SpecialType.System_String &&
+                 method.Parameters[0].Type.SpecialType != SpecialType.System_Char) ||
+                method.Parameters[0].Type.SpecialType != method.Parameters[1].Type.SpecialType) {
+                return false;
+            }
+
+            RegisterRuntimeRequirement("NativeString");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
+            List<string> cleanupLines = new List<string>();
+            string receiverName = CreateTemporaryName("__replace_receiver");
+            string[] argumentNames = new string[2];
+            for (int index = 0; index < 3; index++) {
+                ExpressionSyntax expression = index == 0 ? memberAccess.Expression
+                    : invocationExpression.ArgumentList.Arguments[index - 1].Expression;
+                List<string> expressionLines = new List<string>();
+                int startDepth = context.DepthClass;
+                ExpressionResult expressionResult = ProcessExpression(semantic, context, expression, expressionLines);
+                context.PopClass(startDepth);
+                if (expressionResult.BeforeLines != null) {
+                    lines.AddRange(expressionResult.BeforeLines);
+                }
+                if (expressionResult.AfterLines != null) {
+                    cleanupLines.AddRange(expressionResult.AfterLines);
+                }
+                string temporaryName = index == 0 ? receiverName : CreateTemporaryName("__replace_arg");
+                lines.Add($"auto {temporaryName} = ");
+                lines.AddRange(expressionLines);
+                lines.Add(";\n");
+                if (index > 0) {
+                    ArgumentSyntax argument = invocationExpression.ArgumentList.Arguments[index - 1];
+                    int parameterIndex = argument.NameColon == null ? index - 1
+                        : string.Equals(argument.NameColon.Name.Identifier.Text, method.Parameters[0].Name, StringComparison.Ordinal) ? 0 : 1;
+                    argumentNames[parameterIndex] = temporaryName;
+                }
+            }
+            string resultName = CreateTemporaryName("__replace_result");
+            lines.Add($"auto {resultName} = String::Replace({receiverName}, {argumentNames[0]}, {argumentNames[1]});\n");
+            lines.AddRange(cleanupLines);
+            lines.Add($"return {resultName};\n}})()");
+            return true;
         }
 
         /// <summary>
@@ -11206,13 +11314,14 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
+            ExpressionResult sizeResult = default;
             if (arrayCreation.Initializer != null) {
                 if (!TryProcessArrayInitializerTargetType(semantic, context, arrayCreation, arrayCreation.Initializer.Expressions, lines)) {
                     lines.Add("{ ");
                     AppendExpressionList(semantic, context, arrayCreation.Initializer.Expressions, lines);
                     lines.Add(" }");
                 }
-            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines)) {
+            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines, out sizeResult)) {
             } else if (arrayCreation.Type.RankSpecifiers.Any()) {
                 lines.Add("new Array(");
                 foreach (ArrayRankSpecifierSyntax rankSpecifier in arrayCreation.Type.RankSpecifiers) {
@@ -11223,7 +11332,8 @@ namespace cs2.cpp {
                 lines.Add(")");
             }
 
-            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic),
+                sizeResult.BeforeLines, sizeResult.AfterLines);
         }
 
         bool TryProcessArrayInitializerTargetType(
@@ -13116,22 +13226,49 @@ namespace cs2.cpp {
                 return;
             }
 
-            // Process the condition (before the ?)
-            int conditionStart = context.DepthClass;
-            ProcessExpression(semantic, context, conditional.Condition, lines);
-            context.PopClass(conditionStart);
+            AppendConditionalOperand(semantic, context, conditional.Condition, lines);
             lines.Add(" ? ");
-
-            // Process the true branch (after the ? and before the :)
-            int whenTrueStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenTrue), lines);
-            context.PopClass(whenTrueStart);
+            AppendConditionalOperand(semantic, context, conditional.WhenTrue, lines);
             lines.Add(" : ");
+            AppendConditionalOperand(semantic, context, conditional.WhenFalse, lines);
+        }
 
-            // Process the false branch (after the :)
-            int whenFalseStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenFalse), lines);
-            context.PopClass(whenFalseStart);
+        /// <summary>
+        /// Keeps operand preparation and cleanup inside a self-contained expression so only the selected conditional branch executes its statements.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to lower the operand.</param>
+        /// <param name="context">Active lowering scope, including the legal native lambda capture list.</param>
+        /// <param name="expression">Condition or branch expression, retaining explicit ref semantics when present.</param>
+        /// <param name="lines">Output tokens receiving the lazy operand expression.</param>
+        void AppendConditionalOperand(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> lines) {
+            List<string> operandLines = new List<string>();
+            int startDepth = context.DepthClass;
+            ExpressionResult result = ProcessExpression(semantic, context, UnwrapRefExpression(expression), operandLines);
+            context.PopClass(startDepth);
+            bool hasPreparation = result.BeforeLines != null && result.BeforeLines.Count > 0;
+            bool hasCleanup = result.AfterLines != null && result.AfterLines.Count > 0;
+            if (!hasPreparation && !hasCleanup) {
+                lines.AddRange(operandLines);
+                return;
+            }
+
+            bool preservesReference = expression is RefExpressionSyntax;
+            string returnType = preservesReference ? " -> decltype(auto)" : string.Empty;
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}(){returnType} {{\n");
+            if (hasPreparation) lines.AddRange(result.BeforeLines);
+            if (hasCleanup) {
+                string resultName = CreateTemporaryName("__conditional_result");
+                lines.Add(preservesReference ? $"decltype(auto) {resultName} = (" : $"auto {resultName} = (");
+                lines.AddRange(operandLines);
+                lines.Add(");\n");
+                lines.AddRange(result.AfterLines);
+                lines.Add($"return ({resultName});\n");
+            } else {
+                lines.Add("return (");
+                lines.AddRange(operandLines);
+                lines.Add(");\n");
+            }
+            lines.Add("})()");
         }
 
         bool TryProcessNullableConditionalExpression(
@@ -13157,9 +13294,7 @@ namespace cs2.cpp {
             VariableType convertedCppType = ConvertToCPPType(convertedSourceType, out convertedTypeData);
             string nullableTypeName = convertedCppType.ToCPPString(context.Program);
 
-            int conditionStart = context.DepthClass;
-            ProcessExpression(semantic, context, conditional.Condition, lines);
-            context.PopClass(conditionStart);
+            AppendConditionalOperand(semantic, context, conditional.Condition, lines);
             lines.Add(" ? ");
             AppendNullableConditionalBranch(semantic, context, conditional.WhenTrue, nullableTypeName, lines);
             lines.Add(" : ");
@@ -13180,9 +13315,7 @@ namespace cs2.cpp {
             }
 
             lines.Add($"{nullableTypeName}(");
-            int branchStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(branchExpression), lines);
-            context.PopClass(branchStart);
+            AppendConditionalOperand(semantic, context, branchExpression, lines);
             lines.Add(")");
         }
 
@@ -16500,7 +16633,8 @@ namespace cs2.cpp {
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
                 string name = variable.Identifier.ToString();
-                newLines.Add(name);
+                string emittedName = CPPIdentifierSanitizer.SanitizeIdentifier(name);
+                newLines.Add(emittedName);
 
                 ConversionFunctionVariableUsage usage = fnStack.Function.BodyVariables.FirstOrDefault(c => c.Name == name);
                 if ((usage != null && usage.Reassignment) ||
@@ -16523,6 +16657,7 @@ namespace cs2.cpp {
                 if (fn != null) {
                     var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
+                    var.Remap = emittedName;
                     var.VarType = varType;
                     fn.Stack.Add(var);
                 }
@@ -17765,12 +17900,15 @@ namespace cs2.cpp {
         /// <param name="context">Current lowering context.</param>
         /// <param name="arrayCreation">Array creation syntax being lowered.</param>
         /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="sizeResult">Evaluation statements required by the length expression, propagated to the allocation's containing statement.</param>
         /// <returns><c>true</c> when the array creation was lowered as a native allocation; otherwise, <c>false</c>.</returns>
         bool TryProcessDynamicArrayCreation(
             SemanticModel semantic,
             LayerContext context,
             ArrayCreationExpressionSyntax arrayCreation,
-            List<string> lines) {
+            List<string> lines,
+            out ExpressionResult sizeResult) {
+            sizeResult = default;
             if (arrayCreation.Type.RankSpecifiers.Count == 0) {
                 return false;
             }
@@ -17791,7 +17929,7 @@ namespace cs2.cpp {
             if (arrayCreation.Type.RankSpecifiers.Count == 1) {
                 string elementTypeName = GetCppTypeToken(elementType, context.Program);
                 lines.Add($"new Array<{elementTypeName}>(");
-                ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
                 lines.Add(")");
                 return true;
             }
@@ -17805,7 +17943,7 @@ namespace cs2.cpp {
 
             string nestedElementTypeName = GetCppTypeToken(nestedElementType, context.Program);
             lines.Add($"new Array<{nestedElementTypeName}>(");
-            ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
             lines.Add(")");
             return true;
         }

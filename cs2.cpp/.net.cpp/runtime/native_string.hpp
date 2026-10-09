@@ -346,9 +346,12 @@ public:
         return updatedValue;
     }
 
+    /// <summary>
+    /// Replaces every non-overlapping occurrence, without processing text inserted by a previous match; an empty search value is invalid.
+    /// </summary>
     static HeCppString Replace(const HeCppString& value, const HeCppString& oldValue, const HeCppString& newValue) {
         if (oldValue.empty()) {
-            return value;
+            return he_cpp_raise_value<HeCppString>(ArgumentException("oldValue must not be empty"));
         }
 
         HeCppString updatedValue = value;

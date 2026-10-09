@@ -1781,7 +1781,11 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The enum type to emit.</param>
         /// <param name="headerWriter">Writer that receives the enum declaration.</param>
         void WriteEnum(ConversionClass conversionClass, TextWriter headerWriter) {
-            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}");
+            ITypeSymbol underlyingType = conversionClass.TypeSymbol?.EnumUnderlyingType;
+            string underlyingTypeSuffix = underlyingType == null
+                ? string.Empty
+                : $" : {ConvertType(VariableUtil.GetVarType(underlyingType))}";
+            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}{underlyingTypeSuffix}");
             headerWriter.WriteLine("{");
 
             List<string> members = GetEnumMembers(conversionClass);

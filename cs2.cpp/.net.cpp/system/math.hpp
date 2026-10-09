@@ -101,6 +101,16 @@ inline double LogarithmBaseTwo(double value) {
 #endif
 }
 
+/// <summary>Raises a double-precision base to an exponent and requires the custom provider only when this operation is used.</summary>
+template <typename TValue, typename TExponent>
+inline double Power(TValue value, TExponent exponent) {
+#if HE_CPP_USE_STD_MATH
+    return std::pow(value, exponent);
+#else
+    return pow(value, exponent);
+#endif
+}
+
 /// <summary>Returns the remainder used to determine an exact even integral value.</summary>
 inline double Remainder(double value, double divisor) {
 #if HE_CPP_USE_STD_MATH
@@ -295,6 +305,12 @@ public:
     template <typename TValue>
     static double Log2(TValue value) {
         return he_cpp_math_detail::LogarithmBaseTwo(static_cast<double>(value));
+    }
+
+    /// <summary>Computes managed Math.Pow without reducing either operand to single precision.</summary>
+    template <typename TValue, typename TExponent>
+    static double Pow(TValue value, TExponent exponent) {
+        return he_cpp_math_detail::Power(static_cast<double>(value), static_cast<double>(exponent));
     }
 
     template <typename TValue>
