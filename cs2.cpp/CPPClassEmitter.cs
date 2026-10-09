@@ -706,7 +706,7 @@ namespace cs2.cpp {
                 throw new ArgumentNullException(nameof(sourceIncludeTypes));
             }
 
-            foreach (ConversionFunction function in conversionClass.Functions) {
+            foreach (ConversionFunction function in EnumerateSourceDependencyFunctions(conversionClass)) {
                 SemanticModel semantic = function.Semantic ?? conversionClass.Semantic;
                 if (semantic == null) {
                     continue;
@@ -724,6 +724,25 @@ namespace cs2.cpp {
                         !conversionClass.SourceIncludes.Contains(directIncludePath, StringComparer.Ordinal)) {
                         conversionClass.SourceIncludes.Add(directIncludePath);
                     }
+                }
+            }
+        }
+
+        /// <summary>Includes accessor bodies in source dependency discovery without adding synthesized accessors to the converted class model.</summary>
+        /// <param name="conversionClass">Class whose methods and properties contribute executable source bodies.</param>
+        /// <returns>Method and accessor models retaining their original semantic syntax.</returns>
+        IEnumerable<ConversionFunction> EnumerateSourceDependencyFunctions(ConversionClass conversionClass) {
+            foreach (ConversionFunction function in conversionClass.Functions) {
+                yield return function;
+            }
+            foreach (ConversionVariable variable in conversionClass.Variables) {
+                if (variable.GetBlock != null || variable.ArrowExpression != null) {
+                    ConversionFunction getter = CreateGetter(variable);
+                    getter.ArrowExpression = variable.ArrowExpression?.Parent as ArrowExpressionClauseSyntax;
+                    yield return getter;
+                }
+                if (variable.SetBlock != null) {
+                    yield return CreateSetter(variable);
                 }
             }
         }
@@ -883,10 +902,6 @@ namespace cs2.cpp {
             }
 
             VariableType referencedType = VariableUtil.GetVarType(normalizedIncludeCandidate);
-            if (referencedType.GenericArgs == null || referencedType.GenericArgs.Count == 0) {
-                return false;
-            }
-
             string qualifiedTypeName = GetReferencedTypeName(referencedType);
             if (string.IsNullOrWhiteSpace(qualifiedTypeName)) {
                 return false;
@@ -904,9 +919,15 @@ namespace cs2.cpp {
                 return false;
             }
 
-            string leafTypeName = referencedType.TypeName;
-            if (string.IsNullOrWhiteSpace(leafTypeName)) {
+            string leafTypeName = NormalizeReferencedClassName(referencedType.TypeName);
+            if (string.IsNullOrWhiteSpace(leafTypeName) ||
+                !Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsValidIdentifier(leafTypeName)) {
                 return false;
+            }
+
+            if (referencedType.GenericArgs == null || referencedType.GenericArgs.Count == 0) {
+                headerStem = leafTypeName;
+                return true;
             }
 
             string existingAritySuffix = "_" + referencedType.GenericArgs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -3372,11 +3393,7 @@ namespace cs2.cpp {
             LayerContext context = new CPPLayerContext(program);
             int start = context.DepthClass;
             context.AddClass(conversionClass);
-            if (variable.IsStatic) {
-                context.AddFunction(new FunctionStack(new ConversionFunction {
-                    IsStatic = true
-                }));
-            }
+            context.AddFunction(new FunctionStack(CreateGetter(variable)));
 
             ExpressionResult expressionResult = processor.ProcessExpression(variableSemantic, context, variable.ArrowExpression, expressionLines);
             context.PopClass(start);
@@ -3525,7 +3542,20 @@ namespace cs2.cpp {
                 return false;
             }
 
-            return ShouldEmitConstReferencePropertyGetter(variable.VarType);
+            if (!ShouldEmitConstReferencePropertyGetter(variable.VarType)) {
+                return false;
+            }
+            if (variable.GetBlock == null && variable.ArrowExpression == null) {
+                return true;
+            }
+            ExpressionSyntax returnedExpression = variable.ArrowExpression;
+            if (returnedExpression == null &&
+                variable.GetBlock?.Statements.Count == 1 &&
+                variable.GetBlock.Statements[0] is ReturnStatementSyntax returnStatement) {
+                returnedExpression = returnStatement.Expression;
+            }
+            return returnedExpression != null &&
+                variable.Semantic?.GetSymbolInfo(returnedExpression).Symbol is IFieldSymbol;
         }
 
         /// <summary>

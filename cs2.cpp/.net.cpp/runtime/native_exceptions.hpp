@@ -359,6 +359,33 @@ public:
     ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& message)
         : ArgumentException(he_cpp_exception_detail::MessageWithParameter(message, parameterName, "Specified argument was out of range.")) {
     }
+    /// <summary>
+    /// Retains the verified scalar or enum actual value as a diagnostic without pretending that the runtime supports general managed boxing.
+    /// </summary>
+    HeCppString ActualValueDiagnostic;
+
+    /// <summary>
+    /// Preserves a formatted actual value and the parameter/message failure contract supplied by generated scalar or enum construction.
+    /// </summary>
+    ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& actualValueDiagnostic, const HeCppString& message)
+        : ArgumentException(BuildActualValueMessage(parameterName, actualValueDiagnostic, message)),
+          ActualValueDiagnostic(actualValueDiagnostic) {
+    }
+
+    /// <summary>
+    /// Applies the existing compact-message policy while retaining the actual-value diagnostic independently.
+    /// </summary>
+    static HeCppString BuildActualValueMessage(const HeCppString& parameterName, const HeCppString& actualValueDiagnostic, const HeCppString& message) {
+        HeCppString result = he_cpp_exception_detail::MessageWithParameter(message, parameterName, "Specified argument was out of range.");
+#if !HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        result += "\nActual value was ";
+        result += actualValueDiagnostic;
+        result += ".";
+#else
+        (void)actualValueDiagnostic;
+#endif
+        return result;
+    }
 };
 
 /// <summary>

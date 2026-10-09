@@ -18,6 +18,9 @@ namespace cs2.cpp {
         /// </summary>
         int temporaryNameCounter;
 
+        /// <summary>Tracks pattern declarations shared by a condition and its lazy branches inside one generated conditional scope.</summary>
+        HashSet<DeclarationPatternSyntax> SharedConditionalPatterns;
+
         /// <summary>
         /// Initializes a processor bound to one host, or an unbound processor for focused syntax tests.
         /// </summary>
@@ -343,17 +346,25 @@ namespace cs2.cpp {
             if (declaredTypeData.IsPointer || IsReferencePatternType(semantic, declarationPattern.Type, declaredType)) {
                 RegisterRuntimeRequirement("NativeCast");
 
-                beforeLines.Add($"{declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
-                lines.Add($"{variableName} != nullptr");
+                if (SharedConditionalPatterns?.Contains(declarationPattern) == true) {
+                    lines.Add($"({variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression})) != nullptr");
+                } else {
+                    beforeLines.Add($"{declaredTypeName}* {variableName} = he_cpp_try_cast<{declaredTypeName}>({sourceExpression});\n");
+                    lines.Add($"{variableName} != nullptr");
+                }
             } else {
                 string pointerName = $"__pattern_{variableName}";
 
-                beforeLines.Add($"{declaredTypeName}* {pointerName} = static_cast<{declaredTypeName}*>({sourceExpression});\n");
+                if (SharedConditionalPatterns?.Contains(declarationPattern) == true) {
+                    lines.Add($"({pointerName} = static_cast<{declaredTypeName}*>({sourceExpression})) != nullptr");
+                } else {
+                    beforeLines.Add($"{declaredTypeName}* {pointerName} = static_cast<{declaredTypeName}*>({sourceExpression});\n");
+                    lines.Add($"{pointerName} != nullptr");
+                }
                 if (conversionVariable != null) {
                     conversionVariable.Remap = $"(*{pointerName})";
                 }
 
-                lines.Add($"{pointerName} != nullptr");
             }
 
             if (conversionVariable != null) {
@@ -3557,8 +3568,17 @@ namespace cs2.cpp {
                 out string runtimeObjectTypeName,
                 out string runtimeRequirementName);
             bool isNativeException = TryGetNativeExceptionTypeName(semantic.Compilation, objectCreationTypeSymbol, out string nativeExceptionTypeName);
+            bool hasNativeActualValue = isNativeException &&
+                nativeExceptionTypeName == "ArgumentOutOfRangeException" &&
+                argumentList?.Arguments.Count == 3;
+            ITypeSymbol actualValueType = hasNativeActualValue ? semantic.GetTypeInfo(argumentList.Arguments[1].Expression).Type : null;
+            if (hasNativeActualValue && !SupportsNativeActualValueDiagnostic(actualValueType)) {
+                ReportUnsupportedNode(context, ownershipSyntax,
+                    "Native ArgumentOutOfRangeException actualValue supports scalar and enum diagnostics; arbitrary managed object boxing is unavailable.");
+                return new ExpressionResult(false);
+            }
             bool compactNativeExceptionMessages = isNativeException
-                && UsesCompactNativeExceptionMessages();
+                && !hasNativeActualValue && UsesCompactNativeExceptionMessages();
             ArgumentListSyntax effectiveArgumentList = compactNativeExceptionMessages ? null : argumentList;
 
             if (isNativeException) {
@@ -3602,7 +3622,7 @@ namespace cs2.cpp {
             bool hasOptionalConstructorArguments = constructorParameterSymbols.Length > explicitArgumentCount &&
                 constructorParameterSymbols.Skip(explicitArgumentCount).Any(parameter => parameter.HasExplicitDefaultValue);
             bool hasOwnershipTransfer = GetOwnershipTransitions(ownershipSyntax, CPPOwnershipTransitionKind.Transfer).Count > 0;
-            bool requiresStableArgumentEvaluation = hasOwnershipTransfer ||
+            bool requiresStableArgumentEvaluation = hasNativeActualValue || hasOwnershipTransfer ||
                 explicitArgumentCount > 1 &&
                 effectiveArgumentList.Arguments.Any(argument => RequiresStableConstructorArgumentEvaluation(argument.Expression));
             if (requiresStableArgumentEvaluation) {
@@ -3647,7 +3667,9 @@ namespace cs2.cpp {
                     lines.Add(" = ");
                     lines.AddRange(loweredArgumentLines);
                     lines.Add(";\n");
-                    temporaryArgumentNames.Add(temporaryName);
+                    temporaryArgumentNames.Add(hasNativeActualValue && i == 1
+                        ? FormatNativeActualValueDiagnostic(actualValueType, temporaryName)
+                        : temporaryName);
                 }
 
                 string constructedValueName = string.Empty;
@@ -3765,6 +3787,30 @@ namespace cs2.cpp {
             lines.AddRange(argumentLines);
             lines.Add(")");
             return new ExpressionResult(diagnosticCount == GetDiagnosticCount(), VariablePath.Unknown, cppType);
+        }
+
+        /// <summary>Limits actual-value exception construction to values representable without general managed boxing.</summary>
+        /// <param name="type">Source actual-value type before conversion to the managed object parameter.</param>
+        /// <returns>Whether its value can be retained as an exact scalar or enum diagnostic.</returns>
+        static bool SupportsNativeActualValueDiagnostic(ITypeSymbol type) {
+            return type?.TypeKind == TypeKind.Enum || type?.SpecialType is
+                SpecialType.System_Boolean or SpecialType.System_Char or SpecialType.System_String or
+                SpecialType.System_SByte or SpecialType.System_Byte or SpecialType.System_Int16 or SpecialType.System_UInt16 or
+                SpecialType.System_Int32 or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64 or
+                SpecialType.System_Single or SpecialType.System_Double;
+        }
+
+        /// <summary>Formats an already-evaluated scalar or enum value for the native exception's retained diagnostic field and message.</summary>
+        /// <param name="type">Verified source actual-value type.</param>
+        /// <param name="temporaryName">Stable constructor argument temporary, evaluated exactly once in source order.</param>
+        /// <returns>Portable native string conversion of the verified value.</returns>
+        string FormatNativeActualValueDiagnostic(ITypeSymbol type, string temporaryName) {
+            RegisterRuntimeRequirement("NativeString");
+            if (type is INamedTypeSymbol enumType && enumType.TypeKind == TypeKind.Enum) {
+                VariableType underlyingType = ConvertToCPPType(VariableUtil.GetVarType(enumType.EnumUnderlyingType), out _);
+                temporaryName = $"static_cast<{underlyingType.ToCPPString(codeConverter.Program)}>({temporaryName})";
+            }
+            return $"String::ToJoinString({temporaryName})";
         }
 
         static bool ShouldWrapConstructorArgumentForByValueOverload(
@@ -10359,11 +10405,11 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
             }
 
-            lines.AddRange(left);
+            AppendGroupedBinaryOperand(binary.Left, left, lines);
 
             lines.Add($" {op.ToStringOperator()} ");
 
-            lines.AddRange(right);
+            AppendGroupedBinaryOperand(binary.Right, right, lines);
 
             if (binary.IsKind(SyntaxKind.SubtractExpression) && IsDateTimeVariableType(result.Type)) {
                 RegisterRuntimeRequirement("NativeDateTime");
@@ -10371,6 +10417,17 @@ namespace cs2.cpp {
             }
 
             return result;
+        }
+
+        /// <summary>Retains nested binary grouping in native syntax, including logical mixtures and arithmetic shift operands.</summary>
+        /// <param name="operand">Original operand syntax that determines whether grouping is needed.</param>
+        /// <param name="tokens">Already-lowered operand tokens.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        static void AppendGroupedBinaryOperand(ExpressionSyntax operand, List<string> tokens, List<string> lines) {
+            bool grouped = operand is BinaryExpressionSyntax;
+            if (grouped) lines.Add("(");
+            lines.AddRange(tokens);
+            if (grouped) lines.Add(")");
         }
 
         bool TryProcessFloatingPointModuloExpression(
@@ -13222,6 +13279,9 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
+            if (TryProcessSharedPatternConditional(semantic, context, conditional, lines)) {
+                return;
+            }
             if (TryProcessNullableConditionalExpression(semantic, context, conditional, lines)) {
                 return;
             }
@@ -13231,6 +13291,45 @@ namespace cs2.cpp {
             AppendConditionalOperand(semantic, context, conditional.WhenTrue, lines);
             lines.Add(" : ");
             AppendConditionalOperand(semantic, context, conditional.WhenFalse, lines);
+        }
+
+        /// <summary>Shares declaration-pattern locals across a complete lazy conditional while leaving guarded casts at their original evaluation point.</summary>
+        /// <param name="semantic">Source semantic identities used to resolve cast targets.</param>
+        /// <param name="context">Active function and lambda capture context.</param>
+        /// <param name="conditional">Conditional whose condition may declare pattern locals used by its branches.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        /// <returns>Whether the complete conditional was emitted with shared pattern scope.</returns>
+        bool TryProcessSharedPatternConditional(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
+            List<DeclarationPatternSyntax> patterns = conditional.Condition.DescendantNodesAndSelf()
+                .OfType<DeclarationPatternSyntax>().Where(pattern => pattern.Designation is SingleVariableDesignationSyntax).ToList();
+            if (patterns.Count == 0) return false;
+            HashSet<DeclarationPatternSyntax> previousPatterns = SharedConditionalPatterns;
+            SharedConditionalPatterns = previousPatterns == null
+                ? new HashSet<DeclarationPatternSyntax>(patterns)
+                : new HashSet<DeclarationPatternSyntax>(previousPatterns.Concat(patterns));
+            bool preservesReference = conditional.WhenTrue is RefExpressionSyntax || conditional.WhenFalse is RefExpressionSyntax;
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}(){(preservesReference ? " -> decltype(auto)" : string.Empty)} {{\n");
+            try {
+                foreach (DeclarationPatternSyntax pattern in patterns) {
+                    VariableType declaredType = VariableUtil.GetVarType(pattern.Type, semantic);
+                    VariableType nativeType = ConvertToCPPType(declaredType, out CPPTypeData typeData);
+                    string name = ((SingleVariableDesignationSyntax)pattern.Designation).Identifier.Text;
+                    if (!typeData.IsPointer && !IsReferencePatternType(semantic, pattern.Type, declaredType)) name = "__pattern_" + name;
+                    lines.Add($"{nativeType.ToCPPString(context.Program)}* {name} = nullptr;\n");
+                }
+                lines.Add("return (");
+                if (!TryProcessNullableConditionalExpression(semantic, context, conditional, lines)) {
+                    AppendConditionalOperand(semantic, context, conditional.Condition, lines);
+                    lines.Add(" ? ");
+                    AppendConditionalOperand(semantic, context, conditional.WhenTrue, lines);
+                    lines.Add(" : ");
+                    AppendConditionalOperand(semantic, context, conditional.WhenFalse, lines);
+                }
+                lines.Add(");\n})()");
+            } finally {
+                SharedConditionalPatterns = previousPatterns;
+            }
+            return true;
         }
 
         /// <summary>
@@ -13995,6 +14094,10 @@ namespace cs2.cpp {
                 lines.Add("}\n");
             }
 
+            if (semantic.GetTypeInfo(switchStatement.Expression).Type?.TypeKind == TypeKind.Enum &&
+                !switchStatement.Sections.SelectMany(section => section.Labels).Any(label => label is DefaultSwitchLabelSyntax)) {
+                lines.Add("default: break;\n");
+            }
             lines.Add("}\n\n");
         }
 
@@ -17986,7 +18089,22 @@ namespace cs2.cpp {
                     break;
                 case SyntaxKind.NumericLiteralExpression:
                     literalValue = NormalizeNumericLiteral(literalExpression.Token.Text);
-                    type = "int";
+                    if (literalExpression.Token.Value is long signed64) {
+                        literalValue = signed64.ToString(System.Globalization.CultureInfo.InvariantCulture) + "LL";
+                        type = "long";
+                    } else if (literalExpression.Token.Value is ulong unsigned64) {
+                        literalValue = unsigned64.ToString(System.Globalization.CultureInfo.InvariantCulture) + "ULL";
+                        type = "ulong";
+                    } else if (literalExpression.Token.Value is uint unsigned32) {
+                        literalValue = unsigned32.ToString(System.Globalization.CultureInfo.InvariantCulture) + "U";
+                        type = "uint";
+                    } else if (literalExpression.Token.Value is float) {
+                        type = "float";
+                    } else if (literalExpression.Token.Value is double) {
+                        type = "double";
+                    } else {
+                        type = "int";
+                    }
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
                         type = "char";
