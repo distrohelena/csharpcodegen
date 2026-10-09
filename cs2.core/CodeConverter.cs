@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -13,6 +14,11 @@ namespace cs2.core {
         protected ConversionRules rules;
 
         protected MSBuildWorkspace workspace;
+
+        /// <summary>
+        /// Load failures the workspace reported while the current project opened; checked after the load returns.
+        /// </summary>
+        readonly List<string> workspaceFailures = new List<string>();
 
         protected abstract string[] PreProcessorSymbols { get; }
 
@@ -30,10 +36,16 @@ namespace cs2.core {
                 throw new InvalidOperationException("Conversion program must be initialized before loading a project.");
             }
 
-            workspace ??= MSBuildWorkspace.Create();
+            if (workspace == null) {
+                workspace = MSBuildWorkspace.Create();
+                workspace.WorkspaceFailed += OnWorkspaceFailed;
+            }
             context ??= new ConversionContext(program);
 
+            workspaceFailures.Clear();
             project = AsyncUtil.RunSync(() => workspace.OpenProjectAsync(csprojPath));
+            ThrowOnWorkspaceFailures(csprojPath);
+            ThrowOnCompilationErrors(project);
             OnProjectOpened();
 
             ConversionSession session = new ConversionSession(project, workspace, program, context, rules, this);
@@ -41,6 +53,66 @@ namespace cs2.core {
             pipeline.Execute(session);
 
             project = session.Project;
+        }
+
+        /// <summary>
+        /// Records workspace load failures raised while a project opens, so the conversion can fail loudly once the
+        /// load returns instead of converting a project whose references never resolved.
+        /// </summary>
+        /// <param name="sender">Workspace raising the diagnostic.</param>
+        /// <param name="e">Diagnostic describing the failure or warning.</param>
+        void OnWorkspaceFailed(object sender, WorkspaceDiagnosticEventArgs e) {
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure) {
+                workspaceFailures.Add(e.Diagnostic.Message);
+                return;
+            }
+
+            Console.WriteLine($"-- workspace warning: {e.Diagnostic.Message}");
+        }
+
+        /// <summary>
+        /// Fails the conversion when the workspace reported a load failure for the project just opened. A partial
+        /// load leaves symbols unbound, and every backend would then emit raw member names in silence (a Guid
+        /// `ToString` that never reaches the `toString` remap, for example).
+        /// </summary>
+        /// <param name="csprojPath">Project whose load was attempted.</param>
+        void ThrowOnWorkspaceFailures(string csprojPath) {
+            if (workspaceFailures.Count == 0) {
+                return;
+            }
+
+            foreach (string failure in workspaceFailures) {
+                Console.WriteLine($"-- workspace failure: {failure}");
+            }
+
+            throw new InvalidOperationException(
+                $"Workspace failed to load '{csprojPath}' ({workspaceFailures.Count} failure(s)); conversion would emit unbound identifiers.");
+        }
+
+        /// <summary>
+        /// Fails the conversion when the loaded project does not compile, because a semantic model with errors binds
+        /// symbols only partially and the backends cannot tell a deliberate raw identifier from an unresolved one.
+        /// </summary>
+        /// <param name="loadedProject">Project returned by the workspace.</param>
+        static void ThrowOnCompilationErrors(Project loadedProject) {
+            Compilation compilation = AsyncUtil.RunSync(() => loadedProject.GetCompilationAsync());
+            if (compilation == null) {
+                throw new InvalidOperationException($"Project '{loadedProject.Name}' produced no compilation.");
+            }
+
+            List<Diagnostic> errors = compilation.GetDiagnostics()
+                .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+                .ToList();
+            if (errors.Count == 0) {
+                return;
+            }
+
+            foreach (Diagnostic error in errors.Take(25)) {
+                Console.WriteLine($"-- compilation error: {error}");
+            }
+
+            throw new InvalidOperationException(
+                $"Project '{loadedProject.Name}' has {errors.Count} compilation error(s); conversion would emit unbound identifiers.");
         }
 
         protected virtual ConversionPipeline BuildPipeline() {
