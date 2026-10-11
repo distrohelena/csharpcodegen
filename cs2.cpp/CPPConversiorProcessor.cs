@@ -554,8 +554,12 @@ namespace cs2.cpp {
             if (string.Equals(invokedMethodSymbol.Name, "DetachOwned", StringComparison.Ordinal)) {
                 NativeOwnershipTarget detachTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
                 lines.AddRange(detachTarget.BeforeLines);
+                // Arrays own their storage, while pointer elements remain borrowed.
+                // Preserve argument evaluation without changing buffer ownership.
+                bool isArray = semantic.GetTypeInfo(argument.Expression).Type is IArrayTypeSymbol;
+                lines.Add(isArray ? "(void)(" : string.Empty);
                 lines.Add(detachTarget.ReadExpression);
-                lines.Add("->DetachOwned();\n");
+                lines.Add(isArray ? ");\n" : "->DetachOwned();\n");
                 return true;
             }
 
@@ -8590,6 +8594,17 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(memberName, "Replace", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 2) {
+                lines.Add("String::Replace(");
+                lines.Add(receiverText);
+                lines.Add(", ");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("string");
+                return true;
+            }
+
             if (string.Equals(memberName, "Remove", StringComparison.Ordinal) &&
                 invocationExpression.ArgumentList.Arguments.Count is 1 or 2) {
                 lines.Add("String::Remove(");
@@ -11064,25 +11079,41 @@ namespace cs2.cpp {
             return false;
         }
 
+        /// <summary>
+        /// Lowers array creation while retaining length preparation and cleanup for the enclosing evaluation order.
+        /// </summary>
+        /// <param name="semantic">Semantic model attached to the source array expression.</param>
+        /// <param name="context">Current native lowering scope.</param>
+        /// <param name="arrayCreation">Array allocation being emitted.</param>
+        /// <param name="lines">Output tokens receiving the native allocation.</param>
+        /// <returns>The array type together with setup and cleanup required by its length expression.</returns>
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
+            List<string> beforeLines = new List<string>();
+            List<string> afterLines = new List<string>();
             if (arrayCreation.Initializer != null) {
                 if (!TryProcessArrayInitializerTargetType(semantic, context, arrayCreation, arrayCreation.Initializer.Expressions, lines)) {
                     lines.Add("{ ");
                     AppendExpressionList(semantic, context, arrayCreation.Initializer.Expressions, lines);
                     lines.Add(" }");
                 }
-            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines)) {
+            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines, beforeLines, afterLines)) {
             } else if (arrayCreation.Type.RankSpecifiers.Any()) {
                 lines.Add("new Array(");
                 foreach (ArrayRankSpecifierSyntax rankSpecifier in arrayCreation.Type.RankSpecifiers) {
                     foreach (ExpressionSyntax size in rankSpecifier.Sizes.OfType<ExpressionSyntax>()) {
-                        ProcessExpression(semantic, context, size, lines);
+                        ExpressionResult sizeResult = ProcessExpression(semantic, context, size, lines);
+                        if (sizeResult.BeforeLines != null) {
+                            beforeLines.AddRange(sizeResult.BeforeLines);
+                        }
+                        if (sizeResult.AfterLines != null) {
+                            afterLines.AddRange(sizeResult.AfterLines);
+                        }
                     }
                 }
                 lines.Add(")");
             }
 
-            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic));
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic), beforeLines, afterLines);
         }
 
         bool TryProcessArrayInitializerTargetType(
@@ -12781,6 +12812,14 @@ namespace cs2.cpp {
             return new ExpressionResult(false, VariablePath.Unknown, null);
         }
 
+        /// <summary>
+        /// Emits the required native cast while propagating operand setup and cleanup to preserve evaluation order.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify source and target types.</param>
+        /// <param name="context">Current conversion scope and checked arithmetic policy.</param>
+        /// <param name="castExpr">Managed cast attached to the original syntax tree.</param>
+        /// <param name="lines">Output tokens receiving the cast expression.</param>
+        /// <returns>The target type and the operand's sequencing requirements.</returns>
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
             VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
             CPPTypeData typeData;
@@ -12826,9 +12865,9 @@ namespace cs2.cpp {
                 lines.Add("(*static_cast<");
                 lines.Add(castTargetTypeName);
                 lines.Add("*>(");
-                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                ExpressionResult boxedOperandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
                 lines.Add("))");
-                return new ExpressionResult(true, VariablePath.Unknown, varType);
+                return new ExpressionResult(boxedOperandResult.Processed, VariablePath.Unknown, varType, boxedOperandResult.BeforeLines, boxedOperandResult.AfterLines);
             }
 
             if (sourceExpressionTypeKnown &&
@@ -12841,9 +12880,9 @@ namespace cs2.cpp {
                 lines.Add(">(reinterpret_cast<");
                 lines.Add(IsUnsignedIntegerLikeCppTypeName(cppType.TypeName) ? "uintptr_t" : "intptr_t");
                 lines.Add(">(");
-                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                ExpressionResult pointerOperandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
                 lines.Add("))");
-                return new ExpressionResult(true, VariablePath.Unknown, varType);
+                return new ExpressionResult(pointerOperandResult.Processed, VariablePath.Unknown, varType, pointerOperandResult.BeforeLines, pointerOperandResult.AfterLines);
             }
 
             bool requiresReinterpretCast = sourceExpressionTypeKnown &&
@@ -12853,10 +12892,10 @@ namespace cs2.cpp {
             lines.Add(requiresReinterpretCast ? "reinterpret_cast<" : "static_cast<");
             lines.Add(castTargetTypeName);
             lines.Add(">(");
-            ProcessExpression(semantic, context, castExpr.Expression, lines);
+            ExpressionResult operandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
             lines.Add(")");
 
-            return new ExpressionResult(true, VariablePath.Unknown, varType);
+            return new ExpressionResult(operandResult.Processed, VariablePath.Unknown, varType, operandResult.BeforeLines, operandResult.AfterLines);
         }
 
         static bool IsIntegerLikeCppTypeName(string cppTypeName) {
@@ -12922,22 +12961,50 @@ namespace cs2.cpp {
                 return;
             }
 
-            // Process the condition (before the ?)
-            int conditionStart = context.DepthClass;
-            ProcessExpression(semantic, context, conditional.Condition, lines);
-            context.PopClass(conditionStart);
+            AppendConditionalOperand(semantic, context, conditional.Condition, lines);
             lines.Add(" ? ");
-
-            // Process the true branch (after the ? and before the :)
-            int whenTrueStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenTrue), lines);
-            context.PopClass(whenTrueStart);
+            AppendConditionalOperand(semantic, context, conditional.WhenTrue, lines);
             lines.Add(" : ");
+            AppendConditionalOperand(semantic, context, conditional.WhenFalse, lines);
+        }
 
-            // Process the false branch (after the :)
-            int whenFalseStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(conditional.WhenFalse), lines);
-            context.PopClass(whenFalseStart);
+        /// <summary>
+        /// Keeps an operand's preparation and cleanup inside its evaluation so unselected ternary branches remain lazy.
+        /// </summary>
+        /// <param name="semantic">Semantic model attached to the source expression.</param>
+        /// <param name="context">Current function and type lowering scope.</param>
+        /// <param name="expression">Condition or branch expression, including explicit ref branches.</param>
+        /// <param name="lines">Output tokens receiving the complete operand expression.</param>
+        void AppendConditionalOperand(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> lines) {
+            List<string> expressionLines = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult result = ProcessExpression(semantic, context, UnwrapRefExpression(expression), expressionLines);
+            context.PopClass(start);
+            bool hasBeforeLines = result.BeforeLines != null && result.BeforeLines.Count > 0;
+            bool hasAfterLines = result.AfterLines != null && result.AfterLines.Count > 0;
+            if (!hasBeforeLines && !hasAfterLines) {
+                lines.AddRange(expressionLines);
+                return;
+            }
+
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> decltype(auto) {{\n");
+            if (hasBeforeLines) {
+                lines.AddRange(result.BeforeLines);
+            }
+            bool returnsReference = expression is RefExpressionSyntax;
+            if (hasAfterLines) {
+                string temporaryName = CreateTemporaryName("__conditional_result");
+                lines.Add(returnsReference ? $"auto& {temporaryName} = " : $"auto {temporaryName} = ");
+                lines.AddRange(expressionLines);
+                lines.Add(";\n");
+                lines.AddRange(result.AfterLines);
+                lines.Add(returnsReference ? $"return ({temporaryName});\n" : $"return {temporaryName};\n");
+            } else {
+                lines.Add(returnsReference ? "return (" : "return ");
+                lines.AddRange(expressionLines);
+                lines.Add(returnsReference ? ");\n" : ";\n");
+            }
+            lines.Add("})()");
         }
 
         bool TryProcessNullableConditionalExpression(
@@ -12963,9 +13030,7 @@ namespace cs2.cpp {
             VariableType convertedCppType = ConvertToCPPType(convertedSourceType, out convertedTypeData);
             string nullableTypeName = convertedCppType.ToCPPString(context.Program);
 
-            int conditionStart = context.DepthClass;
-            ProcessExpression(semantic, context, conditional.Condition, lines);
-            context.PopClass(conditionStart);
+            AppendConditionalOperand(semantic, context, conditional.Condition, lines);
             lines.Add(" ? ");
             AppendNullableConditionalBranch(semantic, context, conditional.WhenTrue, nullableTypeName, lines);
             lines.Add(" : ");
@@ -12986,9 +13051,7 @@ namespace cs2.cpp {
             }
 
             lines.Add($"{nullableTypeName}(");
-            int branchStart = context.DepthClass;
-            ProcessExpression(semantic, context, UnwrapRefExpression(branchExpression), lines);
-            context.PopClass(branchStart);
+            AppendConditionalOperand(semantic, context, branchExpression, lines);
             lines.Add(")");
         }
 
@@ -16306,7 +16369,7 @@ namespace cs2.cpp {
             for (int i = 0; i < declaration.Variables.Count; i++) {
                 var variable = declaration.Variables[i];
                 string name = variable.Identifier.ToString();
-                newLines.Add(name);
+                newLines.Add(CPPIdentifierSanitizer.SanitizeIdentifier(name));
 
                 ConversionFunctionVariableUsage usage = fnStack.Function.BodyVariables.FirstOrDefault(c => c.Name == name);
                 if ((usage != null && usage.Reassignment) ||
@@ -16329,6 +16392,7 @@ namespace cs2.cpp {
                 if (fn != null) {
                     var = new ConversionVariable();
                     var.Name = variable.Identifier.ToString();
+                    var.Remap = CPPIdentifierSanitizer.SanitizeIdentifier(var.Name);
                     var.VarType = varType;
                     fn.Stack.Add(var);
                 }
@@ -17571,12 +17635,16 @@ namespace cs2.cpp {
         /// <param name="context">Current lowering context.</param>
         /// <param name="arrayCreation">Array creation syntax being lowered.</param>
         /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
+        /// <param name="beforeLines">Setup statements collected from the array length.</param>
+        /// <param name="afterLines">Cleanup statements collected from the array length.</param>
         /// <returns><c>true</c> when the array creation was lowered as a native allocation; otherwise, <c>false</c>.</returns>
         bool TryProcessDynamicArrayCreation(
             SemanticModel semantic,
             LayerContext context,
             ArrayCreationExpressionSyntax arrayCreation,
-            List<string> lines) {
+            List<string> lines,
+            List<string> beforeLines,
+            List<string> afterLines) {
             if (arrayCreation.Type.RankSpecifiers.Count == 0) {
                 return false;
             }
@@ -17597,7 +17665,13 @@ namespace cs2.cpp {
             if (arrayCreation.Type.RankSpecifiers.Count == 1) {
                 string elementTypeName = GetCppTypeToken(elementType, context.Program);
                 lines.Add($"new Array<{elementTypeName}>(");
-                ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                ExpressionResult sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                if (sizeResult.BeforeLines != null) {
+                    beforeLines.AddRange(sizeResult.BeforeLines);
+                }
+                if (sizeResult.AfterLines != null) {
+                    afterLines.AddRange(sizeResult.AfterLines);
+                }
                 lines.Add(")");
                 return true;
             }
@@ -17611,7 +17685,13 @@ namespace cs2.cpp {
 
             string nestedElementTypeName = GetCppTypeToken(nestedElementType, context.Program);
             lines.Add($"new Array<{nestedElementTypeName}>(");
-            ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            ExpressionResult outerSizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            if (outerSizeResult.BeforeLines != null) {
+                beforeLines.AddRange(outerSizeResult.BeforeLines);
+            }
+            if (outerSizeResult.AfterLines != null) {
+                afterLines.AddRange(outerSizeResult.AfterLines);
+            }
             lines.Add(")");
             return true;
         }

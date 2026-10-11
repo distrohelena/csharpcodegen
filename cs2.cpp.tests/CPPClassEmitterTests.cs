@@ -138,9 +138,9 @@ public class CPPClassEmitterTests {
 
         (string header, string source) = Emit(emitter, conversionClass);
 
-        Assert.Contains("const std::string& get_DisplayName();", header);
+        Assert.Contains("std::string get_DisplayName();", header);
         Assert.Contains("void set_DisplayName(std::string value);", header);
-        Assert.Contains("const std::string& Profile::get_DisplayName()", source);
+        Assert.Contains("std::string Profile::get_DisplayName()", source);
         Assert.Contains("void Profile::set_DisplayName(std::string value)", source);
     }
 
@@ -307,8 +307,9 @@ public class CPPClassEmitterTests {
     /// </summary>
     /// <returns>The class emitter to exercise.</returns>
     private static CPPClassEmitter CreateEmitter() {
-        CPPConversiorProcessor processor = CppProcessorTestHarness.CreateProcessor();
-        CPPProgram program = new CPPProgram(new CPPConversionRules());
+        CPPCodeConverter converter = new CPPCodeConverter(new CPPConversionRules(), CPPConversionOptions.CreateDefault());
+        CPPConversiorProcessor processor = new CPPConversiorProcessor(converter);
+        CPPProgram program = (CPPProgram)((ICPPConversionHost)converter).Program;
         return new CPPClassEmitter(processor, program);
     }
 

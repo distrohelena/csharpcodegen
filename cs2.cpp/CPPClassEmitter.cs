@@ -3121,7 +3121,7 @@ namespace cs2.cpp {
                 if (variable.ArrowExpression != null && variable.GetBlock == null) {
                     WriteExpressionBodiedGetter(conversionClass, variable, headerWriter, sourceWriter);
                 } else {
-                    ConversionFunction getter = CreateGetter(variable);
+                    ConversionFunction getter = CreateGetter(conversionClass, variable);
                     WriteFunction(conversionClass, getter, headerWriter, sourceWriter);
                 }
             }
@@ -3154,7 +3154,7 @@ namespace cs2.cpp {
             // generated program can override it. No pure-virtual suffix is
             // emitted here: this path always writes a definition, which is the
             // correct lowering for an interface member that has a body.
-            string virtualKeyword = ShouldEmitVirtualKeyword(conversionClass, CreateGetter(variable))
+            string virtualKeyword = ShouldEmitVirtualKeyword(conversionClass, CreateGetter(conversionClass, variable))
                 ? "virtual "
                 : string.Empty;
             headerWriter.WriteLine($"    {virtualKeyword}{staticKeyword}{returnTypeName} get_{variable.Name}();");
@@ -3162,17 +3162,13 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{returnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
             sourceWriter.WriteLine("{");
-            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(conversionClass, variable));
 
             List<string> expressionLines = new List<string>();
             LayerContext context = new CPPLayerContext(program);
             int start = context.DepthClass;
             context.AddClass(conversionClass);
-            if (variable.IsStatic) {
-                context.AddFunction(new FunctionStack(new ConversionFunction {
-                    IsStatic = true
-                }));
-            }
+            context.AddFunction(new FunctionStack(CreateGetter(conversionClass, variable)));
 
             ExpressionResult expressionResult = processor.ProcessExpression(variableSemantic, context, variable.ArrowExpression, expressionLines);
             context.PopClass(start);
@@ -3180,7 +3176,19 @@ namespace cs2.cpp {
             if (!expressionResult.Processed) {
                 WriteUnsupportedFailure(sourceWriter, "Property getter could not be lowered.");
             } else {
-                sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
+                if (expressionResult.BeforeLines != null) {
+                    sourceWriter.WriteLine(string.Concat(expressionResult.BeforeLines));
+                }
+                if (expressionResult.AfterLines != null && expressionResult.AfterLines.Count > 0) {
+                    bool returnsReference = variable.ReturnsReference || variable.ReturnsConstReference ||
+                        ShouldEmitConstReferencePropertyGetter(conversionClass, variable);
+                    string reference = returnsReference ? "&" : string.Empty;
+                    sourceWriter.WriteLine($"auto{reference} __getter_result = {string.Concat(expressionLines)};");
+                    sourceWriter.WriteLine(string.Concat(expressionResult.AfterLines));
+                    sourceWriter.WriteLine("return __getter_result;");
+                } else {
+                    sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
+                }
             }
 
             sourceWriter.WriteLine("}");
@@ -3210,7 +3218,7 @@ namespace cs2.cpp {
                 WriteTemplateDeclaration(conversionClass, sourceWriter);
                 sourceWriter.WriteLine($"{getterReturnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
                 sourceWriter.WriteLine("{");
-                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
+                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(conversionClass, variable));
                 sourceWriter.WriteLine(variable.IsStatic
                     ? $"return {GetQualifiedClassName(conversionClass)}::{variable.Name};"
                     : $"return this->{variable.Name};");
@@ -3235,16 +3243,17 @@ namespace cs2.cpp {
         /// <summary>
         /// Creates a getter function model from a property definition.
         /// </summary>
+        /// <param name="conversionClass">Type owning the property and its native dispatch contract.</param>
         /// <param name="variable">The source property model.</param>
         /// <returns>A function model suitable for normal function emission.</returns>
-        ConversionFunction CreateGetter(ConversionVariable variable) {
+        ConversionFunction CreateGetter(ConversionClass conversionClass, ConversionVariable variable) {
             return new ConversionFunction {
                 Name = $"get_{variable.Name}",
                 AccessType = variable.AccessType,
                 DeclarationType = variable.DeclarationType,
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
-                ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(variable),
+                ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(conversionClass, variable),
                 ReturnsReference = variable.ReturnsReference,
                 Semantic = variable.Semantic,
                 SourceLocation = variable.SourceLocation,
@@ -3254,7 +3263,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Resolves the native return type for one generated property getter, preserving constant-reference semantics for strings.
+        /// Resolves the native getter return type, borrowing only stable string storage and preserving explicit ref returns.
         /// </summary>
         /// <param name="conversionClass">Owning class for the property getter.</param>
         /// <param name="variable">Property being emitted.</param>
@@ -3269,7 +3278,7 @@ namespace cs2.cpp {
                 return $"const {typeName}&";
             }
 
-            if (ShouldEmitConstReferencePropertyGetter(variable)) {
+            if (ShouldEmitConstReferencePropertyGetter(conversionClass, variable)) {
                 return $"const {typeName}&";
             }
 
@@ -3277,7 +3286,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Resolves the native return type for one generated property getter from raw type metadata, preserving constant-reference semantics for native strings.
+        /// Resolves a contract getter return type from raw type metadata; string results use value semantics.
         /// </summary>
         /// <param name="conversionClass">Owning class for the property getter.</param>
         /// <param name="variableType">Type metadata for the property being emitted.</param>
@@ -3304,24 +3313,22 @@ namespace cs2.cpp {
                 return $"const {typeName}&";
             }
 
-            if (ShouldEmitConstReferencePropertyGetter(variableType)) {
-                return $"const {typeName}&";
-            }
-
             return typeName;
         }
 
         /// <summary>
         /// Returns whether one generated property getter should expose a constant-reference native signature instead of copying the string value on every access.
         /// </summary>
+        /// <param name="conversionClass">Owning type used to verify storage lifetime and dispatch contracts.</param>
         /// <param name="variable">Property being emitted.</param>
         /// <returns><c>true</c> when the getter should return a constant string reference; otherwise, <c>false</c>.</returns>
-        bool ShouldEmitConstReferencePropertyGetter(ConversionVariable variable) {
+        bool ShouldEmitConstReferencePropertyGetter(ConversionClass conversionClass, ConversionVariable variable) {
             if (variable == null || !variable.IsGet) {
                 return false;
             }
 
-            return ShouldEmitConstReferencePropertyGetter(variable.VarType);
+            return ShouldEmitConstReferencePropertyGetter(variable.VarType) &&
+                CPPPropertyGetterStoragePolicy.CanBorrowStorage(conversionClass, variable);
         }
 
         /// <summary>
@@ -3681,7 +3688,7 @@ namespace cs2.cpp {
                 string parameterType = GetParameterType(parameter, conversionClass, function);
                 string parameterName = useLoweredValueTypeInParameterNames && IsValueTypeInParameter(parameter)
                     ? GetLoweredValueTypeInParameterName(index)
-                    : parameter.Name;
+                    : parameter.Remap ?? CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
 
                 writer.Write($"{parameterType} {parameterName}");
 
@@ -3705,7 +3712,8 @@ namespace cs2.cpp {
                 }
 
                 string parameterType = ConvertType(parameter.VarType, conversionClass, function);
-                writer.WriteLine($"{parameterType} {parameter.Name} = {GetLoweredValueTypeInParameterName(index)};");
+                string parameterName = parameter.Remap ?? CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
+                writer.WriteLine($"{parameterType} {parameterName} = {GetLoweredValueTypeInParameterName(index)};");
             }
         }
 

@@ -10410,7 +10410,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
 
-            Assert.Contains("auto& selected = useLeft ? this->left : this->right;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t& selected = useLeft ? this->left : this->right;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain(" ?  : ", sourceOutput, StringComparison.Ordinal);
         }
 
