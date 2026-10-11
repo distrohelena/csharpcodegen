@@ -4491,6 +4491,14 @@ namespace cs2.cpp {
                     useDirectMemberAccess = false;
                 }
 
+                if (memberSymbol is IEventSymbol interfaceEventSymbol &&
+                    interfaceEventSymbol.ContainingType.TypeKind == TypeKind.Interface &&
+                    !interfaceEventSymbol.IsStatic) {
+                    AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
+                    lines.Add($"{CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEventSymbol)}()");
+                    return new ExpressionResult(true, VariablePath.Unknown, new VariableType(VariableDataType.Object, "Event"));
+                }
+
                 IPropertySymbol resolvedPropertySymbol = memberSymbol as IPropertySymbol;
                 if (resolvedPropertySymbol == null &&
                     memberAccess.Name is IdentifierNameSyntax propertyIdentifier &&

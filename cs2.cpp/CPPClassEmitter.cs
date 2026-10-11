@@ -2064,6 +2064,13 @@ namespace cs2.cpp {
                     continue;
                 }
 
+                if (string.Equals(variable.VarType?.TypeName, "Event", StringComparison.Ordinal)) {
+                    IEventSymbol interfaceEvent = conversionClass.TypeSymbol.GetMembers(variable.Name).OfType<IEventSymbol>().Single();
+                    string accessorName = CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent);
+                    writers.Add(() => headerWriter.WriteLine($"    virtual ::Event& {accessorName}() = 0;"));
+                    continue;
+                }
+
                 writers.Add(() => WriteField(conversionClass, variable, headerWriter, sourceWriter));
             }
 
@@ -2168,6 +2175,7 @@ namespace cs2.cpp {
                 HashSet<string> plannedAccessorNames = BuildPlannedPropertyAccessorNames(conversionClass);
                 AddInterfacePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
                 AddBasePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
+                AddInterfaceEventBridgeWriters(conversionClass, writers, headerWriter);
             }
 
             if (writers.Count == 0) {
@@ -2214,6 +2222,33 @@ namespace cs2.cpp {
             }
 
             return function.AccessType;
+        }
+
+        /// <summary>
+        /// Forwards each interface event contract to its own concrete or inherited implementation storage.
+        /// </summary>
+        /// <param name="conversionClass">Generated class whose interface contracts are being emitted.</param>
+        /// <param name="writers">Pending public member emitters.</param>
+        /// <param name="headerWriter">Writer receiving the native forwarding accessors.</param>
+        void AddInterfaceEventBridgeWriters(ConversionClass conversionClass, List<Action> writers, TextWriter headerWriter) {
+            if (conversionClass.TypeSymbol is not INamedTypeSymbol typeSymbol) {
+                return;
+            }
+
+            HashSet<string> emittedNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
+                foreach (IEventSymbol interfaceEvent in interfaceSymbol.GetMembers().OfType<IEventSymbol>()) {
+                    if (interfaceEvent.IsStatic ||
+                        typeSymbol.FindImplementationForInterfaceMember(interfaceEvent) is not IEventSymbol implementationEvent ||
+                        !emittedNames.Add(CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent))) {
+                        continue;
+                    }
+
+                    string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationEvent.ContainingType);
+                    string accessorName = CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent);
+                    writers.Add(() => headerWriter.WriteLine($"    virtual ::Event& {accessorName}() {{ return {qualifier}{implementationEvent.Name}; }}"));
+                }
+            }
         }
 
         /// <summary>
