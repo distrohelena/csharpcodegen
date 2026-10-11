@@ -474,13 +474,54 @@ namespace cs2.ts {
 
             ConversionClass currentClass = context.GetCurrentClass();
             FunctionStack currentFn = context.GetCurrentFunction();
+            ConversionClass invocationOwnerClass = null;
+            if (invokedMethod?.ContainingType != null) {
+                invocationOwnerClass = tsProgram.Classes.FirstOrDefault(candidate =>
+                    candidate.TypeSymbol != null &&
+                    SymbolEqualityComparer.Default.Equals(candidate.TypeSymbol, invokedMethod.ContainingType));
+                if (invocationOwnerClass == null) {
+                    ConversionClass namedOwner = tsProgram.GetClassByName(invokedMethod.ContainingType.Name);
+                    if (namedOwner != null && namedOwner.TypeSymbol == null) {
+                        invocationOwnerClass = namedOwner;
+                    }
+                }
+            }
+            ConversionClass mappedInvocationOwnerClass = null;
+            if (invokedMethod?.ContainingType != null) {
+                VariableType ownerType = VariableUtil.GetVarType(invokedMethod.ContainingType);
+                string boxedOwnerName = TypeScriptTypeMap.GetTypeScriptBoxedTypeName(ownerType.TypeName);
+                ConversionClass mappedOwner = tsProgram.GetClassByName(boxedOwnerName) ?? GetClass(tsProgram, ownerType);
+                if (mappedOwner != null &&
+                    (mappedOwner.TypeSymbol == null ||
+                     SymbolEqualityComparer.Default.Equals(mappedOwner.TypeSymbol, invokedMethod.ContainingType))) {
+                    mappedInvocationOwnerClass = mappedOwner;
+                }
+            }
+            ConversionClass invocationReceiverClass = null;
+            if (invokedMethod != null &&
+                (!invokedMethod.IsStatic || invokedMethod.ReducedFrom != null) &&
+                identifier.Parent is MemberAccessExpressionSyntax invocationMemberAccess &&
+                invocationMemberAccess.Name == identifier) {
+                ITypeSymbol receiverType = semantic.GetTypeInfo(invocationMemberAccess.Expression).Type ??
+                    semantic.GetTypeInfo(invocationMemberAccess.Expression).ConvertedType;
+                if (receiverType != null) {
+                    invocationReceiverClass = GetClass(tsProgram, VariableUtil.GetVarType(receiverType));
+                }
+            }
+            bool invocationOwnerIsCurrentClass = currentClass != null &&
+                invokedMethod?.ContainingType != null &&
+                (currentClass.TypeSymbol != null &&
+                    SymbolEqualityComparer.Default.Equals(currentClass.TypeSymbol, invokedMethod.ContainingType) ||
+                 currentClass == invocationOwnerClass ||
+                 currentClass == mappedInvocationOwnerClass);
+            bool invocationOwnedOutsideCurrentClass = invokedMethod != null &&
+                currentClass != null &&
+                !invocationOwnerIsCurrentClass;
             bool forcedStaticPrefix = false;
             if (identifier.Parent is InvocationExpressionSyntax &&
                 invokedMethod != null &&
                 invokedMethod.IsStatic &&
-                currentClass != null &&
-                invokedMethod.ContainingType != null &&
-                invokedMethod.ContainingType.Name == currentClass.Name) {
+                invocationOwnerIsCurrentClass) {
                 lines.Add(currentClass.Name);
                 lines.Add(".");
                 forcedStaticPrefix = true;
@@ -550,10 +591,10 @@ namespace cs2.ts {
             // function from the current class
             ConversionFunction classFn = null;
             bool matchedInvocationSignature = false;
-            if (currentClass != null) {
+            if (currentClass != null && !invocationOwnedOutsideCurrentClass) {
                 classFn = currentClass.Functions.Find(c => c.Name == name);
             }
-            if (classFn == null && currentClass != null) {
+            if (classFn == null && currentClass != null && !invocationOwnedOutsideCurrentClass) {
                 // look at base classes
                 for (int i = 0; i < currentClass.Extensions.Count; i++) {
                     string extension = currentClass.Extensions[i];
@@ -567,42 +608,42 @@ namespace cs2.ts {
                     }
                 }
             }
-
-            if (invokedMethod != null) {
-                ConversionClass methodClass = currentClass;
-                if (invokedMethod.ContainingType != null &&
-                    (methodClass == null || methodClass.Name != invokedMethod.ContainingType.Name)) {
-                    methodClass = tsProgram.GetClassByName(invokedMethod.ContainingType.Name);
+            if (invokedMethod != null && invokedMethod.Parameters != null) {
+                List<VariableType> paramTypes = invokedMethod.Parameters
+                    .Select(parameter => VariableUtil.GetVarType(parameter.Type))
+                    .ToList();
+                string runtimeMethodName = StringUtil.ToCamelCase(invokedMethod.Name);
+                List<ConversionClass> methodClasses = new List<ConversionClass>();
+                ConversionClass declaringMethodClass = invocationOwnerIsCurrentClass ? currentClass : invocationOwnerClass;
+                if (declaringMethodClass != null) {
+                    methodClasses.Add(declaringMethodClass);
+                }
+                if (mappedInvocationOwnerClass != null && !methodClasses.Contains(mappedInvocationOwnerClass)) {
+                    methodClasses.Add(mappedInvocationOwnerClass);
+                }
+                if (invocationReceiverClass != null && !methodClasses.Contains(invocationReceiverClass)) {
+                    methodClasses.Add(invocationReceiverClass);
                 }
 
-                if (methodClass != null &&
-                    invokedMethod.Parameters != null &&
-                    invokedMethod.Parameters.Length >= 0) {
+                foreach (ConversionClass methodClass in methodClasses) {
                     var candidates = methodClass.Functions
-                        .Where(c => c.Name == invokedMethod.Name &&
-                            c.InParameters != null &&
-                            c.InParameters.Count == invokedMethod.Parameters.Length)
+                         .Where(c => (c.Name == invokedMethod.Name || c.Name == runtimeMethodName) &&
+                            (c.InParameters == null || c.InParameters.Count == 0 || c.InParameters.Count == invokedMethod.Parameters.Length))
                         .ToList();
-                    if (candidates.Count > 0) {
-                        List<VariableType> paramTypes = new List<VariableType>();
-                        foreach (var parameter in invokedMethod.Parameters) {
-                            paramTypes.Add(VariableUtil.GetVarType(parameter.Type));
-                        }
+                    ConversionFunction match = candidates.FirstOrDefault(c => c.InParameters != null && c.InParameters.Count > 0 && MethodParameterTypesMatch(c.InParameters, paramTypes));
+                    if (match == null && candidates.Count == 1) {
+                        match = candidates[0];
+                    }
 
-                        ConversionFunction match = candidates.FirstOrDefault(c => MethodParameterTypesMatch(c.InParameters, paramTypes));
-                        if (match == null && candidates.Count == 1) {
-                            match = candidates[0];
-                        }
-
-                        if (match != null) {
-                            classFn = match;
-                            matchedInvocationSignature = true;
-                            currentClass = methodClass;
-                        }
+                    if (match != null) {
+                        classFn = match;
+                        name = match.Name;
+                        matchedInvocationSignature = true;
+                        currentClass = methodClass;
+                        break;
                     }
                 }
             }
-
             if (!isMethodGroup &&
                 !isInvocation &&
                 classFn != null &&
@@ -630,7 +671,7 @@ namespace cs2.ts {
             }
 
             // here: dynamic system for typed functions. Like BinaryWriter writeByte, writeInt
-            if (currentClass != null && classFn == null && isMethod) {
+            if (currentClass != null && classFn == null && isMethod && !invocationOwnedOutsideCurrentClass) {
                 // search for closest version
                 string lowercase = name.ToLowerInvariant();
                 string searchName = lowercase;
@@ -2097,7 +2138,7 @@ namespace cs2.ts {
                 paramTypes.Add(VariableUtil.GetVarType(parameter.Type));
             }
 
-            ConversionFunction match = candidates.FirstOrDefault(c => MethodParameterTypesMatch(c.InParameters, paramTypes));
+            ConversionFunction match = candidates.FirstOrDefault(c => c.InParameters != null && c.InParameters.Count > 0 && MethodParameterTypesMatch(c.InParameters, paramTypes));
             if (match == null && candidates.Count == 1) {
                 match = candidates[0];
             }
