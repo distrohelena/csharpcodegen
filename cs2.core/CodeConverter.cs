@@ -20,6 +20,13 @@ namespace cs2.core {
         /// </summary>
         readonly List<string> workspaceFailures = new List<string>();
 
+        /// <summary>
+        /// When true, a loaded project that does not compile fails the conversion instead of being converted with
+        /// partially bound symbols. Off by default: test fixtures and partial projects are converted as before; the
+        /// webhub runtime converter turns it on because an unbound identifier there breaks every browser session.
+        /// </summary>
+        public bool RequireCleanCompilation { get; set; }
+
         protected abstract string[] PreProcessorSymbols { get; }
 
         public CodeConverter(ConversionRules rules) {
@@ -45,7 +52,9 @@ namespace cs2.core {
             workspaceFailures.Clear();
             project = AsyncUtil.RunSync(() => workspace.OpenProjectAsync(csprojPath));
             ThrowOnWorkspaceFailures(csprojPath);
-            ThrowOnCompilationErrors(project);
+            if (RequireCleanCompilation) {
+                ThrowOnCompilationErrors(project);
+            }
             OnProjectOpened();
 
             ConversionSession session = new ConversionSession(project, workspace, program, context, rules, this);
