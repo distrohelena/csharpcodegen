@@ -1291,8 +1291,7 @@ namespace cs2.cpp {
                     return false;
                 }
 
-                return !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
-                    !IsSupportedCheckedAdditionExpression(semantic, binaryExpression);
+                return !IsSupportedCheckedBinaryExpression(semantic, binaryExpression);
             }
 
             if (node is AssignmentExpressionSyntax assignmentExpression &&
@@ -1390,15 +1389,15 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Determines whether checked binary addition uses one exact fixed-width integral type for both operands and the result.
+        /// Determines whether Roslyn promotes both checked binary operands to one supported integral result type.
         /// </summary>
         /// <param name="semantic">Semantic model used to resolve converted operand types.</param>
-        /// <param name="binaryExpression">Addition expression to classify.</param>
-        /// <returns><c>true</c> when the expression can use the native checked-add helper; otherwise <c>false</c>.</returns>
-        static bool IsSupportedCheckedAdditionExpression(SemanticModel semantic, BinaryExpressionSyntax binaryExpression) {
+        /// <param name="binaryExpression">Arithmetic expression to classify.</param>
+        /// <returns><c>true</c> when the converted operands can use an exact-width checked helper.</returns>
+        static bool IsSupportedCheckedBinaryExpression(SemanticModel semantic, BinaryExpressionSyntax binaryExpression) {
             ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
-            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).Type;
-            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).Type;
+            ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binaryExpression.Left).ConvertedType;
+            ITypeSymbol rightTypeSymbol = semantic.GetTypeInfo(binaryExpression.Right).ConvertedType;
             return IsSupportedCheckedMutationType(resultTypeSymbol) &&
                 leftTypeSymbol != null &&
                 rightTypeSymbol != null &&
@@ -9701,9 +9700,12 @@ namespace cs2.cpp {
             resultType = VariableUtil.GetVarType("string");
 
             if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
-                !string.Equals(memberAccess.Name.Identifier.Text, "ToString", StringComparison.Ordinal) ||
-                invocationExpression.ArgumentList.Arguments.Count != 0) {
+                !string.Equals(memberAccess.Name.Identifier.Text, "ToString", StringComparison.Ordinal)) {
                 return false;
+            }
+
+            if (invocationExpression.ArgumentList.Arguments.Count != 0) {
+                return TryProcessInvariantNumericToStringInvocation(semantic, context, invocationExpression, memberAccess, lines);
             }
 
             if (TryResolvePathSeparatorToStringInvocation(memberAccess.Expression, out string pathSeparatorMemberName)) {
@@ -10346,7 +10348,7 @@ namespace cs2.cpp {
                 return ProcessAsTypeExpression(semantic, context, binary, lines);
             }
 
-            if (TryProcessCheckedAdditionExpression(semantic, context, binary, lines, out ExpressionResult checkedAdditionResult)) {
+            if (TryProcessCheckedBinaryExpression(semantic, context, binary, lines, out ExpressionResult checkedAdditionResult)) {
                 return checkedAdditionResult;
             }
 
@@ -12570,15 +12572,15 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Lowers supported checked integral addition through the native overflow-preserving helper.
+        /// Lowers checked integral binary arithmetic through overflow-preserving helpers with Roslyn operand promotion and left-to-right evaluation.
         /// </summary>
-        /// <param name="semantic">Semantic model associated with the addition.</param>
+        /// <param name="semantic">Semantic model associated with the arithmetic.</param>
         /// <param name="context">Current lowering context.</param>
-        /// <param name="binaryExpression">Candidate binary addition.</param>
+        /// <param name="binaryExpression">Candidate binary arithmetic.</param>
         /// <param name="lines">Output token buffer receiving the helper call.</param>
         /// <param name="result">Receives the processed expression result when supported.</param>
         /// <returns><c>true</c> when a checked helper call was emitted; otherwise <c>false</c>.</returns>
-        bool TryProcessCheckedAdditionExpression(
+        bool TryProcessCheckedBinaryExpression(
             SemanticModel semantic,
             LayerContext context,
             BinaryExpressionSyntax binaryExpression,
@@ -12587,8 +12589,11 @@ namespace cs2.cpp {
             result = new ExpressionResult(false);
             if (context is not CPPLayerContext cppContext ||
                 !cppContext.IsCheckedArithmetic ||
-                !binaryExpression.IsKind(SyntaxKind.AddExpression) ||
-                !IsSupportedCheckedAdditionExpression(semantic, binaryExpression)) {
+                !(binaryExpression.IsKind(SyntaxKind.AddExpression) ||
+                  binaryExpression.IsKind(SyntaxKind.SubtractExpression) ||
+                  binaryExpression.IsKind(SyntaxKind.MultiplyExpression) ||
+                  binaryExpression.IsKind(SyntaxKind.DivideExpression)) ||
+                !IsSupportedCheckedBinaryExpression(semantic, binaryExpression)) {
                 return false;
             }
 
@@ -12605,6 +12610,20 @@ namespace cs2.cpp {
             ExpressionResult rightResult = ProcessExpression(semantic, context, binaryExpression.Right, rightLines);
             context.PopClass(startDepth);
 
+            ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binaryExpression).Type;
+            PromoteCheckedBinaryOperand(semantic, context, binaryExpression.Left, resultTypeSymbol, leftLines);
+            PromoteCheckedBinaryOperand(semantic, context, binaryExpression.Right, resultTypeSymbol, rightLines);
+            string helperName = binaryExpression.Kind() switch {
+                SyntaxKind.SubtractExpression => "CheckedSubtract",
+                SyntaxKind.MultiplyExpression => "CheckedMultiply",
+                SyntaxKind.DivideExpression => "CheckedDivide",
+                _ => "CheckedAdd"
+            };
+            if (!binaryExpression.IsKind(SyntaxKind.AddExpression)) {
+                VariableType nativeResultType = ConvertToCPPType(VariableUtil.GetVarType(resultTypeSymbol), out _);
+                helperName += $"<{nativeResultType.ToCPPString(context.Program)}>";
+            }
+
             bool canInlineOperands = CanInlineCheckedAdditionOperand(semantic, binaryExpression.Left) &&
                 CanInlineCheckedAdditionOperand(semantic, binaryExpression.Right) &&
                 (leftResult.BeforeLines == null || leftResult.BeforeLines.Count == 0) &&
@@ -12612,7 +12631,7 @@ namespace cs2.cpp {
                 (leftResult.AfterLines == null || leftResult.AfterLines.Count == 0) &&
                 (rightResult.AfterLines == null || rightResult.AfterLines.Count == 0);
             if (canInlineOperands) {
-                lines.Add("Number::CheckedAdd(");
+                lines.Add($"Number::{helperName}(");
                 lines.AddRange(leftLines);
                 lines.Add(", ");
                 lines.AddRange(rightLines);
@@ -12640,7 +12659,7 @@ namespace cs2.cpp {
             beforeLines.AddRange(rightLines);
             beforeLines.Add(";\n");
 
-            lines.Add("Number::CheckedAdd(");
+            lines.Add($"Number::{helperName}(");
             lines.Add(leftTemporaryName);
             lines.Add(", ");
             lines.Add(rightTemporaryName);
@@ -13332,6 +13351,68 @@ namespace cs2.cpp {
             return true;
         }
 
+        /// <summary>Normalizes the exact invariant numeric overloads used by native benchmarks without accepting locale providers or unsupported formats.</summary>
+        /// <param name="semantic">Original semantic model used to verify primitive and framework identities.</param>
+        /// <param name="context">Current expression context that retains receiver evaluation effects.</param>
+        /// <param name="invocation">Numeric ToString invocation with one provider or a constant format and provider.</param>
+        /// <param name="memberAccess">Receiver and method access from the original syntax tree.</param>
+        /// <param name="lines">Destination native expression tokens.</param>
+        /// <returns>True when a numeric overload was lowered or explicitly diagnosed; false for unrelated methods.</returns>
+        bool TryProcessInvariantNumericToStringInvocation(SemanticModel semantic, LayerContext context, InvocationExpressionSyntax invocation, MemberAccessExpressionSyntax memberAccess, List<string> lines) {
+            IMethodSymbol method = ResolveInvokedMethodSymbol(semantic, invocation);
+            ITypeSymbol receiverType = ResolveNativeToStringReceiverType(semantic, memberAccess.Expression, method);
+            if (!IsNativeToStringTypeSymbol(receiverType) || receiverType.SpecialType == SpecialType.System_Boolean) {
+                return false;
+            }
+
+            SeparatedSyntaxList<ArgumentSyntax> arguments = invocation.ArgumentList.Arguments;
+            ExpressionSyntax provider = arguments[arguments.Count - 1].Expression;
+            ISymbol providerSymbol = semantic.GetSymbolInfo(provider).Symbol;
+            bool invariantProvider = providerSymbol is IPropertySymbol property && property.IsStatic &&
+                property.Name == "InvariantCulture" &&
+                IsFrameworkTypeSymbol(semantic.Compilation, property.ContainingType, "System.Globalization.CultureInfo");
+            string format = arguments.Count == 2 && semantic.GetConstantValue(arguments[0].Expression) is { HasValue: true, Value: string text }
+                ? text : string.Empty;
+            bool floating = IsFloatingPointTypeSymbol(receiverType);
+            bool supportedFormat = arguments.Count == 1 ||
+                (arguments.Count == 2 && (format == "F0" || format == "F1" || (!floating && format == "D6")));
+            if (!invariantProvider || !supportedFormat || arguments.Any(argument => argument.NameColon != null)) {
+                ReportUnsupportedNode(context, invocation, "Native numeric ToString supports only exact CultureInfo.InvariantCulture provider-only overloads and constant D6 (integral), F0 or F1 formats.");
+                lines.Add($"{GetNativeStringTypeName()}()");
+                return true;
+            }
+
+            List<string> receiverLines = new List<string>();
+            int depth = context.DepthClass;
+            ExpressionResult receiverResult = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            RegisterRuntimeRequirement("NativeString");
+            string helper = arguments.Count == 1 ? "ToJoinString" : format == "D6" ? "ToInvariantDecimal6" : "ToInvariantFixed";
+            string precision = helper == "ToInvariantFixed" ? format == "F1" ? ", 1" : ", 0" : string.Empty;
+            lines.AddRange(receiverResult.BeforeLines ?? new List<string>());
+            lines.Add($"String::{helper}({string.Concat(receiverLines)}{precision})");
+            lines.AddRange(receiverResult.AfterLines ?? new List<string>());
+            return true;
+        }
+
+        /// <summary>
+        /// Applies C# binary numeric promotion before helper template deduction without reevaluating an operand.
+        /// </summary>
+        /// <param name="semantic">Semantic model providing the operand's original type.</param>
+        /// <param name="context">Current context used to render the native result type.</param>
+        /// <param name="operand">Operand whose implicit numeric promotion must be emitted.</param>
+        /// <param name="resultTypeSymbol">Integral result type chosen by Roslyn.</param>
+        /// <param name="operandLines">Emitted operand tokens to wrap in the required native conversion.</param>
+        void PromoteCheckedBinaryOperand(SemanticModel semantic, LayerContext context, ExpressionSyntax operand, ITypeSymbol resultTypeSymbol, List<string> operandLines) {
+            ITypeSymbol operandTypeSymbol = semantic.GetTypeInfo(operand).Type;
+            if (operandTypeSymbol != null && operandTypeSymbol.SpecialType == resultTypeSymbol.SpecialType) {
+                return;
+            }
+            VariableType nativeType = ConvertToCPPType(VariableUtil.GetVarType(resultTypeSymbol), out _);
+            operandLines.Insert(0, $"static_cast<{nativeType.ToCPPString(context.Program)}>(");
+            operandLines.Add(")");
+        }
+
         /// <summary>
         /// Keeps operand preparation and cleanup inside a self-contained expression so only the selected conditional branch executes its statements.
         /// </summary>
@@ -13714,7 +13795,7 @@ namespace cs2.cpp {
 
         protected override void ProcessTryStatement(SemanticModel semantic, LayerContext context, TryStatementSyntax tryStatement, List<string> lines) {
             bool hasCatchClauses = tryStatement.Catches.Count > 0;
-            if (hasCatchClauses && !UsesExceptions()) {
+            if (hasCatchClauses && !UsesExceptions() && !IsFatalOnlyOwnershipCleanupCatch(semantic, tryStatement)) {
                 ReportRuntimeCapabilityViolation(
                     context,
                     tryStatement,
@@ -13762,6 +13843,53 @@ namespace cs2.cpp {
                 ProcessStatement(semantic, context, catchClause.Block, lines);
                 lines.Add("}\n");
             }
+        }
+
+        /// <summary>
+        /// Recognizes catch-all handlers that only release local ownership and immediately rethrow.
+        /// Fatal-only runtimes abort without unwinding, so these handlers cannot run and require no recovery support.
+        /// Typed catches, filters, side-effecting arguments and all other catch statements remain unsupported.
+        /// </summary>
+        /// <param name="semantic">Semantic model resolving the actual ownership intrinsic and argument symbols.</param>
+        /// <param name="tryStatement">Try statement whose catch must not contain recovery behavior.</param>
+        /// <returns><c>true</c> only for one validated ownership-cleanup handler followed by a bare rethrow.</returns>
+        static bool IsFatalOnlyOwnershipCleanupCatch(SemanticModel semantic, TryStatementSyntax tryStatement) {
+            if (tryStatement.Catches.Count != 1) {
+                return false;
+            }
+            CatchClauseSyntax catchClause = tryStatement.Catches[0];
+            if (catchClause.Declaration != null || catchClause.Filter != null || catchClause.Block.Statements.Count < 2
+                || catchClause.Block.Statements.Last() is not ThrowStatementSyntax rethrow || rethrow.Expression != null) {
+                return false;
+            }
+            INamedTypeSymbol ownershipType = semantic.Compilation.GetTypeByMetadataName("helengine.NativeOwnership");
+            if (ownershipType == null) {
+                return false;
+            }
+            for (int index = 0; index < catchClause.Block.Statements.Count - 1; index++) {
+                if (catchClause.Block.Statements[index] is not ExpressionStatementSyntax expressionStatement
+                    || expressionStatement.Expression is not InvocationExpressionSyntax invocation
+                    || invocation.ArgumentList.Arguments.Count != 1) {
+                    return false;
+                }
+                IMethodSymbol method = semantic.GetSymbolInfo(invocation).Symbol as IMethodSymbol;
+                if (method == null || !method.IsStatic || !method.ReturnsVoid || method.Arity != 1
+                    || !SymbolEqualityComparer.Default.Equals(method.ContainingType, ownershipType)
+                    || (method.Name != "Release" && method.Name != "DisposeAndRelease")
+                    || method.Parameters.Length != 1 || method.Parameters[0].RefKind != RefKind.Ref
+                    || method.OriginalDefinition.Parameters[0].Type is not ITypeParameterSymbol) {
+                    return false;
+                }
+                ArgumentSyntax argument = invocation.ArgumentList.Arguments[0];
+                if (!argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword) || argument.Expression is not IdentifierNameSyntax) {
+                    return false;
+                }
+                ISymbol target = semantic.GetSymbolInfo(argument.Expression).Symbol;
+                if (target is not ILocalSymbol && target is not IParameterSymbol) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         protected override void ProcessForEachStatement(SemanticModel semantic, LayerContext context, ForEachStatementSyntax forEachStatement, List<string> lines) {

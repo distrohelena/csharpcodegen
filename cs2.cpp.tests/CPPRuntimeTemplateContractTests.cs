@@ -114,7 +114,7 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.DoesNotContain("runtime/native_datetime.hpp", source, StringComparison.Ordinal);
         Assert.Contains("runtime/native_timespan.hpp", source, StringComparison.Ordinal);
         Assert.Contains("std::chrono::steady_clock", source, StringComparison.Ordinal);
-        Assert.Contains("#if defined(__gamecube__)", source, StringComparison.Ordinal);
+        Assert.Contains("#elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)", source, StringComparison.Ordinal);
         Assert.Contains("#include <ogc/lwp_watchdog.h>", source, StringComparison.Ordinal);
         Assert.Contains("gettime()", source, StringComparison.Ordinal);
         Assert.Contains("ticks_to_millisecs", source, StringComparison.Ordinal);

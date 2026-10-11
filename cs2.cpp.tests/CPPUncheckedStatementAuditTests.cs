@@ -69,12 +69,13 @@ namespace cs2.cpp.tests {
         /// Ensures unsupported checked arithmetic remains an explicit conversion error instead of silently using ordinary C++ overflow behavior.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithUnsupportedCheckedSubtraction_ReportsCheckedArithmeticDiagnostic() {
+        public void WriteOutput_WithUnsupportedCheckedSubtractAssignment_ReportsCheckedArithmeticDiagnostic() {
             string source = """
                 public class Counter {
                     public int Add(int value, int increment) {
                         checked {
-                            return value - increment;
+                            value -= increment;
+                            return value;
                         }
                     }
                 }
@@ -83,7 +84,7 @@ namespace cs2.cpp.tests {
             RunConversion(source, out JsonDocument report);
 
             Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            AssertDiagnostic(report, "SubtractExpression");
+            AssertDiagnostic(report, "SubtractAssignmentExpression");
         }
 
         /// <summary>
@@ -403,10 +404,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures mixed-width checked addition remains an explicit diagnostic until operand promotion is emitted deliberately.
+        /// Ensures mixed-width checked addition emits the C# integral promotion before calling the native helper.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithMixedWidthCheckedAddition_ReportsCheckedArithmeticDiagnostic() {
+        public void WriteOutput_WithMixedWidthCheckedAddition_PromotesBeforeCheckedHelper() {
             string source = """
                 public class Counter {
                     public long Add(long left, int right) {
@@ -415,10 +416,9 @@ namespace cs2.cpp.tests {
                 }
                 """;
 
-            RunConversion(source, out JsonDocument report);
-
-            Assert.True(report.RootElement.GetProperty("hasErrors").GetBoolean());
-            AssertDiagnostic(report, "AddExpression");
+            string output = RunConversion(source, out JsonDocument report);
+            Assert.False(report.RootElement.GetProperty("hasErrors").GetBoolean());
+            Assert.Contains("Number::CheckedAdd(left, static_cast<int64_t>(right))", output);
         }
 
         /// <summary>

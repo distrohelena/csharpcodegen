@@ -3,9 +3,11 @@
 #include <cstdint>
 #include "runtime/native_runtime.hpp"
 
+// Wii profiles identify themselves through generated configuration, without
+// defining __gamecube__. Both libogc targets must use the native timebase.
 #if !HE_CPP_USE_STD_CHRONO
 // The provider exposes monotonic microseconds, independent of its timer hardware.
-#elif defined(__gamecube__)
+#elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
 #include <ogc/lwp_watchdog.h>
 #else
 #include <chrono>
@@ -23,7 +25,7 @@ class Stopwatch {
 public:
 #if !HE_CPP_USE_STD_CHRONO
     using TickTimestamp = std::uint64_t;
-#elif defined(__gamecube__)
+#elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
     using TickTimestamp = std::uint64_t;
 #else
     using TickClock = std::chrono::steady_clock;
@@ -167,7 +169,7 @@ private:
     static TickTimestamp CaptureCurrentTimestamp() {
 #if !HE_CPP_USE_STD_CHRONO
         return he_cpp_custom::MonotonicMicroseconds();
-#elif defined(__gamecube__)
+#elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return static_cast<TickTimestamp>(gettime());
 #else
         return TickClock::now();
@@ -182,7 +184,7 @@ private:
     static double ComputeElapsedMilliseconds(TickTimestamp startTimestamp) {
 #if !HE_CPP_USE_STD_CHRONO
         return static_cast<double>(he_cpp_custom::MonotonicMicroseconds() - startTimestamp) / 1000.0;
-#elif defined(__gamecube__)
+#elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return ticks_to_millisecs(gettime() - startTimestamp);
 #else
         const TickClock::duration duration = TickClock::now() - startTimestamp;

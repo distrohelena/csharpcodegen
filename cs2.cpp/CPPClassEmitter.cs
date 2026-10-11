@@ -118,6 +118,20 @@ namespace cs2.cpp {
 
             foreach (string extension in conversionClass.Extensions.Distinct(StringComparer.Ordinal)) {
                 string normalizedExtension = NormalizeReferencedClassName(NormalizeIncludeCandidateTypeName(extension));
+                if (conversionClass.TypeSymbol is INamedTypeSymbol exceptionType &&
+                    IsNativeRuntimeExceptionBase(exceptionType.BaseType) &&
+                    string.Equals(exceptionType.BaseType.Name, normalizedExtension, StringComparison.Ordinal)) {
+                    // The semantic dependency below retains the framework identity required by the native exception runtime.
+                    continue;
+                }
+                if (conversionClass.TypeSymbol is INamedTypeSymbol declaredType && !declaredType.IsValueType &&
+                    ((declaredType.BaseType?.Arity > 0 &&
+                      string.Equals(declaredType.BaseType.Name, normalizedExtension, StringComparison.Ordinal)) ||
+                     declaredType.AllInterfaces.Any(interfaceType => interfaceType.Arity > 0 &&
+                         string.Equals(interfaceType.Name, normalizedExtension, StringComparison.Ordinal)))) {
+                    // Semantic inheritance below retains the generic arity lost by the legacy Extensions list.
+                    continue;
+                }
                 if (!excludedTypeNames.Contains(extension) &&
                     !excludedTypeNames.Contains(normalizedExtension)) {
                     referencedTypes.Add(extension);
@@ -1245,10 +1259,11 @@ namespace cs2.cpp {
 
             if (string.Equals(referencedClass, "IEquatable", StringComparison.Ordinal) ||
                 string.Equals(referencedClass, "System.IEquatable", StringComparison.Ordinal) ||
-                string.Equals(normalizedReferencedClass, "IEquatable", StringComparison.Ordinal)) {
+                string.Equals(normalizedReferencedClass, "IEquatable", StringComparison.Ordinal) ||
+                string.Equals(referencedTypeName, "IEquatable", StringComparison.Ordinal)) {
                 if (processor != null) {
                     CPPTypeData runtimeTypeData;
-                    processor.ConvertToCPPType(VariableUtil.GetVarType(normalizedReferencedClass), out runtimeTypeData);
+                    processor.ConvertToCPPType(referencedType, out runtimeTypeData);
                 }
 
                 return "runtime/native_equatable";
@@ -2207,10 +2222,34 @@ namespace cs2.cpp {
             }
 
             if (!typeSymbol.IsValueType) {
-                foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
+                IEnumerable<INamedTypeSymbol> interfaceTypes = HasNativeRuntimeExceptionBase(typeSymbol)
+                    ? typeSymbol.Interfaces
+                    : typeSymbol.AllInterfaces;
+                foreach (INamedTypeSymbol interfaceSymbol in interfaceTypes) {
                     AddInheritanceTypeReference(interfaceSymbol, referencedTypes, includeRequiredTypes, excludedTypeNames);
                 }
             }
+        }
+
+        /// <summary>Identifies framework exception bases supplied by the native runtime rather than a generated managed class.</summary>
+        /// <param name="typeSymbol">Semantic base type whose inherited framework interfaces must not become native dependencies.</param>
+        /// <returns>True only for an exact supported framework exception with no generated replacement.</returns>
+        bool IsNativeRuntimeExceptionBase(INamedTypeSymbol typeSymbol) {
+            return typeSymbol != null &&
+                IsNativeExceptionQualifiedTypeName(typeSymbol.ToDisplayString()) &&
+                program.FindGeneratedClass(typeSymbol) == null;
+        }
+
+        /// <summary>Recognizes generated exception descendants whose inherited framework-only interfaces are already represented by a native base.</summary>
+        /// <param name="typeSymbol">Declared type whose complete base chain is inspected without changing its generated inheritance.</param>
+        /// <returns>True when any ancestor is an exact framework exception supplied by the native runtime.</returns>
+        bool HasNativeRuntimeExceptionBase(INamedTypeSymbol typeSymbol) {
+            for (INamedTypeSymbol baseType = typeSymbol.BaseType; baseType != null; baseType = baseType.BaseType) {
+                if (IsNativeRuntimeExceptionBase(baseType)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         void AddInheritanceTypeReference(
@@ -2219,7 +2258,7 @@ namespace cs2.cpp {
             HashSet<string> includeRequiredTypes,
             HashSet<string> excludedTypeNames) {
             string typeName = program.FindGeneratedClass(typeSymbol)?.GetEmittedTypeName()
-                ?? NormalizeReferencedClassName(typeSymbol.Name);
+                ?? GetReferencedTypeName(VariableUtil.GetVarType(typeSymbol));
             if (!excludedTypeNames.Contains(typeName)) {
                 referencedTypes.Add(typeName);
                 includeRequiredTypes.Add(typeName);

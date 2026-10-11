@@ -301,6 +301,77 @@ public:
     }
 
     /// <summary>
+    /// Applies managed checked subtraction only after proving the signed or unsigned result is representable.
+    /// </summary>
+    /// <typeparam name="T">Promoted integral type shared by the operands and result.</typeparam>
+    /// <param name="left">Minuend evaluated by the generated caller.</param>
+    /// <param name="right">Subtrahend evaluated by the generated caller.</param>
+    /// <returns>The representable difference.</returns>
+    template <typename T>
+    static T CheckedSubtract(const T& left, const T& right) {
+        if constexpr (std::is_unsigned_v<T>) {
+            if (left < right) {
+                RaiseOverflow();
+            }
+        } else {
+            if ((right > static_cast<T>(0) && left < std::numeric_limits<T>::lowest() + right) ||
+                (right < static_cast<T>(0) && left > std::numeric_limits<T>::max() + right)) {
+                RaiseOverflow();
+            }
+        }
+        return static_cast<T>(left - right);
+    }
+
+    /// <summary>
+    /// Validates integral multiplication using division bounds before executing an operation that could overflow.
+    /// </summary>
+    /// <typeparam name="T">Promoted integral type shared by the operands and result.</typeparam>
+    /// <param name="left">First factor evaluated by the generated caller.</param>
+    /// <param name="right">Second factor evaluated by the generated caller.</param>
+    /// <returns>The representable product.</returns>
+    template <typename T>
+    static T CheckedMultiply(const T& left, const T& right) {
+        if constexpr (std::is_unsigned_v<T>) {
+            if (right != static_cast<T>(0) && left > std::numeric_limits<T>::max() / right) {
+                RaiseOverflow();
+            }
+        } else {
+            if (left > static_cast<T>(0)) {
+                if ((right > static_cast<T>(0) && left > std::numeric_limits<T>::max() / right) ||
+                    (right < static_cast<T>(0) && right < std::numeric_limits<T>::lowest() / left)) {
+                    RaiseOverflow();
+                }
+            } else if (left < static_cast<T>(0)) {
+                if ((right > static_cast<T>(0) && left < std::numeric_limits<T>::lowest() / right) ||
+                    (right < static_cast<T>(0) && left < std::numeric_limits<T>::max() / right)) {
+                    RaiseOverflow();
+                }
+            }
+        }
+        return static_cast<T>(left * right);
+    }
+
+    /// <summary>
+    /// Preserves managed division-by-zero and signed minimum divided by minus one failures before native division.
+    /// </summary>
+    /// <typeparam name="T">Promoted integral type shared by the operands and result.</typeparam>
+    /// <param name="left">Dividend evaluated by the generated caller.</param>
+    /// <param name="right">Divisor evaluated by the generated caller.</param>
+    /// <returns>The truncated representable quotient.</returns>
+    template <typename T>
+    static T CheckedDivide(const T& left, const T& right) {
+        if (right == static_cast<T>(0)) {
+            he_cpp_raise(DivideByZeroException());
+        }
+        if constexpr (std::is_signed_v<T>) {
+            if (left == std::numeric_limits<T>::lowest() && right == static_cast<T>(-1)) {
+                RaiseOverflow();
+            }
+        }
+        return static_cast<T>(left / right);
+    }
+
+    /// <summary>
     /// Applies a managed checked conversion between fixed-width integral types.
     /// </summary>
     /// <typeparam name="TTarget">Integral destination type.</typeparam>
