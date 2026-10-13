@@ -1768,7 +1768,9 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The enum type to emit.</param>
         /// <param name="headerWriter">Writer that receives the enum declaration.</param>
         void WriteEnum(ConversionClass conversionClass, TextWriter headerWriter) {
-            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}");
+            string underlyingType = ResolveEnumUnderlyingType(conversionClass);
+            string underlyingClause = string.IsNullOrEmpty(underlyingType) ? string.Empty : $" : {underlyingType}";
+            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}{underlyingClause}");
             headerWriter.WriteLine("{");
 
             List<string> members = GetEnumMembers(conversionClass);
@@ -1778,6 +1780,26 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("};");
+        }
+
+        /// <summary>Preserves the C# enum's signedness and width so native compilers accept unsigned high-bit constants.</summary>
+        /// <param name="conversionClass">Enum metadata carrying the Roslyn declared type symbol.</param>
+        /// <returns>The fixed-width C++ integer type, or an empty string for synthetic models without semantic metadata.</returns>
+        static string ResolveEnumUnderlyingType(ConversionClass conversionClass) {
+            if (conversionClass.TypeSymbol?.EnumUnderlyingType == null) {
+                return string.Empty;
+            }
+            return conversionClass.TypeSymbol.EnumUnderlyingType.SpecialType switch {
+                SpecialType.System_Byte => "uint8_t",
+                SpecialType.System_SByte => "int8_t",
+                SpecialType.System_Int16 => "int16_t",
+                SpecialType.System_UInt16 => "uint16_t",
+                SpecialType.System_Int32 => "int32_t",
+                SpecialType.System_UInt32 => "uint32_t",
+                SpecialType.System_Int64 => "int64_t",
+                SpecialType.System_UInt64 => "uint64_t",
+                _ => throw new InvalidOperationException("C++ enum emission requires an integral C# underlying type.")
+            };
         }
 
         /// <summary>
