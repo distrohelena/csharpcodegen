@@ -174,7 +174,16 @@ namespace cs2.ts.util {
             builder.AppendLine("};");
             builder.AppendLine("const service = ts.createLanguageService(host, ts.createDocumentRegistry());");
             builder.AppendLine("const edits = service.getFormattingEditsForDocument(fileName, formatSettings);");
-            builder.AppendLine("const output = ts.textChanges.applyChanges(currentText, edits);");
+            // ts.textChanges.applyChanges re-slices the whole text once per edit, which is quadratic on large
+            // generated files; the formatter's edits are sorted and non-overlapping, so splice them in one pass.
+            builder.AppendLine("const parts = [];");
+            builder.AppendLine("let position = 0;");
+            builder.AppendLine("for (const edit of edits) {");
+            builder.AppendLine("  parts.push(currentText.slice(position, edit.span.start), edit.newText);");
+            builder.AppendLine("  position = edit.span.start + edit.span.length;");
+            builder.AppendLine("}");
+            builder.AppendLine("parts.push(currentText.slice(position));");
+            builder.AppendLine("const output = parts.join('');");
             builder.AppendLine("fs.writeFileSync(outputPath, output, 'utf8');");
             return builder.ToString();
         }
