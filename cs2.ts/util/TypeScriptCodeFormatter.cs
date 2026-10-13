@@ -1,284 +1,66 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.IO;
-using System.Text;
+using System.Runtime.InteropServices;
 
 namespace cs2.ts.util {
     /// <summary>
-    /// Formats generated TypeScript output using the TypeScript language service.
+    /// Formats generated TypeScript output using the TypeScript 7 native language server.
     /// </summary>
     public static class TypeScriptCodeFormatter {
         /// <summary>
-        /// Provides candidate node executable names to probe.
+        /// Names an environment variable that may point directly at a TypeScript 7 native executable.
         /// </summary>
-        static readonly string[] NodeExecutableNames = new[] { "node", "node.exe" };
+        public const string ExecutableEnvironmentVariable = "CS2_TS_TSGO";
 
         /// <summary>
-        /// Formats TypeScript output using the TypeScript language service.
+        /// The maximum time one formatting session may take; generated files reach several megabytes.
+        /// </summary>
+        static readonly TimeSpan FormatTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// Serializes dependency installation so concurrent formatting calls do not run npm in parallel.
+        /// </summary>
+        static readonly object InstallLock = new object();
+
+        /// <summary>
+        /// Formats TypeScript output using the TypeScript 7 language server.
         /// </summary>
         /// <param name="source">The raw TypeScript source.</param>
-        /// <param name="runtimeDir">The .net.ts runtime directory used to resolve typescript.</param>
-        /// <param name="logger">Optional logger for warnings.</param>
+        /// <param name="runtimeDir">The .net.ts runtime directory whose node_modules hosts the TypeScript 7 package.</param>
+        /// <param name="logger">Optional logger for installation output and formatter stderr.</param>
         /// <returns>The formatted source.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when TypeScript 7 is unavailable or formatting fails.</exception>
         public static string Format(string source, string runtimeDir, Action<string> logger) {
             if (source == null) {
                 throw new ArgumentNullException(nameof(source));
             }
 
-            if (TryFormatWithTypeScript(source, runtimeDir, logger, out string formatted)) {
-                return formatted;
+            string executable = ResolveLanguageServerExecutable(runtimeDir);
+            if (string.IsNullOrWhiteSpace(executable)) {
+                executable = InstallAndResolveExecutable(runtimeDir, logger);
+            }
+            if (string.IsNullOrWhiteSpace(executable)) {
+                throw new InvalidOperationException(
+                    $"TypeScript formatter failed; the TypeScript 7 native executable ({GetPlatformPackageName()}) was not found from '{runtimeDir}'. "
+                    + $"Run npm install in the .net.ts runtime folder or set {ExecutableEnvironmentVariable}.");
             }
 
-            throw new InvalidOperationException("TypeScript formatter failed; ensure node and the typescript module are available.");
+            string workingDirectory = !string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir) ? runtimeDir : Path.GetTempPath();
+            return TypeScriptLanguageServerFormatter.Format(executable, source, workingDirectory, FormatTimeout, logger);
         }
 
         /// <summary>
-        /// Attempts to format the output using the TypeScript language service.
+        /// Resolves the TypeScript 7 native executable from the override variable or the runtime's node_modules.
         /// </summary>
-        /// <param name="source">The raw TypeScript source.</param>
-        /// <param name="runtimeDir">The .net.ts runtime directory used to resolve typescript.</param>
-        /// <param name="logger">Optional logger for warnings.</param>
-        /// <param name="formatted">Outputs the formatted source.</param>
-        /// <returns>True when formatting succeeded.</returns>
-        static bool TryFormatWithTypeScript(string source, string runtimeDir, Action<string> logger, out string formatted) {
-            formatted = string.Empty;
-
-            string typescriptDir = ResolveTypeScriptDirectory(runtimeDir);
-            if (string.IsNullOrWhiteSpace(typescriptDir)) {
-                logger?.Invoke("Warning: TypeScript formatter skipped because the typescript module was not found.");
-                return false;
-            }
-
-            string nodePath = ResolveNodePath(runtimeDir);
-            if (string.IsNullOrWhiteSpace(nodePath)) {
-                logger?.Invoke("Warning: TypeScript formatter skipped because node was not found.");
-                return false;
-            }
-
-            string nodeModulesPath = Directory.GetParent(typescriptDir)?.FullName ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(nodeModulesPath) || !Directory.Exists(nodeModulesPath)) {
-                return false;
-            }
-
-            string scriptPath = EnsureFormatScript();
-            if (string.IsNullOrWhiteSpace(scriptPath)) {
-                return false;
-            }
-
-            string inputPath = Path.Combine(Path.GetTempPath(), $"cs2.ts.format.{Guid.NewGuid():N}.ts");
-            string outputPath = Path.Combine(Path.GetTempPath(), $"cs2.ts.format.{Guid.NewGuid():N}.out.ts");
-            try {
-                File.WriteAllText(inputPath, source);
-
-                string workingDirectory = ResolveWorkingDirectory(runtimeDir, nodeModulesPath);
-                ProcessStartInfo startInfo = new ProcessStartInfo {
-                    FileName = nodePath,
-                    Arguments = $"\"{scriptPath}\" \"{inputPath}\" \"{outputPath}\"",
-                    WorkingDirectory = workingDirectory,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                AppendNodePath(startInfo, nodeModulesPath);
-
-                using Process process = Process.Start(startInfo);
-                if (process == null) {
-                    logger?.Invoke("Warning: failed to start TypeScript formatter.");
-                    return false;
-                }
-
-                string outputError = process.StandardError.ReadToEnd();
-                process.WaitForExit();
-
-                if (!string.IsNullOrWhiteSpace(outputError)) {
-                    logger?.Invoke(outputError);
-                }
-
-                if (process.ExitCode != 0) {
-                    logger?.Invoke($"Warning: TypeScript formatter exited with code {process.ExitCode}.");
-                    return false;
-                }
-
-                if (!File.Exists(outputPath)) {
-                    return false;
-                }
-
-                formatted = File.ReadAllText(outputPath);
-                if (string.IsNullOrWhiteSpace(formatted)) {
-                    return false;
-                }
-
-                return true;
-            } catch {
-                return false;
-            } finally {
-                TryDeleteTempFile(inputPath);
-                TryDeleteTempFile(outputPath);
-            }
-        }
-
-        /// <summary>
-        /// Ensures the Node formatting script exists and returns its path.
-        /// </summary>
-        /// <returns>The script path when available.</returns>
-        static string EnsureFormatScript() {
-            string scriptPath = Path.Combine(Path.GetTempPath(), "cs2.ts.format.js");
-            string scriptContents = GetScriptContents();
-
-            if (File.Exists(scriptPath)) {
-                string existing = File.ReadAllText(scriptPath);
-                if (string.Equals(existing, scriptContents, StringComparison.Ordinal)) {
-                    return scriptPath;
-                }
-            }
-
-            try {
-                File.WriteAllText(scriptPath, scriptContents);
-                return scriptPath;
-            } catch {
-                return string.Empty;
-            }
-        }
-
-        /// <summary>
-        /// Returns the formatting script contents.
-        /// </summary>
-        /// <returns>The script contents.</returns>
-        static string GetScriptContents() {
-            StringBuilder builder = new StringBuilder();
-            builder.AppendLine("const fs = require('fs');");
-            builder.AppendLine("const ts = require('typescript');");
-            builder.AppendLine("const inputPath = process.argv[2];");
-            builder.AppendLine("const outputPath = process.argv[3];");
-            builder.AppendLine("if (!inputPath || !outputPath) { process.stderr.write('Missing input/output path.'); process.exit(1); }");
-            builder.AppendLine("const input = fs.readFileSync(inputPath, 'utf8');");
-            builder.AppendLine("const fileName = inputPath;");
-            builder.AppendLine("let currentText = input;");
-            builder.AppendLine("let version = 0;");
-            builder.AppendLine("const formatSettings = ts.getDefaultFormatCodeSettings();");
-            builder.AppendLine("formatSettings.indentSize = 4;");
-            builder.AppendLine("formatSettings.tabSize = 4;");
-            builder.AppendLine("formatSettings.convertTabsToSpaces = true;");
-            builder.AppendLine("formatSettings.newLineCharacter = ts.sys.newLine;");
-            builder.AppendLine("const host = {");
-            builder.AppendLine("  getScriptFileNames: () => [fileName],");
-            builder.AppendLine("  getScriptVersion: () => version.toString(),");
-            builder.AppendLine("  getScriptSnapshot: (name) => name === fileName ? ts.ScriptSnapshot.fromString(currentText) : undefined,");
-            builder.AppendLine("  getCurrentDirectory: () => process.cwd(),");
-            builder.AppendLine("  getCompilationSettings: () => ({}),");
-            builder.AppendLine("  getDefaultLibFileName: (opts) => ts.getDefaultLibFilePath(opts),");
-            builder.AppendLine("  fileExists: ts.sys.fileExists,");
-            builder.AppendLine("  readFile: ts.sys.readFile,");
-            builder.AppendLine("  readDirectory: ts.sys.readDirectory");
-            builder.AppendLine("};");
-            builder.AppendLine("const service = ts.createLanguageService(host, ts.createDocumentRegistry());");
-            builder.AppendLine("const edits = service.getFormattingEditsForDocument(fileName, formatSettings);");
-            // ts.textChanges.applyChanges re-slices the whole text once per edit, which is quadratic on large
-            // generated files; the formatter's edits are sorted and non-overlapping, so splice them in one pass.
-            builder.AppendLine("const parts = [];");
-            builder.AppendLine("let position = 0;");
-            builder.AppendLine("for (const edit of edits) {");
-            builder.AppendLine("  parts.push(currentText.slice(position, edit.span.start), edit.newText);");
-            builder.AppendLine("  position = edit.span.start + edit.span.length;");
-            builder.AppendLine("}");
-            builder.AppendLine("parts.push(currentText.slice(position));");
-            builder.AppendLine("const output = parts.join('');");
-            builder.AppendLine("fs.writeFileSync(outputPath, output, 'utf8');");
-            return builder.ToString();
-        }
-
-        /// <summary>
-        /// Attempts to delete a temporary file, ignoring failures.
-        /// </summary>
-        /// <param name=\"path\">The file path to delete.</param>
-        static void TryDeleteTempFile(string path) {
-            if (string.IsNullOrWhiteSpace(path)) {
-                return;
-            }
-
-            try {
-                if (File.Exists(path)) {
-                    File.Delete(path);
-                }
-            } catch {
-            }
-        }
-
-        /// <summary>
-        /// Resolves a usable TypeScript module directory.
-        /// </summary>
-        /// <param name="runtimeDir">The runtime directory to search from.</param>
-        /// <returns>The resolved typescript module directory or empty.</returns>
-        static string ResolveTypeScriptDirectory(string runtimeDir) {
-            string configured = Environment.GetEnvironmentVariable("CS2_TS_TYPESCRIPT_DIR");
-            if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured)) {
-                return configured;
-            }
-
-            string direct = TryResolveTypeScriptDirectory(runtimeDir);
-            if (!string.IsNullOrWhiteSpace(direct)) {
-                return direct;
-            }
-
-            if (string.IsNullOrWhiteSpace(runtimeDir)) {
-                return string.Empty;
-            }
-
-            DirectoryInfo current = new DirectoryInfo(runtimeDir);
-            int depth = 0;
-            while (current != null && depth < 6) {
-                string candidate = Path.Combine(current.FullName, ".net.ts", "node_modules", "typescript");
-                if (Directory.Exists(candidate)) {
-                    return candidate;
-                }
-
-                candidate = Path.Combine(current.FullName, "node_modules", "typescript");
-                if (Directory.Exists(candidate)) {
-                    return candidate;
-                }
-
-                current = current.Parent;
-                depth++;
-            }
-
-            return string.Empty;
-        }
-
-        /// <summary>
-        /// Attempts to resolve a TypeScript module directory from a base path.
-        /// </summary>
-        /// <param name="runtimeDir">The base path to probe.</param>
-        /// <returns>The typescript module directory or empty.</returns>
-        static string TryResolveTypeScriptDirectory(string runtimeDir) {
-            if (string.IsNullOrWhiteSpace(runtimeDir)) {
-                return string.Empty;
-            }
-
-            string candidate = Path.Combine(runtimeDir, "node_modules", "typescript");
-            if (Directory.Exists(candidate)) {
-                return candidate;
-            }
-
-            return string.Empty;
-        }
-
-        /// <summary>
-        /// Resolves the node executable to use for formatting.
-        /// </summary>
-        /// <param name="runtimeDir">The runtime directory to search from.</param>
-        /// <returns>The node executable path or empty.</returns>
-        static string ResolveNodePath(string runtimeDir) {
-            string configured = Environment.GetEnvironmentVariable("CS2_TS_NODE");
+        /// <param name="runtimeDir">The runtime directory to search from; parents are probed as well.</param>
+        /// <returns>The executable path, or empty when none is installed.</returns>
+        public static string ResolveLanguageServerExecutable(string runtimeDir) {
+            string configured = Environment.GetEnvironmentVariable(ExecutableEnvironmentVariable);
             if (!string.IsNullOrWhiteSpace(configured) && File.Exists(configured)) {
                 return configured;
             }
 
-            string pathNode = FindNodeOnPath();
-            if (!string.IsNullOrWhiteSpace(pathNode)) {
-                return pathNode;
-            }
-
             if (string.IsNullOrWhiteSpace(runtimeDir)) {
                 return string.Empty;
             }
@@ -286,10 +68,12 @@ namespace cs2.ts.util {
             DirectoryInfo current = new DirectoryInfo(runtimeDir);
             int depth = 0;
             while (current != null && depth < 6) {
-                string nodeRoot = Path.Combine(current.FullName, "node");
-                string bundled = FindBundledNode(nodeRoot);
-                if (!string.IsNullOrWhiteSpace(bundled)) {
-                    return bundled;
+                string resolved = TryResolveInNodeModules(Path.Combine(current.FullName, "node_modules"));
+                if (resolved.Length == 0) {
+                    resolved = TryResolveInNodeModules(Path.Combine(current.FullName, ".net.ts", "node_modules"));
+                }
+                if (resolved.Length > 0) {
+                    return resolved;
                 }
 
                 current = current.Parent;
@@ -300,24 +84,74 @@ namespace cs2.ts.util {
         }
 
         /// <summary>
-        /// Finds a node executable on the PATH.
+        /// Returns the npm platform package that carries the native executable, e.g. <c>typescript-win32-x64</c>.
         /// </summary>
-        /// <returns>The node executable path or empty.</returns>
-        static string FindNodeOnPath() {
-            string pathValue = Environment.GetEnvironmentVariable("PATH");
-            if (string.IsNullOrWhiteSpace(pathValue)) {
+        /// <returns>The platform package name without its <c>@typescript</c> scope.</returns>
+        public static string GetPlatformPackageName() {
+            return GetPlatformPackageName(RuntimeInformation.OSArchitecture);
+        }
+
+        /// <summary>
+        /// Returns the native executable file name for the current operating system.
+        /// </summary>
+        /// <returns>The executable file name.</returns>
+        public static string GetExecutableName() {
+            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "tsc.exe" : "tsc";
+        }
+
+        /// <summary>
+        /// Installs the runtime's npm dependencies once and resolves the executable again.
+        /// </summary>
+        /// <param name="runtimeDir">The runtime directory holding package.json.</param>
+        /// <param name="logger">Optional logger for npm output.</param>
+        /// <returns>The executable path, or empty when installation did not provide it.</returns>
+        static string InstallAndResolveExecutable(string runtimeDir, Action<string> logger) {
+            if (string.IsNullOrWhiteSpace(runtimeDir) || !File.Exists(Path.Combine(runtimeDir, "package.json"))) {
                 return string.Empty;
             }
 
-            string[] segments = pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < segments.Length; i++) {
-                string segment = segments[i].Trim();
-                if (segment.Length == 0) {
-                    continue;
+            lock (InstallLock) {
+                string executable = ResolveLanguageServerExecutable(runtimeDir);
+                if (!string.IsNullOrWhiteSpace(executable)) {
+                    return executable;
                 }
 
-                for (int j = 0; j < NodeExecutableNames.Length; j++) {
-                    string candidate = Path.Combine(segment, NodeExecutableNames[j]);
+                logger?.Invoke($"-- TypeScript 7 formatter not installed in '{runtimeDir}'; running npm install");
+                TypeScriptRuntimeMetadata.InstallDependencies(new TypeScriptRuntimeMetadataRequest {
+                    RuntimeDirectory = runtimeDir,
+                    EnsureDependencies = true,
+                    ThrowOnError = true,
+                    ForwardOutput = true,
+                    InstallTimeoutMinutes = 3,
+                    Logger = logger
+                });
+                return ResolveLanguageServerExecutable(runtimeDir);
+            }
+        }
+
+        /// <summary>
+        /// Probes a node_modules folder for the platform package, hoisted or nested under the TypeScript 7 alias.
+        /// </summary>
+        /// <param name="nodeModules">The node_modules folder.</param>
+        /// <returns>The executable path, or empty.</returns>
+        static string TryResolveInNodeModules(string nodeModules) {
+            if (!Directory.Exists(nodeModules)) {
+                return string.Empty;
+            }
+
+            List<string> packageNames = new List<string> { GetPlatformPackageName(RuntimeInformation.OSArchitecture) };
+            string processPackage = GetPlatformPackageName(RuntimeInformation.ProcessArchitecture);
+            if (!packageNames.Contains(processPackage)) {
+                packageNames.Add(processPackage);
+            }
+
+            string[] scopeFolders = new[] {
+                Path.Combine(nodeModules, "@typescript"),
+                Path.Combine(nodeModules, TypeScriptRuntimeMetadata.TypeScript7PackageFolder, "node_modules", "@typescript")
+            };
+            for (int i = 0; i < scopeFolders.Length; i++) {
+                for (int j = 0; j < packageNames.Count; j++) {
+                    string candidate = Path.Combine(scopeFolders[i], packageNames[j], "lib", GetExecutableName());
                     if (File.Exists(candidate)) {
                         return candidate;
                     }
@@ -328,97 +162,30 @@ namespace cs2.ts.util {
         }
 
         /// <summary>
-        /// Finds a bundled node executable within a node root directory.
+        /// Builds the platform package name for an architecture using npm's platform and arch spellings.
         /// </summary>
-        /// <param name="nodeRoot">The node root directory.</param>
-        /// <returns>The node executable path or empty.</returns>
-        static string FindBundledNode(string nodeRoot) {
-            if (string.IsNullOrWhiteSpace(nodeRoot) || !Directory.Exists(nodeRoot)) {
-                return string.Empty;
-            }
-
-            string direct = TryResolveNodeInDirectory(nodeRoot);
-            if (!string.IsNullOrWhiteSpace(direct)) {
-                return direct;
-            }
-
-            string[] candidates = Directory.GetDirectories(nodeRoot);
-            for (int i = 0; i < candidates.Length; i++) {
-                string resolved = TryResolveNodeInDirectory(candidates[i]);
-                if (!string.IsNullOrWhiteSpace(resolved)) {
-                    return resolved;
-                }
-            }
-
-            return string.Empty;
-        }
-
-        /// <summary>
-        /// Attempts to resolve node within a candidate directory.
-        /// </summary>
-        /// <param name="candidateDir">The directory to probe.</param>
-        /// <returns>The node executable path or empty.</returns>
-        static string TryResolveNodeInDirectory(string candidateDir) {
-            if (string.IsNullOrWhiteSpace(candidateDir) || !Directory.Exists(candidateDir)) {
-                return string.Empty;
-            }
-
-            for (int i = 0; i < NodeExecutableNames.Length; i++) {
-                string direct = Path.Combine(candidateDir, NodeExecutableNames[i]);
-                if (File.Exists(direct)) {
-                    return direct;
-                }
-            }
-
-            string binDir = Path.Combine(candidateDir, "bin");
-            for (int i = 0; i < NodeExecutableNames.Length; i++) {
-                string binCandidate = Path.Combine(binDir, NodeExecutableNames[i]);
-                if (File.Exists(binCandidate)) {
-                    return binCandidate;
-                }
-            }
-
-            return string.Empty;
-        }
-
-        /// <summary>
-        /// Resolves the working directory for the formatter process.
-        /// </summary>
-        /// <param name="runtimeDir">The requested runtime directory.</param>
-        /// <param name="nodeModulesPath">The resolved node modules path.</param>
-        /// <returns>The working directory.</returns>
-        static string ResolveWorkingDirectory(string runtimeDir, string nodeModulesPath) {
-            if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir)) {
-                return runtimeDir;
-            }
-
-            string nodeModulesParent = Directory.GetParent(nodeModulesPath)?.FullName ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(nodeModulesParent) && Directory.Exists(nodeModulesParent)) {
-                return nodeModulesParent;
-            }
-
-            return Directory.GetCurrentDirectory();
-        }
-
-        /// <summary>
-        /// Ensures the node process can resolve node_modules when the runtime location differs.
-        /// </summary>
-        /// <param name="startInfo">The process start info.</param>
-        /// <param name="nodeModulesPath">The resolved node modules path.</param>
-        static void AppendNodePath(ProcessStartInfo startInfo, string nodeModulesPath) {
-            if (startInfo == null || string.IsNullOrWhiteSpace(nodeModulesPath)) {
-                return;
-            }
-
-            if (startInfo.Environment.TryGetValue("NODE_PATH", out string existingNodePath)) {
-                if (string.IsNullOrWhiteSpace(existingNodePath)) {
-                    startInfo.Environment["NODE_PATH"] = nodeModulesPath;
-                } else if (!existingNodePath.Contains(nodeModulesPath, StringComparison.OrdinalIgnoreCase)) {
-                    startInfo.Environment["NODE_PATH"] = nodeModulesPath + Path.PathSeparator + existingNodePath;
-                }
+        /// <param name="architecture">The architecture to name.</param>
+        /// <returns>The platform package name.</returns>
+        static string GetPlatformPackageName(Architecture architecture) {
+            string platform;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                platform = "win32";
+            } else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                platform = "darwin";
+            } else if (RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD)) {
+                platform = "freebsd";
             } else {
-                startInfo.Environment["NODE_PATH"] = nodeModulesPath;
+                platform = "linux";
             }
+
+            string arch = architecture switch {
+                Architecture.X64 => "x64",
+                Architecture.Arm64 => "arm64",
+                Architecture.Arm => "arm",
+                Architecture.X86 => "ia32",
+                _ => architecture.ToString().ToLowerInvariant()
+            };
+            return $"typescript-{platform}-{arch}";
         }
     }
 }
