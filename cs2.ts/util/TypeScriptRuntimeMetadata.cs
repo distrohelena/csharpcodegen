@@ -9,6 +9,47 @@ namespace cs2.ts.util {
     /// </summary>
     public static class TypeScriptRuntimeMetadata {
         /// <summary>
+        /// The node_modules folder of the npm alias (package.json <c>typescript7</c>) that installs TypeScript 7 beside TypeScript 5.
+        /// </summary>
+        public const string TypeScript7PackageFolder = "typescript7";
+
+        /// <summary>
+        /// Checks whether both the TypeScript 5 JavaScript API (metadata extractor) and the TypeScript 7 alias (formatter) are installed.
+        /// </summary>
+        /// <param name="runtimeDir">The runtime directory.</param>
+        /// <returns>True when no npm install is needed.</returns>
+        public static bool HasRequiredDependencies(string runtimeDir) {
+            string nodeModules = Path.Combine(runtimeDir, "node_modules");
+            return Directory.Exists(Path.Combine(nodeModules, "typescript"))
+                && Directory.Exists(Path.Combine(nodeModules, TypeScript7PackageFolder));
+        }
+
+        /// <summary>
+        /// Runs npm install in the runtime directory.
+        /// </summary>
+        /// <param name="request">The request naming the runtime directory, logger, timeout and failure mode.</param>
+        /// <returns>True when the install succeeded.</returns>
+        public static bool InstallDependencies(TypeScriptRuntimeMetadataRequest request) {
+            if (request == null) {
+                throw new ArgumentNullException(nameof(request));
+            }
+
+            string runtimeDir = request.RuntimeDirectory;
+            string packageJson = Path.Combine(runtimeDir, "package.json");
+            if (!File.Exists(packageJson)) {
+                return HandleFailure(request, new FileNotFoundException($"Expected package.json in '{runtimeDir}'."));
+            }
+
+            request.Logger?.Invoke("-- npm install");
+            ProcessStartInfo npmInfo = BuildNpmInstallInfo(runtimeDir);
+            if (!RunProcess(npmInfo, request, request.InstallTimeoutMinutes, "npm install")) {
+                return HandleFailure(request, new InvalidOperationException("npm install failed."));
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Ensures runtime metadata exists, optionally installing dependencies and running the extractor.
         /// </summary>
         /// <param name="request">The metadata extraction request.</param>
@@ -32,19 +73,9 @@ namespace cs2.ts.util {
                 return HandleFailure(request, new FileNotFoundException($"extractor.js not found in '{runtimeDir}'."));
             }
 
-            if (request.EnsureDependencies) {
-                string typesDir = Path.Combine(runtimeDir, "node_modules", "typescript");
-                if (!Directory.Exists(typesDir)) {
-                    string packageJson = Path.Combine(runtimeDir, "package.json");
-                    if (!File.Exists(packageJson)) {
-                        return HandleFailure(request, new FileNotFoundException($"Expected package.json in '{runtimeDir}'."));
-                    }
-
-                    request.Logger?.Invoke("-- npm install");
-                    ProcessStartInfo npmInfo = BuildNpmInstallInfo(runtimeDir);
-                    if (!RunProcess(npmInfo, request, request.InstallTimeoutMinutes, "npm install")) {
-                        return HandleFailure(request, new InvalidOperationException("npm install failed."));
-                    }
+            if (request.EnsureDependencies && !HasRequiredDependencies(runtimeDir)) {
+                if (!InstallDependencies(request)) {
+                    return false;
                 }
             }
 
