@@ -9429,9 +9429,12 @@ namespace cs2.cpp {
             resultType = VariableUtil.GetVarType("string");
 
             if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
-                !string.Equals(memberAccess.Name.Identifier.Text, "ToString", StringComparison.Ordinal) ||
-                invocationExpression.ArgumentList.Arguments.Count != 0) {
+                !string.Equals(memberAccess.Name.Identifier.Text, "ToString", StringComparison.Ordinal)) {
                 return false;
+            }
+
+            if (invocationExpression.ArgumentList.Arguments.Count != 0) {
+                return TryProcessNativeNumericFormattedToString(semantic, context, invocationExpression, memberAccess, lines);
             }
 
             if (TryResolvePathSeparatorToStringInvocation(memberAccess.Expression, out string pathSeparatorMemberName)) {
@@ -9506,6 +9509,62 @@ namespace cs2.cpp {
 
             RegisterRuntimeRequirement("NativeString");
             lines.Add($"String::ToJoinString({receiverText})");
+            return true;
+        }
+
+        /// <summary>Lowers formatted primitive numbers through the native invariant formatter instead of emitting member calls on C++ arithmetic types.</summary>
+        /// <param name="semantic">Semantic model used to identify primitive receiver and provider types.</param>
+        /// <param name="context">Active conversion scope for receiver and format expressions.</param>
+        /// <param name="invocation">Managed ToString invocation being lowered.</param>
+        /// <param name="memberAccess">Receiver and method access of the invocation.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        /// <returns>True when an arithmetic formatting overload was emitted.</returns>
+        bool TryProcessNativeNumericFormattedToString(SemanticModel semantic, LayerContext context,
+            InvocationExpressionSyntax invocation, MemberAccessExpressionSyntax memberAccess, List<string> lines) {
+            IMethodSymbol method = ResolveInvokedMethodSymbol(semantic, invocation);
+            ITypeSymbol receiverType = ResolveNativeToStringReceiverType(semantic, memberAccess.Expression, method);
+            if (!IsNativeToStringTypeSymbol(receiverType) || receiverType.SpecialType == SpecialType.System_Boolean) {
+                return false;
+            }
+            if (method == null || invocation.ArgumentList.Arguments.Count > 2) {
+                return false;
+            }
+            ExpressionSyntax format = null;
+            for (int index = 0; index < invocation.ArgumentList.Arguments.Count; index++) {
+                ArgumentSyntax argument = invocation.ArgumentList.Arguments[index];
+                int parameterIndex = index;
+                if (argument.NameColon != null) {
+                    parameterIndex = Array.FindIndex(method.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.Text);
+                }
+                if (parameterIndex < 0 || parameterIndex >= method.Parameters.Length) {
+                    return false;
+                }
+                if (method.Parameters[parameterIndex].Type.SpecialType == SpecialType.System_String) {
+                    format = argument.Expression;
+                } else {
+                    ISymbol provider = semantic.GetSymbolInfo(argument.Expression).Symbol;
+                    bool invariant = provider is IPropertySymbol property && property.Name == "InvariantCulture"
+                        && property.ContainingType.ToDisplayString() == "System.Globalization.CultureInfo";
+                    if (!invariant && !argument.Expression.IsKind(SyntaxKind.NullLiteralExpression)) {
+                        throw new NotSupportedException("Native numeric ToString supports an invariant culture provider or null.");
+                    }
+                }
+            }
+            RegisterRuntimeRequirement("NativeString");
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            lines.Add("String::FormatNumeric(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            if (format == null || format.IsKind(SyntaxKind.NullLiteralExpression)) {
+                lines.Add($"{GetNativeStringTypeName()}()");
+            } else {
+                ProcessExpression(semantic, context, format, lines);
+                context.PopClass(depth);
+            }
+            lines.Add(")");
             return true;
         }
 
