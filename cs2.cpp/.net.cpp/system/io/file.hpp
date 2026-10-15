@@ -16,15 +16,15 @@
 class File {
 public:
 	static bool Exists(const char* fileName);
-	static bool Exists(const std::string& fileName);
+	static bool Exists(const HeCppString& fileName);
 
 	static bool Delete(const char* fileName);
-	static bool Delete(const std::string& fileName);
+	static bool Delete(const HeCppString& fileName);
 
 	static FileStream Open(const char* filePath, FileMode fileMode);
-	static FileStream Open(const std::string& filePath, FileMode fileMode);
+	static FileStream Open(const HeCppString& filePath, FileMode fileMode);
 	static FileStream* OpenRead(const char* filePath);
-	static FileStream* OpenRead(const std::string& filePath);
+	static FileStream* OpenRead(const HeCppString& filePath);
 };
 
 #endif // FILE_HPP

@@ -13,12 +13,12 @@
 
 class Console {
 public:
-	static bool Write(char* fileName);
-	static bool Write(const std::string& text);
-	static bool WriteLine(char* fileName);
-	static bool WriteLine(const std::string& text);
+	static bool Write(const char* fileName);
+	static bool Write(const HeCppString& text);
+	static bool WriteLine(const char* fileName);
+	static bool WriteLine(const HeCppString& text);
 	static bool WriteLine();
-	static std::string ReadLine();
+	static HeCppString ReadLine();
 };
 
 #endif // CONSOLE_HPP

@@ -117,13 +117,19 @@ class String {
     }
 
 public:
-    inline static const HeCppString Empty = HeCppString();
+    /// <summary>Provides a present empty managed string, distinct from the default null value.</summary>
+    inline static const HeCppString Empty = HeCppString("");
+
+    /// <summary>Determines whether a managed string is null without conflating it with an empty value.</summary>
+    static bool IsNull(const HeCppString& value) {
+        return value.is_null();
+    }
 
     /// <summary>
-    /// Determines whether the supplied string is empty.
+    /// Determines whether the supplied string is null or contains no characters.
     /// </summary>
     /// <param name="value">String value to inspect.</param>
-    /// <returns>True when the string contains no characters; otherwise false.</returns>
+    /// <returns>True for managed null and present empty strings; otherwise false.</returns>
     static bool IsNullOrEmpty(const HeCppString& value) {
         return value.empty();
     }
@@ -155,6 +161,10 @@ public:
     /// <param name="comparison">Comparison mode.</param>
     /// <returns>True when both strings are equal for the selected comparison.</returns>
     static bool Equals(const HeCppString& left, const HeCppString& right, StringComparison comparison = StringComparison::Ordinal) {
+        if (left.is_null() || right.is_null()) {
+            return left.is_null() && right.is_null();
+        }
+
         if (comparison == StringComparison::OrdinalIgnoreCase) {
             return ToLowerInvariant(left) == ToLowerInvariant(right);
         }
@@ -170,6 +180,10 @@ public:
     /// <param name="comparison">Comparison mode.</param>
     /// <returns>True when the string starts with the prefix; otherwise false.</returns>
     static bool StartsWith(const HeCppString& value, const HeCppString& prefix, StringComparison comparison = StringComparison::Ordinal) {
+        he_cpp_require_string_value(value);
+        if (prefix.is_null()) {
+            he_cpp_raise(ArgumentNullException("prefix"));
+        }
         if (prefix.size() > value.size()) {
             return false;
         }
@@ -184,6 +198,7 @@ public:
     /// <param name="prefix">Prefix character to compare.</param>
     /// <returns>True when the string starts with the character; otherwise false.</returns>
     static bool StartsWith(const HeCppString& value, char prefix) {
+        he_cpp_require_string_value(value);
         return !value.empty() && value.front() == prefix;
     }
 
@@ -195,6 +210,10 @@ public:
     /// <param name="comparison">Comparison mode.</param>
     /// <returns>True when the string ends with the suffix; otherwise false.</returns>
     static bool EndsWith(const HeCppString& value, const HeCppString& suffix, StringComparison comparison = StringComparison::Ordinal) {
+        he_cpp_require_string_value(value);
+        if (suffix.is_null()) {
+            he_cpp_raise(ArgumentNullException("suffix"));
+        }
         if (suffix.size() > value.size()) {
             return false;
         }
@@ -209,6 +228,7 @@ public:
     /// <param name="suffix">Suffix character to compare.</param>
     /// <returns>True when the string ends with the character; otherwise false.</returns>
     static bool EndsWith(const HeCppString& value, char suffix) {
+        he_cpp_require_string_value(value);
         return !value.empty() && value.back() == suffix;
     }
 
@@ -218,6 +238,7 @@ public:
     /// <param name="value">String to trim.</param>
     /// <returns>Trimmed string copy.</returns>
     static HeCppString Trim(const HeCppString& value) {
+        he_cpp_require_string_value(value);
         size_t start = 0;
         while (start < value.size() && IsAsciiWhitespace(static_cast<unsigned char>(value[start]))) {
             start++;
@@ -232,6 +253,7 @@ public:
     }
 
     static HeCppString TrimStart(const HeCppString& value) {
+        he_cpp_require_string_value(value);
         size_t start = 0;
         while (start < value.size() && IsAsciiWhitespace(static_cast<unsigned char>(value[start]))) {
             start++;
@@ -246,6 +268,7 @@ public:
     /// <param name="value">Source string.</param>
     /// <returns>Original string copy.</returns>
     static HeCppString Substring(const HeCppString& value) {
+        he_cpp_require_string_value(value);
         return value;
     }
 
@@ -256,6 +279,7 @@ public:
     /// <param name="startIndex">Zero-based start index.</param>
     /// <returns>Substring copy.</returns>
     static HeCppString Substring(const HeCppString& value, int32_t startIndex) {
+        he_cpp_require_string_value(value);
         if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
             return RaiseOutOfRange<HeCppString>("startIndex");
         }
@@ -271,6 +295,7 @@ public:
     /// <param name="length">Requested substring length.</param>
     /// <returns>Substring copy.</returns>
     static HeCppString Substring(const HeCppString& value, int32_t startIndex, int32_t length) {
+        he_cpp_require_string_value(value);
         if (startIndex < 0 || length < 0 || static_cast<size_t>(startIndex) > value.size()) {
             return RaiseOutOfRange<HeCppString>("startIndex");
         }
@@ -298,6 +323,7 @@ public:
     /// <param name="value">String to transform.</param>
     /// <returns>Lowercase string copy.</returns>
     static HeCppString ToLowerInvariant(const HeCppString& value) {
+        he_cpp_require_string_value(value);
         HeCppString lowered = value;
         he_cpp_alg::Transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
             return ToLowerAscii(character);
@@ -310,6 +336,7 @@ public:
     }
 
     static HeCppString Remove(const HeCppString& value, int32_t startIndex) {
+        he_cpp_require_string_value(value);
         if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
             return RaiseOutOfRange<HeCppString>("startIndex");
         }
@@ -318,6 +345,7 @@ public:
     }
 
     static HeCppString Remove(const HeCppString& value, int32_t startIndex, int32_t count) {
+        he_cpp_require_string_value(value);
         if (startIndex < 0 || count < 0 || static_cast<size_t>(startIndex) > value.size()) {
             return RaiseOutOfRange<HeCppString>("startIndex");
         }
@@ -332,6 +360,10 @@ public:
     }
 
     static HeCppString Insert(const HeCppString& value, int32_t startIndex, const HeCppString& insertion) {
+        he_cpp_require_string_value(value);
+        if (insertion.is_null()) {
+            he_cpp_raise(ArgumentNullException("insertion"));
+        }
         if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
             return RaiseOutOfRange<HeCppString>("startIndex");
         }
@@ -341,6 +373,7 @@ public:
     }
 
     static HeCppString Replace(const HeCppString& value, char oldValue, char newValue) {
+        he_cpp_require_string_value(value);
         HeCppString updatedValue = value;
         he_cpp_alg::Replace(updatedValue.begin(), updatedValue.end(), oldValue, newValue);
         return updatedValue;
@@ -350,6 +383,10 @@ public:
     /// Replaces every non-overlapping occurrence, without processing text inserted by a previous match; an empty search value is invalid.
     /// </summary>
     static HeCppString Replace(const HeCppString& value, const HeCppString& oldValue, const HeCppString& newValue) {
+        he_cpp_require_string_value(value);
+        if (oldValue.is_null()) {
+            he_cpp_raise(ArgumentNullException("oldValue"));
+        }
         if (oldValue.empty()) {
             return he_cpp_raise_value<HeCppString>(ArgumentException("oldValue must not be empty"));
         }
@@ -376,30 +413,9 @@ public:
     /// <param name="separator">Separator inserted between adjacent values.</param>
     /// <param name="values">Collection to concatenate.</param>
     /// <returns>The concatenated string.</returns>
-    template <typename TCollection>
-    static HeCppString Join(const HeCppString& separator, const TCollection* values) {
-        if (values == nullptr) {
-            return HeCppString();
-        }
-
-        HeCppString result;
-        bool isFirst = true;
-
-        for (const auto& value : *values) {
-            if (!isFirst) {
-                result += separator;
-            }
-
-            result += value;
-            isFirst = false;
-        }
-
-        return result;
-    }
-
     template <typename... TValues>
     static HeCppString Join(const HeCppString& separator, const TValues&... values) {
-        HeCppString result;
+        HeCppString result = "";
         bool isFirst = true;
 
         auto appendValue = [&](const auto& currentValue) {
@@ -416,12 +432,12 @@ public:
     }
 
     template <typename TCollection>
-    static auto Join(const HeCppString& separator, const TCollection* values) -> decltype(values->begin(), values->end(), HeCppString()) {
+    static auto Join(const HeCppString& separator, TCollection* values) -> decltype(values->begin(), values->end(), HeCppString("")) {
         if (values == nullptr) {
-            return HeCppString();
+            return HeCppString("");
         }
 
-        HeCppString result;
+        HeCppString result = "";
         bool isFirst = true;
         for (const auto& currentValue : *values) {
             if (!isFirst) {
@@ -437,10 +453,10 @@ public:
 
     static HeCppString JoinArray(const HeCppString& separator, const Array<HeCppString>* values) {
         if (values == nullptr || values->Length <= 0) {
-            return HeCppString();
+            return HeCppString("");
         }
 
-        HeCppString result;
+        HeCppString result = "";
         for (int32_t index = 0; index < values->Length; index++) {
             if (index > 0) {
                 result += separator;
@@ -452,9 +468,15 @@ public:
         return result;
     }
 
+    /// <summary>Concatenates an iterable managed collection as values rather than formatting its native pointer.</summary>
+    template <typename TCollection>
+    static auto Concat(TCollection* values) -> decltype(values->begin(), values->end(), HeCppString("")) {
+        return Join(HeCppString(""), values);
+    }
+
     template <typename... TValues>
     static HeCppString Concat(const TValues&... values) {
-        HeCppString result;
+        HeCppString result = "";
         auto appendValue = [&](const auto& currentValue) {
             result += ToJoinString(currentValue);
         };
@@ -467,6 +489,7 @@ public:
     /// Splits a string on one character while preserving empty segments by default.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, char separator, StringSplitOptions options = StringSplitOptions::None) {
+        he_cpp_require_string_value(value);
         Array<char> separators({ separator });
         return Split(value, &separators, INT32_MAX, options);
     }
@@ -475,6 +498,7 @@ public:
     /// Splits a string on the supplied character set while preserving empty segments by default.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, StringSplitOptions options = StringSplitOptions::None) {
+        he_cpp_require_string_value(value);
         return Split(value, separators, INT32_MAX, options);
     }
 
@@ -482,6 +506,7 @@ public:
     /// Splits a string on one character with the requested maximum number of returned segments.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count) {
+        he_cpp_require_string_value(value);
         Array<char> separators({ separator });
         return Split(value, &separators, count, StringSplitOptions::None);
     }
@@ -490,6 +515,7 @@ public:
     /// Splits a string on one character with a segment count and empty-entry policy.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count, StringSplitOptions options) {
+        he_cpp_require_string_value(value);
         Array<char> separators({ separator });
         return Split(value, &separators, count, options);
     }
@@ -498,6 +524,7 @@ public:
     /// Splits a string on the supplied character set with the requested maximum segment count.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count) {
+        he_cpp_require_string_value(value);
         return Split(value, separators, count, StringSplitOptions::None);
     }
 
@@ -505,6 +532,7 @@ public:
     /// Implements the shared count and empty-entry rules for all character-based string splits.
     /// </summary>
     static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count, StringSplitOptions options) {
+        he_cpp_require_string_value(value);
         if (count == 0) {
             return new Array<HeCppString>(0);
         }
@@ -573,11 +601,16 @@ public:
     }
 
     static HeCppString ToJoinString(const HeCppString& value) {
-        return value;
+        return value.is_null() ? Empty : value;
     }
 
     static HeCppString ToJoinString(const char* value) {
-        return value == nullptr ? HeCppString() : HeCppString(value);
+        return value == nullptr ? HeCppString("") : HeCppString(value);
+    }
+
+    /// <summary>Formats a null reference as a present empty string for joining and concatenation.</summary>
+    static HeCppString ToJoinString(std::nullptr_t) {
+        return Empty;
     }
 
     static HeCppString ToJoinString(char value) {
@@ -589,16 +622,115 @@ public:
         if constexpr (std::is_same_v<TValue, bool>) {
             return value ? "True" : "False";
         } else {
-            HeCppString builder;
+            HeCppString builder = "";
             AppendArithmeticToString(builder, value);
             return builder;
         }
     }
 
+    /// <summary>Formats an integral value with exactly the managed D6 minimum digit count, preserving the sign and full unsigned magnitude.</summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_integral_v<TValue> && !std::is_same_v<TValue, bool>, HeCppString> ToInvariantDecimal6(TValue value) {
+        HeCppString digits = "";
+        AppendIntegralToString(digits, value);
+        bool negative = !digits.empty() && digits[0] == '-';
+        std::size_t count = digits.size() - (negative ? 1 : 0);
+        HeCppString result = negative ? "-" : "";
+        while (count++ < 6) {
+            result += '0';
+        }
+        for (std::size_t index = negative ? 1 : 0; index < digits.size(); index++) {
+            result += digits[index];
+        }
+        return result;
+    }
+
+    /// <summary>Formats an integral F0/F1 value without converting large integers to floating point or losing trailing fractional zeroes.</summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_integral_v<TValue> && !std::is_same_v<TValue, bool>, HeCppString> ToInvariantFixed(TValue value, int32_t precision) {
+        HeCppString result = "";
+        AppendIntegralToString(result, value);
+        if (precision == 1) {
+            result += ".0";
+        } else if (precision != 0) {
+            he_cpp_raise(NotSupportedException("Native invariant fixed formatting supports only F0 and F1."));
+        }
+        return result;
+    }
+
+    /// <summary>Formats binary32/binary64 F0/F1 values by exact integer decomposition and ties-to-even rounding, including negative zero and the complete finite exponent range.</summary>
+    template <typename TValue>
+    static std::enable_if_t<std::is_floating_point_v<TValue>, HeCppString> ToInvariantFixed(TValue value, int32_t precision) {
+        if (precision != 0 && precision != 1) {
+            he_cpp_raise(NotSupportedException("Native invariant fixed formatting supports only F0 and F1."));
+        }
+        double binaryValue = static_cast<double>(value);
+        uint64_t bits;
+        __builtin_memcpy(&bits, &binaryValue, sizeof(bits));
+        bool negative = (bits >> 63) != 0;
+        uint32_t biasedExponent = static_cast<uint32_t>((bits >> 52) & 0x7ff);
+        uint64_t significand = bits & 0x000fffffffffffffULL;
+        if (biasedExponent == 0x7ff) {
+            return significand != 0 ? HeCppString("NaN") : negative ? HeCppString("-Infinity") : HeCppString("Infinity");
+        }
+        int32_t exponent = biasedExponent == 0 ? -1074 : static_cast<int32_t>(biasedExponent) - 1075;
+        if (biasedExponent != 0) {
+            significand |= 0x0010000000000000ULL;
+        }
+        if (precision == 1) {
+            significand *= 5;
+            exponent++;
+        }
+        if (exponent < 0) {
+            int32_t shift = -exponent;
+            if (shift >= 64) {
+                significand = 0;
+            } else {
+                uint64_t quotient = significand >> shift;
+                uint64_t remainder = significand & ((1ULL << shift) - 1);
+                uint64_t half = 1ULL << (shift - 1);
+                if (remainder > half || (remainder == half && (quotient & 1) != 0)) {
+                    quotient++;
+                }
+                significand = quotient;
+            }
+            exponent = 0;
+        }
+        // Binary64's largest finite number needs 309 decimal digits, or 310 after the exact F1 scaling.
+        uint8_t digits[312];
+        int32_t digitCount = 0;
+        do {
+            digits[digitCount++] = static_cast<uint8_t>(significand % 10);
+            significand /= 10;
+        } while (significand != 0);
+        for (int32_t bit = 0; bit < exponent; bit++) {
+            uint8_t carry = 0;
+            for (int32_t digit = 0; digit < digitCount; digit++) {
+                uint8_t doubled = static_cast<uint8_t>(digits[digit] * 2 + carry);
+                digits[digit] = doubled % 10;
+                carry = doubled / 10;
+            }
+            if (carry != 0) {
+                digits[digitCount++] = carry;
+            }
+        }
+        while (digitCount <= precision) {
+            digits[digitCount++] = 0;
+        }
+        HeCppString result = negative ? "-" : "";
+        for (int32_t digit = digitCount - 1; digit >= 0; digit--) {
+            result += static_cast<char>('0' + digits[digit]);
+            if (precision == 1 && digit == 1) {
+                result += '.';
+            }
+        }
+        return result;
+    }
+
     template <typename TValue>
     static std::enable_if_t<std::is_pointer_v<TValue>, HeCppString> ToJoinString(const TValue& value) {
         if (value == nullptr) {
-            return HeCppString();
+            return HeCppString("");
         }
 
         using PointeeType = std::remove_pointer_t<TValue>;
@@ -610,7 +742,7 @@ public:
         return HeCppString(typeid(PointeeType).name());
 #else
         static_assert(he_cpp_has_to_string_method<PointeeType>::value, "String formatting for a pointer without ToString requires RTTI.");
-        return HeCppString();
+        return HeCppString("");
 #endif
     }
 

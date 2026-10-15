@@ -1,6 +1,7 @@
 #pragma once
 #include "native_algorithm.hpp"
 #include "native_runtime.hpp"
+#include "native_module_pinned_callable.hpp"
 
 #include <cstddef>
 #include <type_traits>
@@ -14,6 +15,38 @@ public:
     struct BoundHandler {
         TInstance* Instance;
         void (TInstance::*Method)(TArgs...);
+    };
+
+    /// <summary>Preserves member-method identity while keeping its defining module mapped.</summary>
+    template <typename TInstance, typename... TArgs>
+    struct PinnedBoundHandler {
+        /// <summary>Owns code for as long as this removable token is retained.</summary>
+        HeCppCodeModulePin Pin;
+        /// <summary>Names the module whose callback code is retained by subscribers.</summary>
+        const char* ModuleId;
+        /// <summary>Retains the original identity used by event removal.</summary>
+        BoundHandler<TInstance, TArgs...> Handler;
+
+        /// <summary>Acquires code ownership before exposing the bound token.</summary>
+        PinnedBoundHandler(const char* moduleId, BoundHandler<TInstance, TArgs...> handler)
+            : Pin(moduleId), ModuleId(moduleId), Handler(handler) {
+        }
+    };
+
+    /// <summary>Preserves free-function identity and owns the module containing its code.</summary>
+    template <typename... TArgs>
+    struct PinnedFunctionHandler {
+        /// <summary>Owns code for as long as this removable token is retained.</summary>
+        HeCppCodeModulePin Pin;
+        /// <summary>Names the module whose callback code is retained by subscribers.</summary>
+        const char* ModuleId;
+        /// <summary>Stores the original function pointer used by event removal.</summary>
+        void (*Handler)(TArgs...);
+
+        /// <summary>Acquires code ownership before exposing the function token.</summary>
+        PinnedFunctionHandler(const char* moduleId, void (*handler)(TArgs...))
+            : Pin(moduleId), ModuleId(moduleId), Handler(handler) {
+        }
     };
 
     /// <summary>
@@ -32,6 +65,73 @@ public:
     template <typename TInstance, typename... TArgs>
     static auto Bind(TInstance* instance, void (TInstance::*method)(TArgs...)) {
         return BoundHandler<TInstance, TArgs...> { instance, method };
+    }
+
+    /// <summary>Binds a removable member callback with ownership of its defining module.</summary>
+    template <typename TInstance, typename... TArgs>
+    static auto BindPinned(const char* moduleId, TInstance* instance, void (TInstance::*method)(TArgs...)) {
+        return PinnedBoundHandler<TInstance, TArgs...>(moduleId, Bind(instance, method));
+    }
+
+    /// <summary>Binds a removable free or static callback with ownership of its defining module.</summary>
+    template <typename... TArgs>
+    static auto PinFunction(const char* moduleId, void (*handler)(TArgs...)) {
+        return PinnedFunctionHandler<TArgs...>(moduleId, handler);
+    }
+
+    /// <summary>Stores a pinned member callback without changing its removal identity.</summary>
+    template <typename TInstance, typename... TArgs>
+    Event& operator+=(const PinnedBoundHandler<TInstance, TArgs...>& token) {
+        const auto handler = token.Handler;
+        if (handler.Instance == nullptr || handler.Method == nullptr) {
+            return *this;
+        }
+        Subscribers.push_back(HeCppOwnedPtr<Subscriber>(new Subscriber {
+            sizeof...(TArgs),
+            HeCppPinCodeModuleCallable(token.ModuleId, [handler](void** arguments) {
+                InvokeBoundMethod(handler.Instance, handler.Method, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
+            }),
+            nullptr,
+            [handler](const void* candidateInstance, const void* candidateMethod) {
+                return candidateInstance != nullptr && candidateMethod != nullptr &&
+                    static_cast<TInstance*>(const_cast<void*>(candidateInstance)) == handler.Instance &&
+                    *static_cast<void (TInstance::*const*)(TArgs...)>(candidateMethod) == handler.Method;
+            }
+        }));
+        return *this;
+    }
+
+    /// <summary>Stores a pinned free callback without changing its removal identity.</summary>
+    template <typename... TArgs>
+    Event& operator+=(const PinnedFunctionHandler<TArgs...>& token) {
+        const auto handler = token.Handler;
+        if (handler == nullptr) {
+            return *this;
+        }
+        Subscribers.push_back(HeCppOwnedPtr<Subscriber>(new Subscriber {
+            sizeof...(TArgs),
+            HeCppPinCodeModuleCallable(token.ModuleId, [handler](void** arguments) {
+                InvokeFunctionPointer(handler, arguments, he_cpp_alg::IndexSequenceFor<TArgs...> {});
+            }),
+            [handler](const void* candidateHandler) {
+                return candidateHandler != nullptr &&
+                    *static_cast<void (*const*)(TArgs...)>(candidateHandler) == handler;
+            },
+            nullptr
+        }));
+        return *this;
+    }
+
+    /// <summary>Removes pinned member callbacks by the same receiver and method as ordinary tokens.</summary>
+    template <typename TInstance, typename... TArgs>
+    Event& operator-=(const PinnedBoundHandler<TInstance, TArgs...>& token) {
+        return *this -= token.Handler;
+    }
+
+    /// <summary>Removes pinned free callbacks by their original function pointer.</summary>
+    template <typename... TArgs>
+    Event& operator-=(const PinnedFunctionHandler<TArgs...>& token) {
+        return *this -= token.Handler;
     }
 
     /// <summary>
@@ -242,4 +342,3 @@ private:
     /// </summary>
     HeCppVector<HeCppOwnedPtr<Subscriber>> Subscribers;
 };
-

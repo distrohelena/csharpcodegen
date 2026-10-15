@@ -39,7 +39,7 @@ namespace {
             suffix.erase(suffix.begin());
         }
 
-        HeCppString collapsedSuffix;
+        HeCppString collapsedSuffix = "";
         bool previousWasSeparator = false;
         for (char character : suffix) {
             if (character == '\\') {
@@ -92,7 +92,7 @@ namespace {
         HeCppString normalized = NormalizePs2Path(path);
         std::size_t separatorIndex = normalized.find_last_of("\\/");
         if (separatorIndex == HeCppString::npos) {
-            return HeCppString();
+            return HeCppString("");
         }
 
         if (separatorIndex > 0 && normalized[separatorIndex - 1] == ':') {
@@ -151,7 +151,7 @@ namespace {
 
     HeCppString NormalizeGenericPath(const HeCppString& path) {
         if (path.empty()) {
-            return HeCppString();
+            return HeCppString("");
         }
 
         HeCppString normalized = path;
@@ -160,7 +160,7 @@ namespace {
         const bool rooted = rootLength > 0;
         HeCppString root = normalized.substr(0, rootLength);
         HeCppVector<HeCppString> segments;
-        HeCppString segment;
+        HeCppString segment = "";
 
         for (std::size_t index = rootLength; index <= normalized.size(); index++) {
             const bool endOfPath = index == normalized.size();
@@ -275,7 +275,7 @@ HeCppString Path::GetDirectoryName(const HeCppString& path) {
     const std::size_t rootLength = GetRootLength(normalized);
     const std::size_t separatorIndex = normalized.find_last_of("\\/");
     if (separatorIndex == HeCppString::npos) {
-        return HeCppString();
+        return HeCppString("");
     }
 
     if (separatorIndex < rootLength) {
@@ -287,7 +287,7 @@ HeCppString Path::GetDirectoryName(const HeCppString& path) {
 
 HeCppString Path::GetFileName(const HeCppString& path) {
     if (path.empty()) {
-        return HeCppString();
+        return path;
     }
 
 #if HE_CPP_PLATFORM_PS2
@@ -337,7 +337,7 @@ HeCppString Path::GetFullPath(const HeCppString& path) {
 
 HeCppString Path::ChangeExtension(const HeCppString& path, const HeCppString& extension) {
     if (path.empty()) {
-        return HeCppString();
+        return path;
     }
 
     HeCppString normalized = NormalizeGenericPath(path);

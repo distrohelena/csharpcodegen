@@ -28,7 +28,7 @@ public:
     }
 
     HeCppString ReadToEnd() {
-        HeCppString result;
+        HeCppString result = "";
         uint8_t buffer[4096];
 
         while (true) {

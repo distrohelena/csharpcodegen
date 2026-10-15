@@ -77,7 +77,7 @@ namespace cs2.cpp {
         /// <summary>
         /// Resolves the native string type spelling used by all generated expressions in the active conversion.
         /// </summary>
-        /// <returns>The selected standard or provider-backed native string type.</returns>
+        /// <returns>The nullable managed string wrapper backed by the selected native storage.</returns>
         string GetNativeStringTypeName() {
             return CPPRuntimeOptionResolver.GetStringTypeName(Options);
         }
@@ -168,6 +168,27 @@ namespace cs2.cpp {
         /// <param name="refTypes">Known argument or receiver types for overload resolution.</param>
         /// <returns>The result of expression lowering.</returns>
         public override ExpressionResult ProcessExpression(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, List<string> lines, List<ExpressionResult> refTypes = null) {
+            if (expression is IsPatternExpressionSyntax nullPatternExpression &&
+                IsStringLikeExpression(semantic, nullPatternExpression.Expression)) {
+                PatternSyntax pattern = nullPatternExpression.Pattern;
+                bool negate = pattern is UnaryPatternSyntax unaryPattern && unaryPattern.IsKind(SyntaxKind.NotPattern);
+                if (negate) {
+                    pattern = ((UnaryPatternSyntax)pattern).Pattern;
+                }
+                if (pattern is ConstantPatternSyntax constantPattern && IsNullLikeExpression(constantPattern.Expression)) {
+                    RegisterRuntimeRequirement("NativeString");
+                    lines.Add(negate ? "!String::IsNull(" : "String::IsNull(");
+                    int start = context.DepthClass;
+                    ExpressionResult operandResult = ProcessExpression(semantic, context, nullPatternExpression.Expression, lines);
+                    context.PopClass(start);
+                    lines.Add(")");
+                    return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool")) {
+                        BeforeLines = operandResult.BeforeLines,
+                        AfterLines = operandResult.AfterLines
+                    };
+                }
+            }
+
             if (expression is SizeOfExpressionSyntax sizeOfExpression) {
                 return ProcessSizeOfExpression(semantic, context, sizeOfExpression, lines);
             }
@@ -1703,6 +1724,10 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessAssignmentExpressionSyntax(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (TryProcessStringCoalesceAssignment(semantic, context, assignment, lines)) {
+                return;
+            }
+
             if (TryProcessCheckedAddAssignment(semantic, context, assignment, lines)) {
                 return;
             }
@@ -1798,9 +1823,7 @@ namespace cs2.cpp {
             } else {
                 lines.Add($" {operatorVal} ");
             }
-            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add($"{GetNativeStringTypeName()}()");
-            } else if (TryAppendEventMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
+            if (TryAppendEventMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else if (TryAppendDelegateLambdaAssignmentValue(semantic, context, assignment, rightLines, lines)) {
             } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else if (TryAppendArrayAsListAssignmentValue(semantic, context, assignment, rightLines, lines)) {
@@ -2106,28 +2129,6 @@ namespace cs2.cpp {
             return true;
         }
 
-        /// <summary>
-        /// Determines whether one simple assignment writes a null-like literal into a string target and therefore must lower to an empty native string instead of a pointer literal.
-        /// </summary>
-        /// <param name="semantic">Semantic model for the active document.</param>
-        /// <param name="leftExpression">Assignment target being written.</param>
-        /// <param name="rightExpression">Assignment value being lowered.</param>
-        /// <returns><c>true</c> when the assignment should emit <c>std::string()</c>; otherwise, <c>false</c>.</returns>
-        static bool ShouldEmitEmptyStringForTargetedNullAssignment(
-            SemanticModel semantic,
-            ExpressionSyntax leftExpression,
-            ExpressionSyntax rightExpression) {
-            if (semantic == null || leftExpression == null || rightExpression == null) {
-                return false;
-            }
-
-            if (!IsNullLikeExpression(rightExpression)) {
-                return false;
-            }
-
-            return TryGetAssignmentTargetTypeSymbol(semantic, leftExpression, out ITypeSymbol leftTypeSymbol)
-                && IsStringTypeSymbol(leftTypeSymbol);
-        }
 
         /// <summary>
         /// Wraps array-backed right-hand assignment values as native lists when the assignment target expects one IReadOnlyList-like contract.
@@ -2215,8 +2216,11 @@ namespace cs2.cpp {
             }
 
             RegisterRuntimeRequirement("NativeEvent");
+            bool pinHandler = UsesCodeModuleCallablePins(context);
             if (methodGroupSymbol.IsStatic) {
+                if (pinHandler) lines.Add("Event::PinFunction(HELENGINE_CODE_MODULE_ID, ");
                 lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
+                if (pinHandler) lines.Add(")");
                 return true;
             }
 
@@ -2224,7 +2228,7 @@ namespace cs2.cpp {
                 return false;
             }
 
-            lines.Add("Event::Bind(");
+            lines.Add(pinHandler ? "Event::BindPinned(HELENGINE_CODE_MODULE_ID, " : "Event::Bind(");
             lines.Add(receiverText);
             lines.Add(", ");
             lines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
@@ -4816,9 +4820,7 @@ namespace cs2.cpp {
             }
 
             lines.Add($"set_{propertyName}(");
-            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add($"{GetNativeStringTypeName()}()");
-            } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
+            if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else {
                 int rightStartDepth = context.Class.Count;
                 List<string> rightLines = new List<string>();
@@ -4890,9 +4892,7 @@ namespace cs2.cpp {
 
             lines.Add($"get_{propertyName}()");
             lines.Add(" = ");
-            if (ShouldEmitEmptyStringForTargetedNullAssignment(semantic, assignment.Left, assignment.Right)) {
-                lines.Add($"{GetNativeStringTypeName()}()");
-            } else if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
+            if (TryAppendDelegateMethodGroupAssignmentValue(semantic, context, assignment, lines)) {
             } else {
                 int rightStartDepth = context.Class.Count;
                 List<string> rightLines = new List<string>();
@@ -5478,7 +5478,8 @@ namespace cs2.cpp {
             }
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
-            lines.Add($"static_cast<int32_t>({receiverText}.size())");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add($"static_cast<int32_t>(he_cpp_require_string_value({receiverText}).size())");
             return true;
         }
 
@@ -7379,13 +7380,20 @@ namespace cs2.cpp {
         /// <param name="semantic">Semantic model used to resolve owned-return metadata on argument invocations.</param>
         /// <param name="invocationExpression">Collection insertion invocation owning any recorded transfer transitions.</param>
         /// <param name="insertedValueExpression">Argument expression supplying the inserted value.</param>
-        /// <returns><c>true</c> when the inserted value is a fresh allocation, a transferred owned local, or an owned-return call result.</returns>
+        /// <returns><c>true</c> when the inserted value is a fresh allocation, a transferred owned local or parameter, or an owned-return call result.</returns>
         bool InsertedValueTransfersOwnership(
             SemanticModel semantic,
             InvocationExpressionSyntax invocationExpression,
             ExpressionSyntax insertedValueExpression) {
             if (insertedValueExpression is ObjectCreationExpressionSyntax ||
                 insertedValueExpression is ImplicitObjectCreationExpressionSyntax) {
+                return true;
+            }
+
+            if (insertedValueExpression is IdentifierNameSyntax parameterIdentifier &&
+                semantic.GetSymbolInfo(parameterIdentifier).Symbol is IParameterSymbol parameter &&
+                new CPPIntrinsicOwnershipCatalog().TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind parameterOwnership) &&
+                parameterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
                 return true;
             }
 
@@ -8607,13 +8615,22 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (memberName == "GetHashCode" && invocationExpression.ArgumentList.Arguments.Count == 0) {
+                RegisterRuntimeRequirement("NativeExceptions");
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add($"static_cast<int32_t>(HeCppHash<HeCppString>{{}}(he_cpp_require_string_value({RenderExpressionText(semantic, context, memberAccess.Expression)})))");
+                resultType = VariableUtil.GetVarType("int");
+                return true;
+            }
+
             if (string.Equals(memberName, "Replace", StringComparison.Ordinal) &&
                 TryProcessNativeStringReplaceInvocation(semantic, context, invocationExpression, memberAccess, lines)) {
                 return true;
             }
 
             RegisterRuntimeRequirement("NativeString");
-            string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
+            RegisterRuntimeRequirement("NativeExceptions");
+            string receiverText = $"he_cpp_require_string_value({RenderExpressionText(semantic, context, memberAccess.Expression)})";
 
             if (string.Equals(memberName, "StartsWith", StringComparison.Ordinal) ||
                 string.Equals(memberName, "EndsWith", StringComparison.Ordinal)) {
@@ -8862,7 +8879,8 @@ namespace cs2.cpp {
                 }
             }
             string resultName = CreateTemporaryName("__replace_result");
-            lines.Add($"auto {resultName} = String::Replace({receiverName}, {argumentNames[0]}, {argumentNames[1]});\n");
+            RegisterRuntimeRequirement("NativeExceptions");
+            lines.Add($"auto {resultName} = String::Replace(he_cpp_require_string_value({receiverName}), {argumentNames[0]}, {argumentNames[1]});\n");
             lines.AddRange(cleanupLines);
             lines.Add($"return {resultName};\n}})()");
             return true;
@@ -9733,7 +9751,8 @@ namespace cs2.cpp {
 
             string receiverText = string.Concat(receiverLines);
             if (IsStringLikeExpression(semantic, memberAccess.Expression)) {
-                lines.Add(receiverText);
+                RegisterRuntimeRequirement("NativeExceptions");
+                lines.Add($"he_cpp_require_string_value({receiverText})");
                 return true;
             }
 
@@ -10357,6 +10376,11 @@ namespace cs2.cpp {
                 return stringCoalesceResult;
             }
 
+            if (binary.IsKind(SyntaxKind.CoalesceExpression) &&
+                TryProcessNullableCoalesceExpression(semantic, context, binary, lines, out ExpressionResult nullableCoalesceResult)) {
+                return nullableCoalesceResult;
+            }
+
             if (binary.IsKind(SyntaxKind.AddExpression) &&
                 TryProcessStringConcatenationExpression(semantic, context, binary, lines, out ExpressionResult stringConcatResult)) {
                 return stringConcatResult;
@@ -10401,7 +10425,7 @@ namespace cs2.cpp {
                     lines.Add("!");
                 }
 
-                lines.Add("String::IsNullOrEmpty(");
+                lines.Add("String::IsNull(");
                 lines.AddRange(left);
                 lines.Add(")");
                 return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("bool"));
@@ -10659,6 +10683,47 @@ namespace cs2.cpp {
             return false;
         }
 
+        /// <summary>Unwraps nullable value operands lazily, including string conditional-access length results.</summary>
+        /// <param name="semantic">Semantic model used to identify nullable operands.</param>
+        /// <param name="context">Current expression scope.</param>
+        /// <param name="binary">Null-coalescing expression.</param>
+        /// <param name="lines">Destination native tokens.</param>
+        /// <param name="result">Resolved expression type metadata.</param>
+        /// <returns>True when the left operand is a nullable value.</returns>
+        bool TryProcessNullableCoalesceExpression(SemanticModel semantic, LayerContext context, BinaryExpressionSyntax binary, List<string> lines, out ExpressionResult result) {
+            result = new ExpressionResult(false);
+            if (!TryUnwrapNullableTypeSymbol(semantic.GetTypeInfo(binary.Left).Type, out ITypeSymbol underlyingType)) {
+                return false;
+            }
+            ITypeSymbol resultType = semantic.GetTypeInfo(binary).Type ?? underlyingType;
+            string resultTypeName = GetCppTypeToken(VariableUtil.GetVarType(resultType), context.Program);
+            List<string> operand = new List<string>();
+            int start = context.DepthClass;
+            ExpressionResult leftResult = ProcessExpression(semantic, context, binary.Left, operand);
+            context.PopClass(start);
+            string temporaryName = CreateTemporaryName("__coalesceNullable");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> {resultTypeName} {{\n");
+            if (leftResult.BeforeLines != null) lines.AddRange(leftResult.BeforeLines);
+            lines.Add($"auto {temporaryName} = ");
+            lines.AddRange(operand);
+            lines.Add(";\n");
+            if (leftResult.AfterLines != null) lines.AddRange(leftResult.AfterLines);
+            lines.Add($"if ({temporaryName}.get_HasValue()) return {temporaryName}.get_Value();\n");
+            operand.Clear();
+            start = context.DepthClass;
+            ExpressionResult rightResult = ProcessExpression(semantic, context, binary.Right, operand);
+            context.PopClass(start);
+            if (rightResult.BeforeLines != null) lines.AddRange(rightResult.BeforeLines);
+            string fallbackName = CreateTemporaryName("__coalesceFallback");
+            lines.Add($"{resultTypeName} {fallbackName} = ");
+            lines.AddRange(operand);
+            lines.Add(";\n");
+            if (rightResult.AfterLines != null) lines.AddRange(rightResult.AfterLines);
+            lines.Add($"return {fallbackName};\n}})()");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(resultType));
+            return true;
+        }
+
         bool TryProcessStringCoalesceExpression(
             SemanticModel semantic,
             LayerContext context,
@@ -10671,9 +10736,94 @@ namespace cs2.cpp {
                 return false;
             }
 
+            RegisterRuntimeRequirement("NativeString");
+            string temporaryName = CreateTemporaryName("__coalesceString");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> {GetNativeStringTypeName()} {{\n");
+            AppendEvaluatedStringExpression(semantic, context, binary.Left, temporaryName, lines);
+            lines.Add($"if (!String::IsNull({temporaryName})) return {temporaryName};\n");
+            string fallbackName = CreateTemporaryName("__coalesceFallback");
+            AppendEvaluatedStringExpression(semantic, context, binary.Right, fallbackName, lines);
+            lines.Add($"return {fallbackName};\n}})()");
+            result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
+            return true;
+        }
+
+        /// <summary>Evaluates a string operand once inside a lowering lambda and runs its preparation and cleanup in source order.</summary>
+        /// <param name="semantic">Semantic model for the source operand.</param>
+        /// <param name="context">Current expression scope.</param>
+        /// <param name="expression">Operand to evaluate.</param>
+        /// <param name="temporaryName">Name receiving the managed value snapshot.</param>
+        /// <param name="lines">Destination lambda body.</param>
+        void AppendEvaluatedStringExpression(SemanticModel semantic, LayerContext context, ExpressionSyntax expression, string temporaryName, List<string> lines) {
+            List<string> operandLines = new List<string>();
             int start = context.DepthClass;
-            result = ProcessExpression(semantic, context, binary.Left, lines);
+            ExpressionResult operandResult = ProcessExpression(semantic, context, expression, operandLines);
             context.PopClass(start);
+            if (operandResult.BeforeLines != null) {
+                lines.AddRange(operandResult.BeforeLines);
+            }
+            lines.Add($"{GetNativeStringTypeName()} {temporaryName} = ");
+            lines.AddRange(operandLines);
+            lines.Add(";\n");
+            if (operandResult.AfterLines != null) {
+                lines.AddRange(operandResult.AfterLines);
+            }
+        }
+
+        /// <summary>Preserves lazy fallback evaluation and a single target evaluation for managed string null-coalescing assignment.</summary>
+        /// <param name="semantic">Semantic model used to identify string storage and properties.</param>
+        /// <param name="context">Current lowering scope.</param>
+        /// <param name="assignment">Potential null-coalescing assignment.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        /// <returns>True when the managed string assignment was lowered.</returns>
+        bool TryProcessStringCoalesceAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
+            if (!assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression) || !IsStringLikeExpression(semantic, assignment.Left)) {
+                return false;
+            }
+            RegisterRuntimeRequirement("NativeString");
+            string valueName = CreateTemporaryName("__coalesceAssigned");
+            string targetName = CreateTemporaryName("__coalesceTarget");
+            lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> {GetNativeStringTypeName()} {{\n");
+            ISymbol targetSymbol = semantic.GetSymbolInfo(assignment.Left).Symbol;
+            string propertyTarget = null;
+            if (targetSymbol is IPropertySymbol propertySymbol && !propertySymbol.ReturnsByRef && !propertySymbol.ReturnsByRefReadonly) {
+                if (assignment.Left is MemberAccessExpressionSyntax memberAccess) {
+                    List<string> receiverLines = new List<string>();
+                    int start = context.DepthClass;
+                    ExpressionResult receiver = ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+                    context.PopClass(start);
+                    if (receiver.BeforeLines != null) lines.AddRange(receiver.BeforeLines);
+                    if (propertySymbol.IsStatic) {
+                        propertyTarget = string.Concat(receiverLines) + "::";
+                    } else {
+                        lines.Add($"auto&& {targetName} = ");
+                        lines.AddRange(receiverLines);
+                        lines.Add(";\n");
+                        propertyTarget = targetName + (UsesDirectMemberAccess(semantic, memberAccess.Expression) ? "." : "->");
+                    }
+                } else {
+                    propertyTarget = propertySymbol.IsStatic ? string.Empty : "this->";
+                }
+                lines.Add($"{GetNativeStringTypeName()} {valueName} = {propertyTarget}get_{propertySymbol.Name}();\n");
+            } else {
+                List<string> targetLines = new List<string>();
+                int start = context.DepthClass;
+                ExpressionResult targetResult = ProcessExpression(semantic, context, assignment.Left, targetLines);
+                context.PopClass(start);
+                if (targetResult.BeforeLines != null) lines.AddRange(targetResult.BeforeLines);
+                lines.Add($"auto& {targetName} = ");
+                lines.AddRange(targetLines);
+                lines.Add($";\n{GetNativeStringTypeName()} {valueName} = {targetName};\n");
+            }
+            lines.Add($"if (!String::IsNull({valueName})) return {valueName};\n");
+            string fallbackName = CreateTemporaryName("__coalesceFallback");
+            AppendEvaluatedStringExpression(semantic, context, assignment.Right, fallbackName, lines);
+            if (targetSymbol is IPropertySymbol assignedProperty && propertyTarget != null) {
+                lines.Add($"{propertyTarget}set_{assignedProperty.Name}({fallbackName});\n");
+            } else {
+                lines.Add($"{targetName} = {fallbackName};\n");
+            }
+            lines.Add($"return {fallbackName};\n}})()");
             return true;
         }
 
@@ -10795,7 +10945,7 @@ namespace cs2.cpp {
                 lines.Add("!");
             }
 
-            lines.Add("String::IsNullOrEmpty(");
+            lines.Add("String::IsNull(");
             lines.AddRange(stringLines);
             lines.Add(")");
             return true;
@@ -10964,13 +11114,35 @@ namespace cs2.cpp {
 
             List<string> thrown = new List<string>();
             int startThrow = context.DepthClass;
-            ProcessExpression(semantic, context, throwExpression.Expression, thrown);
+            ExpressionResult thrownResult = ProcessExpression(semantic, context, throwExpression.Expression, thrown);
             context.PopClass(startThrow);
 
             ITypeSymbol resultTypeSymbol = semantic.GetTypeInfo(binary).ConvertedType ?? semantic.GetTypeInfo(binary).Type;
             if (IsStringTypeSymbol(resultTypeSymbol) || IsStringCoalesceExpression(semantic, binary)) {
+                RegisterRuntimeRequirement("NativeString");
+                string temporaryName = CreateTemporaryName("__coalesceString");
+                lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() -> {GetNativeStringTypeName()} {{\n");
+                if (leftResult.BeforeLines != null) lines.AddRange(leftResult.BeforeLines);
+                lines.Add($"{GetNativeStringTypeName()} {temporaryName} = ");
                 lines.AddRange(left);
-                return leftResult;
+                lines.Add(";\n");
+                if (leftResult.AfterLines != null) lines.AddRange(leftResult.AfterLines);
+                lines.Add($"if (!String::IsNull({temporaryName})) return {temporaryName};\n");
+                if (thrownResult.BeforeLines != null) lines.AddRange(thrownResult.BeforeLines);
+                if (UsesExceptions()) {
+                    lines.Add("throw ");
+                    lines.AddRange(thrown);
+                    lines.Add(";\n");
+                } else {
+                    RegisterRuntimeRequirement("NativeExceptions");
+                    string exceptionText = string.Concat(thrown).Trim();
+                    if (exceptionText.StartsWith("new ", StringComparison.Ordinal)) {
+                        exceptionText = exceptionText.Substring("new ".Length);
+                    }
+                    lines.Add($"return he_cpp_raise_value<{GetNativeStringTypeName()}>({exceptionText});\n");
+                }
+                lines.Add("})()");
+                return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
             }
 
             lines.Add("(");
@@ -12113,6 +12285,7 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessInterpolatedStringExpression(SemanticModel semantic, LayerContext context, InterpolatedStringExpressionSyntax interpolatedString, List<string> lines) {
+            RegisterRuntimeRequirement("NativeString");
             bool emittedAnySegment = false;
 
             foreach (var content in interpolatedString.Contents) {
@@ -12132,7 +12305,7 @@ namespace cs2.cpp {
             }
 
             if (!emittedAnySegment) {
-                lines.Add($"{GetNativeStringTypeName()}()");
+                lines.Add($"{GetNativeStringTypeName()}(\"\")");
             }
 
             return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("string"));
@@ -12148,7 +12321,7 @@ namespace cs2.cpp {
         }
 
         string BuildInterpolatedExpressionSegment(SemanticModel semantic, LayerContext context, InterpolationSyntax interpolation) {
-            return BuildStringExpressionSegment(semantic, context, interpolation.Expression);
+            return $"String::Concat({BuildStringExpressionSegment(semantic, context, interpolation.Expression)})";
         }
 
         string BuildStringExpressionSegment(SemanticModel semantic, LayerContext context, ExpressionSyntax expression) {
@@ -12349,6 +12522,22 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
+            if (IsStringExpression(semantic, elementAccess.Expression)) {
+                RegisterRuntimeRequirement("NativeExceptions");
+                lines.Add("he_cpp_require_string_value(");
+                int receiverDepth = context.DepthClass;
+                ProcessExpression(semantic, context, elementAccess.Expression, lines);
+                context.PopClass(receiverDepth);
+                lines.Add(")[");
+                foreach (ArgumentSyntax argument in elementAccess.ArgumentList.Arguments) {
+                    int argumentDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, argument.Expression, lines);
+                    context.PopClass(argumentDepth);
+                }
+                lines.Add("]");
+                return;
+            }
+
             if (TryProcessIndexerElementAccessExpression(semantic, context, elementAccess, lines)) {
                 return;
             }
@@ -13004,7 +13193,12 @@ namespace cs2.cpp {
             lines.AddRange(receiverLines);
             lines.Add(";\n");
             lines.Add($"{resultTypeName} {resultTemporaryName}{{}};\n");
-            lines.Add($"if ({receiverTemporaryName} != nullptr) {{\n");
+            if (receiverTypeSymbol.SpecialType == SpecialType.System_String) {
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add($"if (!String::IsNull({receiverTemporaryName})) {{\n");
+            } else {
+                lines.Add($"if ({receiverTemporaryName} != nullptr) {{\n");
+            }
             if (accessedValueResult.BeforeLines != null &&
                 accessedValueResult.BeforeLines.Count > 0) {
                 lines.AddRange(accessedValueResult.BeforeLines);
@@ -13051,6 +13245,53 @@ namespace cs2.cpp {
                 string.IsNullOrWhiteSpace(receiverTemporaryName) ||
                 lines == null) {
                 return new ExpressionResult(false, VariablePath.Unknown, null);
+            }
+
+            if (IsStringLikeExpression(semantic, conditionalAccess.Expression)) {
+                RegisterRuntimeRequirement("NativeString");
+                if (conditionalAccess.WhenNotNull is MemberBindingExpressionSyntax stringMember &&
+                    stringMember.Name.Identifier.Text == "Length") {
+                    lines.Add($"static_cast<int32_t>({receiverTemporaryName}.size())");
+                    return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
+                }
+                if (conditionalAccess.WhenNotNull is InvocationExpressionSyntax stringInvocation &&
+                    stringInvocation.Expression is MemberBindingExpressionSyntax stringMethod) {
+                    IMethodSymbol method = ResolveInvokedMethodSymbol(semantic, stringInvocation);
+                    if (method == null) return new ExpressionResult(false);
+                    string methodName = stringMethod.Name.Identifier.Text;
+                    if (methodName == "ToString") {
+                        lines.Add(receiverTemporaryName);
+                    } else if (methodName == "GetHashCode") {
+                        lines.Add($"static_cast<int32_t>(HeCppHash<HeCppString>{{}}({receiverTemporaryName}))");
+                    } else {
+                        lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
+                        List<string> argumentNames = new List<string>();
+                        List<string> cleanup = new List<string>();
+                        foreach (ArgumentSyntax argument in stringInvocation.ArgumentList.Arguments) {
+                            List<string> argumentLines = new List<string>();
+                            int argumentDepth = context.DepthClass;
+                            ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentLines);
+                            context.PopClass(argumentDepth);
+                            if (argumentResult.BeforeLines != null) lines.AddRange(argumentResult.BeforeLines);
+                            string argumentName = CreateTemporaryName("__conditionalStringArg");
+                            lines.Add($"auto {argumentName} = ");
+                            lines.AddRange(argumentLines);
+                            lines.Add(";\n");
+                            argumentNames.Add(argumentName);
+                            if (argumentResult.AfterLines != null) cleanup.AddRange(argumentResult.AfterLines);
+                        }
+                        string valueName = CreateTemporaryName("__conditionalStringValue");
+                        lines.Add($"auto {valueName} = String::{methodName}({receiverTemporaryName}");
+                        if (stringInvocation.ArgumentList.Arguments.Count > 0) {
+                            lines.Add(", ");
+                            lines.Add(string.Join(", ", argumentNames));
+                        }
+                        lines.Add(");\n");
+                        lines.AddRange(cleanup);
+                        lines.Add($"return {valueName};\n}})()");
+                    }
+                    return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(method.ReturnType));
+                }
             }
 
             if (conditionalAccess.WhenNotNull is MemberBindingExpressionSyntax memberBinding) {
@@ -13371,13 +13612,18 @@ namespace cs2.cpp {
             bool invariantProvider = providerSymbol is IPropertySymbol property && property.IsStatic &&
                 property.Name == "InvariantCulture" &&
                 IsFrameworkTypeSymbol(semantic.Compilation, property.ContainingType, "System.Globalization.CultureInfo");
-            string format = arguments.Count == 2 && semantic.GetConstantValue(arguments[0].Expression) is { HasValue: true, Value: string text }
-                ? text : string.Empty;
+            string format = string.Empty;
+            if (arguments.Count == 2) {
+                Optional<object> constant = semantic.GetConstantValue(arguments[0].Expression);
+                if (constant.HasValue && constant.Value is string text) {
+                    format = text;
+                }
+            }
             bool floating = IsFloatingPointTypeSymbol(receiverType);
-            bool supportedFormat = arguments.Count == 1 ||
+            bool supportedFormat = (arguments.Count == 1 && !floating) ||
                 (arguments.Count == 2 && (format == "F0" || format == "F1" || (!floating && format == "D6")));
             if (!invariantProvider || !supportedFormat || arguments.Any(argument => argument.NameColon != null)) {
-                ReportUnsupportedNode(context, invocation, "Native numeric ToString supports only exact CultureInfo.InvariantCulture provider-only overloads and constant D6 (integral), F0 or F1 formats.");
+                ReportUnsupportedNode(context, invocation, "Native numeric ToString supports only exact CultureInfo.InvariantCulture with integral provider-only overloads and constant D6 (integral), F0 or F1 formats.");
                 lines.Add($"{GetNativeStringTypeName()}()");
                 return true;
             }
@@ -13389,9 +13635,12 @@ namespace cs2.cpp {
             RegisterRuntimeRequirement("NativeString");
             string helper = arguments.Count == 1 ? "ToJoinString" : format == "D6" ? "ToInvariantDecimal6" : "ToInvariantFixed";
             string precision = helper == "ToInvariantFixed" ? format == "F1" ? ", 1" : ", 0" : string.Empty;
-            lines.AddRange(receiverResult.BeforeLines ?? new List<string>());
-            lines.Add($"String::{helper}({string.Concat(receiverLines)}{precision})");
-            lines.AddRange(receiverResult.AfterLines ?? new List<string>());
+            string expression = $"String::{helper}({string.Concat(receiverLines)}{precision})";
+            if ((receiverResult.BeforeLines?.Count ?? 0) != 0 || (receiverResult.AfterLines?.Count ?? 0) != 0) {
+                lines.Add($"([&]() {{ {string.Concat(receiverResult.BeforeLines ?? new List<string>())} auto __invariant_text = {expression}; {string.Concat(receiverResult.AfterLines ?? new List<string>())} return __invariant_text; }}())");
+            } else {
+                lines.Add(expression);
+            }
             return true;
         }
 
@@ -13564,10 +13813,23 @@ namespace cs2.cpp {
             IReadOnlyList<ParameterSyntax> parameters,
             CSharpSyntaxNode lambdaBody,
             List<string> lines) {
+            bool pinCallable = UsesCodeModuleCallablePins(context);
+            if (pinCallable) lines.Add("HeCppPinCodeModuleCallable(HELENGINE_CODE_MODULE_ID, ");
             lines.Add("[&](");
             AppendLambdaParameters(semantic, context, parameters, lines);
             lines.Add(")");
             AppendNativeLambdaBody(semantic, context, lambdaExpression, lambdaBody, lines);
+            if (pinCallable) lines.Add(")");
+        }
+
+        /// <summary>Limits per-translation-unit callable ownership to source bodies with a stable nongeneric owner.</summary>
+        /// <param name="context">Current converted class and method scope.</param>
+        /// <returns>Whether stored callbacks must retain the active native module.</returns>
+        bool UsesCodeModuleCallablePins(LayerContext context) {
+            return Options.PlatformOptionValues.TryGetValue("codegen-module-lifetime-pins", out string pinOption) &&
+                bool.TryParse(pinOption, out bool pinEnabled) && pinEnabled &&
+                (context.GetCurrentClass()?.GenericArgs?.Count ?? 0) == 0 &&
+                (context.GetCurrentFunction()?.Function?.GenericParameters?.Count ?? 0) == 0;
         }
 
         void AppendLambdaParameters(
@@ -14455,19 +14717,12 @@ namespace cs2.cpp {
                         return new VariableType(parsedType.Type, "void");
                 }
 
-                case VariableDataType.String:
-
-                    if (codeConverter.CPPRules.UseStdString) {
+                case VariableDataType.String: {
                         codeConverter?.RegisterRuntimeRequirement("NativeString");
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
                         return new VariableType(parsedType.Type, GetNativeStringTypeName());
-                } else {
-                        typeData.IsArray = true;
-                        typeData.IsNativeType = true;
-                        typeData.IsPointer = false;
-                        return new VariableType(parsedType.Type, "char");
                 }
                 case VariableDataType.List: {
                         codeConverter?.RegisterRuntimeRequirement("NativeList");
@@ -15714,6 +15969,8 @@ namespace cs2.cpp {
             List<string> delegateConstructionLines = new List<string> {
                 $"new {delegateWrapperTypeName}("
             };
+            bool pinCallable = UsesCodeModuleCallablePins(context);
+            if (pinCallable) delegateConstructionLines.Add("HeCppPinCodeModuleCallable(HELENGINE_CODE_MODULE_ID, ");
             if (methodGroupSymbol.IsStatic) {
                 delegateConstructionLines.Add(RenderQualifiedMethodPointerTarget(methodGroupSymbol, context));
             } else if (TryResolveBoundDelegateReceiverText(semantic, context, methodGroupExpression, methodGroupSymbol, out string receiverText)) {
@@ -15726,6 +15983,7 @@ namespace cs2.cpp {
                 return false;
             }
 
+            if (pinCallable) delegateConstructionLines.Add(")");
             delegateConstructionLines.Add(")");
             lines.AddRange(delegateConstructionLines);
             return true;
@@ -16908,13 +17166,9 @@ namespace cs2.cpp {
 
                 if (variable.Initializer != null) {
                     newLines.Add($" = ");
-                    if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
-                        newLines.Add($"{GetNativeStringTypeName()}()");
-                    } else {
-                        ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
-                        if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
-                            beforeDeclarationLines.AddRange(result.BeforeLines);
-                        }
+                    ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, newLines);
+                    if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                        beforeDeclarationLines.AddRange(result.BeforeLines);
                     }
                 }
             }
@@ -18086,13 +18340,9 @@ namespace cs2.cpp {
 
                 if (variable.Initializer != null) {
                     declarationLines.Add(" = ");
-                    if (ShouldEmitEmptyStringForStringDeclaration(varType, variable.Initializer.Value)) {
-                        declarationLines.Add($"{GetNativeStringTypeName()}()");
-                    } else {
-                        ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, declarationLines);
-                        if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
-                            beforeDeclarationLines.AddRange(result.BeforeLines);
-                        }
+                    ExpressionResult result = ProcessExpression(semantic, context, variable.Initializer.Value, declarationLines);
+                    if (result.BeforeLines != null && result.BeforeLines.Count > 0) {
+                        beforeDeclarationLines.AddRange(result.BeforeLines);
                     }
                 }
 
@@ -18117,25 +18367,6 @@ namespace cs2.cpp {
             return true;
         }
 
-        /// <summary>
-        /// Determines whether one local declaration must lower a null-like initializer to an empty native string.
-        /// </summary>
-        /// <param name="declarationType">Resolved declared type for the local variable.</param>
-        /// <param name="initializerValue">Initializer expression applied to the declaration.</param>
-        /// <returns><c>true</c> when the initializer should emit <c>std::string()</c>; otherwise, <c>false</c>.</returns>
-        static bool ShouldEmitEmptyStringForStringDeclaration(VariableType declarationType, ExpressionSyntax initializerValue) {
-            if (declarationType == null || initializerValue == null) {
-                return false;
-            }
-
-            if (declarationType.Type != VariableDataType.String &&
-                !string.Equals(declarationType.TypeName, "string", StringComparison.Ordinal) &&
-                !string.Equals(declarationType.TypeName, "std::string", StringComparison.Ordinal)) {
-                return false;
-            }
-
-            return IsNullLikeExpression(initializerValue);
-        }
 
         /// <summary>
         /// Emits native C++ dynamic-array allocation for single-dimension and jagged-array creation expressions.
@@ -18259,7 +18490,7 @@ namespace cs2.cpp {
                         literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
                             return match.Value == "\r\n" ? "\\r\\n" : "\\n";
                     });
-                        literalValue = $"\"{literalValue}\"";
+                        literalValue = $"{GetNativeStringTypeName()}(\"{literalValue}\")";
                         break;
                 }
                 case SyntaxKind.NullLiteralExpression:
@@ -18341,12 +18572,6 @@ namespace cs2.cpp {
                 lines.AddRange(result.BeforeLines);
             }
 
-            if (ShouldEmitEmptyStringForTargetedNullReturn(semantic, ret)) {
-                lines.Add("return String::Empty;");
-                context.PopClass(start);
-                return;
-            }
-
             if (TryAppendArrayAsListReturnValue(semantic, context, ret, returnLines, lines)) {
                 context.PopClass(start);
                 return;
@@ -18387,22 +18612,6 @@ namespace cs2.cpp {
             return true;
         }
 
-        /// <summary>
-        /// Returns whether one return statement should lower an explicit null literal to the managed empty-string singleton.
-        /// </summary>
-        /// <param name="semantic">Semantic model for the active document.</param>
-        /// <param name="ret">Return statement being lowered.</param>
-        /// <returns><c>true</c> when the return target is one string and the expression is one null literal; otherwise <c>false</c>.</returns>
-        static bool ShouldEmitEmptyStringForTargetedNullReturn(SemanticModel semantic, ReturnStatementSyntax ret) {
-            if (semantic == null ||
-                ret?.Expression == null ||
-                ret.Expression.Kind() != SyntaxKind.NullLiteralExpression) {
-                return false;
-            }
-
-            ITypeSymbol returnTypeSymbol = ResolveEnclosingReturnTypeSymbol(semantic, ret);
-            return IsStringTypeSymbol(returnTypeSymbol);
-        }
 
         static ITypeSymbol ResolveEnclosingReturnTypeSymbol(SemanticModel semantic, SyntaxNode node) {
             ISymbol enclosingSymbol = semantic?.GetEnclosingSymbol(node?.SpanStart ?? 0);

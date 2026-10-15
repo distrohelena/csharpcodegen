@@ -17,6 +17,6 @@
 
 class Directory {
 public:
-    static bool Exists(const std::string& path);
-    static void CreateDirectory(const std::string& path);
+    static bool Exists(const HeCppString& path);
+    static void CreateDirectory(const HeCppString& path);
 };

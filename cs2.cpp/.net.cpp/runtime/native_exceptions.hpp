@@ -175,7 +175,7 @@ public:
     /// Initializes the standard hosted exception with one managed string message.
     /// </summary>
     explicit Exception(const HeCppString& message)
-        : std::runtime_error(message) {
+        : std::runtime_error(message.c_str()) {
     }
 
     /// <summary>
@@ -629,5 +629,32 @@ public:
         : Exception(he_cpp_exception_detail::SelectMessage(message, "Specified method is not supported.")) {
     }
 };
+
+/// <summary>Represents an instance operation attempted through a null managed reference.</summary>
+class NullReferenceException : public Exception {
+public:
+    /// <summary>Initializes the canonical managed null-reference failure.</summary>
+    NullReferenceException()
+        : Exception("Object reference not set to an instance of an object.") {
+    }
+
+    /// <summary>Initializes the failure with the supplied literal message.</summary>
+    explicit NullReferenceException(const char* message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Object reference not set to an instance of an object.")) {
+    }
+
+    /// <summary>Initializes the failure with the supplied managed message.</summary>
+    explicit NullReferenceException(const HeCppString& message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Object reference not set to an instance of an object.")) {
+    }
+};
+
+/// <summary>Validates a managed string receiver while retaining its value and storage lifetime.</summary>
+inline const HeCppString& he_cpp_require_string_value(const HeCppString& value) {
+    if (value.is_null()) {
+        he_cpp_raise(NullReferenceException());
+    }
+    return value;
+}
 
 #include "../system/object_disposed_exception.hpp"

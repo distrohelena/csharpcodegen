@@ -1024,19 +1024,19 @@ namespace cs2.cpp.tests {
             string textComponentHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextComponent.hpp"));
             string textComponentSource = File.ReadAllText(Path.Combine(output.OutputPath, "TextComponent.cpp"));
 
-            Assert.Contains("const std::string& get_Id();", runtimeDataHeader);
-            Assert.Contains("const std::string& RuntimeData::get_Id()", runtimeDataSource);
+            Assert.Contains("const HeCppString& get_Id();", runtimeDataHeader);
+            Assert.Contains("const HeCppString& RuntimeData::get_Id()", runtimeDataSource);
             Assert.Contains("return this->Id;", runtimeDataSource);
-            Assert.Contains("const std::string& get_Text();", textComponentHeader);
-            Assert.Contains("const std::string& TextComponent::get_Text()", textComponentSource);
+            Assert.Contains("const HeCppString& get_Text();", textComponentHeader);
+            Assert.Contains("const HeCppString& TextComponent::get_Text()", textComponentSource);
             Assert.Contains("return this->TextValue;", textComponentSource);
         }
 
         /// <summary>
-        /// Ensures assigning null to string-backed fields lowers to empty native strings instead of invalid std::string null-pointer assignments.
+        /// Ensures assigning null to string-backed fields preserves a managed null reference.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStringFieldNullAssignments_EmitsEmptyNativeStrings() {
+        public void WriteOutput_WithStringFieldNullAssignments_PreservesManagedNull() {
             string source = """
                 public class MaterialLayout {
                     string ShaderAssetIdValue;
@@ -1056,14 +1056,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "MaterialLayout.cpp"));
 
-            Assert.Contains("this->ShaderAssetIdValue = std::string();", sourceOutput);
-            Assert.Contains("this->VertexProgramValue = std::string();", sourceOutput);
-            Assert.Contains("this->PixelProgramValue = std::string();", sourceOutput);
-            Assert.Contains("this->VariantValue = std::string();", sourceOutput);
-            Assert.DoesNotContain("this->ShaderAssetIdValue = nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("this->VertexProgramValue = nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("this->PixelProgramValue = nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("this->VariantValue = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->ShaderAssetIdValue = nullptr;", sourceOutput);
+            Assert.Contains("this->VertexProgramValue = nullptr;", sourceOutput);
+            Assert.Contains("this->PixelProgramValue = nullptr;", sourceOutput);
+            Assert.Contains("this->VariantValue = nullptr;", sourceOutput);
         }
 
         /// <summary>
@@ -1148,7 +1144,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("::FontInfo* FontInfo;", coreHeader);
             Assert.Contains("::ContentManager* ContentManager;", coreHeader);
-            Assert.Contains("Dictionary<std::string, ::ContentManager*>* Managers;", coreHeader);
+            Assert.Contains("Dictionary<HeCppString, ::ContentManager*>* Managers;", coreHeader);
             Assert.Contains("::ContentManager* GetContentManager();", coreHeader);
             Assert.Contains("::ContentManager* Core::GetContentManager()", coreSource);
             Assert.DoesNotContain("\n    FontInfo* FontInfo;", coreHeader, StringComparison.Ordinal);
@@ -1498,7 +1494,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Registration.cpp"));
 
-            Assert.Contains("const std::string& Registration::get_ProcessorId()", sourceOutput);
+            Assert.Contains("const HeCppString& Registration::get_ProcessorId()", sourceOutput);
             Assert.Contains("return this->processorIdValue;", sourceOutput);
             Assert.DoesNotContain("Method has no generated body.", sourceOutput, StringComparison.Ordinal);
         }
@@ -2178,9 +2174,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::string info = \"Anchored to: \";", sourceOutput);
-            Assert.Contains("return String::Concat(info, String::JoinArray(\", \", values->ToArray()));", sourceOutput);
-            Assert.DoesNotContain("const std::string info[]", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("HeCppString info = HeCppString(\"Anchored to: \");", sourceOutput);
+            Assert.Contains("return String::Concat(info, String::JoinArray(HeCppString(\", \"), values->ToArray()));", sourceOutput);
+            Assert.DoesNotContain("const HeCppString info[]", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("Boolean::Join", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -2742,8 +2738,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "StringGate.cpp"));
 
-            Assert.Contains("return String::IsNullOrEmpty((*items)[index]);", sourceOutput);
-            Assert.Contains("return !String::IsNullOrEmpty((*items)[index]);", sourceOutput);
+            Assert.Contains("return String::IsNull((*items).get_Item(static_cast<int32_t>(index)));", sourceOutput);
+            Assert.Contains("return !String::IsNull((*items).get_Item(static_cast<int32_t>(index)));", sourceOutput);
             Assert.DoesNotContain("== nullptr", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("!= nullptr", sourceOutput, StringComparison.Ordinal);
         }
@@ -2814,7 +2810,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
 
-            Assert.Contains("this->RegisterProcessor(new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("this->RegisterProcessor(new List<HeCppString>({ WildcardExtension }))", sourceOutput);
             Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -2852,7 +2848,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
 
-            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<HeCppString>({ WildcardExtension }))", sourceOutput);
             Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -3871,8 +3867,8 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentManager.cpp"));
             string textProcessorHeader = File.ReadAllText(Path.Combine(output.OutputPath, "TextContentProcessor.hpp"));
 
-            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
-            Assert.Contains("RegisterProcessor<RawByteContent*>(RawByteContentProcessorId, new ::RawByteContentProcessor(), new List<std::string>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("RegisterProcessor<TextContent*>(TextContentProcessorId, new ::TextContentProcessor(), new List<HeCppString>({ WildcardExtension }))", sourceOutput);
+            Assert.Contains("RegisterProcessor<RawByteContent*>(RawByteContentProcessorId, new ::RawByteContentProcessor(), new List<HeCppString>({ WildcardExtension }))", sourceOutput);
             Assert.DoesNotContain("[WildcardExtension]", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("class TextContentProcessor : public IContentProcessor_1<::TextContent*>", textProcessorHeader);
         }
@@ -3923,7 +3919,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Core.cpp"));
 
-            Assert.Contains("new Dictionary<std::string, ::ContentManager*>", sourceOutput);
+            Assert.Contains("new Dictionary<HeCppString, ::ContentManager*>", sourceOutput);
         }
 
         /// <summary>
@@ -3963,17 +3959,17 @@ namespace cs2.cpp.tests {
                 }
                 """;
 
-            ConversionOutput output = RunConversion(source);
+            ConversionOutput output = RunConversion(source, useExceptions: true);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "DebugInfoRegistry.cpp"));
 
-            Assert.Contains("new List<ValueTuple<std::string, std::string, std::string>>();", sourceOutput);
-            Assert.Contains("new List<ValueTuple<std::string, std::string>>();", sourceOutput);
+            Assert.Contains("new List<ValueTuple<HeCppString, HeCppString, HeCppString>>();", sourceOutput);
+            Assert.Contains("new List<ValueTuple<HeCppString, HeCppString>>();", sourceOutput);
             Assert.Contains("catch (...)", sourceOutput);
             Assert.Contains("::IDebugInfoProvider *p = (*providers).get_Item(static_cast<int32_t>(i));", sourceOutput);
-            Assert.Contains("ValueTuple<std::string, std::string> it = (*items).get_Item(static_cast<int32_t>(j));", sourceOutput);
+            Assert.Contains("ValueTuple<HeCppString, HeCppString> it = (*items).get_Item(static_cast<int32_t>(j));", sourceOutput);
             Assert.Contains("result->Add(", sourceOutput);
-            Assert.Contains("ValueTuple<std::string, std::string, std::string>", sourceOutput);
-            Assert.Contains("ValueTuple<std::string, std::string, std::string>(p->get_Category(), it.Item1, it.Item2)", sourceOutput);
+            Assert.Contains("ValueTuple<HeCppString, HeCppString, HeCppString>", sourceOutput);
+            Assert.Contains("ValueTuple<HeCppString, HeCppString, HeCppString>(p->get_Category(), it.Item1, it.Item2)", sourceOutput);
         }
 
         /// <summary>
@@ -4494,11 +4490,11 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
 
-            Assert.Contains("const char c = text[i];", sourceOutput);
+            Assert.Contains("const char c = he_cpp_require_string_value(text)[i];", sourceOutput);
             Assert.Contains("if (c == ' ')", sourceOutput);
             Assert.Contains("::Glyph* ch;", sourceOutput);
-            Assert.Contains("this->Characters->TryGetValue(c, ch)", sourceOutput);
-            Assert.DoesNotContain("const std::string c = text[i];", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("this->Characters->TryGetValue(static_cast<char>(c), ch)", sourceOutput);
+            Assert.DoesNotContain("const HeCppString c = text[i];", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("var* ch", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -4717,9 +4713,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
 
             Assert.Contains("::Glyph ch;", sourceOutput);
-            Assert.Contains("if (this->Characters->TryGetValue(c, ch))", sourceOutput);
+            Assert.Contains("if (this->Characters->TryGetValue(static_cast<char>(c), ch))", sourceOutput);
             Assert.Contains("width += ch.AdvanceWidth;", sourceOutput);
-            Assert.DoesNotContain("([&]() {\n::Glyph ch;\nreturn this->Characters->TryGetValue(c, ch);\n})()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("([&]() {\n::Glyph ch;\nreturn this->Characters->TryGetValue(static_cast<char>(c), ch);\n})()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -5018,8 +5014,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("new List<std::string>({ \"*\" })", sourceOutput);
-            Assert.DoesNotContain("new Array<std::string>", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("new List<HeCppString>({ HeCppString(\"*\") })", sourceOutput);
+            Assert.DoesNotContain("new Array<HeCppString>", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -5168,7 +5164,7 @@ namespace cs2.cpp.tests {
         /// Ensures string coalesce expressions lower without pointer-style temporaries or raw question-mark operators.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStringCoalesce_EmitsDirectStringValue() {
+        public void WriteOutput_WithStringCoalesce_EmitsLazyManagedFallback() {
             string source = """
                 public class Widget {
                     public string Normalize(string message) {
@@ -5181,7 +5177,10 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("const std::string text = message;", sourceOutput);
+            Assert.Contains("const HeCppString text = ([&]() -> HeCppString", sourceOutput);
+            Assert.Contains(" = message;", sourceOutput);
+            Assert.Contains("if (!String::IsNull(", sourceOutput);
+            Assert.Contains(" = String::Empty;", sourceOutput);
             Assert.DoesNotContain("object*", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("??", sourceOutput, StringComparison.Ordinal);
         }
@@ -5480,7 +5479,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("List<int32_t> *values = new List<int32_t>();", sourceOutput);
-            Assert.Contains("Dictionary<std::string, int32_t> *indexes = new Dictionary<std::string, int32_t>();", sourceOutput);
+            Assert.Contains("Dictionary<HeCppString, int32_t> *indexes = new Dictionary<HeCppString, int32_t>();", sourceOutput);
             Assert.Contains("delete values;", sourceOutput);
             Assert.Contains("delete indexes;", sourceOutput);
             Assert.Contains("AddValues(values, indexes);", sourceOutput);
@@ -6212,7 +6211,7 @@ namespace cs2.cpp.tests {
         /// Ensures string null checks lower through a runtime helper that exists on the emitted native string surface.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStringNullCheck_EmitsRuntimeIsNullOrEmptyHelper() {
+        public void WriteOutput_WithStringNullCheck_EmitsRuntimeIsNullHelper() {
             string source = """
                 public class Widget {
                     public bool IsMissing(string value) {
@@ -6225,15 +6224,15 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_string.hpp"));
 
-            Assert.Contains("String::IsNullOrEmpty(value)", sourceOutput);
-            Assert.Contains("static bool IsNullOrEmpty", runtimeHeader);
+            Assert.Contains("String::IsNull(value)", sourceOutput);
+            Assert.Contains("static bool IsNull(", runtimeHeader);
         }
 
         /// <summary>
-        /// Ensures methods that return managed strings coalesce explicit null returns to the native managed empty-string singleton instead of emitting an invalid <c>std::string</c> null return.
+        /// Ensures explicit null returns preserve the managed null reference in string-valued methods.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStringNullReturn_UsesManagedEmptyString() {
+        public void WriteOutput_WithStringNullReturn_PreservesManagedNull() {
             string source = """
                 public class Reader {
                     public string ReadString() {
@@ -6245,8 +6244,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Reader.cpp"));
 
-            Assert.Contains("return String::Empty;", sourceOutput);
-            Assert.DoesNotContain("return nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("return nullptr;", sourceOutput);
+            Assert.DoesNotContain("return String::Empty;", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -6418,7 +6417,7 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
             Assert.Contains("return new ArgumentOutOfRangeException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
-            Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+            Assert.Contains("ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& message)", runtimeHeader);
         }
 
         /// <summary>
@@ -6582,7 +6581,7 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
             Assert.Contains("return new ArgumentException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
-            Assert.Contains("ArgumentException(const std::string& message, const std::string& parameterName)", runtimeHeader);
+            Assert.Contains("ArgumentException(const HeCppString& message, const HeCppString& parameterName)", runtimeHeader);
         }
 
         /// <summary>
@@ -6607,7 +6606,7 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
             Assert.Contains("return new ArgumentNullException(__ctor_arg_00000000, __ctor_arg_00000001);", sourceOutput);
-            Assert.Contains("ArgumentNullException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+            Assert.Contains("ArgumentNullException(const HeCppString& parameterName, const HeCppString& message)", runtimeHeader);
         }
 
         /// <summary>
@@ -6756,10 +6755,10 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
-        /// Ensures string-typed null and default assignments lower to empty native strings instead of pointer literals so generated unload and disposal paths remain valid for std::string-backed members.
+        /// Ensures string null and default assignments retain their managed null state through locals and property setters.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithStringNullAssignments_EmitsEmptyNativeStringsInsteadOfNullptr() {
+        public void WriteOutput_WithStringNullAssignments_PreservesNullAndDefault() {
             string source = """
                 using System;
 
@@ -6777,12 +6776,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::string local = std::string();", sourceOutput);
-            Assert.Contains("this->set_Name(std::string());", sourceOutput);
-            Assert.Contains("local = std::string();", sourceOutput);
-            Assert.DoesNotContain("this->set_Name(nullptr);", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("std::string local = nullptr;", sourceOutput, StringComparison.Ordinal);
-            Assert.DoesNotContain("local = nullptr;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("HeCppString local = nullptr;", sourceOutput);
+            Assert.Contains("this->set_Name(nullptr);", sourceOutput);
+            Assert.Contains("local = HeCppString();", sourceOutput);
         }
 
         /// <summary>
@@ -6962,9 +6958,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ContentProcessorRegistration.cpp"));
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "array.hpp"));
 
-            Assert.Contains("Array<std::string>::Empty()", sourceOutput);
-            Assert.Contains("new Array<std::string>(sourceExtensions->get_Count())", sourceOutput);
-            Assert.Contains("(*normalized)[0] = (*sourceExtensions)[0];", sourceOutput);
+            Assert.Contains("Array<HeCppString>::Empty()", sourceOutput);
+            Assert.Contains("new Array<HeCppString>(sourceExtensions->get_Count())", sourceOutput);
+            Assert.Contains("(*normalized)[0] = (*sourceExtensions).get_Item(static_cast<int32_t>(0));", sourceOutput);
             Assert.Contains("static Array<T>* Empty()", runtimeHeader);
         }
 
@@ -7156,11 +7152,11 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("String::Equals(extension, \"*\", StringComparison::Ordinal)", sourceOutput);
-            Assert.Contains("String::StartsWith(extension, \".\")", sourceOutput);
-            Assert.Contains("static_cast<int32_t>(extension.size()) > 3", sourceOutput);
-            Assert.Contains("String::EndsWith(extension, \".TXT\", StringComparison::OrdinalIgnoreCase)", sourceOutput);
-            Assert.Contains("return String::ToLowerInvariant(extension);", sourceOutput);
+            Assert.Contains("String::Equals(extension, HeCppString(\"*\"), StringComparison::Ordinal)", sourceOutput);
+            Assert.Contains("String::StartsWith(he_cpp_require_string_value(extension), HeCppString(\".\"))", sourceOutput);
+            Assert.Contains("static_cast<int32_t>(he_cpp_require_string_value(extension).size()) > 3", sourceOutput);
+            Assert.Contains("String::EndsWith(he_cpp_require_string_value(extension), HeCppString(\".TXT\"), StringComparison::OrdinalIgnoreCase)", sourceOutput);
+            Assert.Contains("return String::ToLowerInvariant(he_cpp_require_string_value(extension));", sourceOutput);
             Assert.DoesNotContain("extension.StartsWith", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("extension.EndsWith", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("extension.ToLowerInvariant", sourceOutput, StringComparison.Ordinal);
@@ -7612,7 +7608,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("for (const auto& extension : registrationsByExtension->Keys())", sourceOutput);
-            Assert.Contains("std::string registration;", sourceOutput);
+            Assert.Contains("HeCppString registration;", sourceOutput);
             Assert.Contains("registrationsByExtension->TryGetValue(extension, registration)", sourceOutput);
             Assert.DoesNotContain("for (let ", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain(" out_", sourceOutput, StringComparison.Ordinal);
@@ -7643,8 +7639,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("std::string extension;", sourceOutput);
-            Assert.DoesNotContain("const std::string extension;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("HeCppString extension;", sourceOutput);
+            Assert.DoesNotContain("const HeCppString extension;", sourceOutput, StringComparison.Ordinal);
             Assert.Contains("registrationsByExtension->TryGetValue(fileName, extension)", sourceOutput);
         }
 
@@ -7702,7 +7698,7 @@ namespace cs2.cpp.tests {
             string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
 
             Assert.Contains("throw new ArgumentOutOfRangeException(\"size\", \"ComboBox size must be positive.\")", sourceOutput);
-            Assert.Contains("ArgumentOutOfRangeException(const std::string& parameterName, const std::string& message)", runtimeHeader);
+            Assert.Contains("ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& message)", runtimeHeader);
         }
 
         /// <summary>
@@ -8017,7 +8013,7 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
 
-            Assert.Contains("return new List<std::string>(", output.GeneratedText);
+            Assert.Contains("return new List<HeCppString>(", output.GeneratedText);
             Assert.Contains("values", output.GeneratedText);
         }
 
@@ -8116,7 +8112,7 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
 
-            Assert.Contains("std::string(1, Path::DirectorySeparatorChar)", output.GeneratedText);
+            Assert.Contains("HeCppString(1, Path::DirectorySeparatorChar)", output.GeneratedText);
             Assert.DoesNotContain("Path::DirectorySeparatorChar->ToString()", output.GeneratedText, StringComparison.Ordinal);
         }
 
@@ -9466,7 +9462,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Derived.cpp"));
 
-            Assert.Contains("Derived::Derived() : ::Base_2<int32_t, std::string>(1)", sourceOutput);
+            Assert.Contains("Derived::Derived() : ::Base_2<int32_t, HeCppString>(1)", sourceOutput);
             Assert.DoesNotContain(": Base(1)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -10532,9 +10528,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
             string runtimeString = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_string.hpp"));
 
-            Assert.Contains("String::Split(value, '\\n', StringSplitOptions::None)", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("String::Split(value, '\\n')", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("Split(const std::string& value, char separator", runtimeString, StringComparison.Ordinal);
+            string splitCall = "String::Split(he_cpp_require_string_value(value), '\\n', StringSplitOptions::None)";
+            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sourceOutput, System.Text.RegularExpressions.Regex.Escape(splitCall)).Count);
+            Assert.Contains("Split(const HeCppString& value, char separator", runtimeString, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -11131,10 +11127,10 @@ namespace cs2.cpp.tests {
             string consoleHeader = File.ReadAllText(consoleHeaderPath);
             string regexHeader = File.ReadAllText(regexHeaderPath);
 
-            Assert.Contains("static bool Write(const std::string& text);", consoleHeader);
+            Assert.Contains("static bool Write(const HeCppString& text);", consoleHeader);
             Assert.Contains("static bool WriteLine();", consoleHeader);
-            Assert.Contains("static std::string ReadLine();", consoleHeader);
-            Assert.Contains("GroupAccessor get_Item(const std::string& name) const", regexHeader);
+            Assert.Contains("static HeCppString ReadLine();", consoleHeader);
+            Assert.Contains("GroupAccessor get_Item(const HeCppString& name) const", regexHeader);
             Assert.Contains("Match get_Item(int32_t index) const", regexHeader);
         }
 
@@ -11746,16 +11742,18 @@ namespace cs2.cpp.tests {
         /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
         /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
         /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
+        /// <param name="useExceptions">Whether the fixture permits recoverable native exception handlers.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
         internal static ConversionOutput RunConversion(
             string source,
             bool allowUnsafe = false,
             bool loadNativeRuntimeMetadata = false,
             bool includeAttributesProjectReference = false,
-            bool compactNativeExceptionMessages = false) {
+            bool compactNativeExceptionMessages = false,
+            bool useExceptions = false) {
             return RunConversion(new Dictionary<string, string>(StringComparer.Ordinal) {
                 ["Fixture.cs"] = source
-            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference, compactNativeExceptionMessages);
+            }, allowUnsafe, loadNativeRuntimeMetadata, includeAttributesProjectReference, compactNativeExceptionMessages, useExceptions);
         }
 
         /// <summary>
@@ -11781,13 +11779,15 @@ namespace cs2.cpp.tests {
         /// <param name="loadNativeRuntimeMetadata">Whether the converter loads native runtime metadata during the fixture.</param>
         /// <param name="includeAttributesProjectReference">Whether the fixture references the local code-generation attributes project.</param>
         /// <param name="compactNativeExceptionMessages">Whether native framework exception constructors omit message payloads.</param>
+        /// <param name="useExceptions">Whether the fixture permits recoverable native exception handlers.</param>
         /// <returns>Output folder, parsed report, and generated textual output.</returns>
         static ConversionOutput RunConversion(
             IReadOnlyDictionary<string, string> sources,
             bool allowUnsafe = false,
             bool loadNativeRuntimeMetadata = false,
             bool includeAttributesProjectReference = false,
-            bool compactNativeExceptionMessages = false) {
+            bool compactNativeExceptionMessages = false,
+            bool useExceptions = false) {
             string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-compile-validation-tests", Guid.NewGuid().ToString("N"));
             string projectPath = Path.Combine(rootPath, "Fixture.csproj");
             string outputPath = Path.Combine(rootPath, "out");
@@ -11801,6 +11801,7 @@ namespace cs2.cpp.tests {
             CPPConversionOptions options = CPPConversionOptions.CreateDefault();
             options.LoadNativeRuntimeMetadata = loadNativeRuntimeMetadata;
             options.WriteConversionReport = true;
+            options.RuntimeProfile.UseExceptions = useExceptions;
             if (compactNativeExceptionMessages) {
                 options.PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
                     [CPPCodegenOptionNames.CompactNativeExceptionMessages] = "true"

@@ -75,7 +75,14 @@ namespace cs2.cpp {
             }
 
             AppendAdditionalPreprocessorDefines(lines, options);
-            AppendFeatureDefines(lines, buildUsageReport ?? new CPPBuildUsageReport());
+            CPPBuildUsageReport features = buildUsageReport ?? new CPPBuildUsageReport();
+            if (options.PlatformOptionValues != null && options.PlatformOptionValues.TryGetValue("scene-code-modules", out string rawModules)
+                && bool.TryParse(rawModules, out bool modulesEnabled) && modulesEnabled) {
+                WriteFeatureConfig(outputFolder, features);
+                lines.Add("#include \"runtime/feature_config.hpp\"");
+            } else {
+                AppendFeatureDefines(lines, features);
+            }
 
             foreach (CPPRuntimeRequirementDefinition requirement in registrar.RegisteredRequirements.OrderBy(requirement => requirement.Name, StringComparer.Ordinal)) {
                 lines.Add($"#define {requirement.ConfigDefineName} 1");
@@ -83,6 +90,22 @@ namespace cs2.cpp {
 
             File.WriteAllText(filePath, string.Join(Environment.NewLine, lines) + Environment.NewLine);
             return filePath;
+        }
+
+        /// <summary>Writes the feature-only config included by overlay builds, allowing official report composition without altering target ABI options.</summary>
+        /// <param name="outputFolder">Combined native source root or a newly converted project output.</param>
+        /// <param name="buildUsageReport">Validated feature decisions from the same producer as the runtime manifest.</param>
+        /// <returns>The generated feature config header path.</returns>
+        public static string WriteFeatureConfig(string outputFolder, CPPBuildUsageReport buildUsageReport) {
+            ArgumentNullException.ThrowIfNull(buildUsageReport);
+            if (string.IsNullOrWhiteSpace(outputFolder)) throw new ArgumentException("Output folder must not be empty.", nameof(outputFolder));
+            string runtimeRoot = Path.Combine(outputFolder, "runtime");
+            Directory.CreateDirectory(runtimeRoot);
+            List<string> lines = ["#pragma once", string.Empty];
+            AppendFeatureDefines(lines, buildUsageReport);
+            string path = Path.Combine(runtimeRoot, "feature_config.hpp");
+            File.WriteAllText(path, string.Join(Environment.NewLine, lines) + Environment.NewLine);
+            return path;
         }
 
         static int ToDefineValue(bool value) {

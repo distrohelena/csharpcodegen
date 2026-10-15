@@ -2,7 +2,7 @@
 #include "../../runtime/native_runtime.hpp"
 
 #if !HE_CPP_USE_STD_STRING
-#error "system/numerics/vector.hpp requires HE_CPP_USE_STD_STRING=1; numeric formatting still uses std::string."
+#error "system/numerics/vector.hpp requires HE_CPP_USE_STD_STRING=1; numeric formatting still uses HeCppString."
 #endif
 
 
@@ -147,8 +147,8 @@ public:
         }
     }
 
-    std::string ToString() const {
-        std::string builder = "<";
+    HeCppString ToString() const {
+        HeCppString builder = "<";
         for (int32_t laneIndex = 0; laneIndex < LaneCount; ++laneIndex) {
             if (laneIndex > 0) {
                 builder += ", ";
@@ -162,7 +162,7 @@ public:
     }
 
 private:
-    static void AppendValueToString(std::string& builder, const T& value) {
+    static void AppendValueToString(HeCppString& builder, const T& value) {
         if constexpr (std::is_same_v<T, bool>) {
             builder += value ? "true" : "false";
         } else if constexpr (std::is_integral_v<T>) {
@@ -174,7 +174,7 @@ private:
         }
     }
 
-    static void AppendFloatingPointToString(std::string& builder, const T& value) {
+    static void AppendFloatingPointToString(HeCppString& builder, const T& value) {
         if (std::isnan(value)) {
             builder += "NaN";
             return;
@@ -204,7 +204,7 @@ private:
         AppendFixedFloatingPoint(builder, absoluteValue, precision - integerDigitCount);
     }
 
-    static void AppendScientificFloatingPoint(std::string& builder, double positiveValue, int32_t precision) {
+    static void AppendScientificFloatingPoint(HeCppString& builder, double positiveValue, int32_t precision) {
         int32_t exponent = 0;
         while (positiveValue >= 10.0) {
             positiveValue /= 10.0;
@@ -225,7 +225,7 @@ private:
         builder += String::ToJoinString(exponent);
     }
 
-    static void AppendFixedFloatingPoint(std::string& builder, double positiveValue, int32_t fractionalDigitCount) {
+    static void AppendFixedFloatingPoint(HeCppString& builder, double positiveValue, int32_t fractionalDigitCount) {
         uint64_t integerPart = static_cast<uint64_t>(positiveValue);
         builder += String::ToJoinString(integerPart);
         if (fractionalDigitCount <= 0) {

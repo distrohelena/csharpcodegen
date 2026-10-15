@@ -11,7 +11,7 @@
 /// Provides a lightweight append-oriented string builder for transpiled managed code.
 /// </summary>
 class StringBuilder {
-    HeCppString buffer;
+    HeCppString buffer = "";
 
 public:
     int32_t Length;
@@ -50,6 +50,15 @@ public:
     }
 
 #if HE_CPP_USE_STD_STRING
+    /// <summary>Accepts native hosted storage without ambiguity between managed and view constructors.</summary>
+    explicit StringBuilder(const HeCppRawString& value) : StringBuilder(HeCppString(value)) {}
+
+    /// <summary>Appends native hosted storage through the managed-value implementation.</summary>
+    StringBuilder& Append(const HeCppRawString& value) { return Append(HeCppString(value)); }
+
+    /// <summary>Appends native hosted storage and a newline through the managed-value implementation.</summary>
+    StringBuilder& AppendLine(const HeCppRawString& value) { return AppendLine(HeCppString(value)); }
+
     /// <summary>Preserves the hosted string-view constructor without requiring an owned temporary string.</summary>
     explicit StringBuilder(std::string_view value) {
         buffer.append(value.data(), value.size());
@@ -203,7 +212,7 @@ public:
 
         std::size_t start = static_cast<std::size_t>(startIndex);
         if (start >= buffer.size()) {
-            return HeCppString();
+            return HeCppString("");
         }
 
         std::size_t count = static_cast<std::size_t>(length);

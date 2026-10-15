@@ -64,17 +64,17 @@ namespace {
             if (fileLength < 0) {
                 close(fileDescriptor);
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-                throw InvalidOperationException();
+                he_cpp_raise(InvalidOperationException());
 #else
-                throw InvalidOperationException(std::string("Failed to determine file length: ") + candidatePath);
+                he_cpp_raise(InvalidOperationException(std::string("Failed to determine file length: ") + candidatePath));
 #endif
             }
             if (lseek(fileDescriptor, 0, SEEK_SET) < 0) {
                 close(fileDescriptor);
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-                throw InvalidOperationException();
+                he_cpp_raise(InvalidOperationException());
 #else
-                throw InvalidOperationException(std::string("Failed to seek file: ") + candidatePath);
+                he_cpp_raise(InvalidOperationException(std::string("Failed to seek file: ") + candidatePath));
 #endif
             }
 
@@ -88,9 +88,9 @@ namespace {
                 if (bytesRead <= 0) {
                     close(fileDescriptor);
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-                    throw InvalidOperationException();
+                    he_cpp_raise(InvalidOperationException());
 #else
-                    throw InvalidOperationException(std::string("Failed to read file: ") + candidatePath);
+                    he_cpp_raise(InvalidOperationException(std::string("Failed to read file: ") + candidatePath));
 #endif
                 }
 
@@ -100,9 +100,9 @@ namespace {
             close(fileDescriptor);
             if (totalBytesRead != bytes.size()) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-                throw InvalidOperationException();
+                he_cpp_raise(InvalidOperationException());
 #else
-                throw InvalidOperationException(std::string("Failed to read file: ") + candidatePath);
+                he_cpp_raise(InvalidOperationException(std::string("Failed to read file: ") + candidatePath));
 #endif
             }
 
@@ -110,9 +110,9 @@ namespace {
         }
 
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw FileNotFoundException();
+        he_cpp_raise(FileNotFoundException());
 #else
-        throw FileNotFoundException(std::string("Failed to open file: ") + path);
+        he_cpp_raise(FileNotFoundException(std::string("Failed to open file: ") + path));
 #endif
     }
 }
@@ -130,9 +130,9 @@ const char* GetFileMode(FileMode mode) {
     case FileMode::Truncate: return "wb";
     default:
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw NotSupportedException();
+        he_cpp_raise(NotSupportedException());
 #else
-        throw NotSupportedException("Invalid FileMode");
+        he_cpp_raise(NotSupportedException("Invalid FileMode"));
 #endif
     }
 }
@@ -157,6 +157,9 @@ FileStream::FileStream(const uint8_t* data, size_t dataLength)
 
 FileStream::FileStream(const char* path, FileMode mode)
     : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), writable(true) {
+    if (path == nullptr) {
+        he_cpp_raise(ArgumentNullException("path"));
+    }
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
     if (path != nullptr && mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)) {
@@ -186,9 +189,9 @@ FileStream::FileStream(const char* path, FileMode mode)
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-        throw FileNotFoundException();
+        he_cpp_raise(FileNotFoundException());
 #else
-        throw FileNotFoundException(std::string("Failed to open file: ") + path);
+        he_cpp_raise(FileNotFoundException(std::string("Failed to open file: ") + path));
 #endif
     }
 
@@ -205,11 +208,11 @@ FileStream::FileStream(const char* path, FileMode mode, FileAccess, FileShare)
 }
 
 FileStream::FileStream(const HeCppString& path, FileMode mode)
-    : FileStream(path.c_str(), mode) {
+    : FileStream(path.is_null() ? nullptr : path.c_str(), mode) {
 }
 
 FileStream::FileStream(const HeCppString& path, FileMode mode, FileAccess access, FileShare share)
-    : FileStream(path.c_str(), mode, access, share) {
+    : FileStream(path.is_null() ? nullptr : path.c_str(), mode, access, share) {
 }
 
 // Destructor

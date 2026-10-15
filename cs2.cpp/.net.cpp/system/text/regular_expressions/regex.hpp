@@ -17,6 +17,7 @@
 #endif
 
 #include "../../../runtime/native_runtime.hpp"
+#include "../../../runtime/native_exceptions.hpp"
 
 #if !HE_CPP_USE_STD_STRING
 #error "system/text/regular_expressions/regex.hpp requires HE_CPP_USE_STD_STRING=1; regex text has not been adapted to custom string storage."
@@ -78,24 +79,24 @@ inline bool HasRegexOption(RegexOptions value, RegexOptions expected) {
 /// </summary>
 class Group {
 public:
-    std::string Value;
+    HeCppString Value;
 
     /// <summary>
     /// Initializes an empty group.
     /// </summary>
     Group()
-        : Value() {
+        : Value("") {
     }
 
     /// <summary>
     /// Initializes a group with the captured text.
     /// </summary>
     /// <param name="value">Captured text value.</param>
-    explicit Group(std::string value)
+    explicit Group(HeCppString value)
         : Value(std::move(value)) {
     }
 
-    const std::string& get_Value() const {
+    const HeCppString& get_Value() const {
         return Value;
     }
 };
@@ -107,7 +108,7 @@ class GroupAccessor {
     const Group* group;
 
 public:
-    std::string Value;
+    HeCppString Value;
 
     /// <summary>
     /// Initializes the proxy from one resolved group instance.
@@ -115,7 +116,7 @@ public:
     /// <param name="sourceGroup">Resolved group instance backing the proxy.</param>
     explicit GroupAccessor(const Group* sourceGroup)
         : group(sourceGroup)
-        , Value(sourceGroup != nullptr ? sourceGroup->Value : std::string()) {
+        , Value(sourceGroup != nullptr ? sourceGroup->Value : HeCppString("")) {
     }
 
     /// <summary>
@@ -126,7 +127,7 @@ public:
         return group;
     }
 
-    const std::string& get_Value() const {
+    const HeCppString& get_Value() const {
         return group != nullptr ? group->get_Value() : Value;
     }
 };
@@ -151,8 +152,8 @@ public:
     /// </summary>
     /// <param name="name">Stable group name.</param>
     /// <param name="value">Captured group value.</param>
-    void Set(const std::string& name, const std::string& value) {
-        groups[name] = Group(value);
+    void Set(const HeCppString& name, const HeCppString& value) {
+        groups[name.raw()] = Group(value);
     }
 
     /// <summary>
@@ -160,8 +161,11 @@ public:
     /// </summary>
     /// <param name="name">Group name to resolve.</param>
     /// <returns>A stable access proxy for the matching group when present; otherwise, the shared empty group.</returns>
-    GroupAccessor operator[](const std::string& name) const {
-        std::unordered_map<std::string, Group>::const_iterator iterator = groups.find(name);
+    GroupAccessor operator[](const HeCppString& name) const {
+        if (name.is_null()) {
+            he_cpp_raise(ArgumentNullException("name"));
+        }
+        std::unordered_map<std::string, Group>::const_iterator iterator = groups.find(name.raw());
         if (iterator == groups.end()) {
             return GroupAccessor(&emptyGroup);
         }
@@ -169,7 +173,7 @@ public:
         return GroupAccessor(&iterator->second);
     }
 
-    GroupAccessor get_Item(const std::string& name) const {
+    GroupAccessor get_Item(const HeCppString& name) const {
         return operator[](name);
     }
 };
@@ -261,8 +265,11 @@ public:
     /// </summary>
     /// <param name="pattern">Managed-style regex pattern.</param>
     /// <param name="options">Managed-style option flags.</param>
-    explicit Regex(const std::string& pattern, RegexOptions options = RegexOptions::None) {
-        std::string normalizedPattern = NormalizePattern(pattern, options, namedGroupIndexes);
+    explicit Regex(const HeCppString& pattern, RegexOptions options = RegexOptions::None) {
+        if (pattern.is_null()) {
+            he_cpp_raise(ArgumentNullException("pattern"));
+        }
+        std::string normalizedPattern = NormalizePattern(pattern.raw(), options, namedGroupIndexes);
         compiledPattern = std::regex(normalizedPattern, BuildFlags(options));
     }
 
@@ -271,8 +278,11 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns><c>true</c> when the pattern matches; otherwise, <c>false</c>.</returns>
-    bool IsMatch(const std::string& input) const {
-        return std::regex_search(input, compiledPattern);
+    bool IsMatch(const HeCppString& input) const {
+        if (input.is_null()) {
+            he_cpp_raise(ArgumentNullException("input"));
+        }
+        return std::regex_search(input.raw(), compiledPattern);
     }
 
     /// <summary>
@@ -280,9 +290,12 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns>The first materialized match result.</returns>
-    auto MatchOne(const std::string& input) const -> ::Match {
+    auto MatchOne(const HeCppString& input) const -> ::Match {
+        if (input.is_null()) {
+            he_cpp_raise(ArgumentNullException("input"));
+        }
         std::smatch searchResult;
-        if (!std::regex_search(input, searchResult, compiledPattern)) {
+        if (!std::regex_search(input.raw(), searchResult, compiledPattern)) {
             return ::Match();
         }
 
@@ -294,7 +307,7 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns>The first materialized match result.</returns>
-    auto Match(const std::string& input) const -> ::Match {
+    auto Match(const HeCppString& input) const -> ::Match {
         return MatchOne(input);
     }
 
@@ -303,7 +316,10 @@ public:
     /// </summary>
     /// <param name="input">Source text to inspect.</param>
     /// <returns>The materialized match collection.</returns>
-    MatchCollection Matches(const std::string& input) const {
+    MatchCollection Matches(const HeCppString& input) const {
+        if (input.is_null()) {
+            he_cpp_raise(ArgumentNullException("input"));
+        }
         MatchCollection collection;
 
         for (std::sregex_iterator iterator(input.begin(), input.end(), compiledPattern), end; iterator != end; ++iterator) {
@@ -319,8 +335,11 @@ public:
     /// <param name="input">Source text to transform.</param>
     /// <param name="replacement">Replacement text applied to each match.</param>
     /// <returns>The transformed string.</returns>
-    std::string Replace(const std::string& input, const std::string& replacement) const {
-        return std::regex_replace(input, compiledPattern, replacement);
+    HeCppString Replace(const HeCppString& input, const HeCppString& replacement) const {
+        if (input.is_null() || replacement.is_null()) {
+            he_cpp_raise(ArgumentNullException(input.is_null() ? "input" : "replacement"));
+        }
+        return std::regex_replace(input.raw(), compiledPattern, replacement.raw());
     }
 
 private:

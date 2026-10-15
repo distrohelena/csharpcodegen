@@ -18,7 +18,7 @@ namespace {
         return character == Path::DirectorySeparatorChar || character == Path::AltDirectorySeparatorChar;
     }
 
-    bool CreateSingleDirectory(const std::string& path) {
+    bool CreateSingleDirectory(const HeCppString& path) {
         if (path.empty()) {
             return true;
         }
@@ -32,7 +32,7 @@ namespace {
     }
 }
 
-bool Directory::Exists(const std::string& path) {
+bool Directory::Exists(const HeCppString& path) {
     if (path.empty()) {
         return false;
     }
@@ -41,17 +41,17 @@ bool Directory::Exists(const std::string& path) {
     return stat(path.c_str(), &status) == 0 && (status.st_mode & S_IFDIR) != 0;
 }
 
-void Directory::CreateDirectory(const std::string& path) {
+void Directory::CreateDirectory(const HeCppString& path) {
     if (path.empty()) {
         return;
     }
 
-    const std::string normalized = Path::GetFullPath(path);
+    const HeCppString normalized = Path::GetFullPath(path);
     if (normalized.empty() || Exists(normalized)) {
         return;
     }
 
-    std::string currentPath;
+    HeCppString currentPath = "";
     const std::size_t rootLength = normalized.size() >= 2 && normalized[1] == ':'
         ? (normalized.size() >= 3 && IsDirectorySeparator(normalized[2]) ? 3 : 2)
         : (!normalized.empty() && IsDirectorySeparator(normalized[0]) ? 1 : 0);
@@ -59,7 +59,7 @@ void Directory::CreateDirectory(const std::string& path) {
         currentPath = normalized.substr(0, rootLength);
     }
 
-    std::string segment;
+    HeCppString segment = "";
     for (std::size_t index = rootLength; index <= normalized.size(); index++) {
         const bool endOfPath = index == normalized.size();
         const char character = endOfPath ? Path::DirectorySeparatorChar : normalized[index];

@@ -27,6 +27,9 @@ internal static class Program {
     /// <returns>Process exit code.</returns>
     internal static int Execute(string[] args) {
         try {
+            if (args.Length > 0 && args[0] == "--write-feature-manifest") {
+                return WriteFeatureManifest(args);
+            }
             if (!CodegenCliArgumentParser.TryParseArguments(args, out CodegenCliParsedArguments parsedArguments, out string errorMessage)) {
                 Console.Error.WriteLine(errorMessage);
                 Console.Error.WriteLine("Usage: --cpp --project <project.csproj> --output <output-folder> [--runtime-root <folder>] [--platform <platform-id>] [--runtime stl-lite|custom-retro|freestanding] [--language cpp] [--endianness little|big] [--preset <preset-id>] [--set key=value ...]");
@@ -59,6 +62,18 @@ internal static class Program {
             Console.Error.WriteLine($"Codegen failed: {diagnosticException.Message}");
             return ConversionFailureExitCode;
         }
+    }
+
+    /// <summary>Runs the manifest-only producer without loading managed projects, clearing generated trees or converting any class.</summary>
+    /// <param name="args">Manifest-only command and mandatory report, catalog and output paths.</param>
+    /// <returns>Zero after the generated manifest pair and feature config have been written successfully.</returns>
+    static int WriteFeatureManifest(string[] args) {
+        if (args.Length != 7 || args[1] != "--report" || args[3] != "--feature-catalog" || args[5] != "--output") {
+            throw new ArgumentException("Usage: --write-feature-manifest --report <combined-report.json> --feature-catalog <catalog.json> --output <combined-source-folder>");
+        }
+        CPPFeatureManifestWriter.WriteFromConversionReport(args[2], args[6], args[4]);
+        Console.WriteLine("Combined feature manifest written.");
+        return 0;
     }
 
     /// <summary>

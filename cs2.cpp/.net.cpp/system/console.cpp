@@ -3,7 +3,7 @@
 #include "console.hpp"
 #include <cstdio>
 
-bool Console::Write(char* fileName)
+bool Console::Write(const char* fileName)
 {
     if (fileName == nullptr) {
         return false;
@@ -13,13 +13,13 @@ bool Console::Write(char* fileName)
     return true;
 }
 
-bool Console::Write(const std::string& text)
+bool Console::Write(const HeCppString& text)
 {
     std::fputs(text.c_str(), stdout);
     return true;
 }
 
-bool Console::WriteLine(char* fileName) 
+bool Console::WriteLine(const char* fileName)
 {
     if (fileName == nullptr) {
         return false;
@@ -30,7 +30,7 @@ bool Console::WriteLine(char* fileName)
     return true;
 }
 
-bool Console::WriteLine(const std::string& text)
+bool Console::WriteLine(const HeCppString& text)
 {
     std::fputs(text.c_str(), stdout);
     std::fputc('\n', stdout);
@@ -43,14 +43,14 @@ bool Console::WriteLine()
     return true;
 }
 
-std::string Console::ReadLine()
+HeCppString Console::ReadLine()
 {
     char buffer[4096];
     if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
-        return std::string();
+        return HeCppString();
     }
 
-    std::string line(buffer);
+    HeCppString line(buffer);
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
         line.pop_back();
     }

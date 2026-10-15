@@ -26,8 +26,8 @@ bool File::Exists(const char* fileName) {
 	return stat(fileName, &status) == 0;
 }
 
-bool File::Exists(const std::string& fileName) {
-	return Exists(fileName.c_str());
+bool File::Exists(const HeCppString& fileName) {
+	return Exists(fileName.is_null() ? nullptr : fileName.c_str());
 }
 
 bool File::Delete(const char* fileName) {
@@ -39,8 +39,8 @@ bool File::Delete(const char* fileName) {
 	return std::remove(fileName) == 0;
 }
 
-bool File::Delete(const std::string& fileName) {
-	return Delete(fileName.c_str());
+bool File::Delete(const HeCppString& fileName) {
+	return Delete(fileName.is_null() ? nullptr : fileName.c_str());
 }
 
 FileStream File::Open(const char* filePath, FileMode fileMode)
@@ -48,8 +48,11 @@ FileStream File::Open(const char* filePath, FileMode fileMode)
 	return FileStream(filePath, fileMode);
 }
 
-FileStream File::Open(const std::string& filePath, FileMode fileMode)
+FileStream File::Open(const HeCppString& filePath, FileMode fileMode)
 {
+	if (filePath.is_null()) {
+		he_cpp_raise(ArgumentNullException("filePath"));
+	}
 	return Open(filePath.c_str(), fileMode);
 }
 
@@ -64,8 +67,11 @@ FileStream* File::OpenRead(const char* filePath)
 	return new FileStream(filePath, FileMode::Open, FileAccess::Read, FileShare::Read);
 }
 
-FileStream* File::OpenRead(const std::string& filePath)
+FileStream* File::OpenRead(const HeCppString& filePath)
 {
+	if (filePath.is_null()) {
+		he_cpp_raise(ArgumentNullException("filePath"));
+	}
 	return OpenRead(filePath.c_str());
 }
 

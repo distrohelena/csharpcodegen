@@ -17,6 +17,7 @@
 #endif
 
 #include "../runtime/native_runtime.hpp"
+#include "../runtime/native_exceptions.hpp"
 
 #if !HE_CPP_USE_STD_STRING
 #error "system/guid.hpp requires HE_CPP_USE_STD_STRING=1; Guid formatting has not been adapted to custom string storage."
@@ -66,6 +67,19 @@ public:
     /// <param name="text">Source text used for the guid value.</param>
     explicit Guid(std::string_view text) : value(text) {}
 
+    /// <summary>Accepts native hosted storage without ambiguity between managed and view conversions.</summary>
+    explicit Guid(const std::string& text) : value(text) {}
+
+    /// <summary>Copies managed guid text into native storage without erasing its null validation.</summary>
+    explicit Guid(const HeCppString& text) : value(text.raw()) {
+        if (text.is_null()) {
+            he_cpp_raise(ArgumentNullException("text"));
+        }
+    }
+
+    /// <summary>Accepts a literal guid without ambiguity between managed and view constructors.</summary>
+    explicit Guid(const char* text) : Guid(HeCppString(text)) {}
+
     /// <summary>
     /// Generates a unique guid-like token for generated content and asset ids.
     /// </summary>
@@ -73,14 +87,14 @@ public:
     static Guid NewGuid() {
         static std::atomic<std::uint64_t> nextValue{1};
         std::uint64_t value = nextValue.fetch_add(1, std::memory_order_relaxed);
-        return Guid(FormatCounterGuid(value));
+        return Guid(HeCppString(FormatCounterGuid(value)));
     }
 
     /// <summary>
     /// Returns the guid text representation.
     /// </summary>
     /// <returns>Guid text.</returns>
-    std::string ToString() const {
+    HeCppString ToString() const {
         return value;
     }
 
@@ -89,7 +103,7 @@ public:
     /// </summary>
     /// <param name="format">Requested formatting token.</param>
     /// <returns>Guid text.</returns>
-    std::string ToString(std::string_view format) const {
+    HeCppString ToString(const HeCppString& format) const {
         (void)format;
         return value;
     }

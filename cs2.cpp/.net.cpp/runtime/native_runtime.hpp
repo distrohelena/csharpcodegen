@@ -3,6 +3,7 @@
 #include <type_traits>
 #include "native_algorithm.hpp"
 #include "native_owned_ptr.hpp"
+#include "native_managed_string.hpp"
 
 // The generated configuration is optional for direct hosted consumers.  When it
 // is present, its capability values remain the single source of truth.
@@ -106,10 +107,13 @@
 #endif
 
 #if HE_CPP_USE_STD_STRING
-using HeCppString = std::string;
+using HeCppRawString = std::string;
 #else
-using HeCppString = he_cpp_custom::String;
+using HeCppRawString = he_cpp_custom::String;
 #endif
+
+/// <summary>Represents managed strings with independent null state over the selected native byte storage.</summary>
+using HeCppString = HeCppManagedString<HeCppRawString>;
 
 /// <summary>Selects the consumer's callable storage when standard delegates are unavailable.</summary>
 #if HE_CPP_USE_STD_FUNCTION
@@ -172,13 +176,29 @@ struct HashSelector<TValue, false> : he_cpp_custom::Hash<TValue> {
 }
 
 template <typename TValue>
-using HeCppHash = he_cpp_runtime_detail::HashSelector<
+struct HeCppHash : he_cpp_runtime_detail::HashSelector<
     TValue,
-    HE_CPP_USE_STD_STRING && std::is_same_v<TValue, HeCppString>>;
+    HE_CPP_USE_STD_STRING && std::is_same_v<TValue, HeCppRawString>> {
+};
 #else
 template <typename TValue>
-using HeCppHash = std::hash<TValue>;
+struct HeCppHash : std::hash<TValue> {
+};
 #endif
+
+/// <summary>Hashes managed string contents and null state consistently across standard and custom byte-storage providers.</summary>
+template <>
+struct HeCppHash<HeCppString> {
+    /// <summary>Computes an FNV byte hash with a distinct leading null-state byte, keeping equal managed strings in the same hash bucket.</summary>
+    std::size_t operator()(const HeCppString& value) const {
+        std::size_t hash = static_cast<std::size_t>(2166136261u);
+        hash = (hash ^ static_cast<std::size_t>(value.is_null() ? 0 : 1)) * static_cast<std::size_t>(16777619u);
+        for (unsigned char character : value) {
+            hash = (hash ^ character) * static_cast<std::size_t>(16777619u);
+        }
+        return hash;
+    }
+};
 
 namespace he_cpp_runtime_detail {
 

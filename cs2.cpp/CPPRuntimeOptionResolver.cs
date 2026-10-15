@@ -70,13 +70,9 @@ namespace cs2.cpp {
         /// Resolves the C++ spelling used for managed string values in generated declarations and expressions.
         /// </summary>
         /// <param name="options">Resolved conversion options.</param>
-        /// <returns><c>std::string</c> for standard storage, or <c>HeCppString</c> for provider-backed storage.</returns>
+        /// <returns>The nullable managed string wrapper for every storage profile.</returns>
         public static string GetStringTypeName(CPPConversionOptions options) {
-            if (options?.RuntimeProfile == null) {
-                return "std::string";
-            }
-
-            return options.RuntimeProfile.UseStdString ? "std::string" : "HeCppString";
+            return "HeCppString";
         }
 
         /// <summary>
@@ -89,11 +85,7 @@ namespace cs2.cpp {
                 return GetStringTypeName(cppProgram.Options);
             }
 
-            if (program?.Rules is CPPConversionRules rules) {
-                return rules.UseStdString ? "std::string" : "HeCppString";
-            }
-
-            return "std::string";
+            return "HeCppString";
         }
 
         /// <summary>

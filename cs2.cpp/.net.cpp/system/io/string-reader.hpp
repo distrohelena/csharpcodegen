@@ -1,6 +1,7 @@
 #ifndef STRING_READER_HPP
 #define STRING_READER_HPP
 #include "../../runtime/native_runtime.hpp"
+#include "../../runtime/native_exceptions.hpp"
 
 #include <cstddef>
 
@@ -40,6 +41,9 @@ private:
 public:
     explicit StringReader(const HeCppString& text)
         : source(text), position(0) {
+        if (text.is_null()) {
+            he_cpp_raise(ArgumentNullException("text"));
+        }
     }
 
     StringReaderLine ReadLine() {

@@ -14,6 +14,9 @@ namespace cs2.cpp {
         readonly CPPGeneratedFunctionBodyOverrideCatalog functionBodyOverrideCatalog;
         readonly CPPGeneratedFunctionProfilingScopeEmitter generatedFunctionProfilingScopeEmitter;
 
+        /// <summary>Collects method template definitions for the current header when separately linked native modules require visible instantiations.</summary>
+        StringWriter HeaderTemplateDefinitions;
+
         /// <summary>
         /// Initializes a class emitter bound to the current processor and program state.
         /// </summary>
@@ -82,10 +85,23 @@ namespace cs2.cpp {
                 }
 
                 StringWriter deferredSourceWriter = new StringWriter();
+                HeaderTemplateDefinitions = UsesHeaderTemplateDefinitions() ? new StringWriter() : null;
                 WriteClass(conversionClass, headerWriter, deferredSourceWriter);
                 WriteSourcePreamble(conversionClass, sourceWriter, typeScope);
-                sourceWriter.Write(deferredSourceWriter.ToString());
+                if (HeaderTemplateDefinitions != null && (conversionClass.GenericArgs?.Count ?? 0) > 0) {
+                    WriteSourcePreamble(conversionClass, headerWriter, typeScope);
+                    headerWriter.Write(deferredSourceWriter.ToString());
+                    headerWriter.Write(HeaderTemplateDefinitions.ToString());
+                } else {
+                    sourceWriter.Write(deferredSourceWriter.ToString());
+                    if (HeaderTemplateDefinitions != null && HeaderTemplateDefinitions.GetStringBuilder().Length > 0) {
+                        WriteSourcePreamble(conversionClass, headerWriter, typeScope);
+                        headerWriter.Write(HeaderTemplateDefinitions.ToString());
+                    }
+                }
             } finally {
+                HeaderTemplateDefinitions?.Dispose();
+                HeaderTemplateDefinitions = null;
                 processor?.EndTypeRuntimeRequirementScope(typeScope);
             }
         }
@@ -596,6 +612,7 @@ namespace cs2.cpp {
             sourceWriter.WriteLine("#undef DrawText");
             sourceWriter.WriteLine("#endif");
             sourceWriter.WriteLine($"#include \"{conversionClass.GetEmittedFileStem(program)}.hpp\"");
+            if (UsesModuleLifetimePins()) sourceWriter.WriteLine("#include \"runtime/native_module_pinned_callable.hpp\"");
 
             if (UsesGeneratedFunctionProfiling()) {
                 sourceWriter.WriteLine("#include \"runtime/generated_profiler.hpp\"");
@@ -751,7 +768,7 @@ namespace cs2.cpp {
             }
             foreach (ConversionVariable variable in conversionClass.Variables) {
                 if (variable.GetBlock != null || variable.ArrowExpression != null) {
-                    ConversionFunction getter = CreateGetter(variable);
+                    ConversionFunction getter = CreateGetter(conversionClass, variable);
                     getter.ArrowExpression = variable.ArrowExpression?.Parent as ArrowExpressionClauseSyntax;
                     yield return getter;
                 }
@@ -791,11 +808,11 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Enumerates containing type symbols referenced by one function body through member access so source files include owning generated types even when no explicit type syntax appears.
+        /// Enumerates member-owner types, constructed method arguments and polymorphic cast operand types so standalone implementation files contain complete types required by member access, template instantiation and native casts.
         /// </summary>
         /// <param name="function">Function whose body syntax should be scanned.</param>
         /// <param name="semantic">Semantic model used to resolve referenced symbols.</param>
-        /// <returns>Sequence of containing type symbols required by the function body.</returns>
+        /// <returns>Sequence of member-owner, constructed method argument and original cast-operand type symbols required by the function body.</returns>
         static IEnumerable<ITypeSymbol> EnumerateFunctionBodyReferencedTypeSymbols(ConversionFunction function, SemanticModel semantic) {
             if (function == null || semantic == null) {
                 yield break;
@@ -803,14 +820,39 @@ namespace cs2.cpp {
 
             foreach (SyntaxNode rootNode in EnumerateFunctionBodyRoots(function)) {
                 foreach (ExpressionSyntax expressionSyntax in rootNode.DescendantNodesAndSelf().OfType<ExpressionSyntax>()) {
+                    ExpressionSyntax castOperand = GetPolymorphicCastSourceExpression(expressionSyntax);
+                    if (castOperand != null) {
+                        ITypeSymbol sourceTypeSymbol = semantic.GetTypeInfo(castOperand).Type;
+                        if (sourceTypeSymbol != null) {
+                            yield return sourceTypeSymbol;
+                        }
+                    }
                     SymbolInfo symbolInfo = semantic.GetSymbolInfo(expressionSyntax);
                     ISymbol referencedSymbol = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
+                    if (referencedSymbol is IMethodSymbol referencedMethod) {
+                        foreach (ITypeSymbol typeArgument in referencedMethod.TypeArguments) {
+                            yield return typeArgument;
+                        }
+                    }
                     ITypeSymbol containingTypeSymbol = GetReferencedContainingTypeSymbol(referencedSymbol);
                     if (containingTypeSymbol != null) {
                         yield return containingTypeSymbol;
                     }
                 }
             }
+        }
+
+        /// <summary>Finds the original operand whose complete static type is required when lowering a cast or type pattern to native RTTI.</summary>
+        /// <param name="expression">Expression inspected in its original semantic model, before target conversion.</param>
+        /// <returns>The cast source expression, or null for expressions that do not perform type tests or conversions.</returns>
+        static ExpressionSyntax GetPolymorphicCastSourceExpression(ExpressionSyntax expression) {
+            return expression switch {
+                CastExpressionSyntax castExpression => castExpression.Expression,
+                BinaryExpressionSyntax binaryExpression when binaryExpression.IsKind(Microsoft.CodeAnalysis.CSharp.SyntaxKind.AsExpression) || binaryExpression.IsKind(Microsoft.CodeAnalysis.CSharp.SyntaxKind.IsExpression) => binaryExpression.Left,
+                IsPatternExpressionSyntax patternExpression => patternExpression.Expression,
+                SwitchExpressionSyntax switchExpression => switchExpression.GoverningExpression,
+                _ => null
+            };
         }
 
         /// <summary>
@@ -2318,6 +2360,8 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives source definitions for computed members.</param>
         void WriteInterfaceSection(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
             headerWriter.WriteLine("public:");
+            headerWriter.WriteLine($"    virtual ~{conversionClass.GetEmittedTypeName()}() = default;");
+            headerWriter.WriteLine();
 
             List<Action> writers = new List<Action>();
             HashSet<string> emittedFunctionKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -2385,7 +2429,7 @@ namespace cs2.cpp {
             if (accessType == MemberAccessType.Public &&
                 conversionClass.DeclarationType != MemberDeclarationType.Interface &&
                 ShouldEmitVirtualDestructor(conversionClass)) {
-                writers.Add(() => headerWriter.WriteLine($"    virtual ~{conversionClass.GetEmittedTypeName()}() = default;"));
+                writers.Add(() => WriteModuleAwareDestructor(conversionClass, headerWriter, sourceWriter));
             }
 
             if (accessType == MemberAccessType.Public &&
@@ -2778,7 +2822,7 @@ namespace cs2.cpp {
             }
 
             return !conversionClass.Functions.Any(function => function.IsConstructor) &&
-                   GetInstanceFieldInitializers(conversionClass).Count > 0;
+                   (GetInstanceFieldInitializers(conversionClass).Count > 0 || ShouldPinClassLifetime(conversionClass));
         }
 
         /// <summary>
@@ -2804,6 +2848,7 @@ namespace cs2.cpp {
 
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
+            if (ShouldPinClassLifetime(conversionClass)) sourceWriter.WriteLine("    HeCppRetainCodeModule(HELENGINE_CODE_MODULE_ID);");
             if (ShouldEmitExplicitLayoutFieldAssignments(conversionClass)) {
                 WriteExplicitLayoutFieldAssignments(conversionClass, sourceWriter);
             }
@@ -3385,7 +3430,7 @@ namespace cs2.cpp {
                 if (variable.ArrowExpression != null && variable.GetBlock == null) {
                     WriteExpressionBodiedGetter(conversionClass, variable, headerWriter, sourceWriter);
                 } else {
-                    ConversionFunction getter = CreateGetter(variable);
+                    ConversionFunction getter = CreateGetter(conversionClass, variable);
                     WriteFunction(conversionClass, getter, headerWriter, sourceWriter);
                 }
             }
@@ -3418,7 +3463,7 @@ namespace cs2.cpp {
             // generated program can override it. No pure-virtual suffix is
             // emitted here: this path always writes a definition, which is the
             // correct lowering for an interface member that has a body.
-            string virtualKeyword = ShouldEmitVirtualKeyword(conversionClass, CreateGetter(variable))
+            string virtualKeyword = ShouldEmitVirtualKeyword(conversionClass, CreateGetter(conversionClass, variable))
                 ? "virtual "
                 : string.Empty;
             headerWriter.WriteLine($"    {virtualKeyword}{staticKeyword}{returnTypeName} get_{variable.Name}();");
@@ -3426,13 +3471,13 @@ namespace cs2.cpp {
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"{returnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
             sourceWriter.WriteLine("{");
-            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
+            WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(conversionClass, variable));
 
             List<string> expressionLines = new List<string>();
             LayerContext context = new CPPLayerContext(program);
             int start = context.DepthClass;
             context.AddClass(conversionClass);
-            context.AddFunction(new FunctionStack(CreateGetter(variable)));
+            context.AddFunction(new FunctionStack(CreateGetter(conversionClass, variable)));
 
             ExpressionResult expressionResult = processor.ProcessExpression(variableSemantic, context, variable.ArrowExpression, expressionLines);
             context.PopClass(start);
@@ -3470,7 +3515,7 @@ namespace cs2.cpp {
                 WriteTemplateDeclaration(conversionClass, sourceWriter);
                 sourceWriter.WriteLine($"{getterReturnTypeName} {GetQualifiedClassName(conversionClass)}::get_{variable.Name}()");
                 sourceWriter.WriteLine("{");
-                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(variable));
+                WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, CreateGetter(conversionClass, variable));
                 sourceWriter.WriteLine(variable.IsStatic
                     ? $"return {GetQualifiedClassName(conversionClass)}::{variable.Name};"
                     : $"return this->{variable.Name};");
@@ -3495,16 +3540,17 @@ namespace cs2.cpp {
         /// <summary>
         /// Creates a getter function model from a property definition.
         /// </summary>
+        /// <param name="conversionClass">Owning type used to preserve virtual and interface return contracts.</param>
         /// <param name="variable">The source property model.</param>
         /// <returns>A function model suitable for normal function emission.</returns>
-        ConversionFunction CreateGetter(ConversionVariable variable) {
+        ConversionFunction CreateGetter(ConversionClass conversionClass, ConversionVariable variable) {
             return new ConversionFunction {
                 Name = $"get_{variable.Name}",
                 AccessType = variable.AccessType,
                 DeclarationType = variable.DeclarationType,
                 IsOverride = variable.IsOverride,
                 IsStatic = variable.IsStatic,
-                ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(variable),
+                ReturnsConstReference = variable.ReturnsConstReference || ShouldEmitConstReferencePropertyGetter(conversionClass, variable),
                 ReturnsReference = variable.ReturnsReference,
                 Semantic = variable.Semantic,
                 SourceLocation = variable.SourceLocation,
@@ -3529,7 +3575,7 @@ namespace cs2.cpp {
                 return $"const {typeName}&";
             }
 
-            if (ShouldEmitConstReferencePropertyGetter(variable)) {
+            if (ShouldEmitConstReferencePropertyGetter(conversionClass, variable)) {
                 return $"const {typeName}&";
             }
 
@@ -3537,7 +3583,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Resolves the native return type for one generated property getter from raw type metadata, preserving constant-reference semantics for native strings.
+        /// Resolves a contract getter return type from raw type metadata; string results use value semantics.
         /// </summary>
         /// <param name="conversionClass">Owning class for the property getter.</param>
         /// <param name="variableType">Type metadata for the property being emitted.</param>
@@ -3564,37 +3610,22 @@ namespace cs2.cpp {
                 return $"const {typeName}&";
             }
 
-            if (ShouldEmitConstReferencePropertyGetter(variableType)) {
-                return $"const {typeName}&";
-            }
-
             return typeName;
         }
 
         /// <summary>
         /// Returns whether one generated property getter should expose a constant-reference native signature instead of copying the string value on every access.
         /// </summary>
+        /// <param name="conversionClass">Owning type used to verify storage lifetime and dispatch contracts.</param>
         /// <param name="variable">Property being emitted.</param>
         /// <returns><c>true</c> when the getter should return a constant string reference; otherwise, <c>false</c>.</returns>
-        bool ShouldEmitConstReferencePropertyGetter(ConversionVariable variable) {
+        bool ShouldEmitConstReferencePropertyGetter(ConversionClass conversionClass, ConversionVariable variable) {
             if (variable == null || !variable.IsGet) {
                 return false;
             }
 
-            if (!ShouldEmitConstReferencePropertyGetter(variable.VarType)) {
-                return false;
-            }
-            if (variable.GetBlock == null && variable.ArrowExpression == null) {
-                return true;
-            }
-            ExpressionSyntax returnedExpression = variable.ArrowExpression;
-            if (returnedExpression == null &&
-                variable.GetBlock?.Statements.Count == 1 &&
-                variable.GetBlock.Statements[0] is ReturnStatementSyntax returnStatement) {
-                returnedExpression = returnStatement.Expression;
-            }
-            return returnedExpression != null &&
-                variable.Semantic?.GetSymbolInfo(returnedExpression).Symbol is IFieldSymbol;
+            return ShouldEmitConstReferencePropertyGetter(variable.VarType) &&
+                CPPPropertyGetterStoragePolicy.CanBorrowStorage(conversionClass, variable);
         }
 
         /// <summary>
@@ -3651,7 +3682,45 @@ namespace cs2.cpp {
             }
 
             WriteFunctionDeclaration(conversionClass, function, headerWriter);
-            WriteFunctionDefinition(conversionClass, function, sourceWriter);
+            WriteFunctionDefinition(conversionClass, function,
+                HeaderTemplateDefinitions != null && HasMethodLevelGenericParameters(function)
+                    ? HeaderTemplateDefinitions : sourceWriter);
+        }
+
+        /// <summary>Reads the explicit native-module option without changing legacy unity-based conversion defaults.</summary>
+        /// <returns>Whether generated templates must be available to separately compiled consumers.</returns>
+        bool UsesHeaderTemplateDefinitions() {
+            return processor?.Options?.PlatformOptionValues != null &&
+                processor.Options.PlatformOptionValues.TryGetValue("codegen-header-template-definitions", out string value) &&
+                bool.TryParse(value, out bool enabled) && enabled;
+        }
+
+        /// <summary>Reads the target's explicit code-overlay lifetime policy; legacy native conversions retain their existing ABI.</summary>
+        /// <returns>Whether resident module counters protect escaping generated objects and callbacks.</returns>
+        bool UsesModuleLifetimePins() {
+            return processor?.Options?.PlatformOptionValues != null &&
+                processor.Options.PlatformOptionValues.TryGetValue("codegen-module-lifetime-pins", out string value) &&
+                bool.TryParse(value, out bool enabled) && enabled;
+        }
+
+        /// <summary>Limits constructor ownership to nongeneric reference classes whose bodies have one authoritative native source owner.</summary>
+        /// <param name="conversionClass">Generated class being examined.</param>
+        /// <returns>Whether its out-of-line construction and destruction require module pins.</returns>
+        bool ShouldPinClassLifetime(ConversionClass conversionClass) => UsesModuleLifetimePins() &&
+            conversionClass.TypeSymbol?.TypeKind == TypeKind.Class && (conversionClass.GenericArgs?.Count ?? 0) == 0;
+
+        /// <summary>Emits destructor code in the owning translation unit so ownership never depends on a header consumer's compilation defines.</summary>
+        /// <param name="conversionClass">Reference class whose native object can escape a loaded scene.</param>
+        /// <param name="headerWriter">Class declaration output.</param>
+        /// <param name="sourceWriter">Authoritative owning implementation output.</param>
+        void WriteModuleAwareDestructor(ConversionClass conversionClass, TextWriter headerWriter, TextWriter sourceWriter) {
+            string name = conversionClass.GetEmittedTypeName();
+            if (!ShouldPinClassLifetime(conversionClass)) {
+                headerWriter.WriteLine($"    virtual ~{name}() = default;");
+                return;
+            }
+            headerWriter.WriteLine($"    virtual ~{name}();");
+            sourceWriter.WriteLine($"{GetQualifiedClassName(conversionClass)}::~{name}() {{ HeCppReleaseCodeModule(HELENGINE_CODE_MODULE_ID); }}");
         }
 
         /// <summary>
@@ -3793,6 +3862,10 @@ namespace cs2.cpp {
             sourceWriter.WriteLine();
             sourceWriter.WriteLine("{");
             WriteGeneratedFunctionProfilingScope(sourceWriter, conversionClass, function);
+
+            if (function.IsConstructor && ShouldPinClassLifetime(conversionClass) && !ConstructorDelegatesToThis(function)) {
+                sourceWriter.WriteLine("    HeCppRetainCodeModule(HELENGINE_CODE_MODULE_ID);");
+            }
 
             WriteValueTypeInParameterCopies(conversionClass, function, sourceWriter);
 
