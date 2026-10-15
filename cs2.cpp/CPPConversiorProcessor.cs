@@ -13893,8 +13893,14 @@ namespace cs2.cpp {
         }
 
         protected override void ProcessForEachStatement(SemanticModel semantic, LayerContext context, ForEachStatementSyntax forEachStatement, List<string> lines) {
+            bool dictionaryEntries = TryGetExpressionTypeSymbol(semantic, forEachStatement.Expression, out ITypeSymbol collectionType)
+                && collectionType is INamedTypeSymbol namedCollectionType
+                && namedCollectionType.Arity == 2
+                && namedCollectionType.ContainingType == null
+                && IsDictionaryTypeSymbol(collectionType);
+            string nativeEntryName = $"__dictionaryEntry_{forEachStatement.SpanStart:X8}";
             lines.Add("for (const auto& ");
-            lines.Add(forEachStatement.Identifier.Text);
+            lines.Add(dictionaryEntries ? nativeEntryName : forEachStatement.Identifier.Text);
             lines.Add(" : ");
             if (ShouldDereferenceForEachExpression(semantic, forEachStatement.Expression)) {
                 lines.Add("*");
@@ -13902,6 +13908,13 @@ namespace cs2.cpp {
 
             ProcessExpression(semantic, context, forEachStatement.Expression, lines);
             lines.Add(") {\n");
+
+            if (dictionaryEntries) {
+                RegisterRuntimeRequirement("NativeKeyValuePair");
+                ITypeSymbol entryType = semantic.GetForEachStatementInfo(forEachStatement).ElementType;
+                string entryTypeName = GetCppTypeToken(VariableUtil.GetVarType(entryType), context.Program);
+                lines.Add($"{entryTypeName} {forEachStatement.Identifier.Text}({nativeEntryName}.first, {nativeEntryName}.second);\n");
+            }
 
             // Process the body of the forEach loop
             ProcessStatement(semantic, context, forEachStatement.Statement, lines);

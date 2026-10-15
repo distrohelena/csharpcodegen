@@ -630,3 +630,4 @@ public:
     }
 };
 
+#include "../system/object_disposed_exception.hpp"

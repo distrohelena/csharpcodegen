@@ -8,6 +8,32 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPOwnedMemberContractValidatorTests {
     /// <summary>
+    /// Verifies unconditional cleanup after guarded runtime detachment in a nested registration state.
+    /// </summary>
+    [Fact]
+    public void Validate_WithNestedRegistrationGuardThenRelease_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public static class Registration {
+                sealed class State : IDisposable {
+                    [NativeOwnedMember]
+                    internal object RuntimeWorld;
+                    bool IsDisposed;
+                    public void Dispose() {
+                        if (!IsDisposed) {
+                            IsDisposed = true;
+                            if (RuntimeWorld != null && ReferenceEquals(this, RuntimeWorld)) {
+                                GC.KeepAlive(RuntimeWorld);
+                            }
+                        }
+                        NativeOwnership.DisposeAndRelease(RuntimeWorld);
+                    }
+                }
+            }
+            """);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
     /// Ensures a fully initialized, safely replaced, and disposed owned member is accepted.
     /// </summary>
     [Fact]

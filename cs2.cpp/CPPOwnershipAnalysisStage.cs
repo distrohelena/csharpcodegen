@@ -55,6 +55,14 @@ internal sealed class CPPOwnershipAnalysisStage : IConversionStage {
             CPPConversionDiagnostic firstError = result.MethodSummaries.Diagnostics
                 .Concat(result.Diagnostics)
                 .First(diagnostic => diagnostic.Severity == CPPDiagnosticSeverity.Error);
+            foreach (Compilation compilation in compilations) {
+                foreach (Diagnostic diagnostic in compilation.GetDiagnostics().Where(value => value.Severity == DiagnosticSeverity.Error).Take(30)) {
+                    Console.Error.WriteLine("Semantic diagnostic: " + diagnostic);
+                }
+            }
+            foreach (CPPConversionDiagnostic diagnostic in result.MethodSummaries.Diagnostics.Concat(result.Diagnostics).Where(value => value.Severity == CPPDiagnosticSeverity.Error).Take(30)) {
+                Console.Error.WriteLine(CPPConversionStageUtils.FormatFailure(diagnostic));
+            }
             throw new InvalidOperationException(CPPConversionStageUtils.FormatFailure(firstError));
         }
 
