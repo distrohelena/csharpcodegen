@@ -4392,8 +4392,8 @@ namespace cs2.cpp {
                 return new ExpressionResult(true, VariablePath.Unknown, runtimeTypeNameType);
             }
 
-            if (TryProcessNativeDictionaryKeysMemberAccess(semantic, context, memberAccess, lines, out VariableType dictionaryKeysType)) {
-                return new ExpressionResult(true, VariablePath.Unknown, dictionaryKeysType);
+            if (TryProcessNativeDictionaryCollectionMemberAccess(semantic, context, memberAccess, lines, out VariableType dictionaryCollectionType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, dictionaryCollectionType);
             }
 
             if (TryProcessTupleMemberAccess(semantic, context, memberAccess, lines, out VariableType tupleMemberType)) {
@@ -5496,7 +5496,7 @@ namespace cs2.cpp {
             return true;
         }
 
-        bool TryProcessNativeDictionaryKeysMemberAccess(
+        bool TryProcessNativeDictionaryCollectionMemberAccess(
             SemanticModel semantic,
             LayerContext context,
             MemberAccessExpressionSyntax memberAccess,
@@ -5504,14 +5504,18 @@ namespace cs2.cpp {
             out VariableType resultType) {
             resultType = VariableUtil.GetVarType("object");
             if (memberAccess.Name is not IdentifierNameSyntax identifierName ||
-                !string.Equals(identifierName.Identifier.Text, "Keys", StringComparison.Ordinal) ||
+                (!string.Equals(identifierName.Identifier.Text, "Keys", StringComparison.Ordinal) &&
+                 !string.Equals(identifierName.Identifier.Text, "Values", StringComparison.Ordinal)) ||
                 !TryGetExpressionTypeSymbol(semantic, memberAccess.Expression, out ITypeSymbol receiverTypeSymbol) ||
                 !IsDictionaryTypeSymbol(receiverTypeSymbol)) {
                 return false;
             }
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
-            lines.Add($"{receiverText}->Keys()");
+            string collectionMethodName = string.Equals(identifierName.Identifier.Text, "Values", StringComparison.Ordinal)
+                ? "Values"
+                : "Keys";
+            lines.Add($"{receiverText}->{collectionMethodName}()");
             return true;
         }
 

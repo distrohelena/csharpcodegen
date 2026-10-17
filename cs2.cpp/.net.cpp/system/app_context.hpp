@@ -12,17 +12,20 @@
 #include "../runtime/native_exceptions.hpp"
 
 
-#if defined(_WIN32) && !HE_CPP_USE_EXCEPTIONS
+#if defined(_WIN32) && !HE_CPP_USE_EXCEPTIONS && !HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT
 #error "system/app_context.hpp requires HE_CPP_USE_EXCEPTIONS=1 on Windows; its executable path failure still throws a hosted exception."
 #endif
 
-#ifdef _WIN32
+#if defined(_WIN32) && !HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT
 #include <Windows.h>
 #endif
 
 /// Resolves executable-relative application context values used by generated runtime initialization.
 class AppContext {
 public:
+#if HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT
+    inline static constexpr const char* BaseDirectory = ".";
+#else
     inline static HeCppString BaseDirectory = []() {
 #if !HE_CPP_PLATFORM_IS_WINDOWS_HOST
         return HeCppString(".");
@@ -48,6 +51,7 @@ public:
         return HeCppString(".");
 #endif
     }();
+#endif
 };
 
 #endif // APP_CONTEXT_HPP

@@ -222,6 +222,17 @@ public:
         return keys;
     }
 
+    /// <summary>Copies the current values using the configured vector provider without transferring dictionary ownership.</summary>
+    HeCppVector<TValue> Values() const {
+        HeCppVector<TValue> values;
+        values.reserve(this->size());
+        for (const auto& pair : static_cast<const Base&>(*this)) {
+            values.push_back(pair.second);
+        }
+
+        return values;
+    }
+
     int32_t Count() const {
         return static_cast<int32_t>(this->size());
     }

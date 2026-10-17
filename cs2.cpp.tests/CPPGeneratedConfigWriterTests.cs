@@ -183,6 +183,25 @@ public class CPPGeneratedConfigWriterTests {
     }
 
     /// <summary>
+    /// Ensures the generated config writer emits the static-dot AppContext define when the conversion options request the Vita-safe emission mode.
+    /// </summary>
+    [Fact]
+    public void Write_WithStaticDotAppContextMode_WritesStaticDotDefine() {
+        CPPConversionOptions options = CPPConversionOptions.CreateDefault();
+        options.AppContextBaseDirectoryMode = CPPAppContextBaseDirectoryMode.StaticDot;
+
+        CPPConversionReport report = new CPPConversionReport();
+        CPPRuntimeRequirementRegistrar registrar = new CPPRuntimeRequirementRegistrar(new CPPRuntimeRequirementCatalog(), report);
+        registrar.RegisterDefaults(options);
+
+        string outputFolder = Path.Combine(Path.GetTempPath(), "cs2.cpp.tests", Guid.NewGuid().ToString("N"));
+        string filePath = CPPGeneratedConfigWriter.Write(outputFolder, options, registrar);
+        string output = File.ReadAllText(filePath);
+
+        Assert.Contains("#define HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT 1", output);
+    }
+
+    /// <summary>
     /// Ensures the generated config writer emits resolved feature defines for compile-time pruning in native hosts.
     /// </summary>
     [Fact]

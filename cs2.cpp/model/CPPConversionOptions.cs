@@ -26,6 +26,11 @@ namespace cs2.cpp {
         public CPPRuntimeProfile RuntimeProfile { get; set; } = CPPRuntimeProfile.CreateStlLite();
 
         /// <summary>
+        /// Gets or sets how the generated AppContext runtime should expose the executable base directory.
+        /// </summary>
+        public CPPAppContextBaseDirectoryMode AppContextBaseDirectoryMode { get; set; } = CPPAppContextBaseDirectoryMode.DynamicRuntime;
+
+        /// <summary>
         /// Gets or sets whether unsupported constructs should be recorded in the conversion report.
         /// </summary>
         public bool CollectDiagnostics { get; set; } = true;

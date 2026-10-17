@@ -56,6 +56,7 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_RTTI {ToDefineValue(options.RuntimeProfile.UseRtti)}",
                 $"#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN {ToDefineValue(options.PlatformProfile.IsLittleEndian)}",
                 $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}",
+                $"#define HE_CPP_APP_CONTEXT_BASE_DIRECTORY_STATIC_DOT {ToDefineValue(options.AppContextBaseDirectoryMode == CPPAppContextBaseDirectoryMode.StaticDot)}",
                 $"#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS {ToDefineValue(HasFileDescriptorApis(options))}",
                 $"#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM {ToDefineValue(HasCustomFileSystem(options))}",
                 $"#define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES {ToDefineValue(options.RuntimeProfile.Kind != CPPRuntimeKind.Freestanding)}"
