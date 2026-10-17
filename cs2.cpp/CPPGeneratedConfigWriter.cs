@@ -56,6 +56,7 @@ namespace cs2.cpp {
                 $"#define HE_CPP_USE_RTTI {ToDefineValue(options.RuntimeProfile.UseRtti)}",
                 $"#define HE_CPP_PLATFORM_IS_LITTLE_ENDIAN {ToDefineValue(options.PlatformProfile.IsLittleEndian)}",
                 $"#define HE_CPP_PLATFORM_IS_WINDOWS_HOST {ToDefineValue(options.PlatformProfile.IsWindowsHost)}",
+                $"#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS {ToDefineValue(HasFileDescriptorApis(options))}",
                 $"#define HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM {ToDefineValue(HasCustomFileSystem(options))}",
                 $"#define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES {ToDefineValue(options.RuntimeProfile.Kind != CPPRuntimeKind.Freestanding)}"
             };
@@ -140,6 +141,19 @@ namespace cs2.cpp {
         static bool HasCustomFileSystem(CPPConversionOptions options) {
             return TryGetPlatformOption(options, "native-file-system-header", out _) &&
                 TryGetPlatformOption(options, "native-file-system-type", out _);
+        }
+
+        /// <summary>
+        /// Returns whether the target libc exposes the descriptor APIs used by file-backed stream mutation.
+        /// The default remains enabled for existing host profiles; limited-libc targets opt out through
+        /// the generic platform option rather than forcing a platform-specific runtime branch.
+        /// </summary>
+        static bool HasFileDescriptorApis(CPPConversionOptions options) {
+            if (!TryGetPlatformOption(options, "native-file-stream-descriptor-apis", out string rawValue)) {
+                return true;
+            }
+
+            return !bool.TryParse(rawValue, out bool enabled) || enabled;
         }
 
         static bool TryGetPlatformOption(CPPConversionOptions options, string optionName, out string value) {

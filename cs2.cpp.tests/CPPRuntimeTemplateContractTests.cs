@@ -410,11 +410,11 @@ public sealed class CPPRuntimeTemplateContractTests {
 
         string source = File.ReadAllText(templatePath);
 
-        Assert.Contains("std::vector<std::unique_ptr<Subscriber>> Subscribers", source, StringComparison.Ordinal);
+        Assert.Contains("HeCppVector<HeCppOwnedPtr<Subscriber>> Subscribers", source, StringComparison.Ordinal);
         Assert.DoesNotContain("std::vector<Subscriber> Subscribers", source, StringComparison.Ordinal);
         Assert.Contains("Event& operator+=(void (*handler)(TArgs...))", source, StringComparison.Ordinal);
-        Assert.Contains("std::array<void*, sizeof...(TArgs)> argumentPointers", source, StringComparison.Ordinal);
-        Assert.Contains("subscriber->Invoke(argumentPointers.data());", source, StringComparison.Ordinal);
+        Assert.Contains("void* argumentPointers[sizeof...(TArgs) == 0 ? 1 : sizeof...(TArgs)]", source, StringComparison.Ordinal);
+        Assert.Contains("subscriber->Invoke(argumentPointers);", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -454,6 +454,27 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("static bool IsNaN(double value)", source, StringComparison.Ordinal);
         Assert.Contains("static bool IsInfinity(float value)", source, StringComparison.Ordinal);
         Assert.Contains("static bool IsInfinity(double value)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the math runtime template exposes the authored native helpers and rejects NaN for managed Math.Sign semantics.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_math_declares_sign_and_asin_contract() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "math.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("static int32_t Sign(TValue value)", source, StringComparison.Ordinal);
+        Assert.Contains("if (value != value)", source, StringComparison.Ordinal);
+        Assert.Contains("he_cpp_raise(ArithmeticException", source, StringComparison.Ordinal);
+        Assert.Contains("static double Asin(TValue value)", source, StringComparison.Ordinal);
+        Assert.Contains("static float Asin(TValue value)", source, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -502,6 +523,36 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("memoryBuffer.swap(customStream->memoryBuffer);", source, StringComparison.Ordinal);
         Assert.Contains("customStream->file = nullptr;", source, StringComparison.Ordinal);
         Assert.Contains("customStream->ownsMemoryBuffer = false;", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the file-stream template uses the generic limited-libc capability instead of a platform-specific branch.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_file_stream_guards_dreamcast_file_mutation_apis() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "system",
+            "io",
+            "file-stream.cpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Contains("#ifndef HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", source, StringComparison.Ordinal);
+        Assert.Contains("#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", source, StringComparison.Ordinal);
+        Assert.Contains("he_cpp_raise(NotSupportedException", source, StringComparison.Ordinal);
+        Assert.Contains("(void)newLength;", source, StringComparison.Ordinal);
+        Assert.Contains("FileStream cannot query a file-backed stream on this target.", source, StringComparison.Ordinal);
+        Assert.Contains("FileStream file-backed paths require descriptor APIs on this target.", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
+        Assert.Contains("if (file == nullptr)", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer.resize(newLength)", source, StringComparison.Ordinal);
+        Assert.Contains("memoryBuffer.size()", source, StringComparison.Ordinal);
+        int capabilityGuard = source.IndexOf("#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", StringComparison.Ordinal);
+        int fopenCall = source.IndexOf("file = std::fopen", StringComparison.Ordinal);
+        Assert.True(capabilityGuard >= 0 && capabilityGuard < fopenCall);
     }
 
     /// <summary>

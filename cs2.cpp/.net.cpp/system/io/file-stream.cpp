@@ -8,6 +8,11 @@
 #define HE_CPP_USE_HOSTED_FILE_SYSTEM 1
 #endif
 
+#ifndef HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+// Existing hosted consumers retain descriptor APIs; limited-libc profiles explicitly opt out.
+#define HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS 1
+#endif
+
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
 #include HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_HEADER
@@ -186,6 +191,15 @@ FileStream::FileStream(const char* path, FileMode mode)
         return;
     }
 #endif
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+    (void)path;
+    (void)mode;
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    he_cpp_raise(NotSupportedException());
+#else
+    he_cpp_raise(NotSupportedException("FileStream file-backed paths require descriptor APIs on this target."));
+#endif
+#else
     file = std::fopen(path, GetFileMode(mode));
     if (!file) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
@@ -196,6 +210,7 @@ FileStream::FileStream(const char* path, FileMode mode)
     }
 
     UpdateLength();
+#endif
 #else
     (void)path;
     (void)mode;
@@ -329,6 +344,14 @@ void FileStream::SetLength(size_t newLength) {
     }
 
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+    (void)newLength;
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    he_cpp_raise(NotSupportedException());
+#else
+    he_cpp_raise(NotSupportedException("FileStream cannot resize a file-backed stream on this target."));
+#endif
+#else
     std::fflush(file);
 #if defined(_WIN32)
     _chsize_s(fileno(file), newLength);
@@ -336,6 +359,7 @@ void FileStream::SetLength(size_t newLength) {
     ftruncate(fileno(file), newLength);
 #endif
     UpdateLength();
+#endif
 #else
     he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
 #endif
@@ -349,10 +373,18 @@ void FileStream::UpdateLength() {
         return;
     }
 
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+    he_cpp_raise(NotSupportedException());
+#else
+    he_cpp_raise(NotSupportedException("FileStream cannot query a file-backed stream on this target."));
+#endif
+#else
     struct stat fileStat;
     if (fstat(fileno(file), &fileStat) == 0) {
         length = fileStat.st_size;
     }
+#endif
 #else
     length = memoryBuffer.size();
 #endif
