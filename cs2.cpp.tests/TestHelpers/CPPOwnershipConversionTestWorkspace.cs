@@ -3,19 +3,26 @@ using cs2.cpp;
 namespace cs2.cpp.tests.TestHelpers;
 
 /// <summary>
-/// Creates isolated ownership conversion fixtures beneath the repository-owned scratch directory.
+/// Creates temporary ownership conversion fixtures that reference the active source repository.
 /// </summary>
 public sealed class CPPOwnershipConversionTestWorkspace {
     /// <summary>
-    /// Repository root resolved from the compiled test assembly location.
+    /// Repository root resolved from the test caller's source location, independent of the compiled artifacts directory.
     /// </summary>
     readonly string RepositoryRoot;
 
     /// <summary>
     /// Initializes a workspace factory rooted in the active source repository.
     /// </summary>
-    public CPPOwnershipConversionTestWorkspace() {
-        RepositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    /// <param name="callerFilePath">Compiler-supplied test source path used to locate the real checkout.</param>
+    public CPPOwnershipConversionTestWorkspace([System.Runtime.CompilerServices.CallerFilePath] string callerFilePath = "") {
+        string sourceDirectory = Path.GetDirectoryName(callerFilePath)
+            ?? throw new ArgumentException("The test source path is required to locate the conversion repository.", nameof(callerFilePath));
+        RepositoryRoot = Path.GetFullPath(Path.Combine(sourceDirectory, ".."));
+        string attributesProjectPath = Path.Combine(RepositoryRoot, "cs2.attributes", "cs2.attributes.csproj");
+        if (!File.Exists(attributesProjectPath)) {
+            throw new FileNotFoundException("The conversion repository must contain the ownership attributes project.", attributesProjectPath);
+        }
     }
 
     /// <summary>
@@ -34,7 +41,7 @@ public sealed class CPPOwnershipConversionTestWorkspace {
         }
 
         string workspaceName = SanitizeTestId(testId) + "-" + Guid.NewGuid().ToString("N");
-        string workspacePath = Path.Combine(RepositoryRoot, "scratch", "ownership-tests", workspaceName);
+        string workspacePath = Path.Combine(Path.GetTempPath(), "ownership-tests", workspaceName);
         string projectPath = Path.Combine(workspacePath, "Fixture.csproj");
         string outputPath = Path.Combine(workspacePath, "generated");
         Directory.CreateDirectory(workspacePath);

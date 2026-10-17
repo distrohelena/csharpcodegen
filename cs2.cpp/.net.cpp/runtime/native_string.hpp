@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <cstdio>
+#include <clocale>
+#include <cstring>
+#include <cstdlib>
 
 #include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
@@ -598,6 +602,66 @@ public:
         }
 
         return HeCppString::npos;
+    }
+
+    /// Reports invalid numeric formats through the configured native exception contract, or terminates exception-free runtimes.
+    [[noreturn]] static void RejectNumericFormat(const char* message) {
+#if HE_CPP_USE_EXCEPTIONS
+        throw new ::ArgumentException(message);
+#else
+        (void)message;
+        std::abort();
+#endif
+    }
+
+    /// Formats primitive D/X integral and F/G/E floating values using bounded storage and invariant decimal punctuation.
+    template <typename TValue>
+    static std::enable_if_t<std::is_arithmetic_v<TValue>, HeCppString> FormatNumeric(TValue value, const HeCppString& format) {
+        if (format.empty()) return ToJoinString(value);
+        const char specifier=format[0];
+        int precision=0;
+        for (std::size_t index=1;index<format.size();++index) {
+            if (format[index]<'0' || format[index]>'9' || precision>99) RejectNumericFormat("Unsupported numeric format precision.");
+            precision=precision*10+(format[index]-'0');
+        }
+        if (precision>99) RejectNumericFormat("Numeric precision must not exceed 99.");
+        char buffer[768]{};
+        int count=0;
+        if (specifier=='D' || specifier=='d' || specifier=='X' || specifier=='x') {
+            if constexpr (!std::is_integral_v<TValue> || std::is_same_v<TValue,bool>) {
+                RejectNumericFormat("Integral numeric formats require an integer value.");
+            } else {
+                const int width=precision;
+                if (specifier=='X' || specifier=='x') {
+                    using Unsigned=std::make_unsigned_t<TValue>;
+                    count=std::snprintf(buffer,sizeof(buffer),specifier=='X'?"%0*llX":"%0*llx",width,static_cast<unsigned long long>(static_cast<Unsigned>(value)));
+                } else if constexpr (std::is_signed_v<TValue>) {
+                    count=std::snprintf(buffer,sizeof(buffer),"%0*lld",width+(value<0?1:0),static_cast<long long>(value));
+                } else {
+                    count=std::snprintf(buffer,sizeof(buffer),"%0*llu",width,static_cast<unsigned long long>(value));
+                }
+            }
+        } else if (specifier=='F' || specifier=='f') {
+            count=std::snprintf(buffer,sizeof(buffer),"%.*f",format.size()==1?2:precision,static_cast<double>(value));
+        } else if (specifier=='G' || specifier=='g') {
+            count=std::snprintf(buffer,sizeof(buffer),specifier=='G'?"%.*G":"%.*g",format.size()==1 || precision==0?9:precision,static_cast<double>(value));
+        } else if (specifier=='E' || specifier=='e') {
+            count=std::snprintf(buffer,sizeof(buffer),specifier=='E'?"%.*E":"%.*e",format.size()==1?6:precision,static_cast<double>(value));
+        } else {
+            RejectNumericFormat("Unsupported native numeric format specifier.");
+        }
+        if (count<0 || static_cast<std::size_t>(count)>=sizeof(buffer)) RejectNumericFormat("Formatted numeric value exceeds bounded storage.");
+        HeCppString result;
+        const char* decimal=std::localeconv()->decimal_point;
+        const std::size_t decimalLength=std::strlen(decimal);
+        for (std::size_t index=0;index<static_cast<std::size_t>(count);) {
+            if (decimalLength && index+decimalLength<=static_cast<std::size_t>(count) && std::strncmp(buffer+index,decimal,decimalLength)==0) {
+                result+='.'; index+=decimalLength;
+            } else {
+                result+=buffer[index++];
+            }
+        }
+        return result;
     }
 
     static HeCppString ToJoinString(const HeCppString& value) {

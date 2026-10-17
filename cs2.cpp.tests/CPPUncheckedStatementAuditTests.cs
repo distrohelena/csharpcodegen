@@ -60,7 +60,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("static T CheckedPostIncrement(T& value)", output);
             Assert.Contains("static T CheckedAddAssign(T& left, const T& right)", output);
             Assert.Contains("if (value == std::numeric_limits<T>::max())", output);
-            Assert.Contains("throw OverflowException();", output);
+            Assert.Contains("he_cpp_raise(OverflowException());", output);
             Assert.DoesNotContain("this->Value++;", output, StringComparison.Ordinal);
             Assert.DoesNotContain("this->Total += amount;", output, StringComparison.Ordinal);
         }

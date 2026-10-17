@@ -337,6 +337,7 @@ namespace cs2.cpp {
             }
 
             VariableType declaredType = VariableUtil.GetVarType(declarationPattern.Type, semantic);
+            RegisterGeneratedTypeReferences(context, declaredType);
             CPPTypeData declaredTypeData;
             VariableType cppDeclaredType = ConvertToCPPType(declaredType, out declaredTypeData);
 
@@ -580,8 +581,12 @@ namespace cs2.cpp {
             if (string.Equals(invokedMethodSymbol.Name, "DetachOwned", StringComparison.Ordinal)) {
                 NativeOwnershipTarget detachTarget = ResolveNativeOwnershipTarget(semantic, context, argument.Expression, false);
                 lines.AddRange(detachTarget.BeforeLines);
+                // Arrays own their storage, while pointer elements remain borrowed.
+                // Preserve argument evaluation without changing buffer ownership.
+                bool isArray = semantic.GetTypeInfo(argument.Expression).Type is IArrayTypeSymbol;
+                lines.Add(isArray ? "(void)(" : string.Empty);
                 lines.Add(detachTarget.ReadExpression);
-                lines.Add("->DetachOwned();\n");
+                lines.Add(isArray ? ");\n" : "->DetachOwned();\n");
                 return true;
             }
 
@@ -4545,6 +4550,14 @@ namespace cs2.cpp {
                     UsesDirectMemberAccess(memberSymbol);
                 if (IsPointerBackedExpressionType(context, semantic, memberAccess.Expression, result.Type)) {
                     useDirectMemberAccess = false;
+                }
+
+                if (memberSymbol is IEventSymbol interfaceEventSymbol &&
+                    interfaceEventSymbol.ContainingType.TypeKind == TypeKind.Interface &&
+                    !interfaceEventSymbol.IsStatic) {
+                    AppendMemberAccessSeparator(lines, useStaticAccess, result.VarPath, useDirectMemberAccess);
+                    lines.Add($"{CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEventSymbol)}()");
+                    return new ExpressionResult(true, VariablePath.Unknown, new VariableType(VariableDataType.Object, "Event"));
                 }
 
                 IPropertySymbol resolvedPropertySymbol = memberSymbol as IPropertySymbol;
@@ -8675,6 +8688,17 @@ namespace cs2.cpp {
                 return true;
             }
 
+            if (string.Equals(memberName, "Replace", StringComparison.Ordinal) &&
+                invocationExpression.ArgumentList.Arguments.Count == 2) {
+                lines.Add("String::Replace(");
+                lines.Add(receiverText);
+                lines.Add(", ");
+                AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType("string");
+                return true;
+            }
+
             if (string.Equals(memberName, "Remove", StringComparison.Ordinal) &&
                 invocationExpression.ArgumentList.Arguments.Count is 1 or 2) {
                 lines.Add("String::Remove(");
@@ -9723,7 +9747,8 @@ namespace cs2.cpp {
             }
 
             if (invocationExpression.ArgumentList.Arguments.Count != 0) {
-                return TryProcessInvariantNumericToStringInvocation(semantic, context, invocationExpression, memberAccess, lines);
+                return TryProcessInvariantNumericToStringInvocation(semantic, context, invocationExpression, memberAccess, lines)
+                    || TryProcessNativeNumericFormattedToString(semantic, context, invocationExpression, memberAccess, lines);
             }
 
             if (TryResolvePathSeparatorToStringInvocation(memberAccess.Expression, out string pathSeparatorMemberName)) {
@@ -9799,6 +9824,62 @@ namespace cs2.cpp {
 
             RegisterRuntimeRequirement("NativeString");
             lines.Add($"String::ToJoinString({receiverText})");
+            return true;
+        }
+
+        /// <summary>Lowers formatted primitive numbers through the native invariant formatter instead of emitting member calls on C++ arithmetic types.</summary>
+        /// <param name="semantic">Semantic model used to identify primitive receiver and provider types.</param>
+        /// <param name="context">Active conversion scope for receiver and format expressions.</param>
+        /// <param name="invocation">Managed ToString invocation being lowered.</param>
+        /// <param name="memberAccess">Receiver and method access of the invocation.</param>
+        /// <param name="lines">Destination expression tokens.</param>
+        /// <returns>True when an arithmetic formatting overload was emitted.</returns>
+        bool TryProcessNativeNumericFormattedToString(SemanticModel semantic, LayerContext context,
+            InvocationExpressionSyntax invocation, MemberAccessExpressionSyntax memberAccess, List<string> lines) {
+            IMethodSymbol method = ResolveInvokedMethodSymbol(semantic, invocation);
+            ITypeSymbol receiverType = ResolveNativeToStringReceiverType(semantic, memberAccess.Expression, method);
+            if (!IsNativeToStringTypeSymbol(receiverType) || receiverType.SpecialType == SpecialType.System_Boolean) {
+                return false;
+            }
+            if (method == null || invocation.ArgumentList.Arguments.Count > 2) {
+                return false;
+            }
+            ExpressionSyntax format = null;
+            for (int index = 0; index < invocation.ArgumentList.Arguments.Count; index++) {
+                ArgumentSyntax argument = invocation.ArgumentList.Arguments[index];
+                int parameterIndex = index;
+                if (argument.NameColon != null) {
+                    parameterIndex = Array.FindIndex(method.Parameters.ToArray(), parameter => parameter.Name == argument.NameColon.Name.Identifier.Text);
+                }
+                if (parameterIndex < 0 || parameterIndex >= method.Parameters.Length) {
+                    return false;
+                }
+                if (method.Parameters[parameterIndex].Type.SpecialType == SpecialType.System_String) {
+                    format = argument.Expression;
+                } else {
+                    ISymbol provider = semantic.GetSymbolInfo(argument.Expression).Symbol;
+                    bool invariant = provider is IPropertySymbol property && property.Name == "InvariantCulture"
+                        && property.ContainingType.ToDisplayString() == "System.Globalization.CultureInfo";
+                    if (!invariant && !argument.Expression.IsKind(SyntaxKind.NullLiteralExpression)) {
+                        throw new NotSupportedException("Native numeric ToString supports an invariant culture provider or null.");
+                    }
+                }
+            }
+            RegisterRuntimeRequirement("NativeString");
+            int depth = context.DepthClass;
+            List<string> receiverLines = new List<string>();
+            ProcessExpression(semantic, context, memberAccess.Expression, receiverLines);
+            context.PopClass(depth);
+            lines.Add("String::FormatNumeric(");
+            lines.AddRange(receiverLines);
+            lines.Add(", ");
+            if (format == null || format.IsKind(SyntaxKind.NullLiteralExpression)) {
+                lines.Add($"{GetNativeStringTypeName()}()");
+            } else {
+                ProcessExpression(semantic, context, format, lines);
+                context.PopClass(depth);
+            }
+            lines.Add(")");
             return true;
         }
 
@@ -11544,27 +11625,41 @@ namespace cs2.cpp {
             return false;
         }
 
+        /// <summary>
+        /// Lowers array creation while retaining length preparation and cleanup for the enclosing evaluation order.
+        /// </summary>
+        /// <param name="semantic">Semantic model attached to the source array expression.</param>
+        /// <param name="context">Current native lowering scope.</param>
+        /// <param name="arrayCreation">Array allocation being emitted.</param>
+        /// <param name="lines">Output tokens receiving the native allocation.</param>
+        /// <returns>The array type together with setup and cleanup required by its length expression.</returns>
         protected override ExpressionResult ProcessArrayCreationExpression(SemanticModel semantic, LayerContext context, ArrayCreationExpressionSyntax arrayCreation, List<string> lines) {
-            ExpressionResult sizeResult = default;
+            List<string> beforeLines = new List<string>();
+            List<string> afterLines = new List<string>();
             if (arrayCreation.Initializer != null) {
                 if (!TryProcessArrayInitializerTargetType(semantic, context, arrayCreation, arrayCreation.Initializer.Expressions, lines)) {
                     lines.Add("{ ");
                     AppendExpressionList(semantic, context, arrayCreation.Initializer.Expressions, lines);
                     lines.Add(" }");
                 }
-            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines, out sizeResult)) {
+            } else if (TryProcessDynamicArrayCreation(semantic, context, arrayCreation, lines, beforeLines, afterLines)) {
             } else if (arrayCreation.Type.RankSpecifiers.Any()) {
                 lines.Add("new Array(");
                 foreach (ArrayRankSpecifierSyntax rankSpecifier in arrayCreation.Type.RankSpecifiers) {
                     foreach (ExpressionSyntax size in rankSpecifier.Sizes.OfType<ExpressionSyntax>()) {
-                        ProcessExpression(semantic, context, size, lines);
+                        ExpressionResult sizeResult = ProcessExpression(semantic, context, size, lines);
+                        if (sizeResult.BeforeLines != null) {
+                            beforeLines.AddRange(sizeResult.BeforeLines);
+                        }
+                        if (sizeResult.AfterLines != null) {
+                            afterLines.AddRange(sizeResult.AfterLines);
+                        }
                     }
                 }
                 lines.Add(")");
             }
 
-            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic),
-                sizeResult.BeforeLines, sizeResult.AfterLines);
+            return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(arrayCreation.Type, semantic), beforeLines, afterLines);
         }
 
         bool TryProcessArrayInitializerTargetType(
@@ -13360,6 +13455,14 @@ namespace cs2.cpp {
             return new ExpressionResult(false, VariablePath.Unknown, null);
         }
 
+        /// <summary>
+        /// Emits the required native cast while propagating operand setup and cleanup to preserve evaluation order.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to identify source and target types.</param>
+        /// <param name="context">Current conversion scope and checked arithmetic policy.</param>
+        /// <param name="castExpr">Managed cast attached to the original syntax tree.</param>
+        /// <param name="lines">Output tokens receiving the cast expression.</param>
+        /// <returns>The target type and the operand's sequencing requirements.</returns>
         protected override ExpressionResult ProcessCastExpression(SemanticModel semantic, LayerContext context, CastExpressionSyntax castExpr, List<string> lines) {
             VariableType varType = VariableUtil.GetVarType(castExpr.Type, semantic);
             CPPTypeData typeData;
@@ -13409,9 +13512,9 @@ namespace cs2.cpp {
                 lines.Add("(*static_cast<");
                 lines.Add(castTargetTypeName);
                 lines.Add("*>(");
-                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                ExpressionResult boxedOperandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
                 lines.Add("))");
-                return new ExpressionResult(true, VariablePath.Unknown, varType);
+                return new ExpressionResult(boxedOperandResult.Processed, VariablePath.Unknown, varType, boxedOperandResult.BeforeLines, boxedOperandResult.AfterLines);
             }
 
             if (sourceExpressionTypeKnown &&
@@ -13424,9 +13527,9 @@ namespace cs2.cpp {
                 lines.Add(">(reinterpret_cast<");
                 lines.Add(IsUnsignedIntegerLikeCppTypeName(cppType.TypeName) ? "uintptr_t" : "intptr_t");
                 lines.Add(">(");
-                ProcessExpression(semantic, context, castExpr.Expression, lines);
+                ExpressionResult pointerOperandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
                 lines.Add("))");
-                return new ExpressionResult(true, VariablePath.Unknown, varType);
+                return new ExpressionResult(pointerOperandResult.Processed, VariablePath.Unknown, varType, pointerOperandResult.BeforeLines, pointerOperandResult.AfterLines);
             }
 
             bool requiresReinterpretCast = sourceExpressionTypeKnown &&
@@ -13436,10 +13539,10 @@ namespace cs2.cpp {
             lines.Add(requiresReinterpretCast ? "reinterpret_cast<" : "static_cast<");
             lines.Add(castTargetTypeName);
             lines.Add(">(");
-            ProcessExpression(semantic, context, castExpr.Expression, lines);
+            ExpressionResult operandResult = ProcessExpression(semantic, context, castExpr.Expression, lines);
             lines.Add(")");
 
-            return new ExpressionResult(true, VariablePath.Unknown, varType);
+            return new ExpressionResult(operandResult.Processed, VariablePath.Unknown, varType, operandResult.BeforeLines, operandResult.AfterLines);
         }
 
         /// <summary>
@@ -13538,6 +13641,13 @@ namespace cs2.cpp {
                 string.Equals(cppTypeName, "uintptr_t", StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Keeps condition pattern variables alive through both ternary branches without eagerly evaluating short-circuited casts.
+        /// </summary>
+        /// <param name="semantic">Semantic model used to resolve pattern types.</param>
+        /// <param name="context">Current expression lowering scope.</param>
+        /// <param name="conditional">Managed conditional expression to lower.</param>
+        /// <param name="lines">Output tokens for the native expression.</param>
         protected override void ProcessConditionalExpression(SemanticModel semantic, LayerContext context, ConditionalExpressionSyntax conditional, List<string> lines) {
             if (TryProcessSharedPatternConditional(semantic, context, conditional, lines)) {
                 return;
@@ -13623,9 +13733,7 @@ namespace cs2.cpp {
             bool supportedFormat = (arguments.Count == 1 && !floating) ||
                 (arguments.Count == 2 && (format == "F0" || format == "F1" || (!floating && format == "D6")));
             if (!invariantProvider || !supportedFormat || arguments.Any(argument => argument.NameColon != null)) {
-                ReportUnsupportedNode(context, invocation, "Native numeric ToString supports only exact CultureInfo.InvariantCulture with integral provider-only overloads and constant D6 (integral), F0 or F1 formats.");
-                lines.Add($"{GetNativeStringTypeName()}()");
-                return true;
+                return false;
             }
 
             List<string> receiverLines = new List<string>();
@@ -18375,15 +18483,16 @@ namespace cs2.cpp {
         /// <param name="context">Current lowering context.</param>
         /// <param name="arrayCreation">Array creation syntax being lowered.</param>
         /// <param name="lines">Output line buffer that receives emitted C++ tokens.</param>
-        /// <param name="sizeResult">Evaluation statements required by the length expression, propagated to the allocation's containing statement.</param>
+        /// <param name="beforeLines">Setup statements collected from the array length.</param>
+        /// <param name="afterLines">Cleanup statements collected from the array length.</param>
         /// <returns><c>true</c> when the array creation was lowered as a native allocation; otherwise, <c>false</c>.</returns>
         bool TryProcessDynamicArrayCreation(
             SemanticModel semantic,
             LayerContext context,
             ArrayCreationExpressionSyntax arrayCreation,
             List<string> lines,
-            out ExpressionResult sizeResult) {
-            sizeResult = default;
+            List<string> beforeLines,
+            List<string> afterLines) {
             if (arrayCreation.Type.RankSpecifiers.Count == 0) {
                 return false;
             }
@@ -18404,7 +18513,13 @@ namespace cs2.cpp {
             if (arrayCreation.Type.RankSpecifiers.Count == 1) {
                 string elementTypeName = GetCppTypeToken(elementType, context.Program);
                 lines.Add($"new Array<{elementTypeName}>(");
-                sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                ExpressionResult sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+                if (sizeResult.BeforeLines != null) {
+                    beforeLines.AddRange(sizeResult.BeforeLines);
+                }
+                if (sizeResult.AfterLines != null) {
+                    afterLines.AddRange(sizeResult.AfterLines);
+                }
                 lines.Add(")");
                 return true;
             }
@@ -18418,7 +18533,13 @@ namespace cs2.cpp {
 
             string nestedElementTypeName = GetCppTypeToken(nestedElementType, context.Program);
             lines.Add($"new Array<{nestedElementTypeName}>(");
-            sizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            ExpressionResult outerSizeResult = ProcessExpression(semantic, context, outerRankSpecifier.Sizes[0], lines);
+            if (outerSizeResult.BeforeLines != null) {
+                beforeLines.AddRange(outerSizeResult.BeforeLines);
+            }
+            if (outerSizeResult.AfterLines != null) {
+                afterLines.AddRange(outerSizeResult.AfterLines);
+            }
             lines.Add(")");
             return true;
         }

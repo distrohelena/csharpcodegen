@@ -1859,11 +1859,9 @@ namespace cs2.cpp {
         /// <param name="conversionClass">The enum type to emit.</param>
         /// <param name="headerWriter">Writer that receives the enum declaration.</param>
         void WriteEnum(ConversionClass conversionClass, TextWriter headerWriter) {
-            ITypeSymbol underlyingType = conversionClass.TypeSymbol?.EnumUnderlyingType;
-            string underlyingTypeSuffix = underlyingType == null
-                ? string.Empty
-                : $" : {ConvertType(VariableUtil.GetVarType(underlyingType))}";
-            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}{underlyingTypeSuffix}");
+            string underlyingType = ResolveEnumUnderlyingType(conversionClass);
+            string underlyingClause = string.IsNullOrEmpty(underlyingType) ? string.Empty : $" : {underlyingType}";
+            headerWriter.WriteLine($"enum class {conversionClass.GetEmittedTypeName()}{underlyingClause}");
             headerWriter.WriteLine("{");
 
             List<string> members = GetEnumMembers(conversionClass);
@@ -1873,6 +1871,26 @@ namespace cs2.cpp {
             }
 
             headerWriter.WriteLine("};");
+        }
+
+        /// <summary>Preserves the C# enum's signedness and width so native compilers accept unsigned high-bit constants.</summary>
+        /// <param name="conversionClass">Enum metadata carrying the Roslyn declared type symbol.</param>
+        /// <returns>The fixed-width C++ integer type, or an empty string for synthetic models without semantic metadata.</returns>
+        static string ResolveEnumUnderlyingType(ConversionClass conversionClass) {
+            if (conversionClass.TypeSymbol?.EnumUnderlyingType == null) {
+                return string.Empty;
+            }
+            return conversionClass.TypeSymbol.EnumUnderlyingType.SpecialType switch {
+                SpecialType.System_Byte => "uint8_t",
+                SpecialType.System_SByte => "int8_t",
+                SpecialType.System_Int16 => "int16_t",
+                SpecialType.System_UInt16 => "uint16_t",
+                SpecialType.System_Int32 => "int32_t",
+                SpecialType.System_UInt32 => "uint32_t",
+                SpecialType.System_Int64 => "int64_t",
+                SpecialType.System_UInt64 => "uint64_t",
+                _ => throw new InvalidOperationException("C++ enum emission requires an integral C# underlying type.")
+            };
         }
 
         /// <summary>
@@ -2301,7 +2319,18 @@ namespace cs2.cpp {
             HashSet<string> excludedTypeNames) {
             string typeName = program.FindGeneratedClass(typeSymbol)?.GetEmittedTypeName()
                 ?? GetReferencedTypeName(VariableUtil.GetVarType(typeSymbol));
-            if (!excludedTypeNames.Contains(typeName)) {
+            string leafTypeName = NormalizeReferencedClassName(typeSymbol.Name);
+            if (string.IsNullOrWhiteSpace(typeName)) {
+                typeName = leafTypeName;
+            }
+
+            if (!string.Equals(typeName, leafTypeName, StringComparison.Ordinal)) {
+                referencedTypes.Remove(leafTypeName);
+                includeRequiredTypes.Remove(leafTypeName);
+            }
+
+            if (!excludedTypeNames.Contains(typeName) &&
+                !excludedTypeNames.Contains(leafTypeName)) {
                 referencedTypes.Add(typeName);
                 includeRequiredTypes.Add(typeName);
             }
@@ -2369,6 +2398,13 @@ namespace cs2.cpp {
             foreach (ConversionVariable variable in conversionClass.Variables) {
                 if (variable.IsGet || variable.IsSet) {
                     writers.Add(() => WriteComputedProperty(conversionClass, variable, headerWriter, sourceWriter));
+                    continue;
+                }
+
+                if (string.Equals(variable.VarType?.TypeName, "Event", StringComparison.Ordinal)) {
+                    IEventSymbol interfaceEvent = conversionClass.TypeSymbol.GetMembers(variable.Name).OfType<IEventSymbol>().Single();
+                    string accessorName = CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent);
+                    writers.Add(() => headerWriter.WriteLine($"    virtual ::Event& {accessorName}() = 0;"));
                     continue;
                 }
 
@@ -2476,6 +2512,7 @@ namespace cs2.cpp {
                 HashSet<string> plannedAccessorNames = BuildPlannedPropertyAccessorNames(conversionClass);
                 AddInterfacePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
                 AddBasePropertyBridgeWriters(conversionClass, plannedAccessorNames, writers, headerWriter, sourceWriter);
+                AddInterfaceEventBridgeWriters(conversionClass, writers, headerWriter);
             }
 
             if (writers.Count == 0) {
@@ -2522,6 +2559,33 @@ namespace cs2.cpp {
             }
 
             return function.AccessType;
+        }
+
+        /// <summary>
+        /// Forwards each interface event contract to its own concrete or inherited implementation storage.
+        /// </summary>
+        /// <param name="conversionClass">Generated class whose interface contracts are being emitted.</param>
+        /// <param name="writers">Pending public member emitters.</param>
+        /// <param name="headerWriter">Writer receiving the native forwarding accessors.</param>
+        void AddInterfaceEventBridgeWriters(ConversionClass conversionClass, List<Action> writers, TextWriter headerWriter) {
+            if (conversionClass.TypeSymbol is not INamedTypeSymbol typeSymbol) {
+                return;
+            }
+
+            HashSet<string> emittedNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (INamedTypeSymbol interfaceSymbol in typeSymbol.AllInterfaces) {
+                foreach (IEventSymbol interfaceEvent in interfaceSymbol.GetMembers().OfType<IEventSymbol>()) {
+                    if (interfaceEvent.IsStatic ||
+                        typeSymbol.FindImplementationForInterfaceMember(interfaceEvent) is not IEventSymbol implementationEvent ||
+                        !emittedNames.Add(CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent))) {
+                        continue;
+                    }
+
+                    string qualifier = GetInterfaceBridgeQualifier(conversionClass, implementationEvent.ContainingType);
+                    string accessorName = CPPInterfaceEventAccessPolicy.GetAccessorName(interfaceEvent);
+                    writers.Add(() => headerWriter.WriteLine($"    virtual ::Event& {accessorName}() {{ return {qualifier}{implementationEvent.Name}; }}"));
+                }
+            }
         }
 
         /// <summary>
@@ -3485,7 +3549,19 @@ namespace cs2.cpp {
             if (!expressionResult.Processed) {
                 WriteUnsupportedFailure(sourceWriter, "Property getter could not be lowered.");
             } else {
-                sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
+                if (expressionResult.BeforeLines != null) {
+                    sourceWriter.WriteLine(string.Concat(expressionResult.BeforeLines));
+                }
+                if (expressionResult.AfterLines != null && expressionResult.AfterLines.Count > 0) {
+                    bool returnsReference = variable.ReturnsReference || variable.ReturnsConstReference ||
+                        ShouldEmitConstReferencePropertyGetter(conversionClass, variable);
+                    string reference = returnsReference ? "&" : string.Empty;
+                    sourceWriter.WriteLine($"auto{reference} __getter_result = {string.Concat(expressionLines)};");
+                    sourceWriter.WriteLine(string.Concat(expressionResult.AfterLines));
+                    sourceWriter.WriteLine("return __getter_result;");
+                } else {
+                    sourceWriter.WriteLine($"return {string.Concat(expressionLines)};");
+                }
             }
 
             sourceWriter.WriteLine("}");
@@ -3560,7 +3636,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Resolves the native return type for one generated property getter, preserving constant-reference semantics for strings.
+        /// Resolves the native getter return type, borrowing only stable string storage and preserving explicit ref returns.
         /// </summary>
         /// <param name="conversionClass">Owning class for the property getter.</param>
         /// <param name="variable">Property being emitted.</param>
@@ -4029,7 +4105,7 @@ namespace cs2.cpp {
                 string parameterType = GetParameterType(parameter, conversionClass, function);
                 string parameterName = useLoweredValueTypeInParameterNames && IsValueTypeInParameter(parameter)
                     ? GetLoweredValueTypeInParameterName(index)
-                    : CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
+                    : parameter.Remap ?? CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
 
                 writer.Write($"{parameterType} {parameterName}");
 
@@ -4053,7 +4129,8 @@ namespace cs2.cpp {
                 }
 
                 string parameterType = ConvertType(parameter.VarType, conversionClass, function);
-                writer.WriteLine($"{parameterType} {CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name)} = {GetLoweredValueTypeInParameterName(index)};");
+                string parameterName = parameter.Remap ?? CPPIdentifierSanitizer.SanitizeIdentifier(parameter.Name);
+                writer.WriteLine($"{parameterType} {parameterName} = {GetLoweredValueTypeInParameterName(index)};");
             }
         }
 

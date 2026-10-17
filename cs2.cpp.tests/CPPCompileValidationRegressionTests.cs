@@ -132,6 +132,51 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures semantic framework exception bases use the native exception runtime while a user-defined same-named base remains a generated header dependency.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithSemanticExceptionBases_PreservesFrameworkAndUserDefinedIdentity() {
+            ConversionOutput nativeOutput = RunConversion("""
+                public class NativeFailure : System.InvalidOperationException {
+                }
+                """);
+            string nativeHeader = File.ReadAllText(Path.Combine(nativeOutput.OutputPath, "NativeFailure.hpp"));
+
+            ConversionOutput userOutput = RunConversion("""
+                public class InvalidOperationException {
+                }
+
+                public class UserFailure : InvalidOperationException {
+                }
+                """);
+            string userHeader = File.ReadAllText(Path.Combine(userOutput.OutputPath, "UserFailure.hpp"));
+
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", nativeHeader, StringComparison.Ordinal);
+            Assert.DoesNotContain("#include \"InvalidOperationException.hpp\"", nativeHeader, StringComparison.Ordinal);
+            Assert.Contains("#include \"InvalidOperationException.hpp\"", userHeader, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Ensures generic inheritance emits its specialized generated header without a duplicate unspecialized header.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithGenericBase_EmitsOnlySpecializedHeader() {
+            string source = """
+                public interface ShaderContentProcessorBase<T> {
+                }
+
+                public class ShaderContentProcessor : ShaderContentProcessorBase<int> {
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source);
+            string headerOutput = File.ReadAllText(Path.Combine(output.OutputPath, "ShaderContentProcessor.hpp"));
+
+            Assert.Contains(@"#include ""ShaderContentProcessorBase_1.hpp""", headerOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(@"#include ""ShaderContentProcessorBase.hpp""", headerOutput, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Ensures inherited classes and method-body type references emit the includes and base declaration required for native compile visibility.
         /// </summary>
         [Fact]
@@ -6420,6 +6465,26 @@ namespace cs2.cpp.tests {
             Assert.Contains("ArgumentOutOfRangeException(const HeCppString& parameterName, const HeCppString& message)", runtimeHeader);
         }
 
+        /// <summary>Verifies the native exception template accepts an enum actual-value argument without boxing it.</summary>
+        [Fact]
+        public void WriteOutput_WithArgumentOutOfRangeExceptionActualValue_UsesRuntimeOverload() {
+            string source = """
+                using System;
+                public enum Mode { Default }
+                public class Fixture {
+                    public void Reject(Mode mode) {
+                        throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported mode.");
+                    }
+                }
+                """;
+            ConversionOutput output = RunConversion(source);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+            Assert.Contains("new ArgumentOutOfRangeException", sourceOutput);
+            Assert.Contains("template<typename TParameterName, typename TActualValue, typename TMessage>", runtimeHeader);
+            Assert.Contains("const TActualValue& actualValue", runtimeHeader);
+        }
+
         /// <summary>
         /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
         /// </summary>
@@ -10341,7 +10406,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
 
-            Assert.Contains("auto& selected = useLeft ? this->left : this->right;", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("int32_t& selected = useLeft ? this->left : this->right;", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain(" ?  : ", sourceOutput, StringComparison.Ordinal);
         }
 

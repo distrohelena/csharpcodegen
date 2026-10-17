@@ -72,6 +72,39 @@ namespace cs2.cpp.tests {
             AssertRuntimeRequirement(output.Report, "NativeCast");
         }
 
+        /// <summary>Verifies ternary pattern variables stay in scope and casts remain inside short-circuit conditions.</summary>
+        [Fact]
+        public void WriteOutput_WithConditionalDeclarationPatterns_PreservesScopeAndShortCircuit() {
+            string source = """
+                public interface IProxy { int Value { get; } }
+                public class Fixture {
+                    public int Read(object source) => source is IProxy proxy ? proxy.Value : 0;
+                    public int ReadWhen(bool enabled, object source) => enabled && source is IProxy scroll ? scroll.Value : 0;
+                }
+                """;
+            ConversionOutput output = RunConversion(source);
+            AssertNoDiagnostic(output.Report, "IsPatternExpression");
+            Assert.Contains("IProxy* proxy = nullptr;", output.GeneratedText);
+            Assert.Contains("(proxy = he_cpp_try_cast<IProxy>(source)) != nullptr", output.GeneratedText);
+            Assert.Contains("IProxy* scroll = nullptr;", output.GeneratedText);
+            Assert.Contains("enabled && (scroll = he_cpp_try_cast<IProxy>(source)) != nullptr", output.GeneratedText);
+        }
+
+        /// <summary>Ensures accessing a concrete pattern variable emits its complete type header.</summary>
+        [Fact]
+        public void WriteOutput_WithConcreteConditionalDeclarationPattern_IncludesConcreteHeader() {
+            string source = """
+                public class Entity { }
+                public class ScrollComponent : Entity { public int Direction; }
+                public class Fixture {
+                    public int Read(Entity source) => source is ScrollComponent scroll ? scroll.Direction : 0;
+                }
+                """;
+            ConversionOutput output = RunConversion(source);
+            string generatedSource = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            Assert.Contains("#include \"ScrollComponent.hpp\"", generatedSource);
+        }
+
         /// <summary>
         /// Runs the C++ converter against a temporary single-file project and returns all generated textual output.
         /// </summary>
