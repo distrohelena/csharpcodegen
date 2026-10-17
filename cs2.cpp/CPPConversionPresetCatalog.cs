@@ -221,7 +221,6 @@ namespace cs2.cpp {
                 IncludeProjectDefinedPreprocessorSymbols = false,
                 AdditionalPreprocessorSymbols = new[] {
                     "HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED",
-                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 },
                 PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
@@ -271,7 +270,6 @@ namespace cs2.cpp {
                 },
                 IncludeProjectDefinedPreprocessorSymbols = false,
                 AdditionalPreprocessorSymbols = new[] {
-                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 },
                 PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
@@ -302,7 +300,6 @@ namespace cs2.cpp {
                 },
                 IncludeProjectDefinedPreprocessorSymbols = false,
                 AdditionalPreprocessorSymbols = new[] {
-                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 },
                 PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
@@ -331,7 +328,6 @@ namespace cs2.cpp {
                 },
                 IncludeProjectDefinedPreprocessorSymbols = false,
                 AdditionalPreprocessorSymbols = new[] {
-                    "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                     "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
                 },
                 PlatformOptionValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {

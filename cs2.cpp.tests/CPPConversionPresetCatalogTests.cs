@@ -62,10 +62,10 @@ public class CPPConversionPresetCatalogTests {
     }
 
     /// <summary>
-    /// Ensures the stripped native core-boot preset carries only the reflection-disable preprocessor symbols required by the stripped runtime.
+    /// Ensures the stripped native core-boot preset carries only the remaining menu-reflection preprocessor symbol.
     /// </summary>
     [Fact]
-    public void ApplyTo_NativeCoreBoot_AddsReflectionDisableSymbols() {
+    public void ApplyTo_NativeCoreBoot_AddsOnlyMenuReflectionDisableSymbol() {
         CPPConversionOptions options = new CPPConversionOptions {
             PresetId = "native-core-boot",
             FeatureCatalog = new CPPExternalFeatureCatalog(
@@ -81,8 +81,23 @@ public class CPPConversionPresetCatalogTests {
 
         Assert.False(options.IncludeProjectDefinedPreprocessorSymbols);
         Assert.DoesNotContain("HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED", options.AdditionalPreprocessorSymbols);
-        Assert.Contains("HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION", options.AdditionalPreprocessorSymbols);
-        Assert.Contains("HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION", options.AdditionalPreprocessorSymbols);
+        Assert.Equal(["HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"], options.AdditionalPreprocessorSymbols);
+    }
+
+    /// <summary>
+    /// Ensures native preset defaults preserve capability and menu symbols after managed reflection leaves the conversion input.
+    /// </summary>
+    /// <param name="presetId">Native preset whose exact default symbols are evaluated.</param>
+    /// <param name="expectedSymbols">Ordered symbols required independently of managed reflection.</param>
+    [Theory]
+    [InlineData("ps2-lite", new[] { "HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED", "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION" })]
+    [InlineData("native-core-boot", new[] { "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION" })]
+    [InlineData("native-core-boot-freestanding", new[] { "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION" })]
+    [InlineData("n64-minimal", new[] { "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION" })]
+    public void Resolve_NativePreset_KeepsOnlyPortableSymbols(string presetId, string[] expectedSymbols) {
+        CPPConversionPreset preset = new CPPConversionPresetCatalog().Resolve(presetId);
+
+        Assert.Equal(expectedSymbols, preset.AdditionalPreprocessorSymbols);
     }
 
     /// <summary>
@@ -160,7 +175,6 @@ public class CPPConversionPresetCatalogTests {
 
         Assert.Contains("HELENGINE_RUNTIME_MATERIAL_RESOLUTION_COOKED_PLATFORM_OWNED", options.AdditionalPreprocessorSymbols);
         Assert.Contains("HELENGINE_RUNTIME_TEXTURE_RESOLUTION_COOKED_PLATFORM_OWNED", options.AdditionalPreprocessorSymbols);
-        Assert.DoesNotContain("HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION", options.AdditionalPreprocessorSymbols);
     }
 
 }

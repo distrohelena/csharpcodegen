@@ -87,7 +87,12 @@ namespace ExampleEngine.Core.Runtime {
 }
 """;
 
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => RunConversionWithPreset(source, "ps2-lite"));
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => RunConversionWithPreset(
+            source,
+            "ps2-lite",
+            options => options.PlatformOptionValues = new Dictionary<string, string>(options.PlatformOptionValues, StringComparer.OrdinalIgnoreCase) {
+                [CPPCodegenOptionNames.RuntimeProviderHeader] = "fixture_runtime.hpp"
+            }));
         Assert.Contains("ps2-lite", exception.Message, StringComparison.Ordinal);
         Assert.Contains("runtime_json", exception.Message, StringComparison.Ordinal);
     }
@@ -275,7 +280,6 @@ namespace ExampleEngine {
             },
             IncludeProjectDefinedPreprocessorSymbols = false,
             AdditionalPreprocessorSymbols = [
-                "HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION",
                 "HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION"
             ],
             LoadNativeRuntimeMetadata = false,
@@ -333,10 +337,10 @@ namespace ExampleEngine {
     }
 
     /// <summary>
-    /// Verifies that the stripped native core-boot preset applies the reflection-disabling preprocessor symbols before type emission.
+    /// Verifies that the stripped native core-boot preset preserves portable registry behavior and the independent menu-reflection restriction.
     /// </summary>
     [Fact]
-    public void WriteOutput_WhenPresetIsNativeCoreBoot_DoesNotEmitRuntimeScriptReflectionTypes() {
+    public void WriteOutput_WhenPresetIsNativeCoreBoot_KeepsPortableRegistryAndDisablesMenuReflection() {
         string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-gamecube-reflection-pruning-tests", Guid.NewGuid().ToString("N"));
         string referencedProjectPath = Path.Combine(rootPath, "Referenced", "Referenced.csproj");
         string rootProjectPath = Path.Combine(rootPath, "Root", "Root.csproj");
@@ -349,9 +353,6 @@ namespace ExampleEngine {
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "RuntimeContracts.cs"),
             """
 namespace ExampleEngine {
-    public interface IScriptTypeResolver {
-    }
-
     public interface IMenuDefinitionProvider {
     }
 
@@ -360,36 +361,10 @@ namespace ExampleEngine {
 }
 """);
         File.WriteAllText(
-            Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "AutomaticScriptComponentRuntimeDeserializer.cs"),
-            """
-#if !HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION
-namespace ExampleEngine {
-    public sealed class AutomaticScriptComponentRuntimeDeserializer : IRuntimeComponentDeserializer {
-    }
-}
-#endif
-""");
-        File.WriteAllText(
-            Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "ScriptTypeResolver.cs"),
-            """
-#if !HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION
-namespace ExampleEngine {
-    public sealed class ScriptTypeResolver : IScriptTypeResolver {
-    }
-}
-#endif
-""");
-        File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(referencedProjectPath) ?? throw new InvalidOperationException("Referenced project directory path must resolve."), "MenuDefinitionProviderResolver.cs"),
             """
 namespace ExampleEngine {
     public class MenuDefinitionProviderResolver {
-        readonly IScriptTypeResolver scriptTypeResolver;
-
-        public MenuDefinitionProviderResolver(IScriptTypeResolver scriptTypeResolver = null) {
-            this.scriptTypeResolver = scriptTypeResolver;
-        }
-
         public IMenuDefinitionProvider Resolve(string providerTypeName) {
 #if HELENGINE_CODEGEN_DISABLE_MENU_REFLECTION
             throw new InvalidOperationException("Menu definition provider reflection is not available in generated native builds.");
@@ -411,11 +386,7 @@ namespace ExampleEngine {
         }
 
         public IRuntimeComponentDeserializer GetDeserializer(string componentTypeId) {
-#if HELENGINE_CODEGEN_DISABLE_RUNTIME_SCRIPT_REFLECTION
             throw new InvalidOperationException($"Player builds do not support serialized component type '{componentTypeId}' yet.");
-#else
-            return new AutomaticScriptComponentRuntimeDeserializer();
-#endif
         }
     }
 }
@@ -448,12 +419,10 @@ namespace ExampleEngine {
         converter.AddCsproj(rootProjectPath);
         converter.WriteOutput(outputPath);
 
-        Assert.False(File.Exists(Path.Combine(outputPath, "AutomaticScriptComponentRuntimeDeserializer.hpp")));
-        Assert.False(File.Exists(Path.Combine(outputPath, "AutomaticScriptComponentRuntimeDeserializer.cpp")));
-        Assert.False(File.Exists(Path.Combine(outputPath, "ScriptTypeResolver.hpp")));
-        Assert.False(File.Exists(Path.Combine(outputPath, "ScriptTypeResolver.cpp")));
         Assert.True(File.Exists(Path.Combine(outputPath, "RuntimeComponentRegistry.hpp")));
         Assert.True(File.Exists(Path.Combine(outputPath, "MenuDefinitionProviderResolver.hpp")));
+        string registrySource = File.ReadAllText(Path.Combine(outputPath, "RuntimeComponentRegistry.cpp"));
+        Assert.Contains("Player builds do not support serialized component type", registrySource);
         string resolverSource = File.ReadAllText(Path.Combine(outputPath, "MenuDefinitionProviderResolver.cpp"));
         Assert.DoesNotContain("Activator::CreateInstance", resolverSource);
     }

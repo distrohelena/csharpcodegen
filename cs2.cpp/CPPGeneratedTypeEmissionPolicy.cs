@@ -22,6 +22,8 @@ namespace cs2.cpp {
             "cs2.attributes.NativeOwnedReturnAttribute",
             "cs2.attributes.NativeRetainsBorrowAttribute",
             "cs2.attributes.NativeTakesOwnershipAttribute",
+            "helengine.RunInEditorAttribute",
+            "helengine.CpuReadableModelReferenceAttribute",
             "helengine.EditorPropertyDisplayNameAttribute",
             "helengine.EditorPropertyHiddenAttribute",
             "helengine.EditorPropertyOrderAttribute",
