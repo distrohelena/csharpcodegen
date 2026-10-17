@@ -81,7 +81,17 @@ namespace cs2.cpp {
         public bool LoadNativeRuntimeMetadata { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets an optional mirror folder that receives a fresh copy of the generated core for the Windows host repository.
+        /// Gets or sets the deployment-root folder that owns generated source, intermediate, and shared build outputs.
+        /// </summary>
+        public string DeploymentRoot { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the target identifier used to derive target-scoped generated-source and intermediate folders.
+        /// </summary>
+        public string TargetId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets an optional mirror folder that receives a fresh copy of the generated core for the Windows host repository until deployment-root handoff wiring is fully replaced.
         /// </summary>
         public string WindowsHandoffOutputFolder { get; set; } = string.Empty;
 

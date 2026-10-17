@@ -68,6 +68,84 @@ public class CPPCodeConverterPipelineTests {
     }
 
     /// <summary>
+    /// Ensures regenerating one target replaces only its generated source, preserving other targets and native build state.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithDeploymentRoot_ClearsOnlyActiveTargetGeneratedSource() {
+        string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-deployment-tests", Guid.NewGuid().ToString("N"));
+        string deploymentRoot = Path.Combine(rootPath, "Deployment");
+        string outputFolder = Path.Combine(rootPath, "legacy-output");
+        CPPConversionOptions options = CreateTestOptions();
+        options.DeploymentRoot = deploymentRoot;
+        options.TargetId = "windows-directx";
+        CPPDeploymentBuildLayout windowsLayout = CPPDeploymentBuildLayoutFactory.Create(options);
+        options.TargetId = "ps2";
+        CPPDeploymentBuildLayout ps2Layout = CPPDeploymentBuildLayoutFactory.Create(options);
+        Directory.CreateDirectory(rootPath);
+        try {
+            TestableCPPCodeConverter converter = new TestableCPPCodeConverter(new CPPConversionRules(), options);
+            converter.UseEmptyPInvokePlan();
+            converter.WriteOutput(outputFolder);
+            string ps2ConfigPath = Path.Combine(ps2Layout.GeneratedSourceRoot, CPPGeneratedConfigWriter.DefaultFileName);
+            string ps2Config = File.ReadAllText(ps2ConfigPath);
+
+            Directory.CreateDirectory(windowsLayout.GeneratedSourceRoot);
+            Directory.CreateDirectory(windowsLayout.IntermediateRoot);
+            Directory.CreateDirectory(ps2Layout.IntermediateRoot);
+            Directory.CreateDirectory(windowsLayout.BuildRoot);
+            Directory.CreateDirectory(outputFolder);
+            string stalePath = Path.Combine(windowsLayout.GeneratedSourceRoot, "stale.cpp");
+            string windowsIntermediatePath = Path.Combine(windowsLayout.IntermediateRoot, "preserved.obj");
+            string ps2IntermediatePath = Path.Combine(ps2Layout.IntermediateRoot, "preserved.o");
+            string buildPath = Path.Combine(windowsLayout.BuildRoot, "preserved.bin");
+            string legacyPath = Path.Combine(outputFolder, "preserved.txt");
+            File.WriteAllText(stalePath, "stale");
+            File.WriteAllText(windowsIntermediatePath, "windows");
+            File.WriteAllText(ps2IntermediatePath, "ps2");
+            File.WriteAllText(buildPath, "build");
+            File.WriteAllText(legacyPath, "legacy");
+
+            options.TargetId = "windows-directx";
+            converter.WriteOutput(outputFolder);
+
+            Assert.False(File.Exists(stalePath));
+            Assert.True(File.Exists(Path.Combine(windowsLayout.GeneratedSourceRoot, CPPGeneratedConfigWriter.DefaultFileName)));
+            Assert.Equal(ps2Config, File.ReadAllText(ps2ConfigPath));
+            Assert.Equal("windows", File.ReadAllText(windowsIntermediatePath));
+            Assert.Equal("ps2", File.ReadAllText(ps2IntermediatePath));
+            Assert.Equal("build", File.ReadAllText(buildPath));
+            Assert.Equal("legacy", File.ReadAllText(legacyPath));
+        } finally {
+            Directory.Delete(rootPath, true);
+        }
+    }
+
+    /// <summary>
+    /// Ensures deployment path validation fails before cleanup can remove files selected by an escaping target.
+    /// </summary>
+    [Fact]
+    public void WriteOutput_WithEscapingTarget_ThrowsBeforeDeletingOutput() {
+        string rootPath = Path.Combine(Path.GetTempPath(), "cs2cpp-deployment-tests", Guid.NewGuid().ToString("N"));
+        string outsidePath = Path.Combine(rootPath, "outside");
+        Directory.CreateDirectory(outsidePath);
+        try {
+            string sentinelPath = Path.Combine(outsidePath, "preserved.txt");
+            File.WriteAllText(sentinelPath, "preserved");
+            CPPConversionOptions options = CreateTestOptions();
+            options.DeploymentRoot = Path.Combine(rootPath, "Deployment");
+            options.TargetId = outsidePath;
+            TestableCPPCodeConverter converter = new TestableCPPCodeConverter(new CPPConversionRules(), options);
+            converter.UseEmptyPInvokePlan();
+
+            Assert.Throws<ArgumentException>(() => converter.WriteOutput(outsidePath));
+
+            Assert.Equal("preserved", File.ReadAllText(sentinelPath));
+        } finally {
+            Directory.Delete(rootPath, true);
+        }
+    }
+
+    /// <summary>
     /// Ensures per-run report state is cleared before a new conversion pipeline execution begins.
     /// </summary>
     [Fact]

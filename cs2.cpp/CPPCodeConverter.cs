@@ -254,11 +254,14 @@ namespace cs2.cpp {
             };
             CPPGeneratedRuntimeProfilingTemplateReplacements.Add(replacements, generatedFunctionProfilingEnabled);
 
-            if (Directory.Exists(outputFolder)) {
-                Directory.Delete(outputFolder, true);
+            CPPDeploymentBuildLayout layout = ResolveDeploymentBuildLayout(outputFolder);
+            string resolvedOutputFolder = layout.GeneratedSourceRoot;
+
+            if (Directory.Exists(resolvedOutputFolder)) {
+                Directory.Delete(resolvedOutputFolder, true);
             }
 
-            Directory.CreateDirectory(outputFolder);
+            Directory.CreateDirectory(resolvedOutputFolder);
             generatedFunctionProfilingManifest.Clear();
 
             BuildUsageReport = ResolveBuildUsageReport();
@@ -272,7 +275,7 @@ namespace cs2.cpp {
             string rootPath = ResolveRuntimeTemplateDirectory();
             BackgroundWork runtimeCopy = new BackgroundWork(
                 "cs2-runtime-template-copy",
-                () => CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(outputFolder), replacements));
+                () => CopyRuntimeFiles(new DirectoryInfo(rootPath), new DirectoryInfo(resolvedOutputFolder), replacements));
 
             IReadOnlyList<CPPClassEmissionResult> loweredClasses;
             try {
@@ -283,43 +286,43 @@ namespace cs2.cpp {
             }
 
             runtimeCopy.Wait();
-            WriteClassFiles(outputFolder, loweredClasses);
-            PruneDisabledFeatureRuntimeFiles(outputFolder);
-            foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(outputFolder)) {
+            WriteClassFiles(resolvedOutputFolder, loweredClasses);
+            PruneDisabledFeatureRuntimeFiles(resolvedOutputFolder);
+            foreach (string supportFile in CPPGeneratedRuntimeComponentRegistrationSupportWriter.WriteIfRequired(resolvedOutputFolder)) {
                 TrackEmittedFile(supportFile);
             }
 
-            string configPath = CPPGeneratedConfigWriter.Write(outputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
+            string configPath = CPPGeneratedConfigWriter.Write(resolvedOutputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
 
-            foreach (string profilingSupportFile in CPPGeneratedFunctionProfilingSupportWriter.Write(outputFolder, generatedFunctionProfilingEnabled, generatedFunctionProfilingManifest)) {
+            foreach (string profilingSupportFile in CPPGeneratedFunctionProfilingSupportWriter.Write(resolvedOutputFolder, generatedFunctionProfilingEnabled, generatedFunctionProfilingManifest)) {
                 TrackEmittedFile(profilingSupportFile);
             }
 
-            foreach (string manifestFile in CPPFeatureManifestWriter.Write(outputFolder, BuildUsageReport)) {
+            foreach (string manifestFile in CPPFeatureManifestWriter.Write(resolvedOutputFolder, BuildUsageReport)) {
                 TrackEmittedFile(manifestFile);
             }
 
-            foreach (string nativeImportsFile in CPPNativeImportsWriter.Write(outputFolder, PInvokePlan)) {
+            foreach (string nativeImportsFile in CPPNativeImportsWriter.Write(resolvedOutputFolder, PInvokePlan)) {
                 TrackEmittedFile(nativeImportsFile);
             }
 
-            foreach (string harnessFile in CPPCompileHarnessWriter.Write(outputFolder, Options)) {
+            foreach (string harnessFile in CPPCompileHarnessWriter.Write(resolvedOutputFolder, Options)) {
                 TrackEmittedFile(harnessFile);
             }
 
-            CPPGeneratedOwnershipValidator.Validate(outputFolder);
+            CPPGeneratedOwnershipValidator.Validate(resolvedOutputFolder);
 
-            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(outputFolder, PInvokePlan);
+            string windowsHandoffPath = CPPWindowsHandoffWriter.Write(resolvedOutputFolder, PInvokePlan, layout);
             TrackEmittedFile(windowsHandoffPath);
 
             if (Options.WriteConversionReport) {
-                string reportPath = Path.Combine(outputFolder, CPPConversionReportWriter.DefaultFileName);
+                string reportPath = Path.Combine(resolvedOutputFolder, CPPConversionReportWriter.DefaultFileName);
                 TrackEmittedFile(reportPath);
-                CPPConversionReportWriter.Write(outputFolder, Report, Options);
+                CPPConversionReportWriter.Write(resolvedOutputFolder, Report, Options);
             }
 
-            MirrorWindowsHandoffOutput(outputFolder);
+            MirrorWindowsHandoffOutput(resolvedOutputFolder);
 
             //string outputFile = Path.Combine(outputFolder, fileName);
             //string outputDir = Path.GetDirectoryName(outputFile)!;
@@ -464,6 +467,19 @@ namespace cs2.cpp {
 
             return File.Exists(Path.Combine(candidateRoot, "system", "console.cpp")) &&
                 File.Exists(Path.Combine(candidateRoot, "runtime", "native_string.hpp"));
+        }
+
+        /// <summary>
+        /// Resolves the active deployment-root layout for the current conversion run.
+        /// </summary>
+        /// <param name="outputFolder">The caller-provided fallback output folder.</param>
+        /// <returns>The resolved deployment-root layout.</returns>
+        CPPDeploymentBuildLayout ResolveDeploymentBuildLayout(string outputFolder) {
+            if (!string.IsNullOrWhiteSpace(Options.DeploymentRoot) && !string.IsNullOrWhiteSpace(Options.TargetId)) {
+                return CPPDeploymentBuildLayoutFactory.Create(Options);
+            }
+
+            return new CPPDeploymentBuildLayout(outputFolder, outputFolder, outputFolder, outputFolder);
         }
 
         /// <summary>
