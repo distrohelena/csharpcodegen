@@ -239,6 +239,57 @@ public:
 };
 
 /// <summary>
+/// Represents multiple managed failures using the selected native exception message policy.
+/// </summary>
+class AggregateException : public Exception {
+public:
+    /// <summary>
+    /// Initializes an aggregate failure with the standard managed aggregate message.
+    /// </summary>
+    AggregateException()
+        : AggregateException("One or more errors occurred.") {
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a literal message while respecting the compact-message policy.
+    /// </summary>
+    explicit AggregateException(const char* message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "One or more errors occurred.")) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        Message = "One or more errors occurred.";
+#endif
+    }
+
+    /// <summary>
+    /// Initializes an aggregate failure from a managed string while respecting the compact-message policy.
+    /// </summary>
+    explicit AggregateException(const HeCppString& message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "One or more errors occurred.")) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        Message = "One or more errors occurred.";
+#endif
+    }
+
+    /// <summary>
+    /// Accepts two native failures and a literal message without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const char* message, Exception* firstException, Exception* secondException)
+        : AggregateException(message) {
+        (void)firstException;
+        (void)secondException;
+    }
+
+    /// <summary>
+    /// Accepts two native failures and a managed string without allocating an inner-exception collection.
+    /// </summary>
+    AggregateException(const HeCppString& message, Exception* firstException, Exception* secondException)
+        : AggregateException(message) {
+        (void)firstException;
+        (void)secondException;
+    }
+};
+
+/// <summary>
 /// Represents an invalid argument supplied to a generated managed operation.
 /// </summary>
 class ArgumentException : public Exception {

@@ -158,6 +158,29 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Verifies both native exception-message profiles accept the managed aggregate shape used to preserve primary and rollback failures.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_native_exceptions_support_three_argument_aggregate_construction() {
+        string templatePath = Path.Combine(
+            ResolveRepositoryRootPath(),
+            "cs2.cpp",
+            ".net.cpp",
+            "runtime",
+            "native_exceptions.hpp");
+
+        string source = File.ReadAllText(templatePath);
+
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(source, "class AggregateException : public Exception").Count);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(
+            source,
+            @"AggregateException\(const char\* message, Exception\* firstException, Exception\* secondException\)").Count);
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(
+            source,
+            @"AggregateException\(const HeCppString& message, Exception\* firstException, Exception\* secondException\)").Count);
+    }
+
+    /// <summary>
     /// Verifies the shared exception runtime template honors the generic compact-message config switch instead of always constructing heavyweight standard-library exception payloads.
     /// </summary>
     [Fact]
@@ -482,11 +505,12 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
-    /// Resolves the csharpcodegen repository root from the current test assembly location.
+    /// Resolves the active repository from the source path independently of test artifact placement.
     /// </summary>
+    /// <param name="sourcePath">Compiler-supplied source file in the actual checkout.</param>
     /// <returns>Absolute repository root path.</returns>
-    static string ResolveRepositoryRootPath() {
-        string currentPath = AppContext.BaseDirectory;
+    static string ResolveRepositoryRootPath([System.Runtime.CompilerServices.CallerFilePath] string sourcePath = "") {
+        string currentPath = Path.GetDirectoryName(sourcePath);
         while (!string.IsNullOrWhiteSpace(currentPath)) {
             string rootMarkerPath = Path.Combine(currentPath, "cs2.cpp", "cs2.cpp.csproj");
             if (File.Exists(rootMarkerPath)) {
@@ -501,6 +525,6 @@ public sealed class CPPRuntimeTemplateContractTests {
             currentPath = parentDirectory.FullName;
         }
 
-        throw new InvalidOperationException("Could not resolve the csharpcodegen repository root from the current test assembly location.");
+        throw new InvalidOperationException("Could not resolve the csharpcodegen repository root from the test source path.");
     }
 }

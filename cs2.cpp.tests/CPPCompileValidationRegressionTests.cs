@@ -6486,6 +6486,72 @@ namespace cs2.cpp.tests {
         }
 
         /// <summary>
+        /// Ensures named managed exception catches remain available to nested rollback aggregation in both ordinary and finally-protected native control flow.
+        /// </summary>
+        [Fact]
+        public void WriteOutput_WithNamedExceptionCatches_PreservesVariablesAndAggregateRuntime() {
+            string source = """
+                using System;
+
+                public class Fixture {
+                    public bool WasCleaned;
+
+                    public void Bind() {
+                        try {
+                            throw new InvalidOperationException("Binding failed.");
+                        } catch (Exception bindingException) {
+                            try {
+                                throw new InvalidOperationException("Rollback failed.");
+                            } catch (Exception rollbackException) {
+                                throw new AggregateException("Binding and rollback both failed.", bindingException, rollbackException);
+                            }
+                        }
+                    }
+
+                    public void BindWithCleanup() {
+                        try {
+                            throw new InvalidOperationException("Binding failed.");
+                        } catch (Exception cleanupException) {
+                            throw cleanupException;
+                        } finally {
+                            WasCleaned = true;
+                        }
+                    }
+                }
+                """;
+
+            ConversionOutput output = RunConversion(source, useExceptions: true);
+            string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+            string runtimeHeader = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_exceptions.hpp"));
+
+            Assert.Contains("catch (Exception* bindingException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("catch (Exception* rollbackException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("catch (Exception* cleanupException) {", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("throw new AggregateException(", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("\"Binding and rollback both failed.\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains(", bindingException, rollbackException)", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("#include \"runtime/native_exceptions.hpp\"", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("class AggregateException : public Exception", runtimeHeader, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(output.OutputPath, "AggregateException.hpp")));
+            TestHelpers.CPPGeneratedProgramResult result = new TestHelpers.CPPGeneratedProgramRunner(output.OutputPath).Run("""
+                Fixture fixture;
+                bool aggregateCaught = false;
+                try { fixture.Bind(); }
+                catch (AggregateException* error) {
+                    aggregateCaught = std::string(error->what()) == "Binding and rollback both failed.";
+                    delete error;
+                }
+                if (!aggregateCaught) return 1;
+                bool cleanupCaught = false;
+                try { fixture.BindWithCleanup(); }
+                catch (Exception* error) { cleanupCaught = true; delete error; }
+                if (!cleanupCaught || !fixture.WasCleaned) return 2;
+                """);
+            Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+            Assert.True(result.ProgramExitCode == 0, result.ProgramOutput);
+        }
+
+        /// <summary>
         /// Ensures managed key lookup failures map to the shared native exception runtime instead of an unavailable generated managed type.
         /// </summary>
         [Fact]

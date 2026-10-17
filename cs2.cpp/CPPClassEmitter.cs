@@ -1580,6 +1580,11 @@ namespace cs2.cpp {
                 return string.Empty;
             }
 
+            if (normalizedIncludeCandidate.StartsWith("delegate*", StringComparison.Ordinal)) {
+                processor?.RegisterRuntimeRequirement("NativeFunctionPointer");
+                return "runtime/function_pointer";
+            }
+
             VariableType variableType = VariableUtil.GetVarType(normalizedIncludeCandidate);
             string normalizedTypeName = NormalizeReferencedClassName(variableType.TypeName);
 
