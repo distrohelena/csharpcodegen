@@ -14329,7 +14329,7 @@ namespace cs2.cpp {
                 RegisterRuntimeRequirement("NativeKeyValuePair");
                 ITypeSymbol entryType = semantic.GetForEachStatementInfo(forEachStatement).ElementType;
                 string entryTypeName = GetCppTypeToken(VariableUtil.GetVarType(entryType), context.Program);
-                lines.Add($"{entryTypeName} {forEachStatement.Identifier.Text}({nativeEntryName}.first, {nativeEntryName}.second);\n");
+                lines.Add($"{entryTypeName} {forEachStatement.Identifier.Text}({nativeEntryName}.get_Key(), {nativeEntryName}.get_Value());\n");
             }
 
             // Process the body of the forEach loop

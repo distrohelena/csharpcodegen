@@ -23,8 +23,20 @@ namespace cs2.cpp.tests {
             string output = ConvertSource(source.Replace("DICTIONARY", dictionaryType));
             string generated = File.ReadAllText(Path.Combine(output, "AliasProbe.cpp"));
             Assert.Matches(@"KeyValuePair<[^>]+> alias\(", generated);
-            Assert.Contains(".first,", generated, StringComparison.Ordinal);
-            Assert.Contains(".second);", generated, StringComparison.Ordinal);
+            CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output).Run("""
+                Dictionary<HeCppString, HeCppString> aliases;
+                AliasProbe probe;
+                if (probe.Find(&aliases) != "missing") return 1;
+                aliases.Add("other", "ignored");
+                aliases.Add("logical", "resolved");
+                if (probe.Find(&aliases) != "resolved") return 2;
+                aliases.set_Item("logical", HeCppString(nullptr));
+                if (!probe.Find(&aliases).is_null()) return 3;
+                aliases.set_Item("logical", HeCppString(""));
+                if (probe.Find(&aliases).is_null() || !probe.Find(&aliases).empty()) return 4;
+                """);
+            Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+            Assert.True(result.ProgramExitCode == 0, result.ProgramOutput);
         }
 
         /// <summary>Preserves scalar iteration over dictionary key and value views.</summary>
