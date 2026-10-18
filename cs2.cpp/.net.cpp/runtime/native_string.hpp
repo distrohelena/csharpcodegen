@@ -717,7 +717,9 @@ public:
         }
         double binaryValue = static_cast<double>(value);
         uint64_t bits;
-        __builtin_memcpy(&bits, &binaryValue, sizeof(bits));
+        const unsigned char* valueBytes = reinterpret_cast<const unsigned char*>(&binaryValue);
+        unsigned char* bitBytes = reinterpret_cast<unsigned char*>(&bits);
+        for (std::size_t index = 0; index < sizeof(bits); ++index) bitBytes[index] = valueBytes[index];
         bool negative = (bits >> 63) != 0;
         uint32_t biasedExponent = static_cast<uint32_t>((bits >> 52) & 0x7ff);
         uint64_t significand = bits & 0x000fffffffffffffULL;
@@ -868,7 +870,9 @@ private:
     /// Preserves the existing printf-compatible F/E/G contract using exact binary64 decimal expansion.
     static HeCppString FormatBinaryNumeric(double value, char specifier, int precision) {
         uint64_t bits;
-        __builtin_memcpy(&bits, &value, sizeof(bits));
+        const unsigned char* valueBytes = reinterpret_cast<const unsigned char*>(&value);
+        unsigned char* bitBytes = reinterpret_cast<unsigned char*>(&bits);
+        for (std::size_t index = 0; index < sizeof(bits); ++index) bitBytes[index] = valueBytes[index];
         const bool negative = (bits >> 63) != 0;
         const bool uppercase = specifier == 'E' || specifier == 'G';
         const uint32_t biasedExponent = static_cast<uint32_t>((bits >> 52) & 0x7ff);

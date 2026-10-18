@@ -12,6 +12,15 @@ std::uint64_t MonotonicMicroseconds() { return 0; }
 }
 #endif
 
+/// Reinterprets independently specified IEEE-754 test patterns through portable character aliasing.
+static double numeric_format_value(uint64_t bits) {
+    double value;
+    const unsigned char* bitBytes = reinterpret_cast<const unsigned char*>(&bits);
+    unsigned char* valueBytes = reinterpret_cast<unsigned char*>(&value);
+    for (std::size_t index = 0; index < sizeof(value); ++index) valueBytes[index] = bitBytes[index];
+    return value;
+}
+
 /// Checks portable numeric contracts without introducing hosted formatting headers.
 int numeric_format_smoke() {
     if (String::FormatNumeric(-12, "D6") != "-000012") return 1;
@@ -31,14 +40,20 @@ int numeric_format_smoke() {
     if (String::FormatNumeric(1.25, "G0") != "1.25") return 15;
     if (String::FormatNumeric(0, "D99").size() != 99) return 16;
     if (String::FormatNumeric(1.0, "F99").size() != 101) return 17;
-    if (String::FormatNumeric(__builtin_inf(), "E") != "INF") return 18;
-    if (String::FormatNumeric(-__builtin_inf(), "f") != "-inf") return 19;
-    if (String::FormatNumeric(__builtin_nan(""), "G") != "NAN") return 20;
+    if (String::FormatNumeric(numeric_format_value(0x7ff0000000000000ULL), "E") != "INF") return 18;
+    if (String::FormatNumeric(-numeric_format_value(0x7ff0000000000000ULL), "f") != "-inf") return 19;
+    if (String::FormatNumeric(numeric_format_value(0x7ff8000000000000ULL), "G") != "NAN") return 20;
     if (String::FormatNumeric(0.0, "g99") != "0") return 21;
     if (String::FormatNumeric(1.15f, "F2") != "1.15") return 29;
     if (String::FormatNumeric(1.15, "F1") != "1.1") return 31;
     if (String::FormatNumeric(3.5, "F0") != "4") return 32;
     if (String::FormatNumeric(0.0, "E0") != "0E+00") return 33;
+    if (String::ToInvariantFixed(2.25, 1) != "2.2") return 34;
+    // Signaling NaNs share the deterministic portable spelling, including sign and format case.
+    if (String::FormatNumeric(numeric_format_value(0x7ff0000000000001ULL), "f") != "nan") return 35;
+    if (String::FormatNumeric(numeric_format_value(0xfff0000000000001ULL), "f") != "-nan") return 36;
+    if (String::FormatNumeric(numeric_format_value(0x7ff0000000000001ULL), "G") != "NAN") return 37;
+    if (String::FormatNumeric(numeric_format_value(0xfff0000000000001ULL), "G") != "-NAN") return 38;
     HeCppString nullValue;
     HeCppString emptyValue("");
     if (!nullValue.is_null() || emptyValue.is_null()) return 22;
@@ -55,8 +70,8 @@ int numeric_format_smoke() {
     if (!rejected) return 26;
 #endif
     // Portable formatting preserves the NaN sign, even where hosted UCRT omits it.
-    if (String::FormatNumeric(-__builtin_nan(""), "f") != "-nan") return 27;
-    if (String::FormatNumeric(-__builtin_nan(""), "G") != "-NAN") return 28;
+    if (String::FormatNumeric(-numeric_format_value(0x7ff8000000000000ULL), "f") != "-nan") return 27;
+    if (String::FormatNumeric(-numeric_format_value(0x7ff8000000000000ULL), "G") != "-NAN") return 28;
     return 0;
 }
 
@@ -74,10 +89,11 @@ int numeric_format_parity() {
             0x7fefffffffffffffULL, 0x7ff0000000000000ULL, 0xfff0000000000000ULL,
             0x7ff8000000000000ULL, 0xfff8000000000000ULL};
         uint64_t bits = sample < 9 ? edgeBits[sample] : state;
-        // Signed NaN spelling differs between UCRT and GNU libc; finite signs remain strict.
-        if ((bits & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (bits & 0x000fffffffffffffULL) != 0) bits &= 0x7fffffffffffffffULL;
-        double value;
-        __builtin_memcpy(&value, &bits, sizeof(value));
+        // UCRT omits NaN signs and adds "(snan)" for signaling payloads; explicit contracts above cover both.
+        if ((bits & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (bits & 0x000fffffffffffffULL) != 0) {
+            bits = (bits & 0x7fffffffffffffffULL) | 0x0008000000000000ULL;
+        }
+        const double value = numeric_format_value(bits);
         for (char specifier : specifiers) {
             for (int precision : precisions) {
                 char format[8];

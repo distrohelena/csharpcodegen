@@ -102,6 +102,9 @@ non-finite values, invalid formats, and managed null-versus-empty string state.
 The hosted and custom EASTL runs each compare 24,576 F/E/G results against libc
 across binary64 edge cases and deterministic bit patterns. The custom run poisons
 `cstdio` and `clocale` to reject accidental hosted formatter dependencies.
-Signed NaN has an explicit portable sign-preserving contract: GNU libc preserves
-that sign, while UCRT omits it, so only the NaN sign is normalized for the libc
-oracle comparison. No finite value or runtime failure is excluded.
+Quiet and signaling NaNs have an explicit portable sign-preserving `nan`/`NAN`
+contract. GNU libc preserves NaN signs, while UCRT omits them and may append
+`(snan)` for signaling payloads. The libc oracle therefore compares positive
+quiet NaNs; direct assertions cover signaling payloads, sign and case separately.
+No finite value or runtime failure is excluded. The same fixture compiles under
+MSVC as well as GCC, without compiler-specific byte-copy or special-value builtins.
