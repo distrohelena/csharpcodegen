@@ -253,6 +253,18 @@ done
 freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST"
 freestanding_includes="-I$fixture/poison -I$fixture/freestanding -I$fixture -I$runtime"
 
+# Numeric formatting retains hosted output without hosted stdio/locale dependencies.
+"$cxx" -std=c++20 -Wall -Wextra -Werror -DHE_CPP_NUMERIC_FORMAT_PARITY \
+    -I"$fixture/hosted" -I"$runtime" "$fixture/numeric_format_smoke.cpp" -o "$output/numeric-format-hosted"
+"$output/numeric-format-hosted"
+"$cxx" -std=c++20 -fno-exceptions -fno-rtti -DHE_CPP_TEST_HOST -DHE_CPP_NUMERIC_FORMAT_PARITY \
+    -DEA_COMPILER_HAS_INTTYPES -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+    -I"$fixture/numeric-format-poison" -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+    -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+    "$fixture/numeric_format_smoke.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" \
+    "$dependencies/EASTL/source/hashtable.cpp" -o "$output/numeric-format-custom"
+"$output/numeric-format-custom"
+
 if "$cxx" $freestanding_flags $freestanding_includes \
     -c "$fixture/hosted_services_guard.cpp" -o "$output/hosted-services-guard.o" \
     >"$output/hosted-services-guard.log" 2>&1; then

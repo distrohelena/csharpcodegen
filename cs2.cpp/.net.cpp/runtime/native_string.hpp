@@ -3,10 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-#include <cstdio>
-#include <clocale>
-#include <cstring>
-#include <cstdlib>
 
 #include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
@@ -609,59 +605,50 @@ public:
 #if HE_CPP_USE_EXCEPTIONS
         throw new ::ArgumentException(message);
 #else
-        (void)message;
-        std::abort();
+        he_cpp_runtime_detail::DefaultFail(message);
 #endif
     }
 
-    /// Formats primitive D/X integral and F/G/E floating values using bounded storage and invariant decimal punctuation.
+    /// Formats primitive D/X integers and F/G/E binary64 values without hosted stdio or locale services.
     template <typename TValue>
     static std::enable_if_t<std::is_arithmetic_v<TValue>, HeCppString> FormatNumeric(TValue value, const HeCppString& format) {
         if (format.empty()) return ToJoinString(value);
-        const char specifier=format[0];
-        int precision=0;
-        for (std::size_t index=1;index<format.size();++index) {
-            if (format[index]<'0' || format[index]>'9' || precision>99) RejectNumericFormat("Unsupported numeric format precision.");
-            precision=precision*10+(format[index]-'0');
+        const char specifier = format[0];
+        int precision = 0;
+        for (std::size_t index = 1; index < format.size(); ++index) {
+            if (format[index] < '0' || format[index] > '9' || precision > 99) RejectNumericFormat("Unsupported numeric format precision.");
+            precision = precision * 10 + (format[index] - '0');
         }
-        if (precision>99) RejectNumericFormat("Numeric precision must not exceed 99.");
-        char buffer[768]{};
-        int count=0;
-        if (specifier=='D' || specifier=='d' || specifier=='X' || specifier=='x') {
-            if constexpr (!std::is_integral_v<TValue> || std::is_same_v<TValue,bool>) {
+        if (precision > 99) RejectNumericFormat("Numeric precision must not exceed 99.");
+        if (specifier == 'D' || specifier == 'd' || specifier == 'X' || specifier == 'x') {
+            if constexpr (!std::is_integral_v<TValue> || std::is_same_v<TValue, bool>) {
                 RejectNumericFormat("Integral numeric formats require an integer value.");
             } else {
-                const int width=precision;
-                if (specifier=='X' || specifier=='x') {
-                    using Unsigned=std::make_unsigned_t<TValue>;
-                    count=std::snprintf(buffer,sizeof(buffer),specifier=='X'?"%0*llX":"%0*llx",width,static_cast<unsigned long long>(static_cast<Unsigned>(value)));
-                } else if constexpr (std::is_signed_v<TValue>) {
-                    count=std::snprintf(buffer,sizeof(buffer),"%0*lld",width+(value<0?1:0),static_cast<long long>(value));
-                } else {
-                    count=std::snprintf(buffer,sizeof(buffer),"%0*llu",width,static_cast<unsigned long long>(value));
-                }
+                using Unsigned = std::make_unsigned_t<TValue>;
+                const bool hexadecimal = specifier == 'X' || specifier == 'x';
+                const bool negative = !hexadecimal && std::is_signed_v<TValue> && value < 0;
+                Unsigned magnitude = static_cast<Unsigned>(value);
+                if (negative) magnitude = static_cast<Unsigned>(Unsigned(0) - magnitude);
+                const Unsigned radix = hexadecimal ? 16 : 10;
+                const char* alphabet = specifier == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
+                char digits[64];
+                int count = 0;
+                do {
+                    digits[count++] = alphabet[magnitude % radix];
+                    magnitude /= radix;
+                } while (magnitude != 0);
+                HeCppString result = negative ? "-" : "";
+                for (int padding = count; padding < precision; ++padding) result += '0';
+                while (count != 0) result += digits[--count];
+                return result;
             }
-        } else if (specifier=='F' || specifier=='f') {
-            count=std::snprintf(buffer,sizeof(buffer),"%.*f",format.size()==1?2:precision,static_cast<double>(value));
-        } else if (specifier=='G' || specifier=='g') {
-            count=std::snprintf(buffer,sizeof(buffer),specifier=='G'?"%.*G":"%.*g",format.size()==1 || precision==0?9:precision,static_cast<double>(value));
-        } else if (specifier=='E' || specifier=='e') {
-            count=std::snprintf(buffer,sizeof(buffer),specifier=='E'?"%.*E":"%.*e",format.size()==1?6:precision,static_cast<double>(value));
-        } else {
+        }
+        if (specifier != 'F' && specifier != 'f' && specifier != 'E' && specifier != 'e' && specifier != 'G' && specifier != 'g') {
             RejectNumericFormat("Unsupported native numeric format specifier.");
         }
-        if (count<0 || static_cast<std::size_t>(count)>=sizeof(buffer)) RejectNumericFormat("Formatted numeric value exceeds bounded storage.");
-        HeCppString result;
-        const char* decimal=std::localeconv()->decimal_point;
-        const std::size_t decimalLength=std::strlen(decimal);
-        for (std::size_t index=0;index<static_cast<std::size_t>(count);) {
-            if (decimalLength && index+decimalLength<=static_cast<std::size_t>(count) && std::strncmp(buffer+index,decimal,decimalLength)==0) {
-                result+='.'; index+=decimalLength;
-            } else {
-                result+=buffer[index++];
-            }
-        }
-        return result;
+        if (format.size() == 1) precision = specifier == 'F' || specifier == 'f' ? 2 : specifier == 'E' || specifier == 'e' ? 6 : 9;
+        if ((specifier == 'G' || specifier == 'g') && precision == 0) precision = 9;
+        return FormatBinaryNumeric(static_cast<double>(value), specifier, precision);
     }
 
     static HeCppString ToJoinString(const HeCppString& value) {
@@ -816,6 +803,124 @@ public:
     }
 
 private:
+    /// Multiplies little-endian decimal digits by two or five during exact binary64 decomposition.
+    static void MultiplyNumericDigits(uint8_t* digits, int& count, int multiplier) {
+        int carry = 0;
+        for (int index = 0; index < count; ++index) {
+            const int product = digits[index] * multiplier + carry;
+            digits[index] = static_cast<uint8_t>(product % 10);
+            carry = product / 10;
+        }
+        if (carry != 0) digits[count++] = static_cast<uint8_t>(carry);
+    }
+
+    /// Divides decimal digits by a power of ten with exact round-to-nearest, ties-to-even behavior.
+    static void RoundNumericDigits(uint8_t* digits, int& count, int& scale, int removed) {
+        if (removed <= 0) return;
+        bool roundUp = false;
+        if (removed <= count) {
+            const int firstDiscarded = digits[removed - 1];
+            bool sticky = false;
+            for (int index = 0; index < removed - 1; ++index) sticky = sticky || digits[index] != 0;
+            roundUp = firstDiscarded > 5 || (firstDiscarded == 5 && (sticky || (removed < count && (digits[removed] & 1) != 0)));
+        }
+        int remaining = count - removed;
+        if (remaining <= 0) {
+            count = 1;
+            digits[0] = roundUp ? 1 : 0;
+        } else {
+            for (int index = 0; index < remaining; ++index) digits[index] = digits[index + removed];
+            count = remaining;
+            if (roundUp) {
+                int index = 0;
+                while (index < count && digits[index] == 9) digits[index++] = 0;
+                if (index == count) digits[count++] = 1;
+                else ++digits[index];
+            }
+        }
+        scale -= removed;
+    }
+
+    /// Emits fixed decimal punctuation, padding missing positions without floating-point arithmetic.
+    static void AppendNumericFixed(HeCppString& result, const uint8_t* digits, int count, int scale, int precision) {
+        const int exponent = count - scale - 1;
+        for (int power = exponent > 0 ? exponent : 0; power >= -precision; --power) {
+            if (power == -1) result += '.';
+            const int index = power + scale;
+            result += static_cast<char>('0' + (index >= 0 && index < count ? digits[index] : 0));
+        }
+    }
+
+    /// Emits scientific notation with an explicit sign and at least two decimal exponent digits.
+    static void AppendNumericScientific(HeCppString& result, const uint8_t* digits, int count, int exponent, int precision, char marker) {
+        result += static_cast<char>('0' + digits[count - 1]);
+        if (precision != 0) result += '.';
+        for (int index = 1; index <= precision; ++index) {
+            result += static_cast<char>('0' + (index < count ? digits[count - index - 1] : 0));
+        }
+        result += marker;
+        result += exponent < 0 ? '-' : '+';
+        if (exponent < 0) exponent = -exponent;
+        if (exponent < 10) result += '0';
+        AppendIntegralToString(result, exponent);
+    }
+
+    /// Preserves the existing printf-compatible F/E/G contract using exact binary64 decimal expansion.
+    static HeCppString FormatBinaryNumeric(double value, char specifier, int precision) {
+        uint64_t bits;
+        __builtin_memcpy(&bits, &value, sizeof(bits));
+        const bool negative = (bits >> 63) != 0;
+        const bool uppercase = specifier == 'E' || specifier == 'G';
+        const uint32_t biasedExponent = static_cast<uint32_t>((bits >> 52) & 0x7ff);
+        uint64_t significand = bits & 0x000fffffffffffffULL;
+        HeCppString result = negative ? "-" : "";
+        if (biasedExponent == 0x7ff) {
+            result += significand != 0 ? (uppercase ? "NAN" : "nan") : (uppercase ? "INF" : "inf");
+            return result;
+        }
+        int binaryExponent = biasedExponent == 0 ? -1074 : static_cast<int>(biasedExponent) - 1075;
+        if (biasedExponent != 0) significand |= 0x0010000000000000ULL;
+        // The exact expansion needs at most 767 decimal digits; leave space for rounding carry.
+        uint8_t digits[800];
+        int count = 0;
+        do {
+            digits[count++] = static_cast<uint8_t>(significand % 10);
+            significand /= 10;
+        } while (significand != 0);
+        int scale = 0;
+        if (count != 1 || digits[0] != 0) {
+            const int multiplier = binaryExponent < 0 ? 5 : 2;
+            const int steps = binaryExponent < 0 ? -binaryExponent : binaryExponent;
+            for (int index = 0; index < steps; ++index) MultiplyNumericDigits(digits, count, multiplier);
+            if (binaryExponent < 0) scale = -binaryExponent;
+        }
+        const bool fixed = specifier == 'F' || specifier == 'f';
+        const bool general = specifier == 'G' || specifier == 'g';
+        RoundNumericDigits(digits, count, scale, fixed ? scale - precision : count - precision - (general ? 0 : 1));
+        const bool zero = count == 1 && digits[0] == 0;
+        const int exponent = zero ? 0 : count - scale - 1;
+        if (zero) scale = 0;
+        const bool scientific = !fixed && (!general || exponent < -4 || exponent >= precision);
+        if (scientific) {
+            AppendNumericScientific(result, digits, count, exponent, general ? precision - 1 : precision, uppercase ? 'E' : 'e');
+        } else {
+            AppendNumericFixed(result, digits, count, scale, fixed ? precision : (precision > exponent + 1 ? precision - exponent - 1 : 0));
+        }
+        if (general) {
+            // Remove insignificant fractional zeros before any scientific exponent.
+            const std::size_t exponentStart = scientific ? result.find(uppercase ? 'E' : 'e') : result.size();
+            const std::size_t point = result.find('.');
+            if (point != HeCppString::npos && point < exponentStart) {
+                std::size_t end = exponentStart;
+                while (end > point + 1 && result[end - 1] == '0') --end;
+                if (end == point + 1) --end;
+                result.erase(end, exponentStart - end);
+            }
+        }
+        if (result.size() >= 768) RejectNumericFormat("Formatted numeric value exceeds bounded storage.");
+        return result;
+    }
+
     /// <summary>
     /// Appends an arithmetic value using a lightweight managed-style formatting path.
     /// </summary>

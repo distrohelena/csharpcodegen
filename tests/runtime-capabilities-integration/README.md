@@ -93,3 +93,15 @@ SNES conversion passes `--set pointer-size-bytes=2` together with
 `--platform generic --set generated-math-convention=native-column-vector`;
 `--platform retroppc` is rejected without them.
 
+
+## Portable numeric formatting
+
+`numeric_format_smoke.cpp` verifies D/X padding and integer width, F/E/G precision
+through 99 digits, ties-to-even rounding, exponent transitions, negative zero,
+non-finite values, invalid formats, and managed null-versus-empty string state.
+The hosted and custom EASTL runs each compare 24,576 F/E/G results against libc
+across binary64 edge cases and deterministic bit patterns. The custom run poisons
+`cstdio` and `clocale` to reject accidental hosted formatter dependencies.
+Signed NaN has an explicit portable sign-preserving contract: GNU libc preserves
+that sign, while UCRT omits it, so only the NaN sign is normalized for the libc
+oracle comparison. No finite value or runtime failure is excluded.

@@ -1,0 +1,1 @@
+#error "Numeric formatting must not depend on hosted stdio or locale headers."
