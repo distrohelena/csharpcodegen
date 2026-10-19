@@ -65,6 +65,7 @@ namespace cs2.cpp {
                 throw new ArgumentNullException(nameof(sourceWriter));
             }
 
+            if (CPPRealIntrinsicEmitter.TryEmitClass(conversionClass, headerWriter, sourceWriter, processor)) { return; }
             processor?.BeginClassEmission();
 
             WriteHeaderPreamble(conversionClass, headerWriter);

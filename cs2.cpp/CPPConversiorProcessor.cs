@@ -2479,6 +2479,12 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
+            if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(identifier).Symbol, out string realConstant)) {
+                RegisterRuntimeRequirement("NativeReal");
+                lines.Add(realConstant);
+                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(semantic.GetTypeInfo(identifier).Type));
+            }
+
             string name = identifier.ToString();
             if (string.Equals(name, "_", StringComparison.Ordinal) &&
                 identifier.Parent is ArgumentSyntax discardArgument &&
@@ -4376,6 +4382,12 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+            if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(memberAccess).Symbol, out string realConstant)) {
+                RegisterRuntimeRequirement("NativeReal");
+                lines.Add(realConstant);
+                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(semantic.GetTypeInfo(memberAccess).Type));
+            }
+
             if (TryProcessNativeStringLengthMemberAccess(semantic, context, memberAccess, lines, out VariableType stringLengthType)) {
                 return new ExpressionResult(true, VariablePath.Unknown, stringLengthType);
             }

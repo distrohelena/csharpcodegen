@@ -30,6 +30,7 @@ namespace cs2.cpp {
             }
 
             CPPRuntimeOptionResolver.Resolve(options);
+            CPPRealNumericPolicy numericPolicy = CPPNumericPolicyResolver.Resolve(options);
 
             Directory.CreateDirectory(outputFolder);
 
@@ -38,6 +39,10 @@ namespace cs2.cpp {
                 "#pragma once",
                 string.Empty,
                 "#define HE_CPP_GENERATED_CONFIG 1",
+                $"#define HE_CPP_REAL_STORAGE_BITS {numericPolicy.StorageBits}",
+                $"#define HE_CPP_REAL_ARITHMETIC_BITS {numericPolicy.ArithmeticBits}",
+                $"#define HE_CPP_REAL_REPRESENTATION_VERSION {numericPolicy.RepresentationVersion}",
+                $"#define HE_CPP_REAL_NUMERIC_IDENTITY \"{numericPolicy.Identity}\"",
                 $"#define {options.CompilerProfile.DefineName} 1",
                 $"#define {options.PlatformProfile.DefineName} 1",
                 $"#define {options.RuntimeProfile.DefineName} 1",

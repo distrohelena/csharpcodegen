@@ -90,6 +90,7 @@ namespace cs2.cpp {
             this.CPPRules = rules;
             Options = options ?? CPPConversionOptions.CreateDefault();
             Options = new CPPConversionPresetCatalog().ApplyTo(Options);
+            CPPNumericPolicyResolver.Resolve(Options);
             CPPRuntimeOptionResolver.Resolve(Options);
             CPPRules.UseStdString = Options.RuntimeProfile.UseStdString;
             CPPRules.UseStdVector = Options.RuntimeProfile.UseStdVector;

@@ -5,6 +5,9 @@ namespace cs2.cpp {
     /// Defines the target and reporting options for a C++ conversion run.
     /// </summary>
     public class CPPConversionOptions {
+        /// <summary>Gets or sets this conversion's configurable engine numeric representation, separate from fixed primitives.</summary>
+        public CPPRealNumericPolicy RealNumericPolicy { get; set; } = new(32, 32);
+
         /// <summary>
         /// Gets or sets the named preset identifier that supplied the active conversion profiles.
         /// </summary>

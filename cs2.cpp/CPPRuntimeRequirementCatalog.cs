@@ -46,6 +46,7 @@ namespace cs2.cpp {
                 Make("NativeNullComparison", "runtime/native_null.hpp", "HE_CPP_REQ_NATIVE_NULL_COMPARISON", "Portable null-comparison helpers for dependent managed generic values that may lower to either reference-like or value-like native forms."),
                 Make("NativeHashCode", "runtime/native_hash.hpp", "HE_CPP_REQ_NATIVE_HASH_CODE", "Portable hash-code helpers for dependent managed generic values that may lower to primitive, pointer, or struct native forms."),
                 Make("NativeString", "runtime/native_string.hpp", "HE_CPP_REQ_NATIVE_STRING", "Managed-style string abstraction support."),
+                Make("NativeReal", "runtime/native_real.hpp", "HE_CPP_REQ_NATIVE_REAL", "Build-configurable engine scalar storage and arithmetic."),
                 Make("NativeList", "runtime/native_list.hpp", "HE_CPP_REQ_NATIVE_LIST", "Managed-style list abstraction support."),
                 Make("NativeStack", "runtime/native_stack.hpp", "HE_CPP_REQ_NATIVE_STACK", "Managed-style stack abstraction support for lightweight LIFO state."),
                 Make("NativeDictionary", "runtime/native_dictionary.hpp", "HE_CPP_REQ_NATIVE_DICTIONARY", "Managed-style dictionary abstraction support."),
