@@ -101,6 +101,42 @@ public sealed class CPPRealArithmeticCompilationTests {
         Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
     }
 
+    /// <summary>Executes the actual constrained layout specialization, including selected-width integer ingress.</summary>
+    [Theory]
+    [InlineData(32, 32)] [InlineData(64, 64)] [InlineData(32, 64)]
+    public void LayoutKernelExecutesSelectedPolicy(int storageBits, int arithmeticBits) {
+        using CPPOwnershipConversionOutput output = new CPPRealNumericTestWorkspace().Convert("""
+            using helengine;
+            namespace helengine {
+                // Fixture declarations expose component constants only; every formula is linked from the actual checkout.
+                public static class ViewportComponent { public const int NoScalingMode = 0, ReferenceCanvasScalingMode = 1, ReferenceCanvasStretchScalingMode = 2, DensityScalingMode = 3; }
+                public static class LayoutComponent { public const byte LeftAnchorFlag = 1, RightAnchorFlag = 2, TopAnchorFlag = 4, BottomAnchorFlag = 8; }
+            }
+            public sealed class LayoutFixture {
+                public int Dimension() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.ScaleInteger(16777217, 1d, new RuntimeLayoutNumericOperations()); }
+                public int FitWidth() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Fit(320d, 240d, 1280, 720, 1d, new RuntimeLayoutNumericOperations()).X; }
+                public Real Density() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Resolve(3, new int2(1, 1), new int2(320, 240), 1d, 1d, 16777217d, 16777216d, new RuntimeLayoutNumericOperations()).ScaleX; }
+
+                public float3 Position() {
+                    ViewportLayoutMetrics metrics = new ViewportLayoutMetrics { ScaleX = 3d, ScaleY = 1d, GlyphScale = 1d };
+                    return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Position(new float3(16777217d, 2d, 3d), metrics, new RuntimeLayoutNumericOperations());
+                }
+            }
+            """, storageBits, arithmeticBits, includeEngineVectors: true, includeEngineLayout: true);
+        Assert.False(output.Report.HasErrors, string.Join(Environment.NewLine, output.Report.Diagnostics.Select(d => d.Message)));
+        CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run($$"""
+            LayoutFixture fixture;
+            if (fixture.Dimension() != {{(arithmeticBits == 32 ? "16777216" : "16777217")}}) return 1;
+            if (fixture.Position().X.ToDouble() != {{(storageBits == 64 ? "50331651.0" : "50331648.0")}}) return 2;
+            if (fixture.FitWidth() != 320) return 3;
+            if (fixture.Density().ToDouble() != {{(storageBits == 64 ? "1.0000000596046448" : "1.0")}}) return 4;
+            static_assert(!std::is_polymorphic_v<RuntimeLayoutNumericOperations>);
+
+            """);
+        Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
+    }
+
     /// <summary>A same-named user scalar is never replaced by the engine's intrinsic representation.</summary>
     [Fact]
     public void UnrelatedRealTypeIsUnchanged() {

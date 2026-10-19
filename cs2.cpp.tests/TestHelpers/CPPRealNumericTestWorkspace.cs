@@ -11,10 +11,11 @@ public sealed class CPPRealNumericTestWorkspace {
     /// <param name="arithmeticBits">Native expression evaluation width.</param>
     /// <param name="includeEngineScalars">Whether this fixture consumes the actual engine scalar source files.</param>
     /// <param name="includeEngineVectors">Whether the actual configurable vector and matrix source files are also converted.</param>
+    /// <param name="includeEngineLayout">Whether the actual shared numeric layout kernels and runtime evaluator are converted.</param>
     /// <param name="callerFilePath">Source location used to locate the real sibling engine checkout.</param>
     /// <returns>Generated conversion output with ordinary disposable fixture ownership.</returns>
     public CPPOwnershipConversionOutput Convert(string source, int storageBits, int arithmeticBits,
-        bool includeEngineScalars = true, bool includeEngineVectors = false, [CallerFilePath] string callerFilePath = "") {
+        bool includeEngineScalars = true, bool includeEngineVectors = false, bool includeEngineLayout = false, [CallerFilePath] string callerFilePath = "") {
         string workspace = @"C:\temp\numeric-precision\windows\converter-fixture";
         string project = Path.Combine(workspace, "Fixture.csproj");
         string output = Path.Combine(workspace, "generated");
@@ -32,6 +33,12 @@ public sealed class CPPRealNumericTestWorkspace {
             if (includeEngineVectors) {
                 foreach (string file in new[] { "float2.cs", "float3.cs", "float4.cs", "float4x4.cs" }) {
                     string path = Path.Combine(engine, "engine", "helengine.core", "model", file);
+                    items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
+                }
+            }
+            if (includeEngineLayout) {
+                foreach (string file in new[] { "model/int2.cs", "components/2d/TextNativePixelMode.cs", "components/layout/ViewportLayoutMetrics.cs", "utils/TextNativePixelEffectUtils.cs", "numeric/layout/ILayoutNumericOperations.cs", "numeric/layout/RuntimeLayoutNumericOperations.cs", "numeric/layout/LayoutNumericKernel.cs" }) {
+                    string path = Path.Combine(engine, "engine", "helengine.core", file.Replace('/', Path.DirectorySeparatorChar));
                     items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
                 }
             }

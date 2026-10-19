@@ -141,6 +141,11 @@ namespace cs2.cpp {
                     // The semantic dependency below retains the framework identity required by the native exception runtime.
                     continue;
                 }
+                if (conversionClass.TypeSymbol is INamedTypeSymbol valueType && valueType.IsValueType &&
+                    valueType.AllInterfaces.Any(interfaceType => string.Equals(interfaceType.Name, normalizedExtension, StringComparison.Ordinal))) {
+                    // Unboxed structs dispatch constrained calls directly and have no native interface base.
+                    continue;
+                }
                 if (conversionClass.TypeSymbol is INamedTypeSymbol declaredType && !declaredType.IsValueType &&
                     ((declaredType.BaseType?.Arity > 0 &&
                       string.Equals(declaredType.BaseType.Name, normalizedExtension, StringComparison.Ordinal)) ||
