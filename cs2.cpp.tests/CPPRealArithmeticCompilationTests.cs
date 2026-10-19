@@ -63,6 +63,44 @@ public sealed class CPPRealArithmeticCompilationTests {
         Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
     }
 
+    /// <summary>Compiles all actual vector and matrix methods with their selected storage and evaluation widths.</summary>
+    [Theory]
+    [InlineData(32, 32)] [InlineData(64, 64)] [InlineData(32, 64)]
+    public void EngineVectorsExecuteSelectedPolicy(int storageBits, int arithmeticBits) {
+        using CPPOwnershipConversionOutput output = new CPPRealNumericTestWorkspace().Convert("""
+            using helengine;
+            public sealed class VectorFixture {
+                public float3 Interpolate() { return float3.Lerp(new float3(16777216d, 0d, 0d), new float3(16777218d, 2d, 0d), 0.5d); }
+                public RealEvaluation MixedLiteral() { Real value = 2d; return value * 0.5d + 1d; }
+                public double FixedOutput() { return (double)Real.FromDouble(3d); }
+                public RealEvaluation Bounded() { return RealMath.Clamp(3d, 1d, 2d); }
+                public RealEvaluation DotCancellation() { return float3.Dot(new float3(16777216d, 1d, 0d), new float3(1d, 1d, 0d)) - Real.FromDouble(16777216d); }
+            }
+            """, storageBits, arithmeticBits, includeEngineVectors: true);
+        Assert.False(output.Report.HasErrors, string.Join(Environment.NewLine, output.Report.Diagnostics.Select(d => d.Message)));
+        string expected = storageBits == 64 && arithmeticBits == 64 ? "16777217.0" : "16777216.0";
+        CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run($$"""
+            VectorFixture fixture;
+            if (sizeof(float3) != {{3 * storageBits / 8}}) return 1;
+            if (sizeof(float4x4) != {{16 * storageBits / 8}}) return 2;
+            if (fixture.Interpolate().X.ToDouble() != {{expected}}) return 3;
+            if (fixture.Interpolate().Y.ToDouble() != 1.0) return 4;
+            if (fixture.MixedLiteral().ToDouble() != 2.0) return 5;
+            if (fixture.FixedOutput() != 3.0) return 6;
+            if (RealMath::Round(RealEvaluation(2.5)).ToDouble() != 2.0) return 7;
+            if (RealMath::Round(RealEvaluation(3.5)).ToDouble() != 4.0) return 8;
+            if (RealMath::Round(RealEvaluation(-2.5), MidpointRounding::AwayFromZero).ToDouble() != -3.0) return 9;
+            if (!std::signbit(RealMath::Min(RealEvaluation(-0.0), RealEvaluation(0.0)).ToDouble())) return 10;
+            if (std::signbit(RealMath::Max(RealEvaluation(0.0), RealEvaluation(-0.0)).ToDouble())) return 11;
+            if (!std::signbit(RealMath::Round(RealEvaluation(-0.25)).ToDouble())) return 12;
+            if (RealMath::Round(RealEvaluation(8388609.0)).ToDouble() != 8388609.0) return 13;
+            if (fixture.Bounded().ToDouble() != 2.0) return 14;
+            if (fixture.DotCancellation().ToDouble() != {{(arithmeticBits == 64 ? "1.0" : "0.0")}}) return 15;
+            """);
+        Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
+    }
+
     /// <summary>A same-named user scalar is never replaced by the engine's intrinsic representation.</summary>
     [Fact]
     public void UnrelatedRealTypeIsUnchanged() {
@@ -70,6 +108,6 @@ public sealed class CPPRealArithmeticCompilationTests {
             "namespace other { public struct Real { public double Value; } }", 32, 32, false);
         CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run("if (sizeof(Real) != 8) return 1;");
         Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
-        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
     }
 }

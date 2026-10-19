@@ -10,10 +10,11 @@ public sealed class CPPRealNumericTestWorkspace {
     /// <param name="storageBits">Native stored numeric width.</param>
     /// <param name="arithmeticBits">Native expression evaluation width.</param>
     /// <param name="includeEngineScalars">Whether this fixture consumes the actual engine scalar source files.</param>
+    /// <param name="includeEngineVectors">Whether the actual configurable vector and matrix source files are also converted.</param>
     /// <param name="callerFilePath">Source location used to locate the real sibling engine checkout.</param>
     /// <returns>Generated conversion output with ordinary disposable fixture ownership.</returns>
     public CPPOwnershipConversionOutput Convert(string source, int storageBits, int arithmeticBits,
-        bool includeEngineScalars = true, [CallerFilePath] string callerFilePath = "") {
+        bool includeEngineScalars = true, bool includeEngineVectors = false, [CallerFilePath] string callerFilePath = "") {
         string workspace = @"C:\temp\numeric-precision\windows\converter-fixture";
         string project = Path.Combine(workspace, "Fixture.csproj");
         string output = Path.Combine(workspace, "generated");
@@ -27,6 +28,12 @@ public sealed class CPPRealNumericTestWorkspace {
                 string path = Path.Combine(engine, "engine", "helengine.core", "numeric", file);
                 if (!File.Exists(path)) { throw new FileNotFoundException("The numeric fixture requires the real sibling engine checkout.", path); }
                 items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
+            }
+            if (includeEngineVectors) {
+                foreach (string file in new[] { "float2.cs", "float3.cs", "float4.cs", "float4x4.cs" }) {
+                    string path = Path.Combine(engine, "engine", "helengine.core", "model", file);
+                    items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
+                }
             }
             import = "<Import Project=\"" + SecurityElement.Escape(Path.Combine(engine, "build", "NumericPrecision.targets")) + "\" />";
         }
