@@ -34,15 +34,17 @@ namespace cs2.cpp {
             return true;
         }
 
-        /// <summary>Prevents managed authoring constants from overriding the numeric policy of the native build.</summary>
+        /// <summary>Lowers representation constants and the policy getter independently of managed auto-property optimization.</summary>
         /// <param name="symbol">Semantically resolved source member.</param>
         /// <param name="expression">Native build-policy expression when the member is recognized.</param>
-        /// <returns>True only for the engine representation's selected-width constants.</returns>
+        /// <returns>True only for the engine representation's reviewed native members.</returns>
         public static bool TryGetRepresentationConstant(ISymbol symbol, out string expression) {
             expression = string.Empty;
-            if (symbol is not IFieldSymbol field || field.ContainingType?.ToDisplayString() != "helengine.RealRepresentation") { return false; }
-            if (field.Name == "StorageBits") { expression = "HE_CPP_REAL_STORAGE_BITS"; }
-            else if (field.Name == "ArithmeticBits") { expression = "HE_CPP_REAL_ARITHMETIC_BITS"; }
+            if (symbol?.ContainingType?.ToDisplayString() != "helengine.RealRepresentation") { return false; }
+            if (symbol is IPropertySymbol property && property.IsStatic && property.Name == "Policy") {
+                expression = "::RealRepresentation::get_Policy()";
+            } else if (symbol is IFieldSymbol field && field.Name == "StorageBits") { expression = "HE_CPP_REAL_STORAGE_BITS"; }
+            else if (symbol is IFieldSymbol arithmeticField && arithmeticField.Name == "ArithmeticBits") { expression = "HE_CPP_REAL_ARITHMETIC_BITS"; }
             return expression.Length != 0;
         }
     }

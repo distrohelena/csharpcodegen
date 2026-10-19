@@ -3,6 +3,7 @@ using cs2.cpp.tests.TestHelpers;
 namespace cs2.cpp.tests;
 
 /// <summary>Executes generated numeric code and verifies layout, arithmetic width and fixed primitive boundaries.</summary>
+[Collection(CPPRealNumericCollection.Name)]
 public sealed class CPPRealArithmeticCompilationTests {
     /// <summary>The same actual engine source lowers to each selected native representation and executes its semantics.</summary>
     [Theory]

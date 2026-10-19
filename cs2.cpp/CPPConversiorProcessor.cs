@@ -2482,7 +2482,8 @@ namespace cs2.cpp {
             if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(identifier).Symbol, out string realConstant)) {
                 RegisterRuntimeRequirement("NativeReal");
                 lines.Add(realConstant);
-                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(semantic.GetTypeInfo(identifier).Type));
+                VariablePath realPath = semantic.GetSymbolInfo(identifier).Symbol is IPropertySymbol ? VariablePath.Unknown : VariablePath.Static;
+                return new ExpressionResult(true, realPath, VariableUtil.GetVarType(semantic.GetTypeInfo(identifier).Type));
             }
 
             string name = identifier.ToString();
@@ -4385,7 +4386,8 @@ namespace cs2.cpp {
             if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(memberAccess).Symbol, out string realConstant)) {
                 RegisterRuntimeRequirement("NativeReal");
                 lines.Add(realConstant);
-                return new ExpressionResult(true, VariablePath.Static, VariableUtil.GetVarType(semantic.GetTypeInfo(memberAccess).Type));
+                VariablePath realPath = semantic.GetSymbolInfo(memberAccess).Symbol is IPropertySymbol ? VariablePath.Unknown : VariablePath.Static;
+                return new ExpressionResult(true, realPath, VariableUtil.GetVarType(semantic.GetTypeInfo(memberAccess).Type));
             }
 
             if (TryProcessNativeStringLengthMemberAccess(semantic, context, memberAccess, lines, out VariableType stringLengthType)) {
