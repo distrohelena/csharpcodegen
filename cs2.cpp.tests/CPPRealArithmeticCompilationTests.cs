@@ -113,13 +113,13 @@ public sealed class CPPRealArithmeticCompilationTests {
                 public static class LayoutComponent { public const byte LeftAnchorFlag = 1, RightAnchorFlag = 2, TopAnchorFlag = 4, BottomAnchorFlag = 8; }
             }
             public sealed class LayoutFixture {
-                public int Dimension() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.ScaleInteger(16777217, 1d, new RuntimeLayoutNumericOperations()); }
-                public int FitWidth() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Fit(320d, 240d, 1280, 720, 1d, new RuntimeLayoutNumericOperations()).X; }
-                public Real Density() { return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Resolve(3, new int2(1, 1), new int2(320, 240), 1d, 1d, 16777217d, 16777216d, new RuntimeLayoutNumericOperations()).ScaleX; }
+                public int Dimension() { return LayoutNumericKernel<RealEvaluation, RuntimeNumericOperations>.ScaleInteger(16777217, 1d, new RuntimeNumericOperations()); }
+                public int FitWidth() { return LayoutNumericKernel<RealEvaluation, RuntimeNumericOperations>.Fit(320d, 240d, 1280, 720, 1d, new RuntimeNumericOperations()).X; }
+                public Real Density() { return LayoutNumericKernel<RealEvaluation, RuntimeNumericOperations>.Resolve(3, new int2(1, 1), new int2(320, 240), 1d, 1d, 16777217d, 16777216d, new RuntimeNumericOperations()).ScaleX; }
 
                 public float3 Position() {
                     ViewportLayoutMetrics metrics = new ViewportLayoutMetrics { ScaleX = 3d, ScaleY = 1d, GlyphScale = 1d };
-                    return LayoutNumericKernel<RealEvaluation, RuntimeLayoutNumericOperations>.Position(new float3(16777217d, 2d, 3d), metrics, new RuntimeLayoutNumericOperations());
+                    return LayoutNumericKernel<RealEvaluation, RuntimeNumericOperations>.Position(new float3(16777217d, 2d, 3d), metrics, new RuntimeNumericOperations());
                 }
             }
             """, storageBits, arithmeticBits, includeEngineVectors: true, includeEngineLayout: true);
@@ -130,8 +130,35 @@ public sealed class CPPRealArithmeticCompilationTests {
             if (fixture.Position().X.ToDouble() != {{(storageBits == 64 ? "50331651.0" : "50331648.0")}}) return 2;
             if (fixture.FitWidth() != 320) return 3;
             if (fixture.Density().ToDouble() != {{(storageBits == 64 ? "1.0000000596046448" : "1.0")}}) return 4;
-            static_assert(!std::is_polymorphic_v<RuntimeLayoutNumericOperations>);
+            static_assert(!std::is_polymorphic_v<RuntimeNumericOperations>);
 
+            """);
+        Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
+    }
+
+    /// <summary>Cook and native runtime use the actual shared transform formulas and matching storage boundaries.</summary>
+    [Theory]
+    [InlineData(32, 32)] [InlineData(64, 64)] [InlineData(32, 64)]
+    public void TransformKernelExecutesSelectedPolicy(int storageBits, int arithmeticBits) {
+        using CPPOwnershipConversionOutput output = new CPPRealNumericTestWorkspace().Convert("""
+            using helengine;
+            public sealed class TransformFixture {
+                public float3 Rotate() { return float4.RotateVector(new float3(16777217d, 2d, 3d), float4.Identity); }
+                public float4 Normalize() { float4 result = new float4(1d, 2d, 3d, 4d); result.Normalize(); return result; }
+                public float4 Concatenate() { float4 a = new float4(1d, 2d, 3d, 4d); float4 b = new float4(5d, 6d, 7d, 8d); float4.Concatenate(ref a, ref b, out float4 result); return result; }
+            }
+            """, storageBits, arithmeticBits, includeEngineVectors: true);
+        Assert.False(output.Report.HasErrors, string.Join(Environment.NewLine, output.Report.Diagnostics.Select(d => d.Message)));
+        double inverse = arithmeticBits == 32 ? (double)(1f / MathF.Sqrt(30f)) : 1d / Math.Sqrt(30d);
+        double normalized = storageBits == 32 ? (double)(float)(arithmeticBits == 32 ? (double)(4f * (float)inverse) : 4d * inverse) : 4d * inverse;
+        string expected = normalized.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run($$"""
+            TransformFixture fixture;
+            if (fixture.Rotate().X.ToDouble() != {{(storageBits == 32 ? "16777216.0" : "16777217.0")}}) return 1;
+            if (fixture.Normalize().W.ToDouble() != {{expected}}) return 2;
+            float4 composed = fixture.Concatenate();
+            if (composed.X.ToDouble() != 32.0 || composed.Y.ToDouble() != 32.0 || composed.Z.ToDouble() != 56.0 || composed.W.ToDouble() != -6.0) return 3;
             """);
         Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
         Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);

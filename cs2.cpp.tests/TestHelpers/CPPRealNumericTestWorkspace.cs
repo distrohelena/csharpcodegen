@@ -31,13 +31,13 @@ public sealed class CPPRealNumericTestWorkspace {
                 items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
             }
             if (includeEngineVectors) {
-                foreach (string file in new[] { "float2.cs", "float3.cs", "float4.cs", "float4x4.cs" }) {
-                    string path = Path.Combine(engine, "engine", "helengine.core", "model", file);
+                foreach (string file in new[] { "model/float2.cs", "model/float3.cs", "model/float4.cs", "model/float4x4.cs", "components/2d/TextNativePixelMode.cs", "utils/TextNativePixelEffectUtils.cs", "numeric/kernels/INumericOperations.cs", "numeric/kernels/RuntimeNumericOperations.cs", "numeric/kernels/TransformNumericKernel.cs" }) {
+                    string path = Path.Combine(engine, "engine", "helengine.core", file.Replace('/', Path.DirectorySeparatorChar));
                     items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
                 }
             }
             if (includeEngineLayout) {
-                foreach (string file in new[] { "model/int2.cs", "components/2d/TextNativePixelMode.cs", "components/layout/ViewportLayoutMetrics.cs", "utils/TextNativePixelEffectUtils.cs", "numeric/layout/ILayoutNumericOperations.cs", "numeric/layout/RuntimeLayoutNumericOperations.cs", "numeric/layout/LayoutNumericKernel.cs" }) {
+                foreach (string file in new[] { "model/int2.cs", "components/layout/ViewportLayoutMetrics.cs", "numeric/kernels/LayoutNumericKernel.cs" }) {
                     string path = Path.Combine(engine, "engine", "helengine.core", file.Replace('/', Path.DirectorySeparatorChar));
                     items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
                 }
