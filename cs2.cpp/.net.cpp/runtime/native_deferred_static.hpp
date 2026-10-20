@@ -2,6 +2,7 @@
 
 #include <new>
 #include "native_algorithm.hpp"
+#include "native_noinline.hpp"
 
 /// <summary>Holds constant-initialized storage for a guarded accessor; a separate HeCppDeferredStaticLifetime owns source/module cleanup without relying on function-local atexit callbacks.</summary>
 template <typename TValue>
@@ -19,7 +20,7 @@ public:
     /// <summary>Prevents assigning ownership of an in-place static value.</summary>
     HeCppDeferredStaticStorage& operator=(const HeCppDeferredStaticStorage&) = delete;
     /// <summary>Releases the constructed value when its explicit lifetime owner finalizes; the storage itself stays trivially destructible for constant initialization.</summary>
-    void Destroy() {
+    HE_CPP_NOINLINE void Destroy() {
         if (Constructed) {
             Constructed = false;
             std::launder(reinterpret_cast<TValue*>(Storage))->~TValue();
