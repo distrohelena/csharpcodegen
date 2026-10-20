@@ -3,7 +3,6 @@
 #include "native_hash.hpp"
 #include "../system/math.hpp"
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include "native_string.hpp"
 
@@ -364,7 +363,11 @@ inline RealEvaluation& RealEvaluation::operator/=(RealEvaluation value) { *this 
 inline bool he_cpp_real_signbit(he_real_eval value) {
     using Bits = std::conditional_t<sizeof(he_real_eval) == sizeof(uint32_t), uint32_t, uint64_t>;
     Bits bits{};
-    std::memcpy(&bits, &value, sizeof(value));
+    const unsigned char* source = reinterpret_cast<const unsigned char*>(&value);
+    unsigned char* destination = reinterpret_cast<unsigned char*>(&bits);
+    for (unsigned int index = 0; index < sizeof(value); ++index) {
+        destination[index] = source[index];
+    }
     return (bits >> (sizeof(value) * 8 - 1)) != 0;
 }
 
