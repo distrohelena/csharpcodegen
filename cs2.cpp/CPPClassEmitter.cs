@@ -3435,7 +3435,7 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Receives the single storage owner and accessor definition.</param>
         void WriteStringConstantAccessor(ConversionClass conversionClass, ConversionVariable variable, string typeName, TextWriter headerWriter, TextWriter sourceWriter) {
             INamedTypeSymbol owner = conversionClass.TypeSymbol as INamedTypeSymbol;
-            string getter = CPPStringConstantUtils.GetAccessorName(owner, variable.Name);
+            string getter = variable.Name;
             string storage = CPPStringConstantUtils.GetStorageName(owner, variable.Name);
             headerWriter.WriteLine($"    static const {typeName}& {getter}();");
             headerWriter.WriteLine($"    static HeCppDeferredStaticStorage<{typeName}> {storage};");

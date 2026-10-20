@@ -2917,7 +2917,7 @@ namespace cs2.cpp {
         /// <param name="qualified">Whether the enclosing member access already emitted its type qualifier.</param>
         /// <param name="lines">Receives the native getter call.</param>
         /// <param name="type">Managed string result type.</param>
-        /// <returns>Whether a generated constant or the runtime empty-string field was handled.</returns>
+        /// <returns>Whether a local/external generated constant or the runtime empty-string field was handled.</returns>
         bool TryProcessStringConstantRead(LayerContext context, ISymbol symbol, bool qualified, List<string> lines, out VariableType type) {
             type = null;
             if (symbol is not IFieldSymbol field || field.Type.SpecialType != SpecialType.System_String) {
@@ -2925,8 +2925,16 @@ namespace cs2.cpp {
             }
             bool runtimeEmpty = field.ContainingType.SpecialType == SpecialType.System_String && field.Name == "Empty";
             ConversionClass owner = runtimeEmpty ? null : context.Program.FindGeneratedClass(field.ContainingType);
-            if (!runtimeEmpty && (!field.IsConst || owner == null || owner.IsNative)) {
+            if (!runtimeEmpty && (!field.IsConst || owner?.IsNative == true)) {
                 return false;
+            }
+            if (!runtimeEmpty && owner == null) {
+                string namespaceName = field.ContainingType.ContainingNamespace.ToDisplayString();
+                if (field.ContainingType.SpecialType != SpecialType.None ||
+                    namespaceName.StartsWith("System", StringComparison.Ordinal) ||
+                    namespaceName.StartsWith("Microsoft", StringComparison.Ordinal)) {
+                    return false;
+                }
             }
             RegisterRuntimeRequirement("NativeString");
             if (owner != null) {
@@ -2941,7 +2949,7 @@ namespace cs2.cpp {
                 lines.Add(runtimeEmpty ? "String" : GetContainingTypeAccessName(context, field.ContainingType));
                 lines.Add("::");
             }
-            lines.Add(CPPStringConstantUtils.GetAccessorName(field.ContainingType, field.Name));
+            lines.Add(runtimeEmpty ? "get_Empty" : field.Name);
             lines.Add("()");
             type = VariableUtil.GetVarType(field.Type);
             return true;

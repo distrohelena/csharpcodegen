@@ -62,19 +62,20 @@ public sealed class CPPStringConstantEmissionTests {
         Assert.False(converter.Report.HasErrors);
         string header = File.ReadAllText(Path.Combine(output, "StringConstantsFixture.hpp"));
         Assert.Contains("inline static const int32_t Count = 3;", header);
-        Assert.Contains("static const HeCppString& get_Text_constant();", header);
+        Assert.Contains("static const HeCppString& Text();", header);
         Assert.DoesNotContain("inline static const HeCppString", header);
         string implementation = File.ReadAllText(Path.Combine(output, "StringConstantsFixture.cpp"));
-        Assert.Contains("const HeCppString& StringConstantsFixture::get_Text_constant()", implementation);
+        Assert.Contains("const HeCppString& StringConstantsFixture::Text()", implementation);
         Assert.Contains("static const HeCppString& value = ", implementation);
         string stringRuntime = File.ReadAllText(Path.Combine(output, "runtime", "native_string.hpp"));
         Assert.Contains("const HeCppString& get_Empty()", stringRuntime);
         Assert.DoesNotContain("inline static const HeCppString Empty", stringRuntime);
         CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output).Run("""
-            static_assert(std::is_same_v<decltype(StringConstantsFixture::get_Text_constant()), const HeCppString&>);
-            if (&StringConstantsFixture::get_Text_constant() != &StringConstantsFixture::get_Text_constant()) return 6;
+            static_assert(std::is_same_v<decltype(StringConstantsFixture::Text()), const HeCppString&>);
+            if (&StringConstantsFixture::Text() != &StringConstantsFixture::Text()) return 6;
             if (&String::get_Empty() != &String::get_Empty()) return 7;
             if (String::get_Empty().is_null() || !String::get_Empty().empty()) return 8;
+            if (StringConstantsFixture::get_Text() != 17) return 14;
             if (!StringConstantsFixture::Verify()) return 1;
             if (!StringConstantsConsumer::Verify()) return 2;
             if (!AStringConstantsStartupConsumer::Verify()) return 5;
