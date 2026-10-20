@@ -15,6 +15,7 @@ namespace cs2.cpp {
             if (identity != "helengine.Real" && identity != "helengine.RealEvaluation" && identity != "helengine.RealMath"
                 && identity != "helengine.RealRepresentation") { return false; }
             processor.RegisterRuntimeRequirement("NativeReal");
+            if (processor.Options.RealNumericPolicy.ArithmeticBits == 16) { processor.RegisterRuntimeRequirement("NativeBinary16Arithmetic"); }
             header.WriteLine("#pragma once");
             header.WriteLine("#include \"runtime/native_real.hpp\"");
             if (identity == "helengine.RealRepresentation") {

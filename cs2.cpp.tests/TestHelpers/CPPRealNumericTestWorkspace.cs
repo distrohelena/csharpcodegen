@@ -25,7 +25,7 @@ public sealed class CPPRealNumericTestWorkspace {
         string items = string.Empty;
         string import = string.Empty;
         if (includeEngineScalars) {
-            foreach (string file in new[] { "Real.cs", "RealEvaluation.cs", "RealMath.cs", "NumericPrecisionPolicy.cs" }) {
+            foreach (string file in new[] { "Real.cs", "RealEvaluation.cs", "RealMath.cs", "NumericPrecisionPolicy.cs", "Binary16Codec.cs" }) {
                 string path = Path.Combine(engine, "engine", "helengine.core", "numeric", file);
                 if (!File.Exists(path)) { throw new FileNotFoundException("The numeric fixture requires the real sibling engine checkout.", path); }
                 items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";

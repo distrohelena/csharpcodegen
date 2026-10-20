@@ -12,7 +12,7 @@ namespace cs2.cpp {
             CPPRealNumericPolicy policy = new(
                 ReadWidth(options.PlatformOptionValues, "real-storage-bits", options.RealNumericPolicy.StorageBits),
                 ReadWidth(options.PlatformOptionValues, "real-arithmetic-bits", options.RealNumericPolicy.ArithmeticBits));
-            if (policy.StorageBits == 16 || policy.ArithmeticBits == 16) {
+            if (policy.ArithmeticBits == 16 && policy.StorageBits != 16 || policy.StorageBits == 16 && policy.ArithmeticBits == 64) {
                 throw new NotSupportedException($"Native numeric policy '{policy.Identity}' has no implemented half-precision backend.");
             }
             options.RealNumericPolicy = policy;

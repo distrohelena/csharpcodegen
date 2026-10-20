@@ -293,6 +293,10 @@ namespace cs2.cpp {
                 TrackEmittedFile(supportFile);
             }
 
+            foreach (string supportFile in CPPBinary16ArithmeticSupportWriter.Write(resolvedOutputFolder, Options.RealNumericPolicy)) {
+                TrackEmittedFile(supportFile);
+            }
+
             string configPath = CPPGeneratedConfigWriter.Write(resolvedOutputFolder, Options, RuntimeRequirementRegistrar, BuildUsageReport);
             TrackEmittedFile(configPath);
 

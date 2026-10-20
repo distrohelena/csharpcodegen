@@ -31,11 +31,11 @@ public sealed class CPPRealNumericPolicyTests {
         Assert.Throws<ArgumentException>(() => CPPNumericPolicyResolver.Resolve(options));
     }
 
-    /// <summary>The initial native backend rejects binary16 until its explicit implementation is available.</summary>
+    /// <summary>Unsupported mixed half policies fail instead of silently selecting a wider evaluator.</summary>
     [Fact]
-    public void UnimplementedHalfFailsExplicitly() {
+    public void UnsupportedHalfCombinationFailsExplicitly() {
         CPPConversionOptions options = CPPConversionOptions.CreateDefault();
-        options.PlatformOptionValues = new Dictionary<string, string> { ["real-storage-bits"] = "16", ["real-arithmetic-bits"] = "32" };
+        options.PlatformOptionValues = new Dictionary<string, string> { ["real-storage-bits"] = "16", ["real-arithmetic-bits"] = "64" };
         Assert.Throws<NotSupportedException>(() => CPPNumericPolicyResolver.Resolve(options));
     }
 
