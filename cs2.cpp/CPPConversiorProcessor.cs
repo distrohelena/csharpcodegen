@@ -4945,6 +4945,7 @@ namespace cs2.cpp {
             return true;
         }
 
+        /// <summary>Expands value-type compound assignment while keeping the complete right operand grouped under the binary operator.</summary>
         bool TryProcessValueTypeCompoundAssignment(SemanticModel semantic, LayerContext context, AssignmentExpressionSyntax assignment, List<string> lines) {
             if (assignment == null ||
                 assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) ||
@@ -4989,11 +4990,12 @@ namespace cs2.cpp {
             lines.Add(leftText);
             lines.Add(" = ");
             lines.Add(leftText);
-            lines.Add($" {binaryOperator} ");
+            lines.Add($" {binaryOperator} (");
 
             int rightStartDepth = context.Class.Count;
             ProcessExpression(semantic, context, assignment.Right, lines);
             context.PopClass(rightStartDepth);
+            lines.Add(")");
             return true;
         }
 

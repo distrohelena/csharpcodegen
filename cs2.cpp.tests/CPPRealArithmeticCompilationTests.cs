@@ -1,4 +1,4 @@
-using cs2.cpp.tests.TestHelpers;
+﻿using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 
@@ -160,6 +160,37 @@ public sealed class CPPRealArithmeticCompilationTests {
             if (fixture.Normalize().W.ToDouble() != {{expected}}) return 2;
             float4 composed = fixture.Concatenate();
             if (composed.X.ToDouble() != 32.0 || composed.Y.ToDouble() != 32.0 || composed.Z.ToDouble() != 56.0 || composed.W.ToDouble() != -6.0) return 3;
+            """);
+        Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
+    }
+
+    /// <summary>Expanded compound assignments keep the complete right operand grouped, including text-width accumulation.</summary>
+    [Theory]
+    [InlineData(32, 32)] [InlineData(64, 64)]
+    public void CompoundAssignmentPreservesRightOperandPrecedence(int storageBits, int arithmeticBits) {
+        using CPPOwnershipConversionOutput output = new CPPRealNumericTestWorkspace().Convert("""
+            using helengine;
+            public sealed class CompoundFixture {
+                public RealEvaluation GlyphWidth(bool hasAdvance) {
+                    RealEvaluation width = 0d;
+                    float advance = hasAdvance ? 20f : 0f;
+                    for (int i = 0; i < 3; i++) { width += advance > 0f ? advance : 12d; }
+                    return width;
+                }
+                public RealEvaluation SubtractSum() { RealEvaluation value = 100d; value -= 3d + 7d; return value; }
+                public RealEvaluation MultiplySum() { RealEvaluation value = 10d; value *= 3d + 7d; return value; }
+                public RealEvaluation DivideProduct() { RealEvaluation value = 100d; value /= 2d * 5d; return value; }
+            }
+            """, storageBits, arithmeticBits);
+        Assert.False(output.Report.HasErrors, string.Join(Environment.NewLine, output.Report.Diagnostics.Select(d => d.Message)));
+        CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run("""
+            CompoundFixture fixture;
+            if (fixture.GlyphWidth(true).ToDouble() != 60.0) return 1;
+            if (fixture.GlyphWidth(false).ToDouble() != 36.0) return 2;
+            if (fixture.SubtractSum().ToDouble() != 90.0) return 3;
+            if (fixture.MultiplySum().ToDouble() != 100.0) return 4;
+            if (fixture.DivideProduct().ToDouble() != 10.0) return 5;
             """);
         Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
         Assert.True(result.ProgramExitCode == 0, result.ProgramOutput + " exit=" + result.ProgramExitCode);
