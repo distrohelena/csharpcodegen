@@ -1,4 +1,4 @@
-using cs2.core;
+﻿using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -2481,6 +2481,12 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessIdentifierNameSyntax(SemanticModel semantic, LayerContext context, IdentifierNameSyntax identifier, List<string> lines, List<ExpressionResult> refTypes) {
             if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(identifier).Symbol, out string realConstant)) {
                 RegisterRuntimeRequirement("NativeReal");
+                if (semantic.GetSymbolInfo(identifier).Symbol is IPropertySymbol) {
+                    ConversionClass realOwner = GetOwningEmissionClass(context);
+                    if (realOwner != null && !realOwner.SourceIncludes.Contains("RealRepresentation.hpp", StringComparer.Ordinal)) {
+                        realOwner.SourceIncludes.Add("RealRepresentation.hpp");
+                    }
+                }
                 lines.Add(realConstant);
                 VariablePath realPath = semantic.GetSymbolInfo(identifier).Symbol is IPropertySymbol ? VariablePath.Unknown : VariablePath.Static;
                 return new ExpressionResult(true, realPath, VariableUtil.GetVarType(semantic.GetTypeInfo(identifier).Type));
@@ -4385,6 +4391,12 @@ namespace cs2.cpp {
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
             if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(memberAccess).Symbol, out string realConstant)) {
                 RegisterRuntimeRequirement("NativeReal");
+                if (semantic.GetSymbolInfo(memberAccess).Symbol is IPropertySymbol) {
+                    ConversionClass realOwner = GetOwningEmissionClass(context);
+                    if (realOwner != null && !realOwner.SourceIncludes.Contains("RealRepresentation.hpp", StringComparer.Ordinal)) {
+                        realOwner.SourceIncludes.Add("RealRepresentation.hpp");
+                    }
+                }
                 lines.Add(realConstant);
                 VariablePath realPath = semantic.GetSymbolInfo(memberAccess).Symbol is IPropertySymbol ? VariablePath.Unknown : VariablePath.Static;
                 return new ExpressionResult(true, realPath, VariableUtil.GetVarType(semantic.GetTypeInfo(memberAccess).Type));

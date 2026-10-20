@@ -13,6 +13,10 @@ public sealed class CPPRealRepresentationCompilationTests {
         using CPPOwnershipConversionOutput output = new CPPRealNumericTestWorkspace().Convert("""
             using helengine;
             using static helengine.RealRepresentation;
+            public sealed class ImportedRepresentationFixture {
+                readonly NumericPrecisionPolicy Captured = RealRepresentation.Policy;
+                public NumericPrecisionPolicy Read() { return Captured; }
+            }
             public sealed class RepresentationFixture {
                 public NumericPrecisionPolicy Qualified() { return RealRepresentation.Policy; }
                 public NumericPrecisionPolicy Imported() { return Policy; }
@@ -21,8 +25,11 @@ public sealed class CPPRealRepresentationCompilationTests {
             }
             """, storageBits, arithmeticBits);
         Assert.False(output.Report.HasErrors);
+        Assert.Contains("#include \"RealRepresentation.hpp\"", File.ReadAllText(Path.Combine(output.OutputPath, "ImportedRepresentationFixture.cpp")));
         CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run($$"""
+            ImportedRepresentationFixture imported;
             RepresentationFixture fixture;
+            if (imported.Read() != fixture.Qualified()) return 4;
             if (fixture.Qualified() != fixture.Imported()) return 1;
             if (fixture.StoredWidth() != {{storageBits}}) return 2;
             if (fixture.EvaluationWidth() != {{arithmeticBits}}) return 3;
