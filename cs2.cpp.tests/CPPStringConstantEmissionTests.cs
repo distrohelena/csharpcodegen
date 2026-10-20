@@ -82,18 +82,24 @@ public sealed class CPPStringConstantEmissionTests {
             if (!GenericConstants_1<int32_t>::Verify()) return 3;
             if (!GenericConstants_1<bool>::Verify()) return 4;
             using Storage = HeCppDeferredStaticStorage<TrackedDeferredValue>;
+            using Lifetime = HeCppDeferredStaticLifetime<TrackedDeferredValue>;
             static_assert(!std::is_copy_constructible_v<Storage>);
-            { Storage unused; }
+            static_assert(std::is_trivially_destructible_v<Storage>);
+            { Storage unused; Lifetime finalizer(unused); }
             if (TrackedDeferredValue::Destroyed != 0) return 9;
             alignas(Storage) unsigned char arena[sizeof(Storage)];
             for (int generation = 1; generation <= 2; ++generation) {
                 Storage* storage = new (arena) Storage;
-                if (storage->Initialize(37).Value != 37 || TrackedDeferredValue::Live != 1) return 10;
+                {
+                    Lifetime finalizer(*storage);
+                    if (storage->Initialize(37).Value != 37 || TrackedDeferredValue::Live != 1) return 10;
+                }
                 storage->~Storage();
                 if (TrackedDeferredValue::Live != 0 || TrackedDeferredValue::Destroyed != generation) return 11;
             }
             try {
                 Storage failed;
+                Lifetime finalizer(failed);
                 failed.Initialize(-1);
                 return 12;
             } catch (int) {

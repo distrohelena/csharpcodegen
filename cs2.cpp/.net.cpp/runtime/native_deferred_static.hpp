@@ -3,7 +3,7 @@
 #include <new>
 #include "native_algorithm.hpp"
 
-/// <summary>Owns constant-initialized storage whose value is constructed by a guarded accessor and destroyed by its source/module finalizer, without relying on atexit for a function-local object.</summary>
+/// <summary>Holds constant-initialized storage for a guarded accessor; a separate HeCppDeferredStaticLifetime owns source/module cleanup without relying on function-local atexit callbacks.</summary>
 template <typename TValue>
 class HeCppDeferredStaticStorage {
     /// <summary>Reserves correctly aligned bytes before any dynamic initializer can request the value.</summary>
@@ -18,9 +18,10 @@ public:
     HeCppDeferredStaticStorage(const HeCppDeferredStaticStorage&) = delete;
     /// <summary>Prevents assigning ownership of an in-place static value.</summary>
     HeCppDeferredStaticStorage& operator=(const HeCppDeferredStaticStorage&) = delete;
-    /// <summary>Destroys a successfully constructed value when the owning source/module finalizes.</summary>
-    ~HeCppDeferredStaticStorage() {
+    /// <summary>Releases the constructed value when its explicit lifetime owner finalizes; the storage itself stays trivially destructible for constant initialization.</summary>
+    void Destroy() {
         if (Constructed) {
+            Constructed = false;
             std::launder(reinterpret_cast<TValue*>(Storage))->~TValue();
         }
     }

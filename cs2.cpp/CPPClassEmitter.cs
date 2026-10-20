@@ -3437,16 +3437,21 @@ namespace cs2.cpp {
             INamedTypeSymbol owner = conversionClass.TypeSymbol as INamedTypeSymbol;
             string getter = variable.Name;
             string storage = CPPStringConstantUtils.GetStorageName(owner, variable.Name);
+            string lifetime = CPPStringConstantUtils.GetLifetimeName(owner, variable.Name);
             headerWriter.WriteLine($"    static const {typeName}& {getter}();");
             headerWriter.WriteLine($"    static HeCppDeferredStaticStorage<{typeName}> {storage};");
+            headerWriter.WriteLine($"    static HeCppDeferredStaticLifetime<{typeName}> {lifetime};");
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"HeCppDeferredStaticStorage<{typeName}> {GetQualifiedClassName(conversionClass)}::{storage};");
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"HeCppDeferredStaticLifetime<{typeName}> {GetQualifiedClassName(conversionClass)}::{lifetime}({storage});");
             sourceWriter.WriteLine();
             WriteTemplateDeclaration(conversionClass, sourceWriter);
             sourceWriter.WriteLine($"const {typeName}& {GetQualifiedClassName(conversionClass)}::{getter}() {{");
             if (!TryLowerInlineFieldInitializer(conversionClass, variable, out string initializer)) {
                 throw new InvalidOperationException($"Cannot lower string constant {conversionClass.Name}.{variable.Name}.");
             }
+            sourceWriter.WriteLine($"    (void)&{lifetime};");
             sourceWriter.WriteLine($"    static const {typeName}& value = {storage}.Initialize({initializer});");
             sourceWriter.WriteLine("    return value;");
             sourceWriter.WriteLine("}");

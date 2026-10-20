@@ -20,6 +20,14 @@ internal static class CPPStringConstantUtils {
         return GetAvailableName(owner, "StringConstantStorage_" + fieldName);
     }
 
+    /// <summary>Chooses the explicit cleanup registration's name without colliding with a source member.</summary>
+    /// <param name="owner">Original declaring type.</param>
+    /// <param name="fieldName">Managed constant field name.</param>
+    /// <returns>Stable native lifetime registration identifier.</returns>
+    public static string GetLifetimeName(INamedTypeSymbol owner, string fieldName) {
+        return GetAvailableName(owner, "StringConstantLifetime_" + fieldName);
+    }
+
     /// <summary>Disambiguates a generated native identifier against all declared source members.</summary>
     /// <param name="owner">Declaring type used for collision checks.</param>
     /// <param name="candidate">Preferred generated identifier.</param>

@@ -7,7 +7,7 @@
 #include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
 #include "native_runtime.hpp"
-#include "native_deferred_static.hpp"
+#include "native_deferred_static_lifetime.hpp"
 #include "array.hpp"
 
 #if HE_CPP_USE_RTTI
@@ -120,8 +120,11 @@ class String {
 public:
     /// <summary>Keeps the empty string's destruction attached to the runtime/module finalizer rather than an atexit callback.</summary>
     inline static HeCppDeferredStaticStorage<HeCppString> EmptyStorage;
+    /// <summary>Pairs the shared empty-string storage with native translation-unit/module lifetime registration.</summary>
+    inline static HeCppDeferredStaticLifetime<HeCppString> EmptyLifetime{EmptyStorage};
     /// <summary>Provides one present empty managed string on first access, distinct from the default null value.</summary>
     static const HeCppString& get_Empty() {
+        (void)&EmptyLifetime;
         static const HeCppString& value = EmptyStorage.Initialize("");
         return value;
     }
