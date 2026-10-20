@@ -2557,6 +2557,10 @@ namespace cs2.cpp {
                 }
             }
 
+            if (TryProcessStringConstantRead(context, nsSymbol, isQualifiedMemberName, lines, out VariableType constantStringType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, constantStringType);
+            }
+
             if (nsSymbol is IMethodSymbol methodSymbol) {
                 isMethod = true;
             }
@@ -2905,6 +2909,42 @@ namespace cs2.cpp {
             }
 
             return false;
+        }
+
+        /// <summary>Routes managed string constant reads through the same source-owned accessor emitted for their declaration.</summary>
+        /// <param name="context">Current generated type and include scope.</param>
+        /// <param name="symbol">Semantically bound field, avoiding local shadowing and syntax-based guesses.</param>
+        /// <param name="qualified">Whether the enclosing member access already emitted its type qualifier.</param>
+        /// <param name="lines">Receives the native getter call.</param>
+        /// <param name="type">Managed string result type.</param>
+        /// <returns>Whether a generated constant or the runtime empty-string field was handled.</returns>
+        bool TryProcessStringConstantRead(LayerContext context, ISymbol symbol, bool qualified, List<string> lines, out VariableType type) {
+            type = null;
+            if (symbol is not IFieldSymbol field || field.Type.SpecialType != SpecialType.System_String) {
+                return false;
+            }
+            bool runtimeEmpty = field.ContainingType.SpecialType == SpecialType.System_String && field.Name == "Empty";
+            ConversionClass owner = runtimeEmpty ? null : context.Program.FindGeneratedClass(field.ContainingType);
+            if (!runtimeEmpty && (!field.IsConst || owner == null || owner.IsNative)) {
+                return false;
+            }
+            RegisterRuntimeRequirement("NativeString");
+            if (owner != null) {
+                RegisterGeneratedTypeReferences(context, VariableUtil.GetVarType(field.ContainingType));
+                ConversionClass consumer = GetOwningEmissionClass(context);
+                string include = owner.GetEmittedFileStem(context.Program) + ".hpp";
+                if (consumer != null && !consumer.SourceIncludes.Contains(include, StringComparer.Ordinal)) {
+                    consumer.SourceIncludes.Add(include);
+                }
+            }
+            if (!qualified) {
+                lines.Add(runtimeEmpty ? "String" : GetContainingTypeAccessName(context, field.ContainingType));
+                lines.Add("::");
+            }
+            lines.Add(CPPStringConstantUtils.GetAccessorName(field.ContainingType, field.Name));
+            lines.Add("()");
+            type = VariableUtil.GetVarType(field.Type);
+            return true;
         }
 
         static string GetEmittedFunctionName(ConversionFunction function) {
@@ -4389,6 +4429,10 @@ namespace cs2.cpp {
         }
 
         protected override ExpressionResult ProcessMemberAccessExpressionSyntax(SemanticModel semantic, LayerContext context, MemberAccessExpressionSyntax memberAccess, List<string> lines, List<ExpressionResult> refTypes) {
+            ISymbol stringConstantSymbol = semantic.GetSymbolInfo(memberAccess).Symbol ?? semantic.GetSymbolInfo(memberAccess.Name).Symbol;
+            if (TryProcessStringConstantRead(context, stringConstantSymbol, false, lines, out VariableType constantStringType)) {
+                return new ExpressionResult(true, VariablePath.Unknown, constantStringType);
+            }
             if (CPPRealIntrinsicEmitter.TryGetRepresentationConstant(semantic.GetSymbolInfo(memberAccess).Symbol, out string realConstant)) {
                 RegisterRuntimeRequirement("NativeReal");
                 if (semantic.GetSymbolInfo(memberAccess).Symbol is IPropertySymbol) {

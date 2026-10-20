@@ -3399,7 +3399,7 @@ namespace cs2.cpp {
         }
 
         /// <summary>
-        /// Writes one C# const field either as an inline literal constant or as a declaration plus source definition for dependent expressions.
+        /// Writes primitive constants inline, dependent constants in their source, and managed string constants through source-owned deferred accessors.
         /// </summary>
         /// <param name="conversionClass">Owning class that declares the field.</param>
         /// <param name="variable">Constant field to emit.</param>
@@ -3407,6 +3407,10 @@ namespace cs2.cpp {
         /// <param name="sourceWriter">Writer that receives any out-of-class definition required for dependent constants.</param>
         void WriteConstField(ConversionClass conversionClass, ConversionVariable variable, TextWriter headerWriter, TextWriter sourceWriter) {
             string typeName = ConvertType(variable.VarType, conversionClass);
+            if (CPPStringConstantUtils.IsStringConstant(variable)) {
+                WriteStringConstantAccessor(conversionClass, variable, typeName, headerWriter, sourceWriter);
+                return;
+            }
             if (ShouldInlineConstField(variable)) {
                 headerWriter.Write($"    inline static const {typeName} {variable.Name}");
                 if (TryLowerInlineFieldInitializer(conversionClass, variable, out string loweredInitializer)) {
@@ -3421,6 +3425,32 @@ namespace cs2.cpp {
 
             headerWriter.WriteLine($"    static const {typeName} {variable.Name};");
             WriteStaticFieldDefinition(conversionClass, variable, sourceWriter);
+        }
+
+        /// <summary>Emits one source-owned deferred string with a guarded reference accessor; its source finalizer also runs when a native scene module unloads.</summary>
+        /// <param name="conversionClass">Type owning the managed constant.</param>
+        /// <param name="variable">Managed constant whose initializer is lowered with its original semantic model.</param>
+        /// <param name="typeName">Native managed string representation.</param>
+        /// <param name="headerWriter">Receives storage and accessor declarations.</param>
+        /// <param name="sourceWriter">Receives the single storage owner and accessor definition.</param>
+        void WriteStringConstantAccessor(ConversionClass conversionClass, ConversionVariable variable, string typeName, TextWriter headerWriter, TextWriter sourceWriter) {
+            INamedTypeSymbol owner = conversionClass.TypeSymbol as INamedTypeSymbol;
+            string getter = CPPStringConstantUtils.GetAccessorName(owner, variable.Name);
+            string storage = CPPStringConstantUtils.GetStorageName(owner, variable.Name);
+            headerWriter.WriteLine($"    static const {typeName}& {getter}();");
+            headerWriter.WriteLine($"    static HeCppDeferredStaticStorage<{typeName}> {storage};");
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"HeCppDeferredStaticStorage<{typeName}> {GetQualifiedClassName(conversionClass)}::{storage};");
+            sourceWriter.WriteLine();
+            WriteTemplateDeclaration(conversionClass, sourceWriter);
+            sourceWriter.WriteLine($"const {typeName}& {GetQualifiedClassName(conversionClass)}::{getter}() {{");
+            if (!TryLowerInlineFieldInitializer(conversionClass, variable, out string initializer)) {
+                throw new InvalidOperationException($"Cannot lower string constant {conversionClass.Name}.{variable.Name}.");
+            }
+            sourceWriter.WriteLine($"    static const {typeName}& value = {storage}.Initialize({initializer});");
+            sourceWriter.WriteLine("    return value;");
+            sourceWriter.WriteLine("}");
+            sourceWriter.WriteLine();
         }
 
         /// <summary>

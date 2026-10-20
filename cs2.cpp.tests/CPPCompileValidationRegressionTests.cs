@@ -5225,7 +5225,7 @@ namespace cs2.cpp.tests {
             Assert.Contains("const HeCppString text = ([&]() -> HeCppString", sourceOutput);
             Assert.Contains(" = message;", sourceOutput);
             Assert.Contains("if (!String::IsNull(", sourceOutput);
-            Assert.Contains(" = String::Empty;", sourceOutput);
+            Assert.Contains(" = String::get_Empty();", sourceOutput);
             Assert.DoesNotContain("object*", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("??", sourceOutput, StringComparison.Ordinal);
         }
@@ -6301,7 +6301,7 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
             Assert.Contains("runtime/native_string.hpp", headerOutput);
-            Assert.Contains("String::Empty", sourceOutput);
+            Assert.Contains("String::get_Empty()", sourceOutput);
             Assert.Contains("String::IsNullOrWhiteSpace(value)", sourceOutput);
         }
 

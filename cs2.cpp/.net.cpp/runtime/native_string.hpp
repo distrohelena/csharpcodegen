@@ -7,6 +7,7 @@
 #include "native_algorithm.hpp"
 #include "native_exceptions.hpp"
 #include "native_runtime.hpp"
+#include "native_deferred_static.hpp"
 #include "array.hpp"
 
 #if HE_CPP_USE_RTTI
@@ -117,8 +118,13 @@ class String {
     }
 
 public:
-    /// <summary>Provides a present empty managed string, distinct from the default null value.</summary>
-    inline static const HeCppString Empty = HeCppString("");
+    /// <summary>Keeps the empty string's destruction attached to the runtime/module finalizer rather than an atexit callback.</summary>
+    inline static HeCppDeferredStaticStorage<HeCppString> EmptyStorage;
+    /// <summary>Provides one present empty managed string on first access, distinct from the default null value.</summary>
+    static const HeCppString& get_Empty() {
+        static const HeCppString& value = EmptyStorage.Initialize("");
+        return value;
+    }
 
     /// <summary>Determines whether a managed string is null without conflating it with an empty value.</summary>
     static bool IsNull(const HeCppString& value) {
@@ -652,7 +658,7 @@ public:
     }
 
     static HeCppString ToJoinString(const HeCppString& value) {
-        return value.is_null() ? Empty : value;
+        return value.is_null() ? get_Empty() : value;
     }
 
     static HeCppString ToJoinString(const char* value) {
@@ -661,7 +667,7 @@ public:
 
     /// <summary>Formats a null reference as a present empty string for joining and concatenation.</summary>
     static HeCppString ToJoinString(std::nullptr_t) {
-        return Empty;
+        return get_Empty();
     }
 
     static HeCppString ToJoinString(char value) {
