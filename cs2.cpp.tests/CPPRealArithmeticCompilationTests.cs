@@ -1,4 +1,4 @@
-﻿using cs2.cpp.tests.TestHelpers;
+using cs2.cpp.tests.TestHelpers;
 
 namespace cs2.cpp.tests;
 

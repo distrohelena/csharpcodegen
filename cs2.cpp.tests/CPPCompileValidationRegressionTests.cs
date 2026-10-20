@@ -8303,8 +8303,8 @@ namespace cs2.cpp.tests {
 
             ConversionOutput output = RunConversion(source);
 
-            Assert.Contains("current = current * this->Parent;", output.GeneratedText);
-            Assert.Contains("current = current + this->Parent;", output.GeneratedText);
+            Assert.Contains("current = current * (this->Parent);", output.GeneratedText);
+            Assert.Contains("current = current + (this->Parent);", output.GeneratedText);
             Assert.DoesNotContain("current *= this->Parent;", output.GeneratedText, StringComparison.Ordinal);
             Assert.DoesNotContain("current += this->Parent;", output.GeneratedText, StringComparison.Ordinal);
         }
