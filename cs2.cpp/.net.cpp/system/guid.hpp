@@ -12,32 +12,27 @@
 #define HE_CPP_RUNTIME_HAS_HOSTED_SERVICES 1
 #endif
 
-#if !HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
-#error "This runtime service needs hosted threading or OS facilities and is unavailable under the freestanding runtime."
-#endif
-
 #include "../runtime/native_runtime.hpp"
 #include "../runtime/native_exceptions.hpp"
 
-#if !HE_CPP_USE_STD_STRING
-#error "system/guid.hpp requires HE_CPP_USE_STD_STRING=1; Guid formatting has not been adapted to custom string storage."
-#endif
-
-
+#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
 #include <atomic>
+#endif
 #include <cstdint>
-#include <string>
+#if HE_CPP_USE_STD_STRING
 #include <string_view>
-#include "../runtime/native_runtime.hpp"
+#endif
 
 
 /// <summary>
 /// Provides a lightweight Guid abstraction for transpiled managed code.
 /// </summary>
 class Guid {
-    std::string value;
+    /// <summary>Uses the selected managed string storage without requiring hosted string facilities.</summary>
+    HeCppString value;
 
-    static std::string FormatCounterGuid(std::uint64_t counter) {
+    /// <summary>Formats the existing process-local token counter without a hosted formatter.</summary>
+    static HeCppString FormatCounterGuid(std::uint64_t counter) {
         constexpr char HexDigits[] = "0123456789abcdef";
         char buffer[33];
         for (int32_t index = 0; index < 32; index++) {
@@ -52,7 +47,7 @@ class Guid {
             writeIndex--;
         }
 
-        return std::string(buffer, 32);
+        return HeCppString(buffer, 32);
     }
 
 public:
@@ -65,13 +60,15 @@ public:
     /// Initializes a guid from an existing text representation.
     /// </summary>
     /// <param name="text">Source text used for the guid value.</param>
-    explicit Guid(std::string_view text) : value(text) {}
+#if HE_CPP_USE_STD_STRING
+    explicit Guid(std::string_view text) : value(text.data(), text.size()) {}
+#endif
 
     /// <summary>Accepts native hosted storage without ambiguity between managed and view conversions.</summary>
-    explicit Guid(const std::string& text) : value(text) {}
+    explicit Guid(const HeCppRawString& text) : value(text) {}
 
     /// <summary>Copies managed guid text into native storage without erasing its null validation.</summary>
-    explicit Guid(const HeCppString& text) : value(text.raw()) {
+    explicit Guid(const HeCppString& text) : value(text) {
         if (text.is_null()) {
             he_cpp_raise(ArgumentNullException("text"));
         }
@@ -85,8 +82,15 @@ public:
     /// </summary>
     /// <returns>A unique Guid value.</returns>
     static Guid NewGuid() {
+#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
         static std::atomic<std::uint64_t> nextValue{1};
         std::uint64_t value = nextValue.fetch_add(1, std::memory_order_relaxed);
+#else
+        // Freestanding runtime services have no threading support. Keep the
+        // same process-local token sequence without hosted atomic facilities.
+        static std::uint64_t nextValue = 1;
+        std::uint64_t value = nextValue++;
+#endif
         return Guid(HeCppString(FormatCounterGuid(value)));
     }
 

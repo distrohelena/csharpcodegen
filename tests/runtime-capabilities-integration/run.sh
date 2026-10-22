@@ -65,6 +65,26 @@ test "$result" -eq 73
     "$fixture/services.cpp" -o "$output/hosted-services"
 "$output/hosted-services"
 
+# Guid preserves its process-local token sequence with every string provider;
+# the freestanding runtime is single-threaded and must not require atomics.
+for guid_mode in hosted custom freestanding; do
+    guid_config=custom
+    guid_flags="-fno-exceptions -fno-rtti -DHE_CPP_USE_STD_CHRONO=0 -DEA_COMPILER_HAS_INTTYPES -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0"
+    if [ "$guid_mode" = hosted ]; then
+        guid_config=hosted
+        guid_flags="-DEA_COMPILER_HAS_INTTYPES"
+    elif [ "$guid_mode" = freestanding ]; then
+        guid_flags="$guid_flags -DHE_CPP_RUNTIME_HAS_HOSTED_SERVICES=0"
+    fi
+    "$cxx" -std=c++20 $guid_flags -I"$fixture/$guid_config" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        "$fixture/guid_smoke.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" -o "$output/guid-$guid_mode"
+    "$output/guid-$guid_mode"
+    result=0
+    "$output/guid-$guid_mode" null || result=$?
+    test "$result" -eq 73
+done
+
 "$cxx" -std=c++20 -DHE_CPP_TEST_HOST \
     -I"$fixture/hosted" -I"$runtime" \
     "$fixture/streams.cpp" "$fixture/streams-main.cpp" \
