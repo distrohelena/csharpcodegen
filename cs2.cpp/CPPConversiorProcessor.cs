@@ -2980,7 +2980,7 @@ namespace cs2.cpp {
         /// Determines whether one method call should use the emitted generated-member name rather than the original Roslyn symbol name.
         /// </summary>
         /// <param name="methodSymbol">Method symbol to inspect.</param>
-        /// <returns><c>true</c> when the method resolves to generated output owned by the current conversion graph; otherwise <c>false</c>.</returns>
+        /// <returns><c>true</c> for generated C# members, including externally compiled ref/out members; native runtime mappings retain their original names.</returns>
         bool ShouldUseEmittedMethodNameFromSymbol(IMethodSymbol methodSymbol) {
             if (methodSymbol == null) {
                 return false;
@@ -2989,10 +2989,15 @@ namespace cs2.cpp {
             if (HasSourceDeclaration(methodSymbol)) {
                 return true;
             }
+            if (HasNativeRuntimeMethodContract(methodSymbol)) {
+                return false;
+            }
 
             if (!TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) ||
-                generatedClass == null ||
-                generatedClass.IsNative) {
+                generatedClass == null) {
+                return ShouldPreserveModifierSuffixWithoutGeneratedClass(methodSymbol);
+            }
+            if (generatedClass.IsNative) {
                 return false;
             }
 
@@ -3000,11 +3005,7 @@ namespace cs2.cpp {
         }
 
         string ResolveConvertedFunctionName(IMethodSymbol methodSymbol, ConversionFunction generatedFunction = null) {
-            if (methodSymbol != null &&
-                TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) &&
-                generatedClass != null &&
-                generatedClass.IsNative &&
-                !HasSourceDeclaration(methodSymbol)) {
+            if (HasNativeRuntimeMethodContract(methodSymbol)) {
                 return methodSymbol.Name;
             }
 
@@ -3035,12 +3036,9 @@ namespace cs2.cpp {
         /// Determines whether one method should retain emitted ref/out suffixes even when the containing generated type is not part of the current conversion graph.
         /// </summary>
         /// <param name="methodSymbol">Method symbol to inspect.</param>
-        /// <returns><c>true</c> when the method is a static value-type member whose signature depends on emitted modifier suffixes; otherwise <c>false</c>.</returns>
-        static bool ShouldPreserveModifierSuffixWithoutGeneratedClass(IMethodSymbol methodSymbol) {
-            if (methodSymbol == null ||
-                !methodSymbol.IsStatic ||
-                methodSymbol.ContainingType == null ||
-                !methodSymbol.ContainingType.IsValueType) {
+        /// <returns><c>true</c> when the external C# signature requires the same ref/out ABI suffix as its independently generated declaration.</returns>
+        bool ShouldPreserveModifierSuffixWithoutGeneratedClass(IMethodSymbol methodSymbol) {
+            if (methodSymbol == null || methodSymbol.ContainingType == null || HasNativeRuntimeMethodContract(methodSymbol)) {
                 return false;
             }
 
@@ -3048,6 +3046,20 @@ namespace cs2.cpp {
                 parameter.RefKind == RefKind.Ref ||
                 parameter.RefKind == RefKind.Out ||
                 parameter.RefKind == RefKind.In);
+        }
+
+        /// <summary>Preserves handwritten runtime method names even when optional metadata has not registered a native conversion class.</summary>
+        /// <param name="methodSymbol">Bound method whose declaring type supplies its native or generated ABI.</param>
+        /// <returns>True for metadata-backed runtime shapes or explicitly registered native classes; source declarations retain generated names.</returns>
+        bool HasNativeRuntimeMethodContract(IMethodSymbol methodSymbol) {
+            if (methodSymbol?.ContainingType == null || HasSourceDeclaration(methodSymbol)) {
+                return false;
+            }
+            if (CPPVariableType.UsesNativeRuntimeMemberNames(VariableUtil.GetVarType(methodSymbol.ContainingType))) {
+                return true;
+            }
+            return TryResolveGeneratedContainingClass(methodSymbol, out ConversionClass generatedClass) &&
+                generatedClass != null && generatedClass.IsNative;
         }
 
         bool TryResolveGeneratedFunctionByModifierShape(IMethodSymbol methodSymbol, out ConversionFunction function) {

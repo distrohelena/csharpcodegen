@@ -462,6 +462,17 @@ namespace cs2.cpp {
             return !string.IsNullOrWhiteSpace(includePath);
         }
 
+        /// <summary>Identifies handwritten runtime shapes independently of optional runtime metadata loading.</summary>
+        /// <param name="varType">Managed type reference already classified by the shared variable-type resolver.</param>
+        /// <returns>True when member names follow the shared runtime contract instead of generated C# ref/out mangling.</returns>
+        internal static bool UsesNativeRuntimeMemberNames(VariableType varType) {
+            return varType != null &&
+                (varType.Type == VariableDataType.Array || varType.Type == VariableDataType.List ||
+                 varType.Type == VariableDataType.Dictionary || varType.Type == VariableDataType.String ||
+                 varType.Type == VariableDataType.Tuple || varType.Type == VariableDataType.Callback ||
+                 !string.IsNullOrEmpty(ResolveRuntimeCppTypeName(varType)));
+        }
+
         /// <summary>
         /// Resolves emitted names for shared runtime generic surfaces that are not generated classes, preserving the C++ runtime contract when those types appear in nested generic positions.
         /// </summary>
