@@ -1,5 +1,8 @@
 #include "system/guid.hpp"
 
+// Keep the host test entrypoint linkable when checking -ffreestanding code generation.
+extern "C" int main(int argc, char** argv);
+
 /// <summary>Checks generated asset IDs, copies and null handling with hosted or custom string storage.</summary>
 int main(int argc, char**) {
     if (argc > 1) {
@@ -30,9 +33,11 @@ int main(int argc, char**) {
     return 0;
 }
 
+#if defined(HE_CPP_TEST_HOST)
 #include <cstdio>
 #include <cstdlib>
 namespace he_cpp_custom {
 /// <summary>Turns the expected fatal null-argument path into a distinct test process exit.</summary>
 [[noreturn]] void Fail(const char* message) { std::fputs(message, stderr); std::exit(73); }
 }
+#endif

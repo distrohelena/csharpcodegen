@@ -15,7 +15,7 @@
 #include "../runtime/native_runtime.hpp"
 #include "../runtime/native_exceptions.hpp"
 
-#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
+#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES && (!defined(__STDC_HOSTED__) || __STDC_HOSTED__)
 #include <atomic>
 #endif
 #include <cstdint>
@@ -82,11 +82,11 @@ public:
     /// </summary>
     /// <returns>A unique Guid value.</returns>
     static Guid NewGuid() {
-#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES
+#if HE_CPP_RUNTIME_HAS_HOSTED_SERVICES && (!defined(__STDC_HOSTED__) || __STDC_HOSTED__)
         static std::atomic<std::uint64_t> nextValue{1};
         std::uint64_t value = nextValue.fetch_add(1, std::memory_order_relaxed);
 #else
-        // Freestanding runtime services have no threading support. Keep the
+        // A freestanding runtime or compiler has no hosted threading contract. Keep the
         // same process-local token sequence without hosted atomic facilities.
         static std::uint64_t nextValue = 1;
         std::uint64_t value = nextValue++;

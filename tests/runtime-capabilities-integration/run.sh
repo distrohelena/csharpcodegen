@@ -76,7 +76,7 @@ for guid_mode in hosted custom freestanding; do
     elif [ "$guid_mode" = freestanding ]; then
         guid_flags="$guid_flags -DHE_CPP_RUNTIME_HAS_HOSTED_SERVICES=0"
     fi
-    "$cxx" -std=c++20 $guid_flags -I"$fixture/$guid_config" -I"$fixture" -I"$runtime" \
+    "$cxx" -std=c++20 -DHE_CPP_TEST_HOST $guid_flags -I"$fixture/$guid_config" -I"$fixture" -I"$runtime" \
         -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
         "$fixture/guid_smoke.cpp" "$dependencies/EASTL/source/allocator_eastl.cpp" -o "$output/guid-$guid_mode"
     "$output/guid-$guid_mode"
@@ -196,6 +196,11 @@ for selection in 001 010 011 100 101 110; do
 done
 
 if [ -n "${TARGET_CXX:-}" ]; then
+    "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
+        -DHE_CPP_USE_STD_CHRONO=0 -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
+        -I"$fixture/custom" -I"$fixture" -I"$runtime" \
+        -I"$dependencies/EASTL/include" -I"$dependencies/EABase/include/Common" \
+        -c "$fixture/guid_smoke.cpp" -o "$output/guid-target.o"
     "$TARGET_CXX" -std=c++20 -ffreestanding -fno-exceptions -fno-rtti \
         -DEASTL_EXCEPTIONS_ENABLED=0 -DEASTL_ASSERT_ENABLED=0 \
         -I"$fixture/custom" -I"$fixture" -I"$runtime" \
