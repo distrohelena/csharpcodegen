@@ -22,7 +22,7 @@ public:
 
     explicit NotImplementedException(const HeCppString& message)
 #if HE_CPP_USE_EXCEPTIONS && HE_CPP_USE_STD_STRING
-        : std::logic_error(message) {
+        : std::logic_error(message.c_str()) {
 #else
         : Exception(message) {
 #endif

@@ -9,7 +9,7 @@ namespace cs2.cpp.tests {
     /// </summary>
     public class CPPCompileValidationRegressionTests {
         /// <summary>
-        /// Ensures character literals preserve C# escape text so generated C++ uses valid char literals.
+        /// Ensures character literals retain their UTF-16 value through explicit sixteen-bit C++ literals.
         /// </summary>
         [Fact]
         public void WriteOutput_WithCharacterLiterals_EmitsEscapedCppCharLiterals() {
@@ -32,9 +32,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
 
             AssertNoDiagnostic(output.Report, "CharacterLiteralExpression");
-            Assert.Contains("return shift ? '\"' : '\\'';", output.GeneratedText);
-            Assert.Contains("value == '\\0'", output.GeneratedText);
-            Assert.Contains("return ' ';", output.GeneratedText);
+            Assert.Contains("return shift ? u'\\x0022' : u'\\x0027';", output.GeneratedText);
+            Assert.Contains("value == u'\\x0000'", output.GeneratedText);
+            Assert.Contains("return u'\\x0020';", output.GeneratedText);
             Assert.DoesNotContain("return shift ? \"\"\" : \"'\";", output.GeneratedText);
         }
 
@@ -2358,7 +2358,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate.cpp"));
 
-            Assert.Contains("throw new ArgumentNullException(\"value\");", sourceOutput);
+            Assert.Contains("he_cpp_raise(ArgumentNullException(\"value\"));", sourceOutput);
             Assert.DoesNotContain("nameof(value)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -2384,7 +2384,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "GuardGate_1.cpp"));
 
-            Assert.Contains("throw new ArgumentNullException(\"stream\");", sourceOutput);
+            Assert.Contains("he_cpp_raise(ArgumentNullException(\"stream\"));", sourceOutput);
             Assert.DoesNotContain("nameof(stream)", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -4535,19 +4535,19 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
 
-            Assert.Contains("const char c = he_cpp_require_string_value(text)[i];", sourceOutput);
-            Assert.Contains("if (c == ' ')", sourceOutput);
+            Assert.Contains("const char16_t c = he_cpp_string_char_at(he_cpp_require_string_value(text), i);", sourceOutput);
+            Assert.Contains("if (c == u'\\x0020')", sourceOutput);
             Assert.Contains("::Glyph* ch;", sourceOutput);
-            Assert.Contains("this->Characters->TryGetValue(static_cast<char>(c), ch)", sourceOutput);
+            Assert.Contains("this->Characters->TryGetValue(static_cast<char16_t>(c), ch)", sourceOutput);
             Assert.DoesNotContain("const HeCppString c = text[i];", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("var* ch", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
-        /// Ensures local string variables continue to use native bracket indexing instead of synthetic get_Item calls.
+        /// Ensures local string variables use managed UTF-16 indexing instead of byte indexing or synthetic get_Item calls.
         /// </summary>
         [Fact]
-        public void WriteOutput_WithLocalStringIndexer_UsesNativeBracketAccess() {
+        public void WriteOutput_WithLocalStringIndexer_UsesManagedUtf16Indexing() {
             string source = """
                 public class PathGate {
                     public bool IsRooted(string path) {
@@ -4560,8 +4560,8 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "PathGate.cpp"));
 
-            Assert.Contains("normalized[0] == '/'", sourceOutput, StringComparison.Ordinal);
-            Assert.Contains("normalized[1] == ':'", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("he_cpp_string_char_at(he_cpp_require_string_value(normalized), 0) == u'\\x002F'", sourceOutput, StringComparison.Ordinal);
+            Assert.Contains("he_cpp_string_char_at(he_cpp_require_string_value(normalized), 1) == u'\\x003A'", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("normalized.get_Item(0)", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("normalized.get_Item(1)", sourceOutput, StringComparison.Ordinal);
         }
@@ -4758,9 +4758,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "FontAsset.cpp"));
 
             Assert.Contains("::Glyph ch;", sourceOutput);
-            Assert.Contains("if (this->Characters->TryGetValue(static_cast<char>(c), ch))", sourceOutput);
+            Assert.Contains("if (this->Characters->TryGetValue(static_cast<char16_t>(c), ch))", sourceOutput);
             Assert.Contains("width += ch.AdvanceWidth;", sourceOutput);
-            Assert.DoesNotContain("([&]() {\n::Glyph ch;\nreturn this->Characters->TryGetValue(static_cast<char>(c), ch);\n})()", sourceOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain("([&]() {\n::Glyph ch;\nreturn this->Characters->TryGetValue(static_cast<char16_t>(c), ch);\n})()", sourceOutput, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -4955,12 +4955,12 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Parser.cpp"));
 
-            Assert.Contains("return Parse(source, new List<Define*>(Array<Define*>::Empty()))", sourceOutput);
+            Assert.Contains("return Parser::Parse(source, new List<Define*>(Array<Define*>::Empty()))", sourceOutput);
             Assert.Contains("return members->ToArray()", sourceOutput);
-            Assert.Contains("const int32_t size = ComputeSize(new List<Member*>(members));", sourceOutput);
-            Assert.Contains("String::IsDigit(type[characterIndex])", sourceOutput);
-            Assert.Contains("String::Substring(type, 0, numericIndex)", sourceOutput);
-            Assert.Contains("return String::Trim(String::Substring(type, 0, numericIndex));", sourceOutput);
+            Assert.Contains("const int32_t size = Parser::ComputeSize(new List<Member*>(members));", sourceOutput);
+            Assert.Contains("String::IsDigit(he_cpp_string_char_at(he_cpp_require_string_value(type), characterIndex))", sourceOutput);
+            Assert.Contains("String::Substring(he_cpp_require_string_value(type), 0, numericIndex)", sourceOutput);
+            Assert.Contains("return String::Trim(he_cpp_require_string_value(String::Substring(he_cpp_require_string_value(type), 0, numericIndex)));", sourceOutput);
             Assert.Contains("Number::TryParse(text, value)", sourceOutput);
             Assert.Contains("return Number::IsPositiveInfinity(value);", sourceOutput);
             Assert.Contains("if (String::Equals(__switchValue", sourceOutput);
@@ -5165,7 +5165,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "AssetContentProcessor_1.cpp"));
 
-            Assert.Contains("throw new ArgumentNullException(\"stream\");", sourceOutput);
+            Assert.Contains("he_cpp_raise(ArgumentNullException(\"stream\"));", sourceOutput);
             Assert.DoesNotContain("nameof(stream)", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("#include \"TAsset.hpp\"", sourceOutput, StringComparison.Ordinal);
         }
@@ -5199,8 +5199,9 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "BinaryContentProcessor_1.cpp"));
 
-            Assert.Contains("throw new ArgumentNullException(\"reader\")", sourceOutput);
-            Assert.Contains("throw new ArgumentNullException(\"stream\");", sourceOutput);
+            Assert.Contains("he_cpp_raise_value<", sourceOutput);
+            Assert.Contains("ArgumentNullException(\"reader\")", sourceOutput);
+            Assert.Contains("he_cpp_raise(ArgumentNullException(\"stream\"));", sourceOutput);
             Assert.DoesNotContain("nameof(reader)", sourceOutput, StringComparison.Ordinal);
             Assert.DoesNotContain("nameof(stream)", sourceOutput, StringComparison.Ordinal);
         }
@@ -7338,7 +7339,7 @@ namespace cs2.cpp.tests {
 
             Assert.Contains("String::Equals(extension, HeCppString(\"*\"), StringComparison::Ordinal)", sourceOutput);
             Assert.Contains("String::StartsWith(he_cpp_require_string_value(extension), HeCppString(\".\"))", sourceOutput);
-            Assert.Contains("static_cast<int32_t>(he_cpp_require_string_value(extension).size()) > 3", sourceOutput);
+            Assert.Contains("he_cpp_string_length(he_cpp_require_string_value(extension)) > 3", sourceOutput);
             Assert.Contains("String::EndsWith(he_cpp_require_string_value(extension), HeCppString(\".TXT\"), StringComparison::OrdinalIgnoreCase)", sourceOutput);
             Assert.Contains("return String::ToLowerInvariant(he_cpp_require_string_value(extension));", sourceOutput);
             Assert.DoesNotContain("extension.StartsWith", sourceOutput, StringComparison.Ordinal);
@@ -7363,7 +7364,7 @@ namespace cs2.cpp.tests {
             ConversionOutput output = RunConversion(source);
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Widget.cpp"));
 
-            Assert.Contains("String::Substring(text, 8, static_cast<int32_t>(text.size()) - 8 - 1)", sourceOutput);
+            Assert.Contains("String::Substring(he_cpp_require_string_value(text), 8, (he_cpp_string_length(he_cpp_require_string_value(text)) - 8) - 1)", sourceOutput);
             Assert.DoesNotContain("\"defined(\".size()", sourceOutput, StringComparison.Ordinal);
         }
 
@@ -10742,9 +10743,9 @@ namespace cs2.cpp.tests {
             string sourceOutput = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
             string runtimeString = File.ReadAllText(Path.Combine(output.OutputPath, "runtime", "native_string.hpp"));
 
-            string splitCall = "String::Split(he_cpp_require_string_value(value), '\\n', StringSplitOptions::None)";
+            string splitCall = "String::Split(he_cpp_require_string_value(value), u'\\x000A', StringSplitOptions::None)";
             Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sourceOutput, System.Text.RegularExpressions.Regex.Escape(splitCall)).Count);
-            Assert.Contains("Split(const HeCppString& value, char separator", runtimeString, StringComparison.Ordinal);
+            Assert.Contains("Split(const HeCppString& value, char16_t separator", runtimeString, StringComparison.Ordinal);
         }
 
         /// <summary>

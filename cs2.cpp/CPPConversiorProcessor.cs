@@ -4186,6 +4186,14 @@ namespace cs2.cpp {
             return qualifiedTypeName;
         }
 
+        /// <summary>Constructs managed strings from UTF-16 arrays or repeated characters without native byte overloads.</summary>
+        /// <param name="semantic">Semantic model used to bind the managed constructor and named arguments.</param>
+        /// <param name="context">Current emission scope used for expression temporaries and cleanup.</param>
+        /// <param name="objectCreationTypeSyntax">Managed string type named by the object creation.</param>
+        /// <param name="argumentList">Constructor arguments in their original evaluation order.</param>
+        /// <param name="lines">Receives the native UTF-16 construction expression.</param>
+        /// <param name="resultType">Receives the managed string result type when construction is supported.</param>
+        /// <returns>Whether a reviewed managed character constructor was emitted.</returns>
         bool TryProcessStringObjectCreation(
             SemanticModel semantic,
             LayerContext context,
@@ -4194,23 +4202,56 @@ namespace cs2.cpp {
             List<string> lines,
             out VariableType resultType) {
             resultType = null;
-
-            if (!IsStringRuntimeTypeReference(semantic, objectCreationTypeSyntax) ||
-                argumentList?.Arguments.Count != 1) {
+            if (!IsStringRuntimeTypeReference(semantic, objectCreationTypeSyntax) || argumentList == null) {
                 return false;
             }
 
-            ArgumentSyntax sourceArgument = argumentList.Arguments[0];
-            if (!TryGetExpressionTypeSymbol(semantic, sourceArgument.Expression, out ITypeSymbol sourceTypeSymbol) ||
-                sourceTypeSymbol is not IArrayTypeSymbol sourceArrayTypeSymbol ||
-                sourceArrayTypeSymbol.ElementType.SpecialType != SpecialType.System_Char) {
+            IMethodSymbol constructor = semantic.GetSymbolInfo(objectCreationTypeSyntax.Parent).Symbol as IMethodSymbol;
+            if (constructor == null || constructor.Parameters.Length == 0) {
+                return false;
+            }
+            bool characterArray = constructor.Parameters[0].Type is IArrayTypeSymbol arrayType &&
+                arrayType.ElementType.SpecialType == SpecialType.System_Char;
+            bool repeatedCharacter = constructor.Parameters.Length == 2 &&
+                constructor.Parameters[0].Type.SpecialType == SpecialType.System_Char &&
+                constructor.Parameters[1].Type.SpecialType == SpecialType.System_Int32;
+            if ((!characterArray || argumentList.Arguments.Count is not (1 or 3)) && !repeatedCharacter) {
                 return false;
             }
 
-            string sourceText = RenderExpressionText(semantic, context, sourceArgument.Expression);
-            lines.Add($"{GetNativeStringTypeName()}(");
-            lines.Add($"{sourceText}->Data, static_cast<size_t>({sourceText}->Length)");
-            lines.Add(")");
+            RegisterRuntimeRequirement("NativeString");
+            RegisterRuntimeRequirement("NativeExceptions");
+            string helper = repeatedCharacter ? "he_cpp_string_repeat" : "he_cpp_string_from_utf16";
+            if (argumentList.Arguments.Count == 1 && !IsScopedTemporaryArgumentExpression(argumentList.Arguments[0].Expression)) {
+                lines.Add($"{helper}({RenderExpressionText(semantic, context, argumentList.Arguments[0].Expression)})");
+            } else {
+                lines.Add($"({GetObjectConstructionLambdaCaptureList(context)}() {{\n");
+                string[] parameterNames = new string[constructor.Parameters.Length];
+                List<string> cleanup = new List<string>();
+                for (int argumentIndex = 0; argumentIndex < argumentList.Arguments.Count; argumentIndex++) {
+                    ArgumentSyntax argument = argumentList.Arguments[argumentIndex];
+                    int parameterIndex = argument.NameColon == null ? argumentIndex
+                        : constructor.Parameters.First(parameter => string.Equals(parameter.Name, argument.NameColon.Name.Identifier.Text, StringComparison.Ordinal)).Ordinal;
+                    List<string> argumentLines = new List<string>();
+                    int argumentDepth = context.DepthClass;
+                    ExpressionResult argumentResult = ProcessExpression(semantic, context, argument.Expression, argumentLines);
+                    context.PopClass(argumentDepth);
+                    if (argumentResult.BeforeLines != null) lines.AddRange(argumentResult.BeforeLines);
+                    if (argumentResult.AfterLines != null) cleanup.AddRange(argumentResult.AfterLines);
+                    string argumentName = CreateTemporaryName("__stringCtorArg");
+                    lines.Add($"auto {argumentName} = ");
+                    lines.AddRange(argumentLines);
+                    lines.Add(";\n");
+                    if (characterArray && parameterIndex == 0 && IsScopedTemporaryArgumentExpression(argument.Expression)) {
+                        AppendDeleteGuard(lines, argumentName, "__stringCtorArgDeleteGuard");
+                    }
+                    parameterNames[parameterIndex] = argumentName;
+                }
+                string valueName = CreateTemporaryName("__stringCtorValue");
+                lines.Add($"auto {valueName} = {helper}({string.Join(", ", parameterNames)});\n");
+                lines.AddRange(cleanup);
+                lines.Add($"return {valueName};\n}})()");
+            }
             resultType = VariableUtil.GetVarType("string");
             return true;
         }
@@ -5572,7 +5613,7 @@ namespace cs2.cpp {
 
             string receiverText = RenderExpressionText(semantic, context, memberAccess.Expression);
             RegisterRuntimeRequirement("NativeExceptions");
-            lines.Add($"static_cast<int32_t>(he_cpp_require_string_value({receiverText}).size())");
+            lines.Add($"he_cpp_string_length(he_cpp_require_string_value({receiverText}))");
             return true;
         }
 
@@ -8350,7 +8391,12 @@ namespace cs2.cpp {
             }
 
             if (explicitDefaultValue is string stringValue) {
-                argumentLines.Add(SymbolDisplay.FormatLiteral(stringValue, true));
+                argumentLines.Add(CPPUnicodeLiteralUtils.FormatString(stringValue, GetNativeStringTypeName()));
+                return;
+            }
+
+            if (explicitDefaultValue is char charValue) {
+                argumentLines.Add(CPPUnicodeLiteralUtils.FormatCharacter(charValue));
                 return;
             }
 
@@ -8740,6 +8786,21 @@ namespace cs2.cpp {
 
                 lines.Add(")");
                 resultType = VariableUtil.GetVarType("bool");
+                return true;
+            }
+
+            if (string.Equals(memberName, "IndexOf", StringComparison.Ordinal) ||
+                string.Equals(memberName, "LastIndexOf", StringComparison.Ordinal) ||
+                string.Equals(memberName, "Contains", StringComparison.Ordinal) ||
+                string.Equals(memberName, "ToCharArray", StringComparison.Ordinal)) {
+                lines.Add($"String::{memberName}(");
+                lines.Add(receiverText);
+                if (invocationExpression.ArgumentList.Arguments.Count > 0) {
+                    lines.Add(", ");
+                    AppendInvocationArguments(semantic, context, invocationExpression.ArgumentList.Arguments, lines);
+                }
+                lines.Add(")");
+                resultType = VariableUtil.GetVarType(memberName == "Contains" ? "bool" : memberName == "ToCharArray" ? "char[]" : "int");
                 return true;
             }
 
@@ -12474,7 +12535,7 @@ namespace cs2.cpp {
                         continue;
                     }
 
-                    AppendInterpolatedStringSegment(lines, $"{GetNativeStringTypeName()}(\"{EscapeCppStringLiteral(textValue)}\")", ref emittedAnySegment);
+                    AppendInterpolatedStringSegment(lines, CPPUnicodeLiteralUtils.FormatString(textValue, GetNativeStringTypeName()), ref emittedAnySegment);
                     continue;
                 }
 
@@ -12703,17 +12764,17 @@ namespace cs2.cpp {
         protected override void ProcessElementAccessExpression(SemanticModel semantic, LayerContext context, ElementAccessExpressionSyntax elementAccess, List<string> lines) {
             if (IsStringExpression(semantic, elementAccess.Expression)) {
                 RegisterRuntimeRequirement("NativeExceptions");
-                lines.Add("he_cpp_require_string_value(");
+                lines.Add("he_cpp_string_char_at(he_cpp_require_string_value(");
                 int receiverDepth = context.DepthClass;
                 ProcessExpression(semantic, context, elementAccess.Expression, lines);
                 context.PopClass(receiverDepth);
-                lines.Add(")[");
+                lines.Add("), ");
                 foreach (ArgumentSyntax argument in elementAccess.ArgumentList.Arguments) {
                     int argumentDepth = context.DepthClass;
                     ProcessExpression(semantic, context, argument.Expression, lines);
                     context.PopClass(argumentDepth);
                 }
-                lines.Add("]");
+                lines.Add(")");
                 return;
             }
 
@@ -13430,7 +13491,7 @@ namespace cs2.cpp {
                 RegisterRuntimeRequirement("NativeString");
                 if (conditionalAccess.WhenNotNull is MemberBindingExpressionSyntax stringMember &&
                     stringMember.Name.Identifier.Text == "Length") {
-                    lines.Add($"static_cast<int32_t>({receiverTemporaryName}.size())");
+                    lines.Add($"he_cpp_string_length({receiverTemporaryName})");
                     return new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType("int"));
                 }
                 if (conditionalAccess.WhenNotNull is InvocationExpressionSyntax stringInvocation &&
@@ -14402,7 +14463,15 @@ namespace cs2.cpp {
                 lines.Add("*");
             }
 
+            bool stringCharacters = IsStringExpression(semantic, forEachStatement.Expression);
+            if (stringCharacters) {
+                RegisterRuntimeRequirement("NativeString");
+                lines.Add("he_cpp_string_chars(");
+            }
             ProcessExpression(semantic, context, forEachStatement.Expression, lines);
+            if (stringCharacters) {
+                lines.Add(")");
+            }
             lines.Add(") {\n");
 
             if (dictionaryEntries) {
@@ -14942,7 +15011,7 @@ namespace cs2.cpp {
                         typeData.IsArray = false;
                         typeData.IsNativeType = true;
                         typeData.IsPointer = false;
-                        return new VariableType(parsedType.Type, "char");
+                        return new VariableType(parsedType.Type, "char16_t");
                 }
                 case VariableDataType.Void: {
                         typeData.IsArray = false;
@@ -18730,17 +18799,12 @@ namespace cs2.cpp {
                     break;
                 case SyntaxKind.CharacterLiteralExpression: {
                         type = "char";
-                        literalValue = literalExpression.Token.Text;
+                        literalValue = CPPUnicodeLiteralUtils.FormatCharacter((char)literalExpression.Token.Value);
                         break;
                 }
                 case SyntaxKind.StringLiteralExpression: {
                         type = "string";
-                        string value = literalExpression.Token.ValueText;
-                        literalValue = Regex.Replace(value, @"(?<!\\)\\(?!\\)", @"\\");
-                        literalValue = Regex.Replace(literalValue, @"\r?\n", match => {
-                            return match.Value == "\r\n" ? "\\r\\n" : "\\n";
-                    });
-                        literalValue = $"{GetNativeStringTypeName()}(\"{literalValue}\")";
+                        literalValue = CPPUnicodeLiteralUtils.FormatString(literalExpression.Token.ValueText, GetNativeStringTypeName());
                         break;
                 }
                 case SyntaxKind.NullLiteralExpression:

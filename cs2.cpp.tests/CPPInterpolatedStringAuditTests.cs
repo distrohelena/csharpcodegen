@@ -23,7 +23,7 @@ namespace cs2.cpp.tests {
 
             AssertNoDiagnostic(report, "InterpolatedStringExpression");
             Assert.DoesNotContain("`", output);
-            Assert.Contains("std::string(\"Value: \") + String::ToJoinString(value)", output);
+            Assert.Contains("HeCppString(\"Value: \") + String::Concat(String::ToJoinString(value))", output);
             Assert.DoesNotContain("std::string(\"Value: \") + std::to_string(value)", output, StringComparison.Ordinal);
         }
 

@@ -27,9 +27,15 @@ private:
     size_t position;
     size_t length;
     bool ownsMemoryBuffer;
+    /// <summary>Records whether the descriptor mode or memory provider permits reads.</summary>
+    bool readable;
+    /// <summary>Records whether explicit access, legacy descriptor mode or memory provider permits writes.</summary>
     bool writable;
 
     void UpdateLength();  // Helper to update file size
+
+    /// <summary>Shares initialization while preserving legacy opening policy and honoring explicitly supplied access.</summary>
+    FileStream(const char* path, FileMode mode, FileAccess access, FileShare share, bool legacyMode);
 
 public:
     FileStream(const uint8_t* data, size_t length);

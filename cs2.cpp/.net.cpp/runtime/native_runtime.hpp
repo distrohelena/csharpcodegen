@@ -189,12 +189,14 @@ struct HeCppHash : std::hash<TValue> {
 /// <summary>Hashes managed string contents and null state consistently across standard and custom byte-storage providers.</summary>
 template <>
 struct HeCppHash<HeCppString> {
-    /// <summary>Computes an FNV byte hash with a distinct leading null-state byte, keeping equal managed strings in the same hash bucket.</summary>
+    /// <summary>Computes an FNV UTF16-unit hash with a distinct leading null-state byte, keeping equal managed strings in the same hash bucket.</summary>
     std::size_t operator()(const HeCppString& value) const {
         std::size_t hash = static_cast<std::size_t>(2166136261u);
         hash = (hash ^ static_cast<std::size_t>(value.is_null() ? 0 : 1)) * static_cast<std::size_t>(16777619u);
-        for (unsigned char character : value) {
-            hash = (hash ^ character) * static_cast<std::size_t>(16777619u);
+        size_t offset = 0; char16_t pending = 0;
+        while (offset < value.size() || pending != 0) {
+            const char16_t unit = HeCppUnicode::Next(value.data(), value.size(), offset, pending);
+            hash = (hash ^ static_cast<size_t>(unit)) * static_cast<std::size_t>(16777619u);
         }
         return hash;
     }

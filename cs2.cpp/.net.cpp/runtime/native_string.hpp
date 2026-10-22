@@ -18,6 +18,56 @@
 #include <stdexcept>
 #endif
 
+/// <summary>Gets C# string.Length in UTF16 units while leaving the native byte facade unchanged.</summary>
+inline int32_t he_cpp_string_length(const HeCppString& value) {
+    he_cpp_require_string_value(value); int32_t length = 0; size_t offset = 0; char16_t pending = 0;
+    while (offset < value.size() || pending != 0) { HeCppUnicode::Next(value.data(), value.size(), offset, pending); ++length; }
+    return length;
+}
+
+/// <summary>Reads one C# UTF16 unit, including either half of a surrogate pair, without narrowing it into a byte.</summary>
+inline char16_t he_cpp_string_char_at(const HeCppString& value, int32_t index) {
+    he_cpp_require_string_value(value);
+    if (index < 0) { return he_cpp_raise_value<char16_t>(ArgumentOutOfRangeException("index")); }
+    size_t offset = 0; char16_t pending = 0;
+    while (offset < value.size() || pending != 0) { char16_t unit = HeCppUnicode::Next(value.data(), value.size(), offset, pending); if (index-- == 0) { return unit; } }
+    return he_cpp_raise_value<char16_t>(ArgumentOutOfRangeException("index"));
+}
+
+/// <summary>Owns decoded UTF16 units for safe foreach traversal even when the source is a temporary managed string.</summary>
+inline HeCppVector<char16_t> he_cpp_string_chars(const HeCppString& value) {
+    he_cpp_require_string_value(value); HeCppVector<char16_t> result; result.reserve(value.size()); size_t offset = 0; char16_t pending = 0;
+    while (offset < value.size() || pending != 0) { result.push_back(HeCppUnicode::Next(value.data(), value.size(), offset, pending)); }
+    return result;
+}
+
+/// <summary>Creates managed text from exact UTF16 units, preserving embedded NUL and isolated surrogates internally.</summary>
+inline HeCppString he_cpp_string_from_utf16(const char16_t* units, size_t length) {
+    if (units == nullptr) { return he_cpp_raise_value<HeCppString>(ArgumentNullException("units")); }
+    return HeCppString(units, length);
+}
+
+/// <summary>Creates managed text from a complete managed character array without assuming NUL termination.</summary>
+inline HeCppString he_cpp_string_from_utf16(const Array<char16_t>* units) {
+    if (units == nullptr) { return HeCppString(""); }
+    return units->Length == 0 ? HeCppString("") : HeCppString(units->Data, static_cast<size_t>(units->Length));
+}
+
+/// <summary>Implements the managed character-repeat constructor with validation before conversion to a native allocation size.</summary>
+inline HeCppString he_cpp_string_repeat(char16_t unit, int32_t count) {
+    if (count < 0) { return he_cpp_raise_value<HeCppString>(ArgumentOutOfRangeException("count")); }
+    return HeCppString(static_cast<size_t>(count), unit);
+}
+
+/// <summary>Implements the managed array-slice constructor, whose null behavior differs from the complete-array constructor.</summary>
+inline HeCppString he_cpp_string_from_utf16(const Array<char16_t>* units, int32_t startIndex, int32_t length) {
+    if (units == nullptr) { return he_cpp_raise_value<HeCppString>(ArgumentNullException("value")); }
+    if (startIndex < 0) { return he_cpp_raise_value<HeCppString>(ArgumentOutOfRangeException("startIndex")); }
+    if (length < 0) { return he_cpp_raise_value<HeCppString>(ArgumentOutOfRangeException("length")); }
+    if (startIndex > units->Length || length > units->Length - startIndex) { return he_cpp_raise_value<HeCppString>(ArgumentOutOfRangeException("startIndex")); }
+    return length == 0 ? HeCppString("") : HeCppString(units->Data + startIndex, static_cast<size_t>(length));
+}
+
 /// <summary>
 /// Defines the comparison modes required by transpiled managed string helpers.
 /// </summary>
@@ -190,14 +240,9 @@ public:
     /// <returns>True when the string starts with the prefix; otherwise false.</returns>
     static bool StartsWith(const HeCppString& value, const HeCppString& prefix, StringComparison comparison = StringComparison::Ordinal) {
         he_cpp_require_string_value(value);
-        if (prefix.is_null()) {
-            he_cpp_raise(ArgumentNullException("prefix"));
-        }
-        if (prefix.size() > value.size()) {
-            return false;
-        }
-
-        return Equals(value.substr(0, prefix.size()), prefix, comparison);
+        if (prefix.is_null()) { he_cpp_raise(ArgumentNullException("prefix")); }
+        const int32_t length = he_cpp_string_length(prefix);
+        return length <= he_cpp_string_length(value) && Equals(Substring(value, 0, length), prefix, comparison);
     }
 
     /// <summary>
@@ -206,9 +251,9 @@ public:
     /// <param name="value">String to inspect.</param>
     /// <param name="prefix">Prefix character to compare.</param>
     /// <returns>True when the string starts with the character; otherwise false.</returns>
-    static bool StartsWith(const HeCppString& value, char prefix) {
+    static bool StartsWith(const HeCppString& value, char16_t prefix) {
         he_cpp_require_string_value(value);
-        return !value.empty() && value.front() == prefix;
+        return !value.empty() && he_cpp_string_char_at(value, 0) == prefix;
     }
 
     /// <summary>
@@ -220,14 +265,9 @@ public:
     /// <returns>True when the string ends with the suffix; otherwise false.</returns>
     static bool EndsWith(const HeCppString& value, const HeCppString& suffix, StringComparison comparison = StringComparison::Ordinal) {
         he_cpp_require_string_value(value);
-        if (suffix.is_null()) {
-            he_cpp_raise(ArgumentNullException("suffix"));
-        }
-        if (suffix.size() > value.size()) {
-            return false;
-        }
-
-        return Equals(value.substr(value.size() - suffix.size()), suffix, comparison);
+        if (suffix.is_null()) { he_cpp_raise(ArgumentNullException("suffix")); }
+        const int32_t length = he_cpp_string_length(suffix), total = he_cpp_string_length(value);
+        return length <= total && Equals(Substring(value, total - length, length), suffix, comparison);
     }
 
     /// <summary>
@@ -236,9 +276,9 @@ public:
     /// <param name="value">String to inspect.</param>
     /// <param name="suffix">Suffix character to compare.</param>
     /// <returns>True when the string ends with the character; otherwise false.</returns>
-    static bool EndsWith(const HeCppString& value, char suffix) {
+    static bool EndsWith(const HeCppString& value, char16_t suffix) {
         he_cpp_require_string_value(value);
-        return !value.empty() && value.back() == suffix;
+        return !value.empty() && he_cpp_string_char_at(value, he_cpp_string_length(value) - 1) == suffix;
     }
 
     /// <summary>
@@ -288,12 +328,9 @@ public:
     /// <param name="startIndex">Zero-based start index.</param>
     /// <returns>Substring copy.</returns>
     static HeCppString Substring(const HeCppString& value, int32_t startIndex) {
-        he_cpp_require_string_value(value);
-        if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("startIndex");
-        }
-
-        return value.substr(static_cast<size_t>(startIndex));
+        const int32_t length = he_cpp_string_length(value);
+        if (startIndex < 0 || startIndex > length) { return RaiseOutOfRange<HeCppString>("startIndex"); }
+        return Substring(value, startIndex, length - startIndex);
     }
 
     /// <summary>
@@ -304,17 +341,11 @@ public:
     /// <param name="length">Requested substring length.</param>
     /// <returns>Substring copy.</returns>
     static HeCppString Substring(const HeCppString& value, int32_t startIndex, int32_t length) {
-        he_cpp_require_string_value(value);
-        if (startIndex < 0 || length < 0 || static_cast<size_t>(startIndex) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("startIndex");
-        }
-
-        size_t safeStartIndex = static_cast<size_t>(startIndex);
-        if (safeStartIndex + static_cast<size_t>(length) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("length");
-        }
-
-        return value.substr(safeStartIndex, static_cast<size_t>(length));
+        const auto units = he_cpp_string_chars(value);
+        if (startIndex < 0 || length < 0 || static_cast<size_t>(startIndex) > units.size()) { return RaiseOutOfRange<HeCppString>("startIndex"); }
+        if (static_cast<size_t>(length) > units.size() - static_cast<size_t>(startIndex)) { return RaiseOutOfRange<HeCppString>("length"); }
+        if (length == 0) { return HeCppString(""); }
+        return he_cpp_string_from_utf16(units.data() + startIndex, static_cast<size_t>(length));
     }
 
     /// <summary>
@@ -322,8 +353,8 @@ public:
     /// </summary>
     /// <param name="value">Character to inspect.</param>
     /// <returns>True when the character is a digit; otherwise false.</returns>
-    static bool IsDigit(char value) {
-        return IsAsciiDigit(static_cast<unsigned char>(value));
+    static bool IsDigit(char16_t value) {
+        return value <= 0x7f && IsAsciiDigit(static_cast<unsigned char>(value));
     }
 
     /// <summary>
@@ -340,79 +371,48 @@ public:
         return lowered;
     }
 
-    static char ToUpper(char value) {
-        return ToUpperAscii(static_cast<unsigned char>(value));
+    static char16_t ToUpper(char16_t value) {
+        return value <= 0x7f ? static_cast<char16_t>(ToUpperAscii(static_cast<unsigned char>(value))) : value;
     }
 
     static HeCppString Remove(const HeCppString& value, int32_t startIndex) {
-        he_cpp_require_string_value(value);
-        if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("startIndex");
-        }
-
-        return value.substr(0, static_cast<size_t>(startIndex));
+        return Substring(value, 0, startIndex);
     }
 
     static HeCppString Remove(const HeCppString& value, int32_t startIndex, int32_t count) {
-        he_cpp_require_string_value(value);
-        if (startIndex < 0 || count < 0 || static_cast<size_t>(startIndex) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("startIndex");
-        }
-
-        size_t safeStartIndex = static_cast<size_t>(startIndex);
-        size_t safeCount = static_cast<size_t>(count);
-        if (safeStartIndex + safeCount > value.size()) {
-            return RaiseOutOfRange<HeCppString>("count");
-        }
-
-        return value.substr(0, safeStartIndex) + value.substr(safeStartIndex + safeCount);
+        const int32_t length = he_cpp_string_length(value);
+        if (startIndex < 0 || count < 0 || startIndex > length || count > length - startIndex) { return RaiseOutOfRange<HeCppString>("count"); }
+        return Substring(value, 0, startIndex) + Substring(value, startIndex + count);
     }
 
     static HeCppString Insert(const HeCppString& value, int32_t startIndex, const HeCppString& insertion) {
         he_cpp_require_string_value(value);
-        if (insertion.is_null()) {
-            he_cpp_raise(ArgumentNullException("insertion"));
-        }
-        if (startIndex < 0 || static_cast<size_t>(startIndex) > value.size()) {
-            return RaiseOutOfRange<HeCppString>("startIndex");
-        }
-
-        size_t safeStartIndex = static_cast<size_t>(startIndex);
-        return value.substr(0, safeStartIndex) + insertion + value.substr(safeStartIndex);
+        if (insertion.is_null()) { he_cpp_raise(ArgumentNullException("insertion")); }
+        return Substring(value, 0, startIndex) + insertion + Substring(value, startIndex);
     }
 
-    static HeCppString Replace(const HeCppString& value, char oldValue, char newValue) {
-        he_cpp_require_string_value(value);
-        HeCppString updatedValue = value;
-        he_cpp_alg::Replace(updatedValue.begin(), updatedValue.end(), oldValue, newValue);
-        return updatedValue;
+    static HeCppString Replace(const HeCppString& value, char16_t oldValue, char16_t newValue) {
+        auto units = he_cpp_string_chars(value);
+        for (size_t index = 0; index < units.size(); ++index) { if (units[index] == oldValue) { units[index] = newValue; } }
+        return units.empty() ? HeCppString("") : he_cpp_string_from_utf16(units.data(), units.size());
     }
 
     /// <summary>
     /// Replaces every non-overlapping occurrence, without processing text inserted by a previous match; an empty search value is invalid.
     /// </summary>
     static HeCppString Replace(const HeCppString& value, const HeCppString& oldValue, const HeCppString& newValue) {
-        he_cpp_require_string_value(value);
-        if (oldValue.is_null()) {
-            he_cpp_raise(ArgumentNullException("oldValue"));
+        const auto units = he_cpp_string_chars(value);
+        if (oldValue.is_null()) { he_cpp_raise(ArgumentNullException("oldValue")); }
+        if (oldValue.empty()) { return he_cpp_raise_value<HeCppString>(ArgumentException("oldValue must not be empty")); }
+        const auto search = he_cpp_string_chars(oldValue);
+        HeCppString result = ""; size_t index = 0;
+        while (index < units.size()) {
+            bool matches = search.size() <= units.size() - index;
+            for (size_t match = 0; matches && match < search.size(); ++match) { matches = units[index + match] == search[match]; }
+            if (matches) { result += newValue; index += search.size(); }
+            else { result += units[index++]; }
         }
-        if (oldValue.empty()) {
-            return he_cpp_raise_value<HeCppString>(ArgumentException("oldValue must not be empty"));
-        }
-
-        HeCppString updatedValue = value;
-        size_t searchIndex = 0;
-        while (searchIndex < updatedValue.size()) {
-            size_t matchIndex = updatedValue.find(oldValue, searchIndex);
-            if (matchIndex == HeCppString::npos) {
-                break;
-            }
-
-            updatedValue.replace(matchIndex, oldValue.size(), newValue);
-            searchIndex = matchIndex + newValue.size();
-        }
-
-        return updatedValue;
+        return result;
     }
 
     /// <summary>
@@ -497,16 +497,16 @@ public:
     /// <summary>
     /// Splits a string on one character while preserving empty segments by default.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, char separator, StringSplitOptions options = StringSplitOptions::None) {
+    static Array<HeCppString>* Split(const HeCppString& value, char16_t separator, StringSplitOptions options = StringSplitOptions::None) {
         he_cpp_require_string_value(value);
-        Array<char> separators({ separator });
+        Array<char16_t> separators({ separator });
         return Split(value, &separators, INT32_MAX, options);
     }
 
     /// <summary>
     /// Splits a string on the supplied character set while preserving empty segments by default.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, StringSplitOptions options = StringSplitOptions::None) {
+    static Array<HeCppString>* Split(const HeCppString& value, const Array<char16_t>* separators, StringSplitOptions options = StringSplitOptions::None) {
         he_cpp_require_string_value(value);
         return Split(value, separators, INT32_MAX, options);
     }
@@ -514,25 +514,25 @@ public:
     /// <summary>
     /// Splits a string on one character with the requested maximum number of returned segments.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count) {
+    static Array<HeCppString>* Split(const HeCppString& value, char16_t separator, int32_t count) {
         he_cpp_require_string_value(value);
-        Array<char> separators({ separator });
+        Array<char16_t> separators({ separator });
         return Split(value, &separators, count, StringSplitOptions::None);
     }
 
     /// <summary>
     /// Splits a string on one character with a segment count and empty-entry policy.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, char separator, int32_t count, StringSplitOptions options) {
+    static Array<HeCppString>* Split(const HeCppString& value, char16_t separator, int32_t count, StringSplitOptions options) {
         he_cpp_require_string_value(value);
-        Array<char> separators({ separator });
+        Array<char16_t> separators({ separator });
         return Split(value, &separators, count, options);
     }
 
     /// <summary>
     /// Splits a string on the supplied character set with the requested maximum segment count.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count) {
+    static Array<HeCppString>* Split(const HeCppString& value, const Array<char16_t>* separators, int32_t count) {
         he_cpp_require_string_value(value);
         return Split(value, separators, count, StringSplitOptions::None);
     }
@@ -540,7 +540,7 @@ public:
     /// <summary>
     /// Implements the shared count and empty-entry rules for all character-based string splits.
     /// </summary>
-    static Array<HeCppString>* Split(const HeCppString& value, const Array<char>* separators, int32_t count, StringSplitOptions options) {
+    static Array<HeCppString>* Split(const HeCppString& value, const Array<char16_t>* separators, int32_t count, StringSplitOptions options) {
         he_cpp_require_string_value(value);
         if (count == 0) {
             return new Array<HeCppString>(0);
@@ -552,16 +552,16 @@ public:
         size_t segmentStart = 0;
         int32_t remainingParts = count;
 
-        while (segmentStart <= value.size()) {
+        while (segmentStart <= static_cast<size_t>(he_cpp_string_length(value))) {
             if (remainingParts == 1) {
                 if (options == StringSplitOptions::RemoveEmptyEntries) {
                     // .NET skips empty entries before capturing the remainder as the final segment.
-                    while (segmentStart < value.size() && FindNextSeparator(value, separators, segmentStart) == segmentStart) {
+                    while (segmentStart < static_cast<size_t>(he_cpp_string_length(value)) && FindNextSeparator(value, separators, segmentStart) == segmentStart) {
                         segmentStart++;
                     }
                 }
 
-                HeCppString finalPart = value.substr(segmentStart);
+                HeCppString finalPart = Substring(value, static_cast<int32_t>(segmentStart));
                 if (!(options == StringSplitOptions::RemoveEmptyEntries && finalPart.empty())) {
                     parts.push_back(finalPart);
                 }
@@ -571,8 +571,8 @@ public:
 
             size_t separatorIndex = FindNextSeparator(value, separators, segmentStart);
             HeCppString part = separatorIndex == HeCppString::npos
-                ? value.substr(segmentStart)
-                : value.substr(segmentStart, separatorIndex - segmentStart);
+                ? Substring(value, static_cast<int32_t>(segmentStart))
+                : Substring(value, static_cast<int32_t>(segmentStart), static_cast<int32_t>(separatorIndex - segmentStart));
 
             if (!(options == StringSplitOptions::RemoveEmptyEntries && part.empty())) {
                 parts.push_back(part);
@@ -593,20 +593,116 @@ public:
 
         return result;
     }
-    static size_t FindNextSeparator(const HeCppString& value, const Array<char>* separators, size_t startIndex) {
+    static size_t FindNextSeparator(const HeCppString& value, const Array<char16_t>* separators, size_t startIndex) {
         if (separators == nullptr || separators->Length <= 0) {
-            return value.find_first_of(" \t\r\n", startIndex);
+            for (size_t index = startIndex; index < static_cast<size_t>(he_cpp_string_length(value)); ++index) {
+                if (he_cpp_string_char_at(value, static_cast<int32_t>(index)) <= 0x7f && IsAsciiWhitespace(static_cast<unsigned char>(he_cpp_string_char_at(value, static_cast<int32_t>(index))))) { return index; }
+            }
+            return HeCppString::npos;
         }
 
-        for (size_t index = startIndex; index < value.size(); index++) {
+        for (size_t index = startIndex; index < static_cast<size_t>(he_cpp_string_length(value)); index++) {
             for (int32_t separatorIndex = 0; separatorIndex < separators->Length; separatorIndex++) {
-                if (value[index] == (*separators)[separatorIndex]) {
+                if (he_cpp_string_char_at(value, static_cast<int32_t>(index)) == (*separators)[separatorIndex]) {
                     return index;
                 }
             }
         }
 
         return HeCppString::npos;
+    }
+
+    /// <summary>Copies all managed UTF16 units into an independently owned character array.</summary>
+    static Array<char16_t>* ToCharArray(const HeCppString& value) {
+        const auto units = he_cpp_string_chars(value); auto* result = new Array<char16_t>(static_cast<int32_t>(units.size()));
+        for (int32_t index = 0; index < result->Length; ++index) { (*result)[index] = units[static_cast<size_t>(index)]; }
+        return result;
+    }
+
+    /// <summary>Compares managed values ordinally using exact UTF16 units, with null ordered before every present string.</summary>
+    static int32_t CompareOrdinal(const HeCppString& left, const HeCppString& right) { return left.compare(right); }
+
+    /// <summary>Compares through the selected existing ordinal comparison policy.</summary>
+    static int32_t Compare(const HeCppString& left, const HeCppString& right, StringComparison comparison = StringComparison::Ordinal) {
+        return comparison == StringComparison::OrdinalIgnoreCase ? ToLowerInvariant(left).compare(ToLowerInvariant(right)) : left.compare(right);
+    }
+
+    /// <summary>Finds an ordinal string match and returns its UTF16 start position, including matches of isolated surrogate halves.</summary>
+    static int32_t IndexOf(const HeCppString& value, const HeCppString& search, int32_t startIndex = 0) {
+        const auto units = he_cpp_string_chars(value);
+        if (search.is_null()) { he_cpp_raise(ArgumentNullException("search")); }
+        const auto target = he_cpp_string_chars(search);
+        if (startIndex < 0 || static_cast<size_t>(startIndex) > units.size()) { return RaiseOutOfRange<int32_t>("startIndex"); }
+        for (size_t index = static_cast<size_t>(startIndex); index <= units.size(); ++index) {
+            if (target.size() > units.size() - index) { break; }
+            bool matches = true;
+            for (size_t part = 0; matches && part < target.size(); ++part) { matches = units[index + part] == target[part]; }
+            if (matches) { return static_cast<int32_t>(index); }
+        }
+        return -1;
+    }
+
+    /// <summary>Finds a managed character by its UTF16 unit rather than searching one UTF8 byte.</summary>
+    static int32_t IndexOf(const HeCppString& value, char16_t search, int32_t startIndex = 0) { return IndexOf(value, HeCppString(search), startIndex); }
+
+    /// <summary>Tests for a complete managed substring using ordinal UTF16 matching.</summary>
+    static bool Contains(const HeCppString& value, const HeCppString& search) { return IndexOf(value, search) >= 0; }
+
+    /// <summary>Tests for one managed UTF16 character without narrowing BMP values.</summary>
+    static bool Contains(const HeCppString& value, char16_t search) { return IndexOf(value, search) >= 0; }
+
+    /// <summary>Finds the last substring wholly inside the inclusive backward-search UTF16 window, matching .NET's virtual end position.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, const HeCppString& search, int32_t startIndex, int32_t count) {
+        const auto units = he_cpp_string_chars(value);
+        if (search.is_null()) { he_cpp_raise(ArgumentNullException("search")); }
+        const auto target = he_cpp_string_chars(search); const int32_t length = static_cast<int32_t>(units.size());
+        if (length == 0 && (startIndex == -1 || startIndex == 0)) { return target.empty() ? 0 : -1; }
+        if (startIndex < 0 || startIndex > length) { return RaiseOutOfRange<int32_t>("startIndex"); }
+        if (count < 0 || static_cast<int64_t>(count) > static_cast<int64_t>(startIndex) + 1) { return RaiseOutOfRange<int32_t>("count"); }
+        if (startIndex == length) { --startIndex; if (count > 0) { --count; } }
+        if (target.empty()) { return startIndex + 1; }
+        if (target.size() > static_cast<size_t>(count)) { return -1; }
+        const int32_t minimum = startIndex - count + 1;
+        for (int32_t position = startIndex - static_cast<int32_t>(target.size()) + 1; position >= minimum; --position) {
+            bool matches = true;
+            for (size_t part = 0; matches && part < target.size(); ++part) { matches = units[static_cast<size_t>(position) + part] == target[part]; }
+            if (matches) { return position; }
+        }
+        return -1;
+    }
+
+    /// <summary>Searches backwards through the complete prefix ending at a supplied UTF16 unit.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, const HeCppString& search, int32_t startIndex) {
+        const int32_t length = he_cpp_string_length(value);
+        if (length == 0 && (startIndex == -1 || startIndex == 0)) { return LastIndexOf(value, search, startIndex, 0); }
+        if (startIndex < 0 || startIndex > length) { return RaiseOutOfRange<int32_t>("startIndex"); }
+        return LastIndexOf(value, search, startIndex, startIndex + 1);
+    }
+
+    /// <summary>Searches the entire managed string backwards, returning Length for an empty search.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, const HeCppString& search) {
+        const int32_t length = he_cpp_string_length(value);
+        return LastIndexOf(value, search, length - 1, length);
+    }
+
+    /// <summary>Finds the last managed UTF16 character in a complete string.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, char16_t search) { return LastIndexOf(value, HeCppString(search)); }
+    /// <summary>Finds the last managed UTF16 character at or before an explicit start position.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, char16_t search, int32_t startIndex) {
+        const int32_t length = he_cpp_string_length(value);
+        if (length == 0) { return -1; }
+        if (startIndex < 0 || startIndex >= length) { return RaiseOutOfRange<int32_t>("startIndex"); }
+        return LastIndexOf(value, search, startIndex, startIndex + 1);
+    }
+    /// <summary>Finds a character wholly within an explicit inclusive backward-search window.</summary>
+    static int32_t LastIndexOf(const HeCppString& value, char16_t search, int32_t startIndex, int32_t count) {
+        const auto units = he_cpp_string_chars(value); const int32_t length = static_cast<int32_t>(units.size());
+        if (length == 0) { return -1; }
+        if (startIndex < 0 || startIndex >= length) { return RaiseOutOfRange<int32_t>("startIndex"); }
+        if (count < 0 || count > startIndex + 1) { return RaiseOutOfRange<int32_t>("count"); }
+        const int32_t minimum = startIndex - count + 1;
+        for (int32_t position = startIndex; position >= minimum; --position) { if (units[static_cast<size_t>(position)] == search) { return position; } }
+        return -1;
     }
 
     /// Reports invalid numeric formats through the configured native exception contract, or terminates exception-free runtimes.
@@ -672,6 +768,9 @@ public:
     static HeCppString ToJoinString(std::nullptr_t) {
         return get_Empty();
     }
+
+    /// <summary>Formats a managed UTF16 character as its exact string value, including isolated surrogates.</summary>
+    static HeCppString ToJoinString(char16_t value) { return HeCppString(value); }
 
     static HeCppString ToJoinString(char value) {
         return HeCppString(1, value);

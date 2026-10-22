@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../runtime/array.hpp"
+#include "../../runtime/native_string.hpp"
 #include "../../runtime/native_exceptions.hpp"
 
 /// <summary>
@@ -20,10 +21,10 @@ public:
         if (value.is_null()) {
             he_cpp_raise(ArgumentNullException("value"));
         }
-        Array<uint8_t>* bytes = new Array<uint8_t>(static_cast<int32_t>(value.size()));
-        for (int32_t index = 0; index < bytes->Length; index++) {
-            (*bytes)[index] = static_cast<uint8_t>(value[static_cast<size_t>(index)]);
-        }
+        const auto units = he_cpp_string_chars(value);
+        const HeCppRawString encoded = HeCppUnicode::FromUtf16<HeCppRawString>(units.data(), units.size(), true);
+        Array<uint8_t>* bytes = new Array<uint8_t>(static_cast<int32_t>(encoded.size()));
+        for (int32_t index = 0; index < bytes->Length; ++index) { (*bytes)[index] = static_cast<uint8_t>(encoded[static_cast<size_t>(index)]); }
 
         return bytes;
     }
@@ -39,7 +40,11 @@ public:
             return HeCppString("");
         }
 
-        return HeCppString(reinterpret_cast<const char*>(value->Data), static_cast<size_t>(value->Length));
+        HeCppRawString decoded; size_t offset = 0;
+        while (offset < static_cast<size_t>(value->Length)) {
+            HeCppUnicode::Append(decoded, HeCppUnicode::Decode(reinterpret_cast<const char*>(value->Data), static_cast<size_t>(value->Length), offset, false));
+        }
+        return HeCppString(decoded);
     }
 };
 

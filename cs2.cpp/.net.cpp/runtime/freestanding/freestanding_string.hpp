@@ -2,6 +2,7 @@
 
 #include "../native_algorithm.hpp"
 #include "freestanding_hash.hpp"
+#include "freestanding_reverse_iterator.hpp"
 #include "freestanding_hooks.hpp"
 
 #include <stddef.h>
@@ -19,6 +20,10 @@ public:
     using size_type = size_t;
     using iterator = char*;
     using const_iterator = const char*;
+    /// <summary>Exposes reverse mutable byte traversal required by the shared managed string facade.</summary>
+    using reverse_iterator = FreestandingReverseIterator<iterator>;
+    /// <summary>Exposes reverse immutable byte traversal without adding a hosted dependency.</summary>
+    using const_reverse_iterator = FreestandingReverseIterator<const_iterator>;
     static constexpr size_t npos = static_cast<size_t>(-1);
 
     FreestandingString() : Data(EmptyBuffer()), Length(0), Capacity(0) {}
@@ -71,6 +76,15 @@ public:
     iterator end() { return Data + Length; }
     const_iterator begin() const { return Data; }
     const_iterator end() const { return Data + Length; }
+
+    /// <summary>Starts reverse traversal at the final byte of this native byte string.</summary>
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    /// <summary>Ends reverse traversal immediately before the first byte without dereferencing that position.</summary>
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+    /// <summary>Starts immutable reverse traversal over the stored native bytes.</summary>
+    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    /// <summary>Ends immutable reverse traversal over the stored native bytes.</summary>
+    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
 
     void reserve(size_t newCapacity) {
         if (newCapacity <= Capacity) return;
