@@ -280,7 +280,7 @@ namespace cs2.cpp {
             }
 
             if (varType.Type == VariableDataType.Char) {
-                return "char";
+                return "char16_t";
             }
 
             if (varType.Type == VariableDataType.String) {
@@ -374,7 +374,7 @@ namespace cs2.cpp {
             }
 
             if (typeName == "char" || typeName == "Char") {
-                return "char";
+                return "char16_t";
             }
 
             if (typeName == "List") {

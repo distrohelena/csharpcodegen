@@ -23,6 +23,7 @@ public sealed class CPPIntrinsicOwnershipCatalogTests {
     [InlineData("System.Security.Cryptography.SHA256.HashData(new byte[1])", CPPOwnershipKind.Owned)]
     [InlineData("new System.IO.MemoryStream().ToArray()", CPPOwnershipKind.Owned)]
     [InlineData("\"value\".Split(',')", CPPOwnershipKind.Owned)]
+    [InlineData("\"value\".ToCharArray()", CPPOwnershipKind.Owned)]
     [InlineData("new System.Collections.Generic.List<int>().AsReadOnly()", CPPOwnershipKind.Owned)]
     [InlineData("System.IO.File.OpenRead(\"asset.bin\")", CPPOwnershipKind.Owned)]
     public void TryGetReturnOwnership_ClassifiesKnownFrameworkCalls(string expressionText, CPPOwnershipKind expectedOwnership) {

@@ -10,7 +10,8 @@ public sealed class CPPTestEnvironmentTests {
     [Fact]
     public void ModuleInitializer_RoutesTemporaryOutputIntoRepositoryScratch() {
         string repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        string expectedRoot = Path.Combine(repositoryRoot, "scratch", "test-temp");
+        string expectedRoot = Environment.GetEnvironmentVariable("CSHARPCODEGEN_TEST_TEMP_ROOT")
+            ?? Path.Combine(repositoryRoot, "scratch", "test-temp");
 
         Assert.Equal(expectedRoot, Path.TrimEndingDirectorySeparator(Path.GetTempPath()));
         Assert.True(Directory.Exists(expectedRoot));

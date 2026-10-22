@@ -31,7 +31,8 @@ public sealed class CPPIntrinsicOwnershipCatalog {
                    IsMethod(method, "System.Security.Cryptography.SHA256", "HashData") ||
                    IsMethod(method, "System.IO.MemoryStream", "ToArray") ||
                    IsMethod(method, "System.IO.File", "OpenRead") ||
-                   IsMethod(method, "System.String", "Split")) {
+                   IsMethod(method, "System.String", "Split") ||
+                   IsMethod(method, "System.String", "ToCharArray")) {
             ownership = CPPOwnershipKind.Owned;
             return true;
         }

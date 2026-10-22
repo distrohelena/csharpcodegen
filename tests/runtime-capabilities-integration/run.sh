@@ -75,6 +75,12 @@ test "$result" -eq 73
     -o "$output/hosted-streams"
 "$output/hosted-streams"
 
+"$cxx" -std=c++20 -DHE_CPP_TEST_HOST \
+    -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/hosted-file-access.cpp" "$runtime/system/io/file-stream.cpp" \
+    -o "$output/hosted-file-access"
+"$output/hosted-file-access" "$output" all
+
 "$cxx" -std=c++20 -DHE_CPP_TEST_HOST -DHE_CPP_USE_HOSTED_FILE_SYSTEM=0 \
     -I"$fixture/hosted" -I"$runtime" \
     "$fixture/nohost-file-stream.cpp" \
@@ -250,8 +256,17 @@ done
     "$fixture/algorithm_smoke.cpp" -o "$output/algorithm-smoke"
 "$output/algorithm-smoke"
 
+"$cxx" -std=c++20 -DHE_CPP_TEST_HOST -I"$fixture/hosted" -I"$runtime" \
+    "$fixture/managed-unicode.cpp" -o "$output/managed-unicode"
+"$output/managed-unicode"
+
 freestanding_flags="-std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Werror -DHE_CPP_TEST_HOST"
 freestanding_includes="-I$fixture/poison -I$fixture/freestanding -I$fixture -I$runtime"
+
+"$cxx" $freestanding_flags -I"$fixture/freestanding" -I"$fixture" -I"$runtime" \
+    "$fixture/managed-unicode.cpp" "$runtime/runtime/freestanding/freestanding_hooks_default.cpp" \
+    -o "$output/managed-unicode-freestanding"
+"$output/managed-unicode-freestanding"
 
 # Numeric formatting retains hosted output without hosted stdio/locale dependencies.
 "$cxx" -std=c++20 -Wall -Wextra -Werror -DHE_CPP_NUMERIC_FORMAT_PARITY \

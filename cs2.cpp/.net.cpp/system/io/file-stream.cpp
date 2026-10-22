@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 #include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #if defined(_WIN32)
 #include <io.h>
@@ -141,11 +142,45 @@ const char* GetFileMode(FileMode mode) {
 #endif
     }
 }
+
+/// <summary>Validates supplied access before any open or truncation and selects the corresponding hosted descriptor mode.</summary>
+const char* GetFileMode(FileMode mode, FileAccess access) {
+    if (access != FileAccess::Read && access != FileAccess::Write && access != FileAccess::ReadWrite) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(ArgumentOutOfRangeException());
+#else
+        he_cpp_raise(ArgumentOutOfRangeException("access", "Invalid FileAccess value."));
+#endif
+    }
+    if (((mode == FileMode::Create || mode == FileMode::CreateNew || mode == FileMode::Truncate) && access == FileAccess::Read) ||
+        (mode == FileMode::Append && access != FileAccess::Write)) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(ArgumentException());
+#else
+        he_cpp_raise(ArgumentException("The requested FileMode and FileAccess combination is invalid."));
+#endif
+    }
+    switch (mode) {
+    case FileMode::Open:
+    case FileMode::OpenOrCreate:
+        return access == FileAccess::Read ? "rb" : "r+b";
+    case FileMode::Create:
+        return access == FileAccess::Write ? "wb" : "w+b";
+    case FileMode::CreateNew:
+        return access == FileAccess::Write ? "wbx" : "wbx+";
+    case FileMode::Truncate:
+        return access == FileAccess::Write ? "wb" : "w+b";
+    case FileMode::Append:
+        return "ab";
+    default:
+        return GetFileMode(mode);
+    }
+}
 #endif
 
 // Constructor
 FileStream::FileStream(const uint8_t* data, size_t dataLength)
-    : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(true), writable(false) {
+    : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(true), readable(true), writable(false) {
     if (data == nullptr && dataLength > 0) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
         he_cpp_raise(InvalidOperationException());
@@ -160,20 +195,39 @@ FileStream::FileStream(const uint8_t* data, size_t dataLength)
     length = memoryBuffer.size();
 }
 
+/// <summary>Preserves legacy two-argument open strings and creation behavior through shared initialization.</summary>
 FileStream::FileStream(const char* path, FileMode mode)
-    : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), writable(true) {
+    : FileStream(path, mode, FileAccess::ReadWrite, FileShare::ReadWrite, true) {
+}
+
+/// <summary>Initializes path storage once and honors explicit access before opening a descriptor or read-only provider.</summary>
+FileStream::FileStream(const char* path, FileMode mode, FileAccess access, FileShare share, bool legacyMode)
+    : file(nullptr), memoryBuffer(), position(0), length(0), ownsMemoryBuffer(false), readable(true), writable(true) {
+    (void)share; // Existing FileShare policy is intentionally unchanged.
     if (path == nullptr) {
         he_cpp_raise(ArgumentNullException("path"));
     }
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
+    const char* openMode = legacyMode ? GetFileMode(mode) : GetFileMode(mode, access);
+    const bool updateMode = std::strchr(openMode, '+') != nullptr;
+    readable = legacyMode ? openMode[0] == 'r' || updateMode : access != FileAccess::Write;
+    writable = legacyMode ? openMode[0] != 'r' || updateMode : access != FileAccess::Read;
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
     if (path != nullptr && mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)) {
+        if (!legacyMode && access != FileAccess::Read) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+            he_cpp_raise(NotSupportedException());
+#else
+            he_cpp_raise(NotSupportedException("The custom filesystem provider supports read-only file access."));
+#endif
+        }
         std::unique_ptr<FileStream> customStream(HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::OpenRead(path));
         file = customStream->file;
         memoryBuffer.swap(customStream->memoryBuffer);
         position = customStream->position;
         length = customStream->length;
         ownsMemoryBuffer = customStream->ownsMemoryBuffer;
+        readable = customStream->readable;
         writable = customStream->writable;
         customStream->file = nullptr;
         customStream->ownsMemoryBuffer = false;
@@ -184,6 +238,13 @@ FileStream::FileStream(const char* path, FileMode mode)
     std::string resolvedPs2ReadPath = FileStreamSupportResolvePs2DiscReadPath(path != nullptr ? path : "");
     bool usesPs2DirectRead = mode == FileMode::Open && FileStreamSupportStartsWithPs2CdromPrefix(resolvedPs2ReadPath);
     if (usesPs2DirectRead) {
+        if (!legacyMode && access != FileAccess::Read) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+            he_cpp_raise(NotSupportedException());
+#else
+            he_cpp_raise(NotSupportedException("PS2 disc paths support read-only file access."));
+#endif
+        }
         memoryBuffer = ReadPs2DiscFile(resolvedPs2ReadPath);
         ownsMemoryBuffer = true;
         writable = false;
@@ -200,7 +261,7 @@ FileStream::FileStream(const char* path, FileMode mode)
     he_cpp_raise(NotSupportedException("FileStream file-backed paths require descriptor APIs on this target."));
 #endif
 #else
-    file = std::fopen(path, GetFileMode(mode));
+    file = std::fopen(path, openMode);
     if (!file) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
         he_cpp_raise(FileNotFoundException());
@@ -218,8 +279,9 @@ FileStream::FileStream(const char* path, FileMode mode)
 #endif
 }
 
-FileStream::FileStream(const char* path, FileMode mode, FileAccess, FileShare)
-    : FileStream(path, mode) {
+/// <summary>Uses the requested FileAccess while retaining the established FileShare policy.</summary>
+FileStream::FileStream(const char* path, FileMode mode, FileAccess access, FileShare share)
+    : FileStream(path, mode, access, share, false) {
 }
 
 FileStream::FileStream(const HeCppString& path, FileMode mode)
@@ -237,7 +299,14 @@ FileStream::~FileStream() {
 
 // Reads data from file
 size_t FileStream::Read(uint8_t* buffer, size_t offset, size_t count) {
-    if (!CanRead() || !buffer) return 0;
+    if (!CanRead()) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(NotSupportedException());
+#else
+        he_cpp_raise(NotSupportedException("This file stream does not support reading."));
+#endif
+    }
+    if (!buffer) return 0;
 
     if (file == nullptr) {
         size_t available = position >= memoryBuffer.size() ? 0 : memoryBuffer.size() - position;
@@ -264,7 +333,14 @@ size_t FileStream::Read(uint8_t* buffer, size_t offset, size_t count) {
 
 // Writes data to file
 void FileStream::Write(const uint8_t* buffer, size_t offset, size_t count) {
-    if (!CanWrite() || !buffer) return;
+    if (!CanWrite()) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(NotSupportedException());
+#else
+        he_cpp_raise(NotSupportedException("This file stream does not support writing."));
+#endif
+    }
+    if (!buffer) return;
 
     if (file == nullptr) {
         size_t requiredLength = position + count;
@@ -330,11 +406,14 @@ size_t FileStream::Seek(int64_t offset, SeekOrigin origin) {
 
 // Truncates or extends the file
 void FileStream::SetLength(size_t newLength) {
+    if (!CanWrite()) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(NotSupportedException());
+#else
+        he_cpp_raise(NotSupportedException("This file stream does not support resizing."));
+#endif
+    }
     if (file == nullptr) {
-        if (!writable) {
-            return;
-        }
-
         memoryBuffer.resize(newLength);
         length = memoryBuffer.size();
         if (position > length) {
@@ -391,8 +470,8 @@ void FileStream::UpdateLength() {
 }
 
 // Properties
-bool FileStream::CanRead() const { return file != nullptr || ownsMemoryBuffer; }
-bool FileStream::CanWrite() const { return file != nullptr || (ownsMemoryBuffer && writable); }
+bool FileStream::CanRead() const { return readable && (file != nullptr || ownsMemoryBuffer); }
+bool FileStream::CanWrite() const { return writable && (file != nullptr || ownsMemoryBuffer); }
 bool FileStream::CanSeek() const { return file != nullptr || ownsMemoryBuffer; }
 
 size_t FileStream::Length() const { return length; }

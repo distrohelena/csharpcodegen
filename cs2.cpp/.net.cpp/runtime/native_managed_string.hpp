@@ -3,8 +3,9 @@
 #include <cstddef>
 #include <type_traits>
 #include "native_algorithm.hpp"
+#include "native_unicode.hpp"
 
-/// <summary>Stores managed string nullness independently of the consumer-selected byte string; native interoperation explicitly uses raw() or c_str().</summary>
+/// <summary>Stores exact UTF16 values as UTF8/WTF8 bytes with independent nullness; raw/data/c_str are byte access, not a validating UTF8 encoder for isolated surrogates.</summary>
 template <typename TRawString>
 class HeCppManagedString {
     /// <summary>Owns the bytes through the selected runtime string provider.</summary>
@@ -62,6 +63,14 @@ public:
     HeCppManagedString(const char* value, size_type count) : Storage(value == nullptr ? "" : value, count), IsNull(false) {}
     /// <summary>Creates a present string containing count copies of one character, including count zero.</summary>
     HeCppManagedString(size_type count, char value) : Storage(count, value), IsNull(false) {}
+    /// <summary>Constructs one exact UTF16 unit, including an isolated surrogate.</summary>
+    HeCppManagedString(char16_t value) : Storage(HeCppUnicode::FromUtf16<TRawString>(&value, 1)), IsNull(false) {}
+    /// <summary>Constructs repeated managed UTF16 characters rather than repeated UTF8 bytes.</summary>
+    HeCppManagedString(size_type count, char16_t value) : IsNull(false) { for (size_type index = 0; index < count; ++index) { HeCppUnicode::Append(Storage, value); } }
+    /// <summary>Constructs a zero-terminated UTF16 literal while retaining managed null for a null pointer.</summary>
+    HeCppManagedString(const char16_t* value) : IsNull(value == nullptr) { if (value != nullptr) { size_type count = 0; while (value[count] != 0) { ++count; } Storage = HeCppUnicode::FromUtf16<TRawString>(value, count); } }
+    /// <summary>Constructs an explicit UTF16 range, preserving embedded NUL and isolated surrogate units.</summary>
+    HeCppManagedString(const char16_t* value, size_type count) : Storage(value == nullptr ? TRawString() : HeCppUnicode::FromUtf16<TRawString>(value, count)), IsNull(value == nullptr) {}
     /// <summary>Copies a native iterator range into a present managed string.</summary>
     template <typename TIterator, typename = std::enable_if_t<!std::is_integral_v<TIterator>>>
     HeCppManagedString(TIterator first, TIterator last) : Storage(first, last), IsNull(false) {}
@@ -176,9 +185,11 @@ public:
     template <typename... TArguments>
     HeCppManagedString& append(TArguments&&... arguments) { Storage.append(RawArgument(he_cpp_alg::Forward<TArguments>(arguments))...); IsNull = false; return *this; }
     /// <summary>Appends managed text, interpreting null as empty.</summary>
-    HeCppManagedString& operator+=(const HeCppManagedString& value) { return append(value); }
+    HeCppManagedString& operator+=(const HeCppManagedString& value) { const size_type boundary = Storage.size(); append(value); HeCppUnicode::JoinBoundary(Storage, boundary); return *this; }
     /// <summary>Appends zero-terminated native text, interpreting a null pointer as empty.</summary>
     HeCppManagedString& operator+=(const char* value) { return append(value == nullptr ? "" : value); }
+    /// <summary>Appends one managed UTF16 character without narrowing non-ASCII values.</summary>
+    HeCppManagedString& operator+=(char16_t value) { const size_type boundary = Storage.size(); HeCppUnicode::Append(Storage, value); HeCppUnicode::JoinBoundary(Storage, boundary); IsNull = false; return *this; }
     /// <summary>Appends one byte and materializes the result.</summary>
     HeCppManagedString& operator+=(char value) { push_back(value); return *this; }
     /// <summary>Concatenates managed null as empty while materializing the result.</summary>
@@ -229,14 +240,14 @@ public:
     /// <summary>Exchanges both native contents and the independent managed null flags.</summary>
     void swap(HeCppManagedString& value) { Storage.swap(value.Storage); he_cpp_alg::Swap(IsNull, value.IsNull); }
     /// <summary>Compares managed values ordinally with null ordered before every present value.</summary>
-    int compare(const HeCppManagedString& value) const { return IsNull != value.IsNull ? (IsNull ? -1 : 1) : Storage.compare(value.Storage); }
+    int compare(const HeCppManagedString& value) const { return IsNull != value.IsNull ? (IsNull ? -1 : 1) : HeCppUnicode::Compare(Storage, value.Storage); }
     /// <summary>Compares a native string while honoring its null pointer as managed null.</summary>
     int compare(const char* value) const { return compare(HeCppManagedString(value)); }
     /// <summary>Compares indexed native byte ranges using the provider's comparison overloads.</summary>
     template <typename... TArguments>
     int compare(size_type offset, TArguments&&... arguments) const { return Storage.compare(offset, RawArgument(he_cpp_alg::Forward<TArguments>(arguments))...); }
     /// <summary>Tests managed equality, preserving the difference between null and a present empty string.</summary>
-    friend bool operator==(const HeCppManagedString& left, const HeCppManagedString& right) { return left.IsNull == right.IsNull && left.Storage == right.Storage; }
+    friend bool operator==(const HeCppManagedString& left, const HeCppManagedString& right) { return left.IsNull == right.IsNull && HeCppUnicode::Compare(left.Storage, right.Storage) == 0; }
     /// <summary>Tests managed inequality using both null state and bytes.</summary>
     friend bool operator!=(const HeCppManagedString& left, const HeCppManagedString& right) { return !(left == right); }
     /// <summary>Orders managed strings ordinally with null first.</summary>
@@ -248,9 +259,13 @@ public:
     /// <summary>Tests inclusive descending managed string order.</summary>
     friend bool operator>=(const HeCppManagedString& left, const HeCppManagedString& right) { return left.compare(right) >= 0; }
     /// <summary>Concatenates two managed values, treating null operands as empty and always returning a present string.</summary>
-    friend HeCppManagedString operator+(const HeCppManagedString& left, const HeCppManagedString& right) { HeCppManagedString result(left.Storage); result.append(right); return result; }
+    friend HeCppManagedString operator+(const HeCppManagedString& left, const HeCppManagedString& right) { HeCppManagedString result(left.Storage); result += right; return result; }
     /// <summary>Appends one native byte to managed text and returns a present string.</summary>
     friend HeCppManagedString operator+(const HeCppManagedString& left, char right) { HeCppManagedString result(left.Storage); result += right; return result; }
+    /// <summary>Appends a managed UTF16 unit and retains a present result.</summary>
+    friend HeCppManagedString operator+(const HeCppManagedString& left, char16_t right) { HeCppManagedString result(left.Storage); result += right; return result; }
+    /// <summary>Prepends a managed UTF16 unit without narrowing its value.</summary>
+    friend HeCppManagedString operator+(char16_t left, const HeCppManagedString& right) { HeCppManagedString result(left); result += right; return result; }
     /// <summary>Prepends one native byte to managed text and returns a present string.</summary>
     friend HeCppManagedString operator+(char left, const HeCppManagedString& right) { HeCppManagedString result(1, left); result += right; return result; }
 };

@@ -283,8 +283,8 @@ public class CPPRuntimeCapabilityConversionTests {
         converter.WriteOutput(outputPath);
 
         string gateText = File.ReadAllText(Path.Combine(outputPath, "SplitGate.cpp"));
-        Assert.Matches(@"String::Split\(content, (static_cast<char>\()?'\\n'\)?, StringSplitOptions::None\)", gateText);
-        Assert.Matches(@"String::Split\(content, (static_cast<char>\()?' '\)?, StringSplitOptions::RemoveEmptyEntries\)", gateText);
+        Assert.Contains("String::Split(he_cpp_require_string_value(content), u'\\x000A', StringSplitOptions::None)", gateText);
+        Assert.Contains("String::Split(he_cpp_require_string_value(content), u'\\x0020', StringSplitOptions::RemoveEmptyEntries)", gateText);
         Assert.DoesNotContain("StringSplitOptions::0", gateText, StringComparison.Ordinal);
         Assert.DoesNotContain("content.Split(", gateText, StringComparison.Ordinal);
     }
