@@ -562,8 +562,7 @@ public sealed class CPPRuntimeTemplateContractTests {
         Assert.Contains("#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS", source, StringComparison.Ordinal);
         Assert.Contains("he_cpp_raise(NotSupportedException", source, StringComparison.Ordinal);
         Assert.Contains("(void)newLength;", source, StringComparison.Ordinal);
-        Assert.Contains("FileStream cannot query a file-backed stream on this target.", source, StringComparison.Ordinal);
-        Assert.Contains("FileStream file-backed paths require descriptor APIs on this target.", source, StringComparison.Ordinal);
+        Assert.Contains("FileStream supports only opening existing files for read-only access on this target.", source, StringComparison.Ordinal);
         Assert.DoesNotContain("HE_CPP_PLATFORM_DC", source, StringComparison.Ordinal);
         Assert.Contains("if (file == nullptr)", source, StringComparison.Ordinal);
         Assert.Contains("memoryBuffer.resize(newLength)", source, StringComparison.Ordinal);

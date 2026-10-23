@@ -212,6 +212,16 @@ FileStream::FileStream(const char* path, FileMode mode, FileAccess access, FileS
     const bool updateMode = std::strchr(openMode, '+') != nullptr;
     readable = legacyMode ? openMode[0] == 'r' || updateMode : access != FileAccess::Write;
     writable = legacyMode ? openMode[0] != 'r' || updateMode : access != FileAccess::Read;
+#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+    // Limited-libc hosts can stream existing files through stdio, but cannot create or mutate them.
+    if (mode != FileMode::Open || writable) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+        he_cpp_raise(NotSupportedException());
+#else
+        he_cpp_raise(NotSupportedException("FileStream supports only opening existing files for read-only access on this target."));
+#endif
+    }
+#endif
 #if HE_CPP_RUNTIME_HAS_CUSTOM_FILE_SYSTEM
     if (path != nullptr && mode == FileMode::Open && HE_CPP_RUNTIME_CUSTOM_FILE_SYSTEM_TYPE::CanHandlePath(path)) {
         if (!legacyMode && access != FileAccess::Read) {
@@ -252,15 +262,6 @@ FileStream::FileStream(const char* path, FileMode mode, FileAccess access, FileS
         return;
     }
 #endif
-#if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
-    (void)path;
-    (void)mode;
-#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-    he_cpp_raise(NotSupportedException());
-#else
-    he_cpp_raise(NotSupportedException("FileStream file-backed paths require descriptor APIs on this target."));
-#endif
-#else
     file = std::fopen(path, openMode);
     if (!file) {
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
@@ -271,7 +272,6 @@ FileStream::FileStream(const char* path, FileMode mode, FileAccess access, FileS
     }
 
     UpdateLength();
-#endif
 #else
     (void)path;
     (void)mode;
@@ -453,11 +453,24 @@ void FileStream::UpdateLength() {
     }
 
 #if !HE_CPP_RUNTIME_HAS_FILE_DESCRIPTOR_APIS
+    // Preserve the stdio cursor while determining length, without descriptor APIs or a file-sized buffer.
+    const long savedPosition = std::ftell(file);
+    long endPosition = -1;
+    if (savedPosition >= 0 && std::fseek(file, 0, SEEK_END) == 0) {
+        endPosition = std::ftell(file);
+    }
+    const bool restoredPosition = savedPosition >= 0 && std::fseek(file, savedPosition, SEEK_SET) == 0;
+    if (endPosition < 0 || !restoredPosition) {
+        // A failing constructor has no destructor, so release its stdio handle before raising.
+        std::fclose(file);
+        file = nullptr;
 #if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
-    he_cpp_raise(NotSupportedException());
+        he_cpp_raise(InvalidOperationException());
 #else
-    he_cpp_raise(NotSupportedException("FileStream cannot query a file-backed stream on this target."));
+        he_cpp_raise(InvalidOperationException("Failed to determine or restore the file position while querying length."));
 #endif
+    }
+    length = static_cast<size_t>(endPosition);
 #else
     struct stat fileStat;
     if (fstat(fileno(file), &fileStat) == 0) {
