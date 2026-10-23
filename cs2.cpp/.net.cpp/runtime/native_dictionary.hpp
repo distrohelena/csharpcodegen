@@ -202,9 +202,11 @@ public:
         this->clear();
     }
 
+    /// <summary>Returns the stored value on a hit and assigns the managed default out value on a miss.</summary>
     bool TryGetValue(const TKey& key, TValue& value) const {
         auto iterator = this->find(key);
         if (iterator == Base::end()) {
+            value = TValue{};
             return false;
         }
 
