@@ -1,5 +1,29 @@
 // @ts-nocheck
-﻿export class Convert {
+﻿import { ArgumentNullException } from "./argument-null.exception";
+import { FormatException } from "./format.exception";
+export class Convert {
+    /** Decodes an even-length ASCII hexadecimal string; whitespace, prefixes and invalid digits are rejected. */
+    static FromHexString(value: string): Uint8Array {
+        if (value === null || value === undefined) { throw new ArgumentNullException('s'); }
+        if (typeof value !== 'string' || value.length % 2 !== 0 || /[^0-9a-fA-F]/.test(value)) {
+            throw new FormatException('The input is not a valid hex string.');
+        }
+        const bytes = new Uint8Array(value.length / 2);
+        for (let index = 0; index < bytes.length; index++) {
+            bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+        }
+        return bytes;
+    }
+
+    /** Encodes each byte as exactly two uppercase hexadecimal digits, including leading zeroes. */
+    static ToHexString(value: Uint8Array): string {
+        if (value === null || value === undefined) { throw new ArgumentNullException('inArray'); }
+        const digits = '0123456789ABCDEF';
+        const output: string[] = [];
+        for (const byte of value) { output.push(digits[byte >>> 4], digits[byte & 15]); }
+        return output.join('');
+    }
+
 
     static fromBase64String(base64: string): Uint8Array {
         if (typeof atob === "function") {

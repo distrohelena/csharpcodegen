@@ -60,6 +60,13 @@ declare const Buffer: any;
 declare module "buffer" {
     /** Browser-buffer operations used by generated and handwritten binary code. */
     export class Buffer extends Uint8Array {
+        /** Reads an unsigned big-endian 32-bit value at the byte offset. */
+        public readUInt32BE(offset: number): number;
+        /** Decodes the selected byte range using the requested text or binary encoding. */
+        public toString(encoding?: string, start?: number, end?: number): string;
+        /** Returns a Buffer view over the same underlying bytes. */
+        public subarray(begin?: number, end?: number): Buffer;
+
         public static alloc(size: number): Buffer;
         public static from(data: string | ArrayBuffer | ArrayLike<number>, encoding?: string): Buffer;
         public write(string: string, offset?: number, length?: number, encoding?: string): number;
@@ -70,4 +77,14 @@ declare module "buffer" {
 
 declare module "node:buffer" {
     export { Buffer } from "buffer";
+}
+
+/** Keeps global Buffer annotations aligned with the imported browser/Node Buffer contract. */
+interface Buffer {
+        /** Reads an unsigned big-endian 32-bit value at the byte offset. */
+        readUInt32BE(offset: number): number;
+        /** Decodes the selected byte range using the requested text or binary encoding. */
+        toString(encoding?: string, start?: number, end?: number): string;
+        /** Returns a Buffer view over the same underlying bytes. */
+        subarray(begin?: number, end?: number): Buffer;
 }

@@ -1,8 +1,14 @@
 // @ts-nocheck
+import type { Exception } from "./exception";
 export class InvalidOperationException extends Error {
-    public readonly InnerException?: Error;
+    /** Returns the native error text through the property emitted for System.Exception.Message. */
+    public get Message(): string {
+        return this.message;
+    }
 
-    constructor(message: string = "Operation is not supported.", innerException?: Error | null) {
+    public readonly InnerException?: Error | Exception;
+
+    constructor(message: string = "Operation is not supported.", innerException?: Error | Exception | null) {
         super(message);
         this.name = "InvalidOperationException";
         this.InnerException = innerException ?? undefined;

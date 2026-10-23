@@ -318,7 +318,7 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
         return DateTime.Parse(value);
     }
 
-    if (fullName.endsWith("Byte[]")) {
+    if (fullName === "byte[]" || fullName === "System.Byte[]") {
         if (typeof value === "string") {
             return fromBase64(value);
         }
@@ -328,6 +328,11 @@ function convertValueFromJson(value: any, type: Type | null, options?: JsonSeria
     }
 
     if (Array.isArray(value)) {
+        if (type.IsArray) {
+            const elementType = type.GetElementType();
+            if (!elementType) throw new Error('JSON array element type is unavailable.');
+            return value.map(entry => convertValueFromJson(entry, elementType, options));
+        }
         if (fullName.indexOf("List") >= 0) {
             const list = new List<any>();
             const elementTypeName = getGenericArgument(fullName, 0);

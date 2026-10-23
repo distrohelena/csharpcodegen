@@ -185,6 +185,21 @@ class ReflectionRegistry {
         if (handle) {
             return handle.toType();
         }
+        if (fullName === "string") return Type.string;
+        if (fullName === "object") return Type.object;
+        if (fullName === "bool") return Type.boolean;
+        if (fullName.endsWith("[]")) {
+            const elementType = fullName.slice(0, -2);
+            const metadata: TypeMetadata = { name: fullName, fullName, isArray: true, elementType };
+            const arrayHolder = new LazyType(metadata, null);
+            this.byFullName.set(fullName, arrayHolder);
+            return arrayHolder.toType();
+        }
+        if (primitiveValueTypes.has(fullName)) {
+            const primitiveHolder = new LazyType({ name: fullName, fullName, isStruct: true }, null);
+            this.byFullName.set(fullName, primitiveHolder);
+            return primitiveHolder.toType();
+        }
         const genericStart = fullName.indexOf("<");
         if (genericStart > 0) {
             const baseName = fullName.substring(0, genericStart);

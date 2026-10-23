@@ -45,7 +45,7 @@ export class BinaryReader implements IDisposable {
         const b2 = this.stream.internalReadByte();
         const b3 = this.stream.internalReadByte();
         const b4 = this.stream.internalReadByte();
-        return (b4 << 24) | (b3 << 16) | (b2 << 8) | b1;
+        return ((b4 << 24) | (b3 << 16) | (b2 << 8) | b1) >>> 0;
     }
 
     readInt32(): number {
@@ -82,6 +82,9 @@ export class BinaryReader implements IDisposable {
     }
 
     readBytes(length: number): Uint8Array {
+        if (!Number.isSafeInteger(length) || length < 0 || length > this.stream.length - this.stream.position) {
+            throw new Error("Binary read exceeds remaining input.");
+        }
         const buffer = new Uint8Array(length);
         for (let i = 0; i < length; i++) {
             buffer[i] = this.stream.internalReadByte();

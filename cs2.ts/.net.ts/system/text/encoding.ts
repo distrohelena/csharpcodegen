@@ -28,7 +28,7 @@ export class Encoding {
 
 class Utf8Encoding extends Encoding {
     private encoder = new TextEncoder();
-    private decoder = new TextDecoder("utf-8");
+    private decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
     getBytes(text: string): Uint8Array {
         return this.encoder.encode(text);

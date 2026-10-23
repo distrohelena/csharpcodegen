@@ -2731,6 +2731,10 @@ namespace cs2.ts {
                     break;
             }
 
+            if (value == null && field.IsConst && field.HasConstantValue && field.ContainingType.TypeKind != TypeKind.Enum) {
+                value = FormatDefaultValue(field.ConstantValue);
+            }
+
             if (value == null) {
                 return false;
             }
@@ -2748,7 +2752,7 @@ namespace cs2.ts {
             out ExpressionResult result) {
 
             result = new ExpressionResult(false);
-            if (invocationExpression.ArgumentList.Arguments.Count != 1) {
+            if (invocationExpression.ArgumentList.Arguments.Count < 1) {
                 return false;
             }
             IMethodSymbol method = GetInvocationMethodSymbol(semantic, invocationExpression);
@@ -2761,18 +2765,32 @@ namespace cs2.ts {
             bool isFrameworkMathSyntax = numericMemberAccess != null &&
                 (numericMemberAccess.Expression.ToString() == "Math" || numericMemberAccess.Expression.ToString() == "MathF" ||
                  numericMemberAccess.Expression.ToString() == "System.Math" || numericMemberAccess.Expression.ToString() == "System.MathF");
-            bool isMathAbs = numericMemberAccess?.Name.Identifier.ValueText == "Abs" &&
-                (isSystemMathReceiver || (method == null && isFrameworkMathSyntax));
-            if (isMathAbs) {
-                lines.Add("Math.abs(");
-                ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[0].Expression, lines);
+            string mathName = numericMemberAccess?.Name.Identifier.ValueText;
+            string mathTarget = mathName switch {
+                "Abs" => "abs",
+                "Min" => "min",
+                "Max" => "max",
+                "Floor" => "floor",
+                "Ceiling" => "ceil",
+                _ => null
+            };
+            int mathArity = mathName == "Min" || mathName == "Max" ? 2 : 1;
+            if (mathTarget != null && invocationExpression.ArgumentList.Arguments.Count == mathArity &&
+                (isSystemMathReceiver || (method == null && isFrameworkMathSyntax))) {
+                lines.Add("Math." + mathTarget + "(");
+                for (int argumentIndex = 0; argumentIndex < mathArity; argumentIndex++) {
+                    if (argumentIndex > 0) lines.Add(", ");
+                    int classDepth = context.DepthClass;
+                    ProcessExpression(semantic, context, invocationExpression.ArgumentList.Arguments[argumentIndex].Expression, lines);
+                    context.PopClass(classDepth);
+                }
                 lines.Add(")");
                 ITypeSymbol returnType = method?.ReturnType ?? semantic.GetTypeInfo(invocationExpression).Type;
                 result = new ExpressionResult(true, VariablePath.Unknown, VariableUtil.GetVarType(returnType));
                 return true;
             }
 
-            if (method == null || method.Name != "Parse" || !TryGetNumericTryParseBounds(method.ContainingType.SpecialType, out string minimum, out string maximum)) {
+            if (invocationExpression.ArgumentList.Arguments.Count != 1 || method == null || method.Name != "Parse" || !TryGetNumericTryParseBounds(method.ContainingType.SpecialType, out string minimum, out string maximum)) {
                 return false;
             }
 

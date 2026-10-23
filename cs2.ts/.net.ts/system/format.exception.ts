@@ -1,5 +1,10 @@
 /** Reports input that does not conform to the format required by a runtime conversion. */
 export class FormatException extends Error {
+    /** Returns the native error text through the property emitted for System.Exception.Message. */
+    public get Message(): string {
+        return this.message;
+    }
+
     /** Retains an explicitly supplied originating error, omitting it when no inner error was supplied. */
     public InnerException?: Error;
 
