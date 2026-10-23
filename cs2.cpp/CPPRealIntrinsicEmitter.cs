@@ -4,6 +4,15 @@ using Microsoft.CodeAnalysis;
 namespace cs2.cpp {
     /// <summary>Emits engine scalar intrinsics by complete semantic type identity without changing primitive type mappings.</summary>
     public static class CPPRealIntrinsicEmitter {
+        /// <summary>Identifies types whose reviewed intrinsic implementation declares a native struct instead of a generated class.</summary>
+        /// <param name="type">Semantically resolved source type being referenced or emitted.</param>
+        /// <returns>True only for the engine's explicitly supported scalar intrinsic types.</returns>
+        public static bool UsesNativeStructDeclaration(ConversionClass type) {
+            string identity = type.TypeSymbol?.ToDisplayString() ?? string.Empty;
+            return identity == "helengine.Real" || identity == "helengine.RealEvaluation"
+                || identity == "helengine.RealMath" || identity == "helengine.RealRepresentation";
+        }
+
         /// <summary>Emits reviewed native support for the configurable scalar surface.</summary>
         /// <param name="type">Source type being lowered.</param>
         /// <param name="header">Generated type header writer.</param>
@@ -12,8 +21,7 @@ namespace cs2.cpp {
         /// <returns>True only for the explicitly identified engine intrinsic types.</returns>
         public static bool TryEmitClass(ConversionClass type, TextWriter header, TextWriter source, CPPConversiorProcessor processor) {
             string identity = type.TypeSymbol?.ToDisplayString() ?? string.Empty;
-            if (identity != "helengine.Real" && identity != "helengine.RealEvaluation" && identity != "helengine.RealMath"
-                && identity != "helengine.RealRepresentation") { return false; }
+            if (!UsesNativeStructDeclaration(type)) { return false; }
             processor.RegisterRuntimeRequirement("NativeReal");
             if (processor.Options.RealNumericPolicy.ArithmeticBits == 16) { processor.RegisterRuntimeRequirement("NativeBinary16Arithmetic"); }
             header.WriteLine("#pragma once");

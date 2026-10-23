@@ -551,13 +551,14 @@ namespace cs2.cpp {
                 return false;
             }
 
+            string declarationKeyword = CPPRealIntrinsicEmitter.UsesNativeStructDeclaration(generatedClass) ? "struct" : "class";
             if (generatedClass.GenericArgs != null && generatedClass.GenericArgs.Count > 0) {
                 string templateParameters = string.Join(", ", generatedClass.GenericArgs.Select(static genericArgument => $"typename {genericArgument}"));
-                forwardDeclaration = $"template <{templateParameters}> class {generatedTypeName};";
+                forwardDeclaration = $"template <{templateParameters}> {declarationKeyword} {generatedTypeName};";
                 return true;
             }
 
-            forwardDeclaration = $"class {generatedTypeName};";
+            forwardDeclaration = $"{declarationKeyword} {generatedTypeName};";
             return true;
         }
 
