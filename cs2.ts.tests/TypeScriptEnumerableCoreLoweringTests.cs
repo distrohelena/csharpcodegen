@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -23,6 +23,7 @@ namespace cs2.ts.tests {
         [InlineData("using System.Collections.Generic; using System.Linq; class C { IEnumerable<string> M(IReadOnlyList<string> values) => values.Take(2); }", "NativeArrayUtil.take(values, 2)")]
         [InlineData("using System.Collections.Generic; using System.Linq; class C { IEnumerable<int> M(IReadOnlyList<string> values) => values.Select(value => value.Length); }", "NativeArrayUtil.select(values,")]
         [InlineData("using System.Collections.Generic; using System.Linq; class C { int M(IReadOnlyList<string> values) => values.Count(value => value.Length > 0); }", "NativeArrayUtil.count(values,")]
+        [InlineData("using System.Linq; class C { bool M(byte[] left, byte[] right) => left.SequenceEqual(right); }", "NativeArrayUtil.sequenceEqual(left, right, { Equals: (left, right) => left === right })")]
         public void ReducedEnumerableOperatorsUseIterableRuntime(string source, string expected) {
             string output = Emit(source);
             Assert.Contains(expected, output);

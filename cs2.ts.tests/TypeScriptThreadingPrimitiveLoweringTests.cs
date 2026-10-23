@@ -11,7 +11,7 @@ namespace cs2.ts.tests {
         /// <summary>Preserves Exchange's old-value result while mutating the referenced local, and treats volatile reads as direct values.</summary>
         [Fact]
         public void ExchangeAndReadPreserveObservableSemanticsWithoutRuntimeTypes() {
-            const string source = "using System.Threading; class C { int M() { int value = 0; int old = Interlocked.Exchange(ref value, 1); int observed = Volatile.Read(ref value); return old + observed; } }";
+            const string source = "using System.Threading; class C { int M() { int value = 0; int old = Interlocked.Exchange(ref value, 1); int observed = Volatile.Read(ref value); Volatile.Write(ref value, 2); int incremented = Interlocked.Increment(ref value); return old + observed + incremented; } }";
             var compilation = RoslynTestHelper.CreateCompilation(source);
             Assert.DoesNotContain(compilation.Compilation.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
             var method = RoslynTestHelper.GetFirstMethod(compilation.Root);
@@ -26,6 +26,8 @@ namespace cs2.ts.tests {
             Assert.Contains("value = 1", output);
             Assert.Contains("return __interlockedOld", output);
             Assert.Contains("let observed = value", output);
+            Assert.Contains("(value = 2)", output);
+            Assert.Contains("(++value)", output);
             Assert.DoesNotContain("Interlocked", output);
             Assert.DoesNotContain("Volatile", output);
         }

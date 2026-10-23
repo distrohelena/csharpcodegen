@@ -1632,7 +1632,7 @@ namespace cs2.ts {
             out ExpressionResult result) {
             result = new ExpressionResult(false);
             if (invocationExpression.Expression is not MemberAccessExpressionSyntax memberAccess ||
-                invocationExpression.ArgumentList.Arguments.Count != 2) {
+                (invocationExpression.ArgumentList.Arguments.Count != 1 && invocationExpression.ArgumentList.Arguments.Count != 2)) {
                 return false;
             }
 
@@ -1644,8 +1644,8 @@ namespace cs2.ts {
             }
 
             ArgumentSyntax second = invocationExpression.ArgumentList.Arguments[0];
-            ArgumentSyntax comparer = invocationExpression.ArgumentList.Arguments[1];
-            if (second.NameColon != null || comparer.NameColon != null) {
+            ArgumentSyntax comparer = invocationExpression.ArgumentList.Arguments.Count == 2 ? invocationExpression.ArgumentList.Arguments[1] : null;
+            if (second.NameColon != null || comparer?.NameColon != null) {
                 throw new NotSupportedException("Enumerable.SequenceEqual requires positional arguments.");
             }
 
@@ -1659,7 +1659,13 @@ namespace cs2.ts {
             context.PopClass(depth);
 
             List<string> comparerLines = new List<string>();
-            ProcessExpression(semantic, context, comparer.Expression, comparerLines);
+            if (comparer != null) {
+                ProcessExpression(semantic, context, comparer.Expression, comparerLines);
+            } else if (method.TypeArguments.Length == 1 && method.TypeArguments[0].SpecialType == SpecialType.System_Byte) {
+                comparerLines.Add("{ Equals: (left, right) => left === right }");
+            } else {
+                throw new NotSupportedException("SequenceEqual without an explicit comparer currently requires byte elements.");
+            }
             context.PopClass(depth);
 
             context.AddClass(((TypeScriptProgram)context.Program).GetClassByName("NativeArrayUtil"));
@@ -3229,6 +3235,28 @@ namespace cs2.ts {
                 string target = BuildExpressionString(semantic, context, arguments[0].Expression, beforeLines);
                 lines.Add(target);
                 result = new ExpressionResult(true, VariablePath.Unknown, returnType) { BeforeLines = beforeLines };
+                return true;
+            }
+
+            if (method.ContainingType?.Name == "Volatile" && method.Name == "Write" && arguments.Count == 2) {
+                if (!IsStableThreadingPrimitiveTarget(arguments[0].Expression)) {
+                    throw new NotSupportedException("Volatile.Write requires a stable generated storage target.");
+                }
+                List<string> writePrerequisites = new List<string>();
+                string target = BuildExpressionString(semantic, context, arguments[0].Expression, writePrerequisites);
+                string value = BuildExpressionString(semantic, context, arguments[1].Expression, writePrerequisites);
+                lines.Add("(" + target + " = " + value + ")");
+                result = new ExpressionResult(true, VariablePath.Unknown, returnType) { BeforeLines = writePrerequisites };
+                return true;
+            }
+            if (method.ContainingType?.Name == "Interlocked" && method.Name == "Increment" && arguments.Count == 1) {
+                if (!IsStableThreadingPrimitiveTarget(arguments[0].Expression)) {
+                    throw new NotSupportedException("Interlocked.Increment requires a stable generated storage target.");
+                }
+                List<string> incrementPrerequisites = new List<string>();
+                string target = BuildExpressionString(semantic, context, arguments[0].Expression, incrementPrerequisites);
+                lines.Add("(++" + target + ")");
+                result = new ExpressionResult(true, VariablePath.Unknown, returnType) { BeforeLines = incrementPrerequisites };
                 return true;
             }
 
