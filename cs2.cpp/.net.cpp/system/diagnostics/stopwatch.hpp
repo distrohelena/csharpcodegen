@@ -9,6 +9,10 @@
 // The provider exposes monotonic microseconds, independent of its timer hardware.
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
 #include <ogc/lwp_watchdog.h>
+#elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
+// devkitARM's steady_clock needs an unavailable clock_gettime syscall on DS.
+// Calico owns a monotonic 64-bit tick counter independent of profiling origins.
+#include <calico/system/tick.h>
 #else
 #include <chrono>
 #endif
@@ -26,6 +30,8 @@ public:
 #if !HE_CPP_USE_STD_CHRONO
     using TickTimestamp = std::uint64_t;
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
+    using TickTimestamp = std::uint64_t;
+#elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
     using TickTimestamp = std::uint64_t;
 #else
     using TickClock = std::chrono::steady_clock;
@@ -171,6 +177,11 @@ private:
         return he_cpp_custom::MonotonicMicroseconds();
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return static_cast<TickTimestamp>(gettime());
+#elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
+        // Like libnds cpuStartTiming, initialization is idempotent and must not
+        // reset the system counter when another stopwatch starts or resumes.
+        tickInit();
+        return static_cast<TickTimestamp>(tickGetCount());
 #else
         return TickClock::now();
 #endif
@@ -186,6 +197,10 @@ private:
         return static_cast<double>(he_cpp_custom::MonotonicMicroseconds() - startTimestamp) / 1000.0;
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return ticks_to_millisecs(gettime() - startTimestamp);
+#elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
+        // Subtract full-width ticks before converting, preserving small elapsed
+        // intervals even when the shared system counter has a large origin.
+        return static_cast<double>(tickGetCount() - startTimestamp) * 1000.0 / TICK_FREQ;
 #else
         const TickClock::duration duration = TickClock::now() - startTimestamp;
         return std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(duration).count();

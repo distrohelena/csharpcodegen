@@ -121,6 +121,20 @@ public sealed class CPPRuntimeTemplateContractTests {
     }
 
     /// <summary>
+    /// Ensures DS stopwatch output selects the SDK's full-width Calico counter instead of an unavailable hosted clock syscall.
+    /// </summary>
+    [Fact]
+    public void RuntimeTemplates_stopwatch_ds_uses_native_monotonic_system_ticks() {
+        string templatePath = Path.Combine(ResolveRepositoryRootPath(), "cs2.cpp", ".net.cpp", "system", "diagnostics", "stopwatch.hpp");
+        string source = File.ReadAllText(templatePath);
+        Assert.Contains("#elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS", source, StringComparison.Ordinal);
+        Assert.Contains("#include <calico/system/tick.h>", source, StringComparison.Ordinal);
+        Assert.Contains("tickInit();", source, StringComparison.Ordinal);
+        Assert.Contains("tickGetCount() - startTimestamp", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("cpuGetTiming", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Verifies the shared DateTime runtime template delegates duration support to the narrower TimeSpan runtime template.
     /// </summary>
     [Fact]
