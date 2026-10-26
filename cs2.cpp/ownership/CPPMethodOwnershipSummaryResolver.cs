@@ -363,6 +363,12 @@ public sealed class CPPMethodOwnershipSummaryResolver {
             if (directAssignment != null) {
                 ISymbol destination = semanticModel.GetSymbolInfo(directAssignment.Left).Symbol;
                 if (destination is IFieldSymbol || destination is IPropertySymbol) {
+                    if (destination is IPropertySymbol property && property.SetMethod?.Parameters.Length == 1 &&
+                        IntrinsicCatalog.TryGetParameterOwnership(property.SetMethod.Parameters[0], out CPPParameterOwnershipKind setterOwnership) &&
+                        setterOwnership == CPPParameterOwnershipKind.TakesOwnership) {
+                        takesOwnership = true;
+                        continue;
+                    }
                     if (HasAttribute(destination, "NativeOwnedMember") &&
                         IntrinsicCatalog.TryGetParameterOwnership(parameter, out CPPParameterOwnershipKind memberDestinationOwnership) &&
                         memberDestinationOwnership == CPPParameterOwnershipKind.TakesOwnership) {

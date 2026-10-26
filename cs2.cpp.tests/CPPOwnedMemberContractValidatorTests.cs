@@ -8,6 +8,142 @@ namespace cs2.cpp.tests;
 /// </summary>
 public sealed class CPPOwnedMemberContractValidatorTests {
     /// <summary>
+    /// Accepts an exact static empty-array guard while still requiring cleanup of allocated arrays.
+    /// </summary>
+    /// <param name="guard">Reference comparison whose unequal branch releases the owned array.</param>
+    [Theory]
+    [InlineData("Stored != Array.Empty<object>()")]
+    [InlineData("Array.Empty<object>() != Stored")]
+    [InlineData("!(Stored == Array.Empty<object>())")]
+    public void Validate_WithStaticEmptyArrayGuard_Succeeds(string guard) {
+        CPPOwnershipAnalysisResult result = Analyze($$"""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+                public void Replace() {
+                    if ({{guard}}) {
+                        NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                    }
+                    Stored = new object[1];
+                }
+                public void Dispose() {
+                    if ({{guard}}) {
+                        NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                    }
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Keeps rejecting guards that can skip an allocated array instead of proving the static sentinel.
+    /// </summary>
+    /// <param name="guard">Condition that does not prove the skipped array has static storage.</param>
+    [Theory]
+    [InlineData("Stored == Array.Empty<object>()")]
+    [InlineData("Stored != new object[0]")]
+    [InlineData("Stored != Borrowed()")]
+    [InlineData("Stored != FakeArray.Empty<object>()")]
+    [InlineData("Stored.Length != 0")]
+    [InlineData("Stored != Array.Empty<object>() && Enabled")]
+    [InlineData("Other != Array.Empty<object>()")]
+    [InlineData("OtherOwner.Stored != Array.Empty<object>()")]
+    [InlineData("Enabled")]
+    public void Validate_WithUnprovenArrayGuard_ReportsCPPOWN007(string guard) {
+        CPPOwnershipAnalysisResult result = Analyze($$"""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+                object[] Other;
+                Consumer OtherOwner;
+                bool Enabled;
+                static object[] Borrowed() => Array.Empty<object>();
+                static class FakeArray {
+                    public static T[] Empty<T>() => new T[0];
+                }
+                public void Dispose() {
+                    if ({{guard}}) {
+                        NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                    }
+                }
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Propagates the sentinel fact through finally edges without skipping cleanup for dynamic arrays.
+    /// </summary>
+    [Fact]
+    public void Validate_WithStaticEmptyArrayGuardInFinally_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+                public void Dispose() {
+                    try {
+                        GC.KeepAlive(this);
+                    } finally {
+                        if (Stored != Array.Empty<object>()) {
+                            NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                        }
+                    }
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Rejects cleanup of another instance even when both receivers refer to the same field declaration.
+    /// </summary>
+    [Fact]
+    public void Validate_WithSentinelGuardAndOtherReceiverCleanup_ReportsCPPOWN007() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                object[] Stored;
+                Consumer OtherOwner;
+                public void Dispose() {
+                    if (Stored != Array.Empty<object>()) {
+                        NativeOwnership.DeleteItemsAndRelease(ref OtherOwner.Stored);
+                    }
+                }
+            }
+            """);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
+    /// Preserves explicit cleanup and replacement performed by an external writer on its supplied owner.
+    /// </summary>
+    [Fact]
+    public void Validate_WithExternalWriterCleanupBeforeReplacement_Succeeds() {
+        CPPOwnershipAnalysisResult result = Analyze("""
+            public sealed class Consumer : IDisposable {
+                [NativeOwnedMember]
+                public object[] Stored;
+                public void Dispose() {
+                    NativeOwnership.DeleteItemsAndRelease(ref Stored);
+                }
+            }
+            public static class Writer {
+                public static void Replace(Consumer owner) {
+                    NativeOwnership.DeleteItemsAndRelease(ref owner.Stored);
+                    owner.Stored = new object[1];
+                }
+            }
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "CPPOWN007");
+    }
+
+    /// <summary>
     /// Verifies unconditional cleanup after guarded runtime detachment in a nested registration state.
     /// </summary>
     [Fact]

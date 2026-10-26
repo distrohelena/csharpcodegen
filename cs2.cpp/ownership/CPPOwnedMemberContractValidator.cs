@@ -502,11 +502,72 @@ public sealed class CPPOwnedMemberContractValidator {
             .Select(predecessor => ApplyMemberFinalizationRegions(
                 graph,
                 predecessor,
-                outputStates[predecessor.Source],
+                outputStates[predecessor.Source] || BranchProvesStaticEmptyArray(predecessor, member),
                 member,
                 semanticModel))
             .ToArray();
         return predecessorStates.Length > 0 && predecessorStates.All(released => released);
+    }
+
+    /// <summary>
+    /// Recognizes a reference-equality edge proving that the current field is the framework's borrowed static empty array.
+    /// </summary>
+    /// <param name="branch">Control-flow edge whose comparison result is known.</param>
+    /// <param name="member">Owned field whose release obligation is being tracked.</param>
+    /// <returns><c>true</c> only on the edge equal to the exact System.Array.Empty sentinel.</returns>
+    static bool BranchProvesStaticEmptyArray(ControlFlowBranch branch, ISymbol member) {
+        BasicBlock source = branch.Source;
+        if (source.ConditionKind == ControlFlowConditionKind.None) {
+            return false;
+        }
+
+        bool comparisonResult = branch.IsConditionalSuccessor
+            ? source.ConditionKind == ControlFlowConditionKind.WhenTrue
+            : source.ConditionKind == ControlFlowConditionKind.WhenFalse;
+        IOperation condition = UnwrapConversion(source.BranchValue);
+        while (condition is IUnaryOperation unary &&
+            unary.OperatorKind == UnaryOperatorKind.Not && unary.OperatorMethod == null) {
+            comparisonResult = !comparisonResult;
+            condition = UnwrapConversion(unary.Operand);
+        }
+        if (condition is not IBinaryOperation comparison || comparison.OperatorMethod != null ||
+            (comparison.OperatorKind != BinaryOperatorKind.Equals && comparison.OperatorKind != BinaryOperatorKind.NotEquals)) {
+            return false;
+        }
+        bool referencesEqual = comparison.OperatorKind == BinaryOperatorKind.Equals
+            ? comparisonResult
+            : !comparisonResult;
+        if (!referencesEqual) {
+            return false;
+        }
+
+        return IsCurrentFieldAndStaticEmptyArray(comparison.LeftOperand, comparison.RightOperand, member) ||
+            IsCurrentFieldAndStaticEmptyArray(comparison.RightOperand, comparison.LeftOperand, member);
+    }
+
+    /// <summary>
+    /// Matches the current instance's exact array field against System.Array.Empty of the same element type.
+    /// </summary>
+    /// <param name="fieldOperand">Potential reference to the owned field on this instance.</param>
+    /// <param name="emptyOperand">Potential invocation returning the framework singleton.</param>
+    /// <param name="member">Field symbol whose lifecycle is under validation.</param>
+    /// <returns><c>true</c> for the built-in static sentinel, never an arbitrary borrowed return or another receiver.</returns>
+    static bool IsCurrentFieldAndStaticEmptyArray(IOperation fieldOperand, IOperation emptyOperand, ISymbol member) {
+        if (UnwrapConversion(fieldOperand) is not IFieldReferenceOperation field ||
+            !SymbolEqualityComparer.Default.Equals(field.Field, member) ||
+            field.Field.Type is not IArrayTypeSymbol arrayType ||
+            (!field.Field.IsStatic && field.Instance is not IInstanceReferenceOperation {
+                ReferenceKind: InstanceReferenceKind.ContainingTypeInstance
+            }) ||
+            UnwrapConversion(emptyOperand) is not IInvocationOperation invocation) {
+            return false;
+        }
+
+        IMethodSymbol method = invocation.TargetMethod;
+        return method.IsStatic && method.ContainingType.SpecialType == SpecialType.System_Array &&
+            string.Equals(method.Name, "Empty", StringComparison.Ordinal) &&
+            method.TypeArguments.Length == 1 && invocation.Arguments.Length == 0 &&
+            SymbolEqualityComparer.Default.Equals(method.ReturnType, arrayType);
     }
 
     /// <summary>
@@ -568,7 +629,7 @@ public sealed class CPPOwnedMemberContractValidator {
                     if (predecessor.Source.Ordinal >= finallyRegion.FirstBlockOrdinal &&
                         predecessor.Source.Ordinal <= finallyRegion.LastBlockOrdinal &&
                         regionOutputs.TryGetValue(predecessor.Source, out bool predecessorReleased)) {
-                        incomingStates.Add(predecessorReleased);
+                        incomingStates.Add(predecessorReleased || BranchProvesStaticEmptyArray(predecessor, member));
                     }
                 }
                 if (incomingStates.Count == 0) {
@@ -686,7 +747,7 @@ public sealed class CPPOwnedMemberContractValidator {
                     if (predecessor.Source.Ordinal >= finallyRegion.FirstBlockOrdinal &&
                         predecessor.Source.Ordinal <= finallyRegion.LastBlockOrdinal &&
                         regionOutputs.TryGetValue(predecessor.Source, out bool predecessorReleased)) {
-                        incomingStates.Add(predecessorReleased);
+                        incomingStates.Add(predecessorReleased || BranchProvesStaticEmptyArray(predecessor, member));
                     }
                 }
                 if (incomingStates.Count == 0) {
@@ -943,8 +1004,36 @@ public sealed class CPPOwnedMemberContractValidator {
             return false;
         }
 
-        ISymbol argumentMember = ResolveMemberSymbol(UnwrapConversion(invocation.Arguments[0].Value));
-        return SymbolEqualityComparer.Default.Equals(argumentMember, member);
+        IOperation argument = UnwrapConversion(invocation.Arguments[0].Value);
+        ISymbol argumentMember = ResolveMemberSymbol(argument);
+        if (!SymbolEqualityComparer.Default.Equals(argumentMember, member)) {
+            return false;
+        }
+        if (argument is IFieldReferenceOperation field && !field.Field.IsStatic &&
+            semanticModel.GetEnclosingSymbol(invocationSyntax.SpanStart) is IMethodSymbol method &&
+            !method.IsStatic && IsContainingTypeOrBaseType(method.ContainingType, member.ContainingType)) {
+            return field.Instance is IInstanceReferenceOperation {
+                ReferenceKind: InstanceReferenceKind.ContainingTypeInstance
+            };
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Determines whether an instance method tracks a field on its own type or one of its base types.
+    /// </summary>
+    /// <param name="containingType">Type whose instance is the method's current receiver.</param>
+    /// <param name="memberType">Type declaring the field under validation.</param>
+    /// <returns><c>true</c> when cleanup must refer to this instance rather than a different object of the same type.</returns>
+    static bool IsContainingTypeOrBaseType(INamedTypeSymbol containingType, INamedTypeSymbol memberType) {
+        for (INamedTypeSymbol current = containingType; current != null; current = current.BaseType) {
+            if (SymbolEqualityComparer.Default.Equals(current, memberType)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

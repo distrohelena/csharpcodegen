@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
@@ -1088,6 +1089,30 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             return;
         }
 
+        if (assignmentSyntax.IsKind(SyntaxKind.SimpleAssignmentExpression) &&
+            assignment.Target is IPropertyReferenceOperation propertyReference &&
+            propertyReference.Property.SetMethod is IMethodSymbol setter &&
+            setter.Parameters.Length == 1) {
+            IParameterSymbol valueParameter = setter.Parameters[0];
+            CPPMethodOwnershipSummary setterSummary = ResolveSummary(setter, summaries);
+            CPPParameterOwnershipKind setterOwnership = ResolveParameterOwnership(valueParameter, setterSummary);
+            if (setterOwnership == CPPParameterOwnershipKind.TakesOwnership ||
+                setterOwnership == CPPParameterOwnershipKind.TakesOwnershipRetained) {
+                if (ResolveSetterValueOwnership(assignment.Value, method, summaries, state) == CPPOwnershipKind.Borrowed) {
+                    if (emit) {
+                        AddDiagnostic(diagnostics, DiagnosticFactory.Create(
+                            "CPPOWN002", assignmentSyntax, method,
+                            $"Borrowed value cannot transfer ownership to property setter '{setter.Name}'.",
+                            "Assign an owned value or null to the consuming setter; keep borrowed values with their existing owner."));
+                    }
+                    return;
+                }
+                ProcessOwnershipArgument(assignmentSyntax, assignment.Value, valueParameter, assignmentSyntax,
+                    method, setterSummary, declarations, state, emit, transitions, diagnostics);
+                return;
+            }
+        }
+
         ILocalReferenceOperation valueLocal = UnwrapLocalReference(assignment.Value);
         if (valueLocal == null ||
             !state.TryGetValue(valueLocal.Local, out CPPLocalOwnershipState valueState) ||
@@ -1145,6 +1170,29 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             method,
             $"Owned local '{valueLocal.Local.Name}' escapes into a member without an owned-member contract.",
             "Mark the destination member as native-owned or transfer through an explicitly contracted API."));
+    }
+
+    /// <summary>Resolves a setter argument's existing ownership, including tracked locals and explicitly consuming parameters.</summary>
+    /// <param name="value">Value passed through one property assignment.</param>
+    /// <param name="method">Containing method whose parameter contracts may own the value.</param>
+    /// <param name="summaries">Verified method ownership summaries.</param>
+    /// <param name="state">Current ownership of source locals.</param>
+    /// <returns>Known owned or borrowed provenance, or unknown for unresolved values and null.</returns>
+    CPPOwnershipKind ResolveSetterValueOwnership(IOperation value, IMethodSymbol method,
+        CPPMethodOwnershipSummaryResolution summaries, IDictionary<ILocalSymbol, CPPLocalOwnershipState> state) {
+        if (value is IConversionOperation conversion) {
+            return ResolveSetterValueOwnership(conversion.Operand, method, summaries, state);
+        } else if (value is IParenthesizedOperation parenthesized) {
+            return ResolveSetterValueOwnership(parenthesized.Operand, method, summaries, state);
+        } else if (value is ILocalReferenceOperation local && state.TryGetValue(local.Local, out CPPLocalOwnershipState localState)) {
+            return localState.Ownership;
+        } else if (value is IParameterReferenceOperation parameter) {
+            CPPParameterOwnershipKind ownership = ResolveParameterOwnership(parameter.Parameter, ResolveSummary(method, summaries));
+            if (ownership == CPPParameterOwnershipKind.TakesOwnership || ownership == CPPParameterOwnershipKind.TakesOwnershipRetained) {
+                return CPPOwnershipKind.Owned;
+            }
+        }
+        return ExpressionClassifier.Classify(value, summaries.Summaries);
     }
 
     /// <summary>
