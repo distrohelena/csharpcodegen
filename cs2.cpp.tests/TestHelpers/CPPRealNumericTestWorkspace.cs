@@ -12,7 +12,7 @@ public sealed class CPPRealNumericTestWorkspace {
     /// <param name="includeEngineScalars">Whether this fixture consumes the actual engine scalar source files.</param>
     /// <param name="includeEngineVectors">Whether the actual configurable vector and matrix source files are also converted.</param>
     /// <param name="includeEngineLayout">Whether the actual shared numeric layout kernels and runtime evaluator are converted.</param>
-    /// <param name="callerFilePath">Source location used to locate the real sibling engine checkout.</param>
+    /// <param name="callerFilePath">Source location used to locate the enclosing engine checkout or the existing standalone sibling checkout.</param>
     /// <returns>Generated conversion output with ordinary disposable fixture ownership.</returns>
     public CPPOwnershipConversionOutput Convert(string source, int storageBits, int arithmeticBits,
         bool includeEngineScalars = true, bool includeEngineVectors = false, bool includeEngineLayout = false, [CallerFilePath] string callerFilePath = "") {
@@ -20,14 +20,14 @@ public sealed class CPPRealNumericTestWorkspace {
         string project = Path.Combine(workspace, "Fixture.csproj");
         string output = Path.Combine(workspace, "generated");
         string repository = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(callerFilePath)!, ".."));
-        string engine = Path.GetFullPath(Path.Combine(repository, "..", "helengine"));
+        string engine = includeEngineScalars ? ResolveEngineRoot(repository) : string.Empty;
         Directory.CreateDirectory(workspace);
         string items = string.Empty;
         string import = string.Empty;
         if (includeEngineScalars) {
             foreach (string file in new[] { "Real.cs", "RealEvaluation.cs", "RealMath.cs", "NumericPrecisionPolicy.cs", "Binary16Codec.cs" }) {
                 string path = Path.Combine(engine, "engine", "helengine.core", "numeric", file);
-                if (!File.Exists(path)) { throw new FileNotFoundException("The numeric fixture requires the real sibling engine checkout.", path); }
+                if (!File.Exists(path)) { throw new FileNotFoundException("The numeric fixture requires the real engine checkout.", path); }
                 items += "<Compile Include=\"" + SecurityElement.Escape(path) + "\" />";
             }
             if (includeEngineVectors) {
@@ -58,5 +58,27 @@ public sealed class CPPRealNumericTestWorkspace {
         converter.WriteOutput(output);
         string generatedText = string.Join(Environment.NewLine, Directory.GetFiles(output, "*.hpp", SearchOption.AllDirectories).Select(File.ReadAllText));
         return new CPPOwnershipConversionOutput(workspace, project, output, generatedText, converter.Report, converter);
+    }
+
+    /// <summary>Locates real engine sources in an enclosing checkout for nested vendor layouts, then preserves the standalone sibling layout.</summary>
+    /// <param name="repository">Converter repository resolved from the test caller source location.</param>
+    /// <returns>The engine root containing both scalar source and the numeric build-policy import.</returns>
+    /// <exception cref="FileNotFoundException">Neither supported checkout layout contains the required engine files.</exception>
+    static string ResolveEngineRoot(string repository) {
+        for (DirectoryInfo directory = new DirectoryInfo(repository); directory != null; directory = directory.Parent) {
+            if (File.Exists(Path.Combine(directory.FullName, "engine", "helengine.core", "numeric", "Real.cs"))
+                && File.Exists(Path.Combine(directory.FullName, "build", "NumericPrecision.targets"))) {
+                return directory.FullName;
+            }
+        }
+
+        string sibling = Path.GetFullPath(Path.Combine(repository, "..", "helengine"));
+        if (File.Exists(Path.Combine(sibling, "engine", "helengine.core", "numeric", "Real.cs"))
+            && File.Exists(Path.Combine(sibling, "build", "NumericPrecision.targets"))) {
+            return sibling;
+        }
+
+        throw new FileNotFoundException("The numeric fixture requires the real enclosing or sibling engine checkout.",
+            Path.Combine(sibling, "engine", "helengine.core", "numeric", "Real.cs"));
     }
 }
