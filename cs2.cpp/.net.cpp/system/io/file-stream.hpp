@@ -20,6 +20,10 @@ class FileStream : public Stream {
 private:
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
     std::FILE* file;
+    /// <summary>Tracks the stdio cursor after a sequential read so scalar deserialization retains native buffering.</summary>
+    size_t ReadPosition=0;
+    /// <summary>Allows skipping a seek only while the last stdio operation was a read at the requested logical position.</summary>
+    bool HasReadPosition=false;
 #else
     void* file;
 #endif

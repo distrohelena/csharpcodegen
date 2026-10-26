@@ -321,10 +321,20 @@ size_t FileStream::Read(uint8_t* buffer, size_t offset, size_t count) {
     }
 
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
-    std::fseek(file, position, SEEK_SET);
-
+    if (!HasReadPosition || ReadPosition != position) {
+        HasReadPosition = false;
+        if (std::fseek(file, position, SEEK_SET) != 0) {
+#if HE_CPP_COMPACT_NATIVE_EXCEPTION_MESSAGES
+            he_cpp_raise(InvalidOperationException());
+#else
+            he_cpp_raise(InvalidOperationException("Failed to position the file before reading."));
+#endif
+        }
+    }
     size_t bytesRead = std::fread(buffer + offset, 1, count, file);
     position += bytesRead;
+    ReadPosition = position;
+    HasReadPosition = std::feof(file) == 0;
     return bytesRead;
 #else
     he_cpp_raise(InvalidOperationException("Path-backed FileStream state is unavailable when hosted filesystem support is disabled."));
@@ -355,6 +365,7 @@ void FileStream::Write(const uint8_t* buffer, size_t offset, size_t count) {
     }
 
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
+    HasReadPosition = false;
     std::fseek(file, position, SEEK_SET);
 
     size_t bytesWritten = std::fwrite(buffer + offset, 1, count, file);
@@ -396,6 +407,7 @@ size_t FileStream::Seek(int64_t offset, SeekOrigin origin) {
     case SeekOrigin::End: seekMode = SEEK_END; break;
     }
 
+    HasReadPosition = false;
     std::fseek(file, offset, seekMode);
     position = std::ftell(file);
     return position;
@@ -431,6 +443,7 @@ void FileStream::SetLength(size_t newLength) {
     he_cpp_raise(NotSupportedException("FileStream cannot resize a file-backed stream on this target."));
 #endif
 #else
+    HasReadPosition = false;
     std::fflush(file);
 #if defined(_WIN32)
     _chsize_s(fileno(file), newLength);
@@ -506,7 +519,10 @@ int FileStream::InternalReadByte() {
 // Flushes the file buffer
 void FileStream::Flush() {
 #if HE_CPP_USE_HOSTED_FILE_SYSTEM
-    if (file) std::fflush(file);
+    if (file) {
+        HasReadPosition = false;
+        std::fflush(file);
+    }
 #endif
 }
 
