@@ -731,6 +731,9 @@ namespace cs2.core {
                 case SyntaxKind.NumericLiteralExpression:
                     literalValue = literalExpression.Token.ValueText;
                     break;
+                case SyntaxKind.CharacterLiteralExpression:
+                    literalValue = literalExpression.Token.Text;
+                    break;
                 case SyntaxKind.StringLiteralExpression:
                     literalValue = StringUtil.FormatDoubleQuotedLiteral(literalExpression.Token.ValueText);
                     break;

@@ -49,6 +49,10 @@ public:
     FileStream(const HeCppString& path, FileMode mode, FileAccess access, FileShare share);
     ~FileStream() override;
 
+    /// <summary>Keeps managed-array and span overloads visible beside the raw backend overrides.</summary>
+    using Stream::Read;
+    using Stream::Write;
+
     size_t Read(uint8_t* buffer, size_t offset, size_t count) override;
     void Write(const uint8_t* buffer, size_t offset, size_t count) override;
     size_t Seek(int64_t offset, SeekOrigin origin) override;

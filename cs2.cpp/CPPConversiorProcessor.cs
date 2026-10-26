@@ -1,4 +1,4 @@
-﻿using cs2.core;
+using cs2.core;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -16806,6 +16806,7 @@ namespace cs2.cpp {
                 string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.InvalidDataException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.FileNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal);
@@ -16838,6 +16839,8 @@ namespace cs2.cpp {
                 nativeTypeName = "DivideByZeroException";
             } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.OverflowException")) {
                 nativeTypeName = "OverflowException";
+            } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.InvalidDataException")) {
+                nativeTypeName = "InvalidDataException";
             } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.EndOfStreamException")) {
                 nativeTypeName = "EndOfStreamException";
             } else if (IsFrameworkTypeSymbol(compilation, typeSymbol, "System.IO.FileNotFoundException")) {

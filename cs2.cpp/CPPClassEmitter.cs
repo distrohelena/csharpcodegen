@@ -4633,6 +4633,7 @@ namespace cs2.cpp {
                 string.Equals(typeName, "System.DivideByZeroException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.OverflowException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.EndOfStreamException", StringComparison.Ordinal) ||
+                string.Equals(typeName, "System.IO.InvalidDataException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.FileNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.IO.DirectoryNotFoundException", StringComparison.Ordinal) ||
                 string.Equals(typeName, "System.NotSupportedException", StringComparison.Ordinal);

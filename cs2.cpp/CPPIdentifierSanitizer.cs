@@ -44,6 +44,8 @@ namespace cs2.cpp {
             "export",
             "extern",
             "false",
+            "far",
+            "near",
             "float",
             "for",
             "friend",

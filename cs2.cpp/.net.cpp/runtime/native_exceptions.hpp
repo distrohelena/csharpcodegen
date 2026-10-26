@@ -586,6 +586,19 @@ public:
     }
 };
 
+/// <summary>Represents malformed data rejected before a generated operation can consume it.</summary>
+class InvalidDataException : public Exception {
+public:
+    /// <summary>Initializes the canonical malformed-data failure.</summary>
+    InvalidDataException() : Exception("Invalid data.") {}
+    /// <summary>Retains a literal diagnostic under the selected exception message policy.</summary>
+    explicit InvalidDataException(const char* message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Invalid data.")) {}
+    /// <summary>Retains a managed diagnostic under the selected exception message policy.</summary>
+    explicit InvalidDataException(const HeCppString& message)
+        : Exception(he_cpp_exception_detail::SelectMessage(message, "Invalid data.")) {}
+};
+
 /// <summary>
 /// Represents a missing file requested by a generated operation.
 /// </summary>
