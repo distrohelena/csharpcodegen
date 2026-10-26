@@ -848,6 +848,7 @@ namespace cs2.core {
                         if (accessor.Body != null) {
                             variable.SetBlock = accessor.Body;
                         } else if (accessor.ExpressionBody != null) {
+                            variable.SetterArrowExpression = accessor.ExpressionBody;
                             variable.SetBlock = SyntaxFactory.Block(SyntaxFactory.ExpressionStatement(accessor.ExpressionBody.Expression));
                             PreProcessExpression(semantic, context, accessor.ExpressionBody.Expression);
                         }
@@ -1583,7 +1584,8 @@ namespace cs2.core {
             }
 
             ConversionFunction fn = context.CurrentFunction;
-            ConversionFunctionVariableUsage usage = fn.BodyVariables.FirstOrDefault(c => c.Name == name);
+            // Property accessor expressions have no function-local variables to mark.
+            ConversionFunctionVariableUsage usage = fn?.BodyVariables.FirstOrDefault(c => c.Name == name);
             if (usage != null) {
                 usage.Reassignment = true;
             }

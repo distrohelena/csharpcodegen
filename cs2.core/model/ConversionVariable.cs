@@ -62,6 +62,8 @@ namespace cs2.core {
 
         public BlockSyntax? GetBlock { get; set; }
         public BlockSyntax? SetBlock { get; set; }
+        /// <summary>Preserves the original setter expression and its syntax tree for semantic lowering.</summary>
+        public ArrowExpressionClauseSyntax? SetterArrowExpression { get; set; }
         /// <summary>
         /// Gets or sets the body of a custom event add accessor.
         /// </summary>

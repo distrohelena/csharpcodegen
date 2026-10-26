@@ -13,6 +13,42 @@ namespace cs2.cpp.tests;
 /// not replace the engine's default and the engine silently read the default forever.
 /// </remarks>
 public sealed class CPPVirtualPropertyAccessorTests {
+    /// <summary>Ensures accessor-level expression bodies preserve both reads and writes of a backing field.</summary>
+    [Fact]
+    public void Convert_WhenAccessorsHaveExpressionBodies_EmitsGetterAndSetterBodies() {
+        using CPPOwnershipConversionOutput output = new CPPOwnershipConversionTestWorkspace().Convert(
+            nameof(Convert_WhenAccessorsHaveExpressionBodies_EmitsGetterAndSetterBodies),
+            """
+            public class Fixture {
+                int Stored;
+                int BlockStored;
+                public int Value { get => Stored; set => Stored = value; }
+                public int BlockValue { get { return BlockStored; } set { BlockStored = value; } }
+                public int AutoValue { get; set; }
+            }
+            """);
+
+        string source = File.ReadAllText(Path.Combine(output.OutputPath, "Fixture.cpp"));
+        Assert.Contains("Fixture::get_Value()", source);
+        Assert.Contains("return this->Stored;", source);
+        Assert.Contains("Fixture::set_Value(int32_t value)", source);
+        Assert.Contains("this->Stored = value;", source);
+
+        CPPGeneratedProgramResult result = new CPPGeneratedProgramRunner(output.OutputPath).Run("""
+            Fixture value;
+            value.set_Value(41);
+            if (value.get_Value() != 41) return 1;
+            value.set_Value(42);
+            if (value.get_Value() != 42) return 2;
+            value.set_BlockValue(17);
+            if (value.get_BlockValue() != 17) return 3;
+            value.set_AutoValue(23);
+            if (value.get_AutoValue() != 23) return 4;
+            """);
+        Assert.True(result.CompilerExitCode == 0, result.CompilerOutput);
+        Assert.True(result.ProgramExitCode == 0, result.ProgramOutput);
+    }
+
     /// <summary>
     /// Ensures a virtual property with an expression body generates a virtual accessor.
     /// </summary>

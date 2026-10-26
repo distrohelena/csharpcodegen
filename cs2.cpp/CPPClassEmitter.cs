@@ -3781,7 +3781,8 @@ namespace cs2.cpp {
                 IsStatic = variable.IsStatic,
                 Semantic = variable.Semantic,
                 SourceLocation = variable.SourceLocation,
-                RawBlock = variable.SetBlock
+                RawBlock = variable.SetterArrowExpression == null ? variable.SetBlock : null,
+                ArrowExpression = variable.SetterArrowExpression
             };
 
             setter.InParameters.Add(new ConversionVariable {
