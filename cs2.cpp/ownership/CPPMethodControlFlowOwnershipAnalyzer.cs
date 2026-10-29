@@ -156,7 +156,55 @@ public sealed class CPPMethodControlFlowOwnershipAnalyzer {
             plansByLocal,
             outputStates,
             diagnostics);
+        AddCatchParameterTransferTransitions(methodDeclaration, semanticModel, summaries, declarations, plansByLocal, transitions);
         AddScopeCleanupTransitions(controlFlowGraph, declarations, outputStates, transitions);
+    }
+
+    /// <summary>
+    /// Records guarded-local transfers in catch statements whose CFG entry has no ordinary predecessor.
+    /// The runtime ownership flag preserves exceptional-path state without inventing normal-flow catch inputs.
+    /// </summary>
+    /// <param name="methodDeclaration">Containing method whose own catch statements are inspected.</param>
+    /// <param name="semanticModel">Semantic model resolving actual invocation parameters.</param>
+    /// <param name="summaries">Source and metadata ownership contracts for call boundaries.</param>
+    /// <param name="declarations">Ownership-relevant declarations keyed by their exact local symbols.</param>
+    /// <param name="plansByLocal">Plans identifying locals with runtime cleanup guards.</param>
+    /// <param name="transitions">Aggregate transitions, deduplicated against ordinary graph analysis.</param>
+    void AddCatchParameterTransferTransitions(
+        SyntaxNode methodDeclaration,
+        SemanticModel semanticModel,
+        CPPMethodOwnershipSummaryResolution summaries,
+        IReadOnlyDictionary<ILocalSymbol, VariableDeclaratorSyntax> declarations,
+        IReadOnlyDictionary<ILocalSymbol, CPPLocalOwnershipPlan> plansByLocal,
+        ICollection<CPPOwnershipTransition> transitions) {
+        foreach (ExpressionStatementSyntax statement in methodDeclaration.DescendantNodes().OfType<ExpressionStatementSyntax>()) {
+            if (IsInsideNestedExecutable(statement, methodDeclaration) ||
+                !statement.Ancestors().TakeWhile(ancestor => ancestor != methodDeclaration).OfType<CatchClauseSyntax>().Any() ||
+                statement.Expression is not InvocationExpressionSyntax invocationSyntax ||
+                semanticModel.GetOperation(invocationSyntax) is not IInvocationOperation invocation) {
+                continue;
+            }
+
+            CPPMethodOwnershipSummary summary = ResolveSummary(invocation.TargetMethod, summaries);
+            foreach (IArgumentOperation argument in invocation.Arguments) {
+                ILocalReferenceOperation local = UnwrapLocalReference(argument.Value);
+                CPPParameterOwnershipKind ownership = ResolveParameterOwnership(argument.Parameter, summary);
+                if (local == null ||
+                    ownership != CPPParameterOwnershipKind.TakesOwnership && ownership != CPPParameterOwnershipKind.TakesOwnershipRetained ||
+                    !plansByLocal.TryGetValue(local.Local, out CPPLocalOwnershipPlan plan) ||
+                    !plan.RequiresScopeGuard ||
+                    !declarations.TryGetValue(local.Local, out VariableDeclaratorSyntax declaration)) {
+                    continue;
+                }
+
+                AddTransition(transitions, new CPPOwnershipTransition(
+                    invocationSyntax,
+                    declaration,
+                    CPPOwnershipTransitionKind.Transfer,
+                    CPPOwnershipKind.Owned,
+                    CPPOwnershipLifecycle.Transferred));
+            }
+        }
     }
 
     /// <summary>

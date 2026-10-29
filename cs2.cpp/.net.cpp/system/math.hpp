@@ -162,6 +162,26 @@ inline double RoundToEven(double value) {
 #endif
 }
 
+/// <summary>Returns inverse tangent and requires the custom provider only when the operation is used.</summary>
+template <typename TValue>
+inline double ArcTangent(TValue value) {
+#if HE_CPP_USE_STD_MATH
+    return std::atan(value);
+#else
+    return atan(value);
+#endif
+}
+
+/// <summary>Returns the natural exponential and requires the custom provider only when the operation is used.</summary>
+template <typename TValue>
+inline double Exponential(TValue value) {
+#if HE_CPP_USE_STD_MATH
+    return std::exp(value);
+#else
+    return exp(value);
+#endif
+}
+
 /// <summary>Returns the two-argument arctangent through the selected math provider.</summary>
 inline double ArcTangent2(double y, double x) {
 #if HE_CPP_USE_STD_MATH
@@ -327,6 +347,18 @@ public:
 #endif
     }
 
+    /// <summary>Returns inverse tangent using the managed double-precision contract.</summary>
+    template <typename TValue>
+    static double Atan(TValue value) {
+        return he_cpp_math_detail::ArcTangent(static_cast<double>(value));
+    }
+
+    /// <summary>Returns the natural exponential using the managed double-precision contract.</summary>
+    template <typename TValue>
+    static double Exp(TValue value) {
+        return he_cpp_math_detail::Exponential(static_cast<double>(value));
+    }
+
     template <typename TY, typename TX>
     static double Atan2(TY y, TX x) {
         return he_cpp_math_detail::ArcTangent2(static_cast<double>(y), static_cast<double>(x));
@@ -431,6 +463,18 @@ public:
     template <typename TValue>
     static float Tan(TValue value) {
         return static_cast<float>(Math::Tan(value));
+    }
+
+    /// <summary>Returns inverse tangent rounded to the managed single-precision contract.</summary>
+    template <typename TValue>
+    static float Atan(TValue value) {
+        return static_cast<float>(Math::Atan(value));
+    }
+
+    /// <summary>Returns the natural exponential rounded to the managed single-precision contract.</summary>
+    template <typename TValue>
+    static float Exp(TValue value) {
+        return static_cast<float>(Math::Exp(value));
     }
 
     template <typename TY, typename TX>
