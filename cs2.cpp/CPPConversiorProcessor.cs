@@ -10651,6 +10651,21 @@ namespace cs2.cpp {
 
             BinaryOpTypes op = ParseBinaryExpression(semantic, context, binary, out List<string> left, out List<string> right, out ExpressionResult result);
 
+            // C++ constructors can introduce conversions that C# never considered.
+            // Preserve the user-defined conversions selected for the C# operator operands.
+            if (semantic.GetSymbolInfo(binary).Symbol is IMethodSymbol selectedOperator &&
+                selectedOperator.MethodKind == MethodKind.UserDefinedOperator &&
+                selectedOperator.Parameters.Length == 2) {
+                List<string> convertedLeft = new List<string>();
+                if (TryAppendUserDefinedConversionInvocationArgument(semantic, context, binary.Left, left, selectedOperator.Parameters[0], convertedLeft)) {
+                    left = convertedLeft;
+                }
+                List<string> convertedRight = new List<string>();
+                if (TryAppendUserDefinedConversionInvocationArgument(semantic, context, binary.Right, right, selectedOperator.Parameters[1], convertedRight)) {
+                    right = convertedRight;
+                }
+            }
+
             string rightText = string.Concat(right).Trim();
             ITypeSymbol leftTypeSymbol = semantic.GetTypeInfo(binary.Left).ConvertedType ?? semantic.GetTypeInfo(binary.Left).Type;
             if ((binary.IsKind(SyntaxKind.EqualsExpression) || binary.IsKind(SyntaxKind.NotEqualsExpression)) &&

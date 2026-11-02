@@ -7,6 +7,11 @@
 // defining __gamecube__. Both libogc targets must use the native timebase.
 #if !HE_CPP_USE_STD_CHRONO
 // The provider exposes monotonic microseconds, independent of its timer hardware.
+#elif defined(HE_CPP_PLATFORM_XBOX) && HE_CPP_PLATFORM_XBOX
+// NXDK steady_clock multiplies the absolute RDTSC counter into nanoseconds,
+// overflowing signed 64-bit arithmetic after about 12.6 seconds. Subtract native ticks first.
+#include <profileapi.h>
+#include <stdexcept>
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
 #include <ogc/lwp_watchdog.h>
 #elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
@@ -29,6 +34,8 @@ class Stopwatch {
 public:
 #if !HE_CPP_USE_STD_CHRONO
     using TickTimestamp = std::uint64_t;
+#elif defined(HE_CPP_PLATFORM_XBOX) && HE_CPP_PLATFORM_XBOX
+    using TickTimestamp = std::int64_t;
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
     using TickTimestamp = std::uint64_t;
 #elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
@@ -175,6 +182,12 @@ private:
     static TickTimestamp CaptureCurrentTimestamp() {
 #if !HE_CPP_USE_STD_CHRONO
         return he_cpp_custom::MonotonicMicroseconds();
+#elif defined(HE_CPP_PLATFORM_XBOX) && HE_CPP_PLATFORM_XBOX
+        LARGE_INTEGER counter;
+        if (!QueryPerformanceCounter(&counter)) {
+            he_cpp_raise(std::runtime_error("Xbox monotonic performance counter is unavailable."));
+        }
+        return counter.QuadPart;
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return static_cast<TickTimestamp>(gettime());
 #elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
@@ -195,6 +208,14 @@ private:
     static double ComputeElapsedMilliseconds(TickTimestamp startTimestamp) {
 #if !HE_CPP_USE_STD_CHRONO
         return static_cast<double>(he_cpp_custom::MonotonicMicroseconds() - startTimestamp) / 1000.0;
+#elif defined(HE_CPP_PLATFORM_XBOX) && HE_CPP_PLATFORM_XBOX
+        LARGE_INTEGER frequency;
+        if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) {
+            he_cpp_raise(std::runtime_error("Xbox monotonic performance frequency is invalid."));
+        }
+        // The elapsed interval is bounded independently of the counter origin.
+        const TickTimestamp elapsed = CaptureCurrentTimestamp() - startTimestamp;
+        return static_cast<double>(elapsed) * 1000.0 / static_cast<double>(frequency.QuadPart);
 #elif defined(__gamecube__) || (defined(HE_CPP_PLATFORM_WII) && HE_CPP_PLATFORM_WII)
         return ticks_to_millisecs(gettime() - startTimestamp);
 #elif defined(HE_CPP_PLATFORM_DS) && HE_CPP_PLATFORM_DS
